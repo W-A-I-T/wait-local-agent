@@ -18,6 +18,7 @@ def test_server_entry_uses_env_settings_and_server_address(monkeypatch, tmp_path
     monkeypatch.setenv("WAIT_HOST", "127.0.0.2")
     monkeypatch.setenv("WAIT_PORT", "9876")
     monkeypatch.setenv("WAIT_SCHEDULER_ENABLED", "false")
+    monkeypatch.setenv("WAIT_DEMO_MODE", "true")
     monkeypatch.setattr(
         server_entry.uvicorn,
         "run",

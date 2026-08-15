@@ -480,6 +480,7 @@ def test_founder_cli_helpers_cover_doctor_and_open_config_errors(monkeypatch, se
 
 
 def test_cli_edge_helpers_cover_requested_error_and_format_branches(monkeypatch, settings, tmp_path) -> None:
+    monkeypatch.setenv("WAIT_DEMO_MODE", "true")
     # The CLI adapter only translates FastAPI auth failures; use the real exception type for that branch.
     monkeypatch.setattr(
         cli_module,

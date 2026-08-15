@@ -85,7 +85,7 @@ def test_safe_defaults_are_disabled(monkeypatch) -> None:
     assert settings.end_user_brand_logo_data_uri == ""
     assert settings.end_user_brand_accent_color == "#1f6f55"
     assert settings.end_user_brand_surface_color == "#f3f5f2"
-    assert settings.demo_mode is True
+    assert settings.demo_mode is False
     assert settings.secrets_backend == "env"
     assert str(settings.vault_path) == ".wait-local-agent/vault"
     assert settings.local_model_provider == "deterministic"

@@ -1001,21 +1001,20 @@ def test_controlled_evaluation_runs_existing_agent_in_local_fixture_mode(setting
 
 
 def test_controlled_evaluation_rejects_non_demo_or_write_enabled_settings(settings) -> None:
-    production_settings = settings.__class__(**{**settings.__dict__, "demo_mode": False})
-    endpoint = _endpoint(production_settings, "/consultant/evaluations")
+    request = EvaluationRequest(
+        test_set=[{"id": "triage"}],
+        execution=EvaluationExecutionRequest(
+            agent_id="fixture",
+            entity_id="TCK-1",
+            client_id="acme",
+        ),
+    )
+    rejected_settings = settings.__class__(
+        **{**settings.__dict__, "demo_mode": False, "api_token": "api-token"}
+    )
 
     with pytest.raises(HTTPException, match="local demo mode"):
-        endpoint(
-            EvaluationRequest(
-                test_set=[{"id": "triage"}],
-                execution=EvaluationExecutionRequest(
-                    agent_id="fixture",
-                    entity_id="TCK-1",
-                    client_id="acme",
-                ),
-            ),
-            _technician(),
-        )
+        _endpoint(rejected_settings, "/consultant/evaluations")(request, _technician())
 
 
 def test_employee_onboarding_demo_endpoint_composes_existing_local_fixture(settings) -> None:
@@ -1084,7 +1083,9 @@ def test_employee_onboarding_demo_endpoint_enforces_local_mode_and_tenant_scope(
     with pytest.raises(HTTPException, match="outside authenticated scope"):
         _endpoint(settings, "/consultant/demos/employee-onboarding")(request, _technician(client_id="beta"))
 
-    secured_settings = settings.__class__(**{**settings.__dict__, "demo_mode": False})
+    secured_settings = settings.__class__(
+        **{**settings.__dict__, "demo_mode": False, "api_token": "api-token"}
+    )
     with pytest.raises(HTTPException, match="local demo mode"):
         _endpoint(secured_settings, "/consultant/demos/employee-onboarding")(request, _technician())
 
