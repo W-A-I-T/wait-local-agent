@@ -53,8 +53,14 @@ def test_migration_failure_rolls_back_data_and_version_bump(tmp_path: Path) -> N
         "select 1 from sqlite_master where type = 'table' and name = 'should_rollback'"
     ).fetchone() is None
 
-    runner.run((Migration(1, "successful", lambda active: active.execute("create table committed (value text)")),))
-    runner.run((Migration(1, "successful", lambda active: active.execute("select 1")),))
+    def successful_migration(active: sqlite3.Connection) -> None:
+        active.execute("create table committed (value text)")
+
+    def noop_migration(active: sqlite3.Connection) -> None:
+        active.execute("select 1")
+
+    runner.run((Migration(1, "successful", successful_migration),))
+    runner.run((Migration(1, "successful", noop_migration),))
     assert connection.execute("select version, name from schema_migrations").fetchall() == [(1, "successful")]
     connection.close()
 
