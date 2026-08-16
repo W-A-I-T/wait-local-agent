@@ -6,6 +6,10 @@ All notable changes to WAIT Local Agent will be documented in this file.
 
 ### Security
 
+- The `__quarantine__` client is now reserved and non-assignable: client
+  status changes, principal roles, connector-instance bindings, and client
+  connector mappings cannot target it. Existing upgraded bindings are logged
+  at startup for operator review.
 - Per-connector-instance outbound calls now use a host allowlist, pinned-IP
   DNS resolution, globally-routable address checks, proxy and redirect
   blocking, identity content encoding, and a bounded response stream.
@@ -78,6 +82,9 @@ All notable changes to WAIT Local Agent will be documented in this file.
 
 ### Changed
 
+- Normal AllClients ticket reads and ticket analytics now hide the reserved
+  `__quarantine__` tenant; explicit tenant-scoped quarantine reads and an
+  explicit include opt-in remain available for triage.
 - SQLite backups use a WAL-safe snapshot for plain and encrypted round trips.
 - Non-demo appliances now default to `WAIT_DEMO_MODE=false` and refuse startup
   without `WAIT_ADMIN_TOKEN`, `WAIT_API_TOKEN`, or an active `msp_admin`
