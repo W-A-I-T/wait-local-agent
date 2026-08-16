@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-// Additional terms: ../../../../ADDITIONAL_TERMS.md
+// Additional terms: ../../../ADDITIONAL_TERMS.md
 
 export function WaitAttribution() {
   return (
