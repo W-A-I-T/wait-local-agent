@@ -14,6 +14,7 @@ import {
   LayoutDashboard,
   MessageSquare,
   Files,
+  LibraryBig,
   ShieldCheck,
   Sparkles,
   Workflow
@@ -34,6 +35,7 @@ const navigation = [
   { to: "/workflows", label: "Workflows", icon: Workflow },
   { to: "/workflow-designer", label: "Workflow Designer", icon: Workflow },
   { to: "/templates", label: "Templates", icon: Files },
+  { to: "/playbooks", label: "Playbooks", icon: LibraryBig },
   { to: "/consultant", label: "Consultant", icon: Compass },
   { to: "/collectors", label: "Collectors", icon: Database },
   { to: "/reports", label: "Reports", icon: BarChart3 },
