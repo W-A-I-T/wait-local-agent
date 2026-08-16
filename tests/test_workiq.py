@@ -244,6 +244,47 @@ def test_workiq_validation_edges_and_configured_endpoint(settings) -> None:
     assert WorkIqClient(settings).get_fetch_schema("").status == "failed"
 
 
+def test_workiq_endpoint_requires_non_empty_token_before_client_creation(settings, monkeypatch) -> None:
+    constructed = False
+
+    def fail_if_constructed(*args, **kwargs):
+        nonlocal constructed
+        constructed = True
+        raise AssertionError("tokenless Work IQ endpoint must not construct an MCP client")
+
+    monkeypatch.setattr("wait_local_agent.workiq.McpClient", fail_if_constructed)
+    for token in ("", "   "):
+        client = WorkIqClient(
+            replace(
+                settings,
+                work_iq_mcp_endpoint="https://workiq.example.test/mcp",
+                work_iq_mcp_access_token=token,
+            )
+        )
+
+        assert client._mcp_client is None  # noqa: SLF001
+        response = client.fetch(["/me/messages"])
+        assert response.status == "not_configured"
+        assert response.classification == "read"
+
+    assert constructed is False
+
+
+def test_workiq_injected_client_still_works_without_configured_token(settings) -> None:
+    fake = FakeMcpClient(_result({"results": []}))
+    client = WorkIqClient(
+        replace(
+            settings,
+            work_iq_mcp_endpoint="https://workiq.example.test/mcp",
+            work_iq_mcp_access_token="",
+        ),
+        mcp_client=fake,
+    )
+
+    assert client.fetch(["/me/messages"]).status == "ready"
+    assert fake.calls == [("fetch", {"entityUrls": ["/me/messages"]})]
+
+
 def test_workiq_operation_classifier_and_path_validation_fail_closed(settings) -> None:
     assert classify_work_iq_operation(None) == "unknown"
     assert classify_work_iq_operation("do_action") == "action"

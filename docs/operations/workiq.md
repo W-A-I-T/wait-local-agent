@@ -41,9 +41,12 @@ WAIT_WORK_IQ_MCP_TIMEOUT_SECONDS=20
 WAIT_MCP_CLIENT_ALLOWED_HOSTS=
 ```
 
-The endpoint and access token are kept server-side. The access token must be
-acquired through an externally governed Microsoft Entra flow; WAIT does not
-perform OAuth acquisition in this slice. No Work IQ create, update, delete,
-action, Copilot `ask`, binary retrieval, automatic retries, or broad path
+The endpoint and access token are kept server-side. A non-empty access token is
+required whenever the MCP endpoint is set. If the endpoint has no token, WAIT
+leaves Work IQ `not_configured`, does not create an MCP client, and makes no
+unauthenticated outbound request. The access token must be acquired through an
+externally governed Microsoft Entra flow; WAIT does not perform OAuth
+acquisition in this slice. No Work IQ create, update, delete, action, Copilot
+`ask`, binary retrieval, automatic retries, or broad path
 enumeration is exposed. Unsupported operations remain unavailable rather
 than being inferred from the remote tool catalog.

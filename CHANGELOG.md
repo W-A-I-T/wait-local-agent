@@ -76,6 +76,9 @@ All notable changes to WAIT Local Agent will be documented in this file.
 
 ### Security
 
+- Work IQ now requires an access token when an MCP endpoint is configured; a
+  missing token disables Work IQ as `not_configured` instead of making an
+  unauthenticated request.
 - Explicit demo mode is bounded: provider writes and deployments remain
   disabled, and `/secrets` returns HTTP 403.
 - Principal identity supports per-client roles and a global `msp_admin` role;

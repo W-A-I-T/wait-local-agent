@@ -250,6 +250,12 @@ wait-local-agent secrets list
 
 Operators must back up the vault key separately. Losing `vault.key` means stored secrets cannot be decrypted.
 
+Work IQ uses a fail-closed credential gate: when
+`WAIT_WORK_IQ_MCP_ENDPOINT` is configured,
+`WAIT_WORK_IQ_MCP_ACCESS_TOKEN` must also be non-empty. A missing or
+whitespace-only token leaves Work IQ `not_configured` without creating an MCP
+client or making an unauthenticated outbound request.
+
 ## Payload redaction
 
 Approval request API views redact sensitive key variants before returning payloads to the client. Covered key fragments include:
