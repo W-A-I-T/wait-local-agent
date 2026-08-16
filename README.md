@@ -14,7 +14,7 @@
   <a href="docs/README.md"><img src="https://img.shields.io/badge/docs-read_the_docs-536DFE" alt="Documentation"></a>
 </p>
 
-> **License transition:** the current `main` development line is licensed as a combined work under **AGPL-3.0-only**. Source published through commit `903cb595e8f735fcc306a68f2bee150fce58a416` remains available under Apache License 2.0 on the preserved `1.x` line. See [LICENSE_HISTORY.md](LICENSE_HISTORY.md).
+> **Community licensing:** the current `main` development line is licensed as a combined work under **AGPL-3.0-only** together with the applicable WAIT additional terms in [ADDITIONAL_TERMS.md](ADDITIONAL_TERMS.md). Community interactive interfaces containing covered WAIT material must preserve the reasonable visible **Powered by WAIT** attribution. Source published through commit `903cb595e8f735fcc306a68f2bee150fce58a416` remains available under Apache License 2.0 on the preserved `1.x` line. See [LICENSE_HISTORY.md](LICENSE_HISTORY.md).
 
 ## What is WAIT Local Agent?
 
@@ -219,12 +219,12 @@ import or deployment.
 
 | Edition | What it means |
 | --- | --- |
-| **Community** | **C$0 · AGPL-3.0-only · this public repository · self-hosted · commercially usable when the AGPL terms are followed** |
+| **Community** | **C$0 · AGPL-3.0-only + applicable WAIT Section 7 terms · this public repository · self-hosted · commercially usable when the Community terms are followed · Powered by WAIT attribution retained** |
 | **Professional** | Separate commercial licensing, official packaging, support, and services for teams that need contractual commercial rights or operational assistance. |
 | **MSP** | Commercial rights and services for managed-service operation, including separately licensed packs/control-plane capabilities where purchased. |
 | **Enterprise** | Commercial licensing, integration, assurance, support, and enterprise capabilities under contract. |
 
-Community remains a real route: AGPL-3.0-only permits commercial use subject to its conditions, including the network-source obligations applicable to modified versions. Commercial agreements can separately provide private-modification rights, proprietary WAIT packs, managed-service terms, official builds, support, branding arrangements, white-labeling, or OEM rights where explicitly contracted. No custom `Powered by WAIT` Section 7 term is currently imposed by this repository. See [LICENSE_HISTORY.md](LICENSE_HISTORY.md) and [the public/commercial boundary](docs/concepts/open-core-boundary.md).
+Community remains a real route: AGPL-3.0-only permits commercial use subject to its conditions, including the network-source obligations applicable to modified versions, and the applicable WAIT Section 7 terms require the `Powered by WAIT` attribution for covered WAIT material in interactive interfaces. Commercial agreements can separately provide private-modification rights, proprietary WAIT packs, managed-service terms, official builds, support, attribution removal, partner/co-branding, white-labeling, or OEM rights where explicitly contracted. See [ADDITIONAL_TERMS.md](ADDITIONAL_TERMS.md), [LICENSE_HISTORY.md](LICENSE_HISTORY.md), and [the public/commercial boundary](docs/concepts/open-core-boundary.md).
 
 ## Documentation
 
@@ -262,6 +262,6 @@ boundaries, redaction behavior, and tenant-scoped audit trail in more detail.
 
 ## License
 
-The WAIT Local Agent **2.0 development line** is distributed as a combined work under **GNU Affero General Public License v3 only (`AGPL-3.0-only`)**. See [LICENSE](LICENSE).
+The WAIT Local Agent **2.0 development line** is distributed as a combined work under **GNU Affero General Public License v3 only (`AGPL-3.0-only`)** together with the applicable WAIT additional terms in [ADDITIONAL_TERMS.md](ADDITIONAL_TERMS.md). Community interactive interfaces containing covered WAIT material must preserve the reasonable visible **Powered by WAIT** attribution. See [LICENSE](LICENSE) and [NOTICE](NOTICE).
 
-Source published through `903cb595e8f735fcc306a68f2bee150fce58a416` remains available under Apache License 2.0 on the preserved `1.x` line. See [LICENSE_HISTORY.md](LICENSE_HISTORY.md) for the version boundary and commercial-licensing explanation.
+Source published through `903cb595e8f735fcc306a68f2bee150fce58a416` remains available under Apache License 2.0 on the preserved `1.x` line. See [LICENSE_HISTORY.md](LICENSE_HISTORY.md) for the version boundary and [COMMERCIAL_LICENSE.md](COMMERCIAL_LICENSE.md) for the separate commercial-licensing path, including explicit branding-removal, white-label, and OEM rights where contracted.
