@@ -14,8 +14,9 @@ All notable changes to WAIT Local Agent will be documented in this file.
 ### Added
 
 - Connector-ingested tickets now resolve their client from verified connector
-  mappings and quarantine unmapped records instead of writing a mis-tenanted
-  ticket; existing explicit-client and local/demo ingestion remains unchanged.
+  mappings and keep unmapped records in the review ledger instead of writing a
+  quarantine ticket; ticket identity is now stable per connector instance and
+  local ingestion requires an explicit active client.
 - Admins can now review per-connector sync health and triage unmapped records
   in the Operations → Sync / Reconciliation Center, including a confirm-gated
   action to mark a record as reviewed.
@@ -29,6 +30,11 @@ All notable changes to WAIT Local Agent will be documented in this file.
   remote ticket ID, and remote company ID without requiring a client mapping.
   The ingestion foundation also adds connector cursors and an operator-facing
   quarantine ledger for records that still need identity review.
+- Schema migration v5 preserves every existing ticket ID, backfills legacy
+  tenant references, enforces `tickets.client_id`, and adds the partial unique
+  `(connector_instance_id, external_id)` identity index. Provider upserts use a
+  frozen deterministic identity and return the persisted legacy ID for history
+  and audit writes.
 - A local Clients directory now anchors client identity, connector instances
   can be recorded alongside the existing Settings connector path, and
   external company mappings remain unverified until an operator confirms

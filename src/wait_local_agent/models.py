@@ -830,6 +830,8 @@ class UnmappedRecord:
     payload_digest: str | None
     reason: str
     created_at: str
+    last_seen_at: str | None
+    occurrence_count: int
     resolved_at: str | None
 
 

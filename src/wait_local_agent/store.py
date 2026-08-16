@@ -87,6 +87,10 @@ _ALL_CLIENTS = AllClients()
 _CLIENT_STATUSES = {"active", "archived", "quarantine"}
 _CONNECTOR_INSTANCE_STATUSES = {"inactive", "active", "error", "disabled"}
 
+# Derived once as uuid.uuid5(uuid.NAMESPACE_URL, "wait-local-agent:ticket-identity:v1").
+# This frozen literal is persisted indirectly through every connector ticket id.
+WAIT_TICKET_NS = uuid.UUID("7ab19543-3db8-506a-af8c-341787eb5cdc")
+
 
 class ClientConnectorMappingConflictError(ValueError):
     """Raised when a verified external company mapping already exists."""
@@ -128,6 +132,8 @@ def hash_credential(credential: str) -> str:
 
 class Store:
     def __init__(self, path: Path) -> None:
+        if sqlite3.sqlite_version_info < (3, 35, 0):
+            raise RuntimeError("SQLite 3.35.0 or newer is required for ticket identity upserts")
         self.path = path
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self._init_schema()
@@ -156,6 +162,12 @@ class Store:
                         4,
                         "canonical_assets_tenant_unique",
                         self._apply_canonical_tenant_unique_migration,
+                        foreign_keys_off=True,
+                    ),
+                    Migration(
+                        5,
+                        "ticket_identity_and_tenancy",
+                        self._apply_ticket_identity_migration,
                         foreign_keys_off=True,
                     ),
                 )
@@ -386,6 +398,150 @@ class Store:
         foreign_key_errors = connection.execute("pragma foreign_key_check").fetchall()
         if foreign_key_errors:
             raise RuntimeError(f"canonical asset foreign-key check failed: {foreign_key_errors}")
+
+    def _apply_ticket_identity_migration(self, connection: sqlite3.Connection) -> None:
+        """Make ticket identity instance-scoped and client tenancy mandatory."""
+
+        # v5 must also work when it is applied to the six-column prechange
+        # tickets table, before startup repairs have run.
+        for column_name, definition in (
+            ("client_id", "text"),
+            ("requester_id", "text"),
+            ("created_at", "text not null default ''"),
+            ("updated_at", "text not null default ''"),
+            ("source_system", "text"),
+            ("connector_instance_id", "text"),
+            ("external_id", "text"),
+            ("external_client_id", "text"),
+        ):
+            self._ensure_column(connection, "tickets", column_name, definition)
+        self._ensure_column(connection, "unmapped_records", "last_seen_at", "text")
+        self._ensure_column(connection, "unmapped_records", "occurrence_count", "integer not null default 1")
+        connection.execute("update unmapped_records set last_seen_at = created_at where last_seen_at is null")
+        connection.execute("update unmapped_records set occurrence_count = 1 where occurrence_count is null")
+
+        self.ensure_quarantine_client(connection)
+        now = utc_now()
+        connection.execute(
+            """
+            insert or ignore into clients (client_id, name, status, created_at, updated_at)
+            select distinct client_id, client_id, 'active', ?, ?
+            from tickets
+            where client_id is not null and trim(client_id) <> '' and trim(client_id) <> '__quarantine__'
+            """,
+            (now, now),
+        )
+        connection.execute(
+            """
+            update tickets
+            set client_id = '__quarantine__'
+            where client_id is null or trim(client_id) = ''
+            """
+        )
+        connection.execute(
+            """
+            update tickets
+            set connector_instance_id = case
+                    when connector_instance_id is null or trim(connector_instance_id) = '' then null
+                    else trim(connector_instance_id)
+                end,
+                external_id = case
+                    when external_id is null or trim(external_id) = '' then null
+                    else trim(external_id)
+                end
+            """
+        )
+
+        duplicates = connection.execute(
+            """
+            select connector_instance_id, external_id, count(*) as duplicate_count
+            from tickets
+            where connector_instance_id is not null and external_id is not null
+            group by connector_instance_id, external_id
+            having count(*) > 1
+            order by connector_instance_id, external_id
+            """
+        ).fetchall()
+        if duplicates:
+            offending_pairs = [(row[0], row[1], int(row[2])) for row in duplicates]
+            raise RuntimeError(
+                "tickets contains duplicate (connector_instance_id, external_id) pairs: "
+                f"{offending_pairs}"
+            )
+
+        ticket_indexes = [
+            str(row[0])
+            for row in connection.execute(
+                "select name from sqlite_master "
+                "where type = 'index' and tbl_name = 'tickets' and sql is not null order by name"
+            )
+        ]
+        index_sql = {
+            name: str(
+                connection.execute(
+                    "select sql from sqlite_master where type = 'index' and name = ?", (name,)
+                ).fetchone()[0]
+            )
+            for name in ticket_indexes
+        }
+        connection.execute(
+            """
+            create unique index if not exists ux_tickets_connector_external
+            on tickets(connector_instance_id, external_id)
+            where connector_instance_id is not null and external_id is not null
+            """
+        )
+        index_sql["ux_tickets_connector_external"] = (
+            "create unique index ux_tickets_connector_external on tickets(connector_instance_id, external_id) "
+            "where connector_instance_id is not null and external_id is not null"
+        )
+
+        before_count = int(connection.execute("select count(*) from tickets").fetchone()[0])
+        before_ids = {str(row[0]) for row in connection.execute("select id from tickets")}
+        connection.execute(
+            """
+            create table tickets_new (
+                id text primary key,
+                client text not null,
+                subject text not null,
+                body text not null,
+                priority text not null,
+                status text not null,
+                client_id text not null references clients(client_id),
+                requester_id text,
+                created_at text not null default '',
+                updated_at text not null default '',
+                source_system text,
+                connector_instance_id text references connector_instances(connector_instance_id),
+                external_id text,
+                external_client_id text
+            )
+            """
+        )
+        ticket_columns = (
+            "id, client, subject, body, priority, status, client_id, requester_id, created_at, updated_at, "
+            "source_system, connector_instance_id, external_id, external_client_id"
+        )
+        connection.execute(
+            f"insert into tickets_new ({ticket_columns}) select {ticket_columns} from tickets"  # nosec B608: fixed schema column list
+        )
+        connection.execute("drop table tickets")
+        connection.execute("alter table tickets_new rename to tickets")
+        for sql in index_sql.values():
+            connection.execute(sql)
+
+        after_count = int(connection.execute("select count(*) from tickets").fetchone()[0])
+        after_ids = {str(row[0]) for row in connection.execute("select id from tickets")}
+        if before_count != after_count:
+            raise RuntimeError(f"ticket row count changed during v5 migration: {before_count} != {after_count}")
+        if before_ids != after_ids:
+            raise RuntimeError("ticket ids changed during v5 migration")
+        foreign_key_errors = connection.execute("pragma foreign_key_check").fetchall()
+        if foreign_key_errors:
+            raise RuntimeError(f"ticket foreign-key check failed: {foreign_key_errors}")
+        integrity = str(connection.execute("pragma integrity_check").fetchone()[0])
+        if integrity != "ok":
+            raise RuntimeError(f"SQLite integrity check failed after v5 migration: {integrity}")
 
     def create_principal(
         self,
@@ -1004,49 +1160,91 @@ class Store:
         normalized_payload_digest = _normalize_client_id(payload_digest)
         with self._connect() as connection:
             connection.execute("begin immediate")
-            if connection.execute(
-                "select 1 from connector_instances where connector_instance_id = ?",
-                (normalized_instance_id,),
-            ).fetchone() is None:
-                raise KeyError(normalized_instance_id)
-            existing = connection.execute(
-                """
-                select * from unmapped_records
-                where connector_instance_id = ?
-                  and external_id is ?
-                  and record_type = ?
-                  and resolved_at is null
-                order by created_at, record_id
-                limit 1
-                """,
-                (normalized_instance_id, normalized_external_id, normalized_record_type),
-            ).fetchone()
-            if existing is not None:
-                return _unmapped_record_from_row(existing)
-            connection.execute(
-                """
-                insert into unmapped_records
-                  (record_id, connector_instance_id, external_company_id, external_id,
-                   record_type, payload_digest, reason, created_at, resolved_at)
-                values (?, ?, ?, ?, ?, ?, ?, ?, null)
-                """,
-                (
-                    record_id,
-                    normalized_instance_id,
-                    normalized_external_company_id,
-                    normalized_external_id,
-                    normalized_record_type,
-                    normalized_payload_digest,
-                    normalized_reason,
-                    created_at,
-                ),
+            row = self._record_unmapped(
+                connection,
+                normalized_instance_id,
+                normalized_external_company_id,
+                normalized_external_id,
+                normalized_record_type,
+                normalized_payload_digest,
+                normalized_reason,
+                created_at,
+                record_id,
             )
-            row = connection.execute(
-                "select * from unmapped_records where record_id = ?", (record_id,)
-            ).fetchone()
         if row is None:  # pragma: no cover - the insert returned successfully
             raise RuntimeError("unmapped record was not persisted")
         return _unmapped_record_from_row(row)
+
+    @staticmethod
+    def _record_unmapped(
+        connection: sqlite3.Connection,
+        connector_instance_id: str,
+        external_company_id: str | None,
+        external_id: str | None,
+        record_type: str,
+        payload_digest: str | None,
+        reason: str,
+        created_at: str,
+        record_id: str,
+    ) -> sqlite3.Row:
+        if connection.execute(
+            "select 1 from connector_instances where connector_instance_id = ?",
+            (connector_instance_id,),
+        ).fetchone() is None:
+            raise KeyError(connector_instance_id)
+        existing = connection.execute(
+            """
+            select * from unmapped_records
+            where connector_instance_id = ?
+              and external_id is ?
+              and record_type = ?
+              and resolved_at is null
+            order by created_at, record_id
+            limit 1
+            """,
+            (connector_instance_id, external_id, record_type),
+        ).fetchone()
+        if existing is not None:
+            connection.execute(
+                """
+                update unmapped_records
+                set external_company_id = ?, payload_digest = ?, reason = ?,
+                    last_seen_at = ?, occurrence_count = occurrence_count + 1
+                where record_id = ?
+                """,
+                (external_company_id, payload_digest, reason, created_at, existing["record_id"]),
+            )
+            updated = connection.execute(
+                "select * from unmapped_records where record_id = ?", (existing["record_id"],)
+            ).fetchone()
+            if updated is None:  # pragma: no cover - the update targeted an existing row
+                raise RuntimeError("unmapped record update could not be read")
+            return updated
+        connection.execute(
+            """
+            insert into unmapped_records
+              (record_id, connector_instance_id, external_company_id, external_id,
+               record_type, payload_digest, reason, created_at, last_seen_at, occurrence_count, resolved_at)
+            values (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, null)
+            """,
+            (
+                record_id,
+                connector_instance_id,
+                external_company_id,
+                external_id,
+                record_type,
+                payload_digest,
+                reason,
+                created_at,
+                created_at,
+            ),
+        )
+        row = connection.execute(
+            "select * from unmapped_records where record_id = ?", (record_id,)
+        ).fetchone()
+        if row is None:  # pragma: no cover - the insert returned successfully
+            raise RuntimeError("unmapped record could not be read")
+        return row
 
     def list_unmapped_records(
         self,
@@ -1887,6 +2085,7 @@ class Store:
             where not exists (
                 select 1 from ticket_status_history h where h.ticket_id = t.id
             )
+              and t.client_id <> '__quarantine__'
             """
         )
         self._ensure_column(connection, "end_user_messages", "author_role", "text not null default 'requester'")
@@ -2225,50 +2424,218 @@ class Store:
         self,
         tickets: list[Ticket],
         *,
-        connector_instance_id: str | None = None,
+        client_id: str,
     ) -> IngestSummary:
-        normalized_method_instance_id = _normalize_client_id(connector_instance_id)
-        if connector_instance_id is not None and normalized_method_instance_id is None:
-            raise ValueError("connector_instance_id must be non-empty")
+        normalized_client_id = _normalize_client_id(client_id)
+        if normalized_client_id is None:
+            raise ValueError("client_id must be non-empty")
         written = 0
-        quarantined = 0
+        self._require_active_client(normalized_client_id)
         for ticket in tickets:
-            ticket_instance_id = _normalize_client_id(ticket.connector_instance_id)
-            effective_instance_id = ticket_instance_id or normalized_method_instance_id
-            effective_external_client_id = _normalize_client_id(ticket.external_client_id)
-            effective_ticket = ticket
-            if (
-                _normalize_client_id(ticket.client_id) is None
-                and effective_instance_id is not None
-                and effective_external_client_id is not None
+            if any(
+                value is not None
+                for value in (ticket.connector_instance_id, ticket.external_id, ticket.external_client_id)
             ):
-                if ticket_instance_id != effective_instance_id:
-                    effective_ticket = replace(ticket, connector_instance_id=effective_instance_id)
-                resolved_client_id = self.resolve_client_for(effective_instance_id, effective_external_client_id)
-                if resolved_client_id is None:
-                    self.record_unmapped(
-                        effective_instance_id,
-                        external_company_id=effective_external_client_id,
-                        external_id=_normalize_client_id(ticket.external_id) or ticket.id,
-                        record_type="ticket",
-                        payload_digest=_ticket_payload_digest(effective_ticket),
-                        reason="no_verified_mapping",
-                    )
-                    quarantined += 1
-                    continue
-                effective_ticket = replace(effective_ticket, client_id=resolved_client_id)
+                raise ValueError("connector provenance must use ingest_provider_tickets")
+            record_client_id = _normalize_client_id(ticket.client_id)
+            if record_client_id is not None and record_client_id != normalized_client_id:
+                raise ValueError("ticket client_id conflicts with the local ingestion tenant")
+            effective_ticket = replace(ticket, client_id=normalized_client_id, source_system="local")
             with self._connect() as connection:
                 self._write_ingested_ticket(connection, effective_ticket)
             written += 1
+        return IngestSummary(written=written, quarantined=0)
+
+    def ingest_provider_tickets(
+        self,
+        records: list[Ticket],
+        *,
+        connector_instance_id: str,
+    ) -> IngestSummary:
+        """Ingest provider records using verified, instance-scoped identity."""
+
+        normalized_method_instance_id = _normalize_client_id(connector_instance_id)
+        if normalized_method_instance_id is None:
+            raise ValueError("connector_instance_id must be non-empty")
+        written = 0
+        quarantined = 0
+        with self._connect() as connection:
+            connection.execute("begin immediate")
+            instance = connection.execute(
+                "select * from connector_instances where connector_instance_id = ?",
+                (normalized_method_instance_id,),
+            ).fetchone()
+            if instance is None:
+                raise KeyError(normalized_method_instance_id)
+            if str(instance["status"]).strip().lower() != "active":
+                raise ValueError("connector instance must be active")
+            derived_source_system = str(instance["connector_type"]).strip()
+            for record in records:
+                if record.client_id is not None:
+                    raise ValueError("provider records must not carry client_id")
+                record_instance_id = _normalize_client_id(record.connector_instance_id)
+                if record_instance_id != normalized_method_instance_id:
+                    raise ValueError("provider record connector_instance_id conflicts with the method argument")
+                normalized_external_id = _normalize_client_id(record.external_id)
+                normalized_external_client_id = _normalize_client_id(record.external_client_id)
+                if normalized_external_id is None or normalized_external_client_id is None:
+                    raise ValueError("provider records require external_id and external_client_id")
+                if (
+                    record.source_system is not None
+                    and _normalize_client_id(record.source_system) != derived_source_system
+                ):
+                    raise ValueError("provider source_system must match the connector type")
+
+                mappings = connection.execute(
+                    """
+                    select m.client_id
+                    from client_connector_mappings m
+                    join clients c on c.client_id = m.client_id
+                    where m.connector_instance_id = ?
+                      and m.external_company_id = ?
+                      and m.verified = 1
+                    order by m.mapping_id
+                    """,
+                    (normalized_method_instance_id, normalized_external_client_id),
+                ).fetchall()
+                if len(mappings) != 1:
+                    self._record_unmapped(
+                        connection,
+                        normalized_method_instance_id,
+                        normalized_external_client_id,
+                        normalized_external_id,
+                        "ticket",
+                        _ticket_payload_digest(record),
+                        "no_verified_mapping",
+                        utc_now(),
+                        f"UMR-{uuid.uuid4().hex}",
+                    )
+                    quarantined += 1
+                    continue
+                resolved_client_id = str(mappings[0]["client_id"])
+                client = connection.execute(
+                    "select status from clients where client_id = ?", (resolved_client_id,)
+                ).fetchone()
+                if client is None or str(client["status"]).strip().lower() != "active":
+                    raise ValueError("resolved client must be active")
+                instance_client_id = _normalize_client_id(instance["client_id"])
+                if instance_client_id is not None and instance_client_id != resolved_client_id:
+                    raise ValueError("connector instance client conflicts with the verified mapping")
+
+                ticket_id = str(
+                    uuid.uuid5(
+                        WAIT_TICKET_NS,
+                        json.dumps(
+                            [normalized_method_instance_id, normalized_external_id],
+                            separators=(",", ":"),
+                            ensure_ascii=False,
+                        ),
+                    )
+                )
+                existing = connection.execute(
+                    """
+                    select id, status, client_id
+                    from tickets
+                    where connector_instance_id = ? and external_id = ?
+                    """,
+                    (normalized_method_instance_id, normalized_external_id),
+                ).fetchone()
+                now = utc_now()
+                created_at = record.created_at.strip() or now
+                updated_at = record.updated_at.strip() or created_at
+                returned = connection.execute(
+                    """
+                    insert into tickets
+                      (id, client, subject, body, priority, status, client_id,
+                       requester_id, created_at, updated_at, source_system,
+                       connector_instance_id, external_id, external_client_id)
+                    values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    on conflict(connector_instance_id, external_id)
+                      where connector_instance_id is not null and external_id is not null
+                    do update set
+                      client = excluded.client,
+                      subject = excluded.subject,
+                      body = excluded.body,
+                      priority = excluded.priority,
+                      status = excluded.status,
+                      client_id = excluded.client_id,
+                      requester_id = excluded.requester_id,
+                      created_at = case when tickets.created_at = '' then excluded.created_at
+                                        else tickets.created_at end,
+                      updated_at = excluded.updated_at,
+                      source_system = excluded.source_system,
+                      external_client_id = excluded.external_client_id
+                    returning id
+                    """,
+                    (
+                        ticket_id,
+                        record.client,
+                        record.subject,
+                        record.body,
+                        record.priority,
+                        record.status,
+                        resolved_client_id,
+                        record.requester_id,
+                        created_at,
+                        updated_at,
+                        derived_source_system,
+                        normalized_method_instance_id,
+                        normalized_external_id,
+                        normalized_external_client_id,
+                    ),
+                ).fetchone()
+                if returned is None:  # pragma: no cover - SQLite RETURNING follows a successful upsert
+                    raise RuntimeError("provider ticket upsert did not return an id")
+                persisted_id = str(returned[0])
+                previous_status = str(existing["status"]) if existing is not None else ""
+                if existing is None or previous_status.strip().lower() != record.status.strip().lower():
+                    self._record_ticket_status_history(
+                        connection,
+                        ticket_id=persisted_id,
+                        client_id=resolved_client_id,
+                        from_status=previous_status,
+                        to_status=record.status,
+                        changed_at=updated_at,
+                        source="ticket_ingest",
+                    )
+                self._add_audit_event(
+                    connection,
+                    "ticket.ingested",
+                    persisted_id,
+                    f"Imported {record.subject}",
+                    client_id=resolved_client_id,
+                )
+                written += 1
         return IngestSummary(written=written, quarantined=quarantined)
+
+    def _require_active_client(self, client_id: str) -> None:
+        with self._connect() as connection:
+            row = connection.execute(
+                "select status from clients where client_id = ?", (client_id,)
+            ).fetchone()
+        if row is None or str(row["status"]).strip().lower() != "active":
+            raise ValueError("client_id must refer to an active client")
 
     def _write_ingested_ticket(self, connection: sqlite3.Connection, ticket: Ticket) -> None:
         now = utc_now()
         created_at = ticket.created_at.strip() or now
         updated_at = ticket.updated_at.strip() or created_at
+        normalized_client_id = _normalize_client_id(ticket.client_id)
+        if normalized_client_id is None:
+            raise ValueError("local tickets require a client_id")
         existing = connection.execute(
-            "select status, client_id from tickets where id = ?", (ticket.id,)
+            "select status, client_id, connector_instance_id, external_id, external_client_id "
+            "from tickets where id = ?",
+            (ticket.id,),
         ).fetchone()
+        if existing is not None:
+            if any(
+                existing[field] is not None
+                for field in ("connector_instance_id", "external_id", "external_client_id")
+            ):
+                raise ValueError("local ingestion cannot take over a connector ticket")
+            if _normalize_client_id(existing["client_id"]) != normalized_client_id:
+                raise ValueError("local ingestion cannot take over a ticket owned by another client")
         connection.execute(
             """
             insert into tickets
@@ -2282,14 +2649,14 @@ class Store:
               body=excluded.body,
               priority=excluded.priority,
               status=excluded.status,
-              client_id=coalesce(excluded.client_id, tickets.client_id),
-              requester_id=coalesce(excluded.requester_id, tickets.requester_id),
+              client_id=excluded.client_id,
+              requester_id=excluded.requester_id,
               created_at=case when tickets.created_at = '' then excluded.created_at else tickets.created_at end,
               updated_at=excluded.updated_at,
-              source_system=coalesce(excluded.source_system, tickets.source_system),
-              connector_instance_id=coalesce(excluded.connector_instance_id, tickets.connector_instance_id),
-              external_id=coalesce(excluded.external_id, tickets.external_id),
-              external_client_id=coalesce(excluded.external_client_id, tickets.external_client_id)
+              source_system=excluded.source_system,
+              connector_instance_id=excluded.connector_instance_id,
+              external_id=excluded.external_id,
+              external_client_id=excluded.external_client_id
             """,
             (
                 ticket.id,
@@ -2298,7 +2665,7 @@ class Store:
                 ticket.body,
                 ticket.priority,
                 ticket.status,
-                _normalize_client_id(ticket.client_id),
+                normalized_client_id,
                 ticket.requester_id,
                 created_at,
                 updated_at,
@@ -2309,11 +2676,7 @@ class Store:
             ),
         )
         previous_status = str(existing["status"]) if existing is not None else ""
-        effective_client_id = _normalize_client_id(ticket.client_id) or (
-            _normalize_client_id(str(existing["client_id"]))
-            if existing is not None and existing["client_id"] is not None
-            else None
-        )
+        effective_client_id = normalized_client_id
         if existing is None or previous_status.strip().lower() != ticket.status.strip().lower():
             self._record_ticket_status_history(
                 connection,
@@ -2332,10 +2695,10 @@ class Store:
             client_id=effective_client_id,
         )
 
-    def ingest_ticket_file(self, path: Path) -> int:
+    def ingest_ticket_file(self, path: Path, *, client_id: str) -> int:
         payload = json.loads(path.read_text(encoding="utf-8"))
         tickets = [Ticket(**item) for item in payload]
-        self.ingest_tickets(tickets)
+        self.ingest_tickets(tickets, client_id=client_id)
         return len(tickets)
 
     def list_tickets(self, client_id: ClientScope | str | None = _ALL_CLIENTS) -> list[Ticket]:
@@ -2725,8 +3088,11 @@ class Store:
         normalized_client_id = _normalize_client_id(client_id)
         if not normalized_client_id:
             raise ValueError("end-user tickets require a client scope")
+        self._require_active_client(normalized_client_id)
         if not requester_id.strip():
             raise ValueError("end-user tickets require a requester identity")
+        if any(value is not None for value in (connector_instance_id, external_id, external_client_id)):
+            raise ValueError("end-user tickets cannot carry connector provenance")
         safe_subject = _redact_text(subject.strip())
         safe_body = _redact_text(body.strip())
         now = utc_now()
@@ -2751,10 +3117,10 @@ class Store:
                             _redact_text(requester_id.strip()),
                             now,
                             now,
-                            _normalize_client_id(source_system),
-                            _normalize_client_id(connector_instance_id),
-                            _normalize_client_id(external_id),
-                            _normalize_client_id(external_client_id),
+                            "local",
+                            None,
+                            None,
+                            None,
                         ),
                     )
                     self._record_ticket_status_history(

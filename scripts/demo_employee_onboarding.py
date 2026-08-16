@@ -40,7 +40,8 @@ def main() -> None:
             demo_mode=True,
         )
         store = Store(settings.data_path)
-        store.ingest_ticket_file(ROOT / "examples/sample_tickets/tickets.json")
+        store.create_client("acme", "Demo client")
+        store.ingest_ticket_file(ROOT / "examples/sample_tickets/tickets.json", client_id="acme")
         with store._connect() as connection:  # noqa: SLF001 - isolated fixture tenant binding.
             connection.execute(
                 "update tickets set client_id = ? where id = ?",

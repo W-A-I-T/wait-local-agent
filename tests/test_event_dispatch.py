@@ -7,6 +7,7 @@ from pathlib import Path
 import pytest
 
 import wait_local_agent.event_dispatch as event_dispatch_module
+from tests.support import ingest_local
 from wait_local_agent.agents import AgentExecutionResult, AgentService
 from wait_local_agent.event_dispatch import (
     EventDispatcher,
@@ -21,10 +22,12 @@ from wait_local_agent.store import Store
 
 
 def _seed(store: Store, *, client_id: str | None = "acme") -> None:
-    store.ingest_ticket_file(Path("examples/sample_tickets/tickets.json"))
-    if client_id is not None:
-        with store._connect() as connection:  # noqa: SLF001
-            connection.execute("update tickets set client_id = ?", (client_id,))
+    ingest_local(store, Path("examples/sample_tickets/tickets.json"))
+    with store._connect() as connection:  # noqa: SLF001
+        connection.execute(
+            "update tickets set client_id = ?",
+            (client_id if client_id is not None else "__quarantine__",),
+        )
 
 
 def _event_agent(settings, store: Store, *, client_id: str | None = "acme"):
@@ -422,7 +425,7 @@ def test_event_dispatch_skips_disabled_nonmatching_and_wrong_scope_agents(settin
     assert len(result.run_ids) == 1
 
     with store._connect() as connection:  # noqa: SLF001
-        connection.execute("update tickets set client_id = null where id = ?", ("TCK-1002",))
+        connection.execute("update tickets set client_id = '__quarantine__' where id = ?", ("TCK-1002",))
     unscoped = EventDispatcher(store, service).dispatch(
         event_type="ticket.updated",
         entity_type="ticket",

@@ -4,6 +4,7 @@ import json
 from pathlib import Path
 
 from wait_local_agent.client_scope import AllClients, BoundClients
+from wait_local_agent.models import Ticket
 from wait_local_agent.store import Store
 
 
@@ -12,6 +13,8 @@ def _seed_connectors(store: Store):
     store.create_client("client-b", "Beta")
     connector_a = store.create_connector_instance("halopsa", "Acme", client_id="client-a")
     connector_b = store.create_connector_instance("halopsa", "Beta", client_id="client-b")
+    store.update_connector_instance(connector_a.connector_instance_id, status="active")
+    store.update_connector_instance(connector_b.connector_instance_id, status="active")
     return connector_a, connector_b
 
 
@@ -62,7 +65,7 @@ def test_v3_is_additive_idempotent_and_fk_clean(tmp_path: Path) -> None:
 
     Store(tmp_path / "state.db")
     with store._connect() as connection:  # noqa: SLF001
-        assert connection.execute("select count(*) from schema_migrations").fetchone()[0] == 5
+        assert connection.execute("select count(*) from schema_migrations").fetchone()[0] == 6
         assert connection.execute("pragma foreign_key_check").fetchall() == []
 
 
@@ -80,7 +83,7 @@ def test_ticket_provenance_columns_accept_return_and_enforce_scope(tmp_path: Pat
                     "body": "Body",
                     "priority": "Low",
                     "status": "Open",
-                    "client_id": "client-a",
+                    "client_id": None,
                     "source_system": "halopsa",
                     "connector_instance_id": connector_a.connector_instance_id,
                     "external_id": "remote-1",
@@ -91,13 +94,32 @@ def test_ticket_provenance_columns_accept_return_and_enforce_scope(tmp_path: Pat
         encoding="utf-8",
     )
 
-    assert store.ingest_ticket_file(ticket_path) == 1
+    mapping = store.create_client_connector_mapping(
+        AllClients(), connector_a.connector_instance_id, "company-1", "client-a"
+    )
+    store.verify_client_connector_mapping(AllClients(), mapping.mapping_id)
+    with store._connect() as connection:  # noqa: SLF001
+        connection.execute(
+            """
+            insert into tickets
+              (id, client, subject, body, priority, status, client_id, source_system,
+               connector_instance_id, external_id, external_client_id)
+            values ('TCK-PROVENANCE', 'Acme', 'Imported', 'Body', 'Low', 'Open', 'client-a',
+                    'halopsa', ?, 'remote-1', 'company-1')
+            """,
+            (connector_a.connector_instance_id,),
+        )
+    provider_ticket = Ticket(**json.loads(ticket_path.read_text(encoding="utf-8"))[0])
+    assert store.ingest_provider_tickets(
+        [provider_ticket], connector_instance_id=connector_a.connector_instance_id
+    ).written == 1
     ticket = store.get_ticket("TCK-PROVENANCE", "client-a")
     assert ticket is not None
     assert ticket.source_system == "halopsa"
     assert ticket.connector_instance_id == connector_a.connector_instance_id
     assert ticket.external_id == "remote-1"
     assert ticket.external_client_id == "company-1"
+    assert ticket.id == "TCK-PROVENANCE"
     assert store.get_ticket("TCK-PROVENANCE", "client-b") is None
     assert store.list_tickets(BoundClients(frozenset({"client-b"}))) == []
 

@@ -9,6 +9,7 @@ from typing import cast
 import httpx
 import pytest
 
+from tests.support import ensure_test_client, ensure_test_clients, ingest_local
 from wait_local_agent.collectors import CollectorPreview
 from wait_local_agent.confluence import ConfluencePage
 from wait_local_agent.itglue import ItGlueDocument
@@ -194,7 +195,7 @@ def test_approval_payload_is_redacted_when_read_from_legacy_row(settings) -> Non
 
 
 def _seed_tickets(store: Store) -> None:
-    store.ingest_ticket_file(Path("examples/sample_tickets/tickets.json"))
+    ingest_local(store, Path("examples/sample_tickets/tickets.json"))
 
 
 class FakeProvider:
@@ -943,6 +944,7 @@ def test_action_run_validation_and_provider_errors(settings) -> None:
 
 def test_action_bodies_respect_tenancy_and_citation_optional_ids(settings) -> None:
     store = Store(settings.data_path)
+    ensure_test_clients(store, "acme", "beta")
     _seed_tickets(store)
     with store._connect() as connection:  # noqa: SLF001
         connection.execute("update tickets set client_id = 'acme' where id = 'TCK-1001'")
@@ -966,10 +968,11 @@ def test_action_bodies_respect_tenancy_and_citation_optional_ids(settings) -> No
 
 def test_ticket_quality_reports_explainable_field_issues(settings) -> None:
     store = Store(settings.data_path)
+    ensure_test_client(store, "acme")
     with store._connect() as connection:  # noqa: SLF001
         connection.execute(
-            "insert into tickets (id, client, subject, body, priority, status) values (?, ?, ?, ?, ?, ?)",
-            ("TCK-BAD", "", "", "", "urgent", "waiting"),
+            "insert into tickets (id, client, subject, body, priority, status, client_id) values (?, ?, ?, ?, ?, ?, ?)",
+            ("TCK-BAD", "", "", "", "urgent", "waiting", "acme"),
         )
     result = TicketQualityAction().run(_action_context(store, settings), {"ticket_id": "TCK-BAD"})
     assert result.status == "success"
@@ -985,6 +988,7 @@ def test_ticket_quality_reports_explainable_field_issues(settings) -> None:
 
 def test_security_alert_assessment_is_deterministic_and_non_mutating(settings) -> None:
     store = Store(settings.data_path)
+    ensure_test_client(store, "acme")
     with store._connect() as connection:  # noqa: SLF001
         connection.execute(
             "insert into tickets (id, client, subject, body, priority, status, client_id) values (?, ?, ?, ?, ?, ?, ?)",
@@ -1016,6 +1020,7 @@ def test_security_alert_assessment_is_deterministic_and_non_mutating(settings) -
 
 def test_ticket_sla_assessment_uses_explicit_threshold_and_reports_missing_evidence(settings) -> None:
     store = Store(settings.data_path)
+    ensure_test_client(store, "acme")
     with store._connect() as connection:  # noqa: SLF001
         connection.execute(
             """
@@ -1078,6 +1083,7 @@ def test_ticket_sla_assessment_uses_explicit_threshold_and_reports_missing_evide
 
 def test_stale_ticket_sweep_is_tenant_scoped_and_bounded(settings) -> None:
     store = Store(settings.data_path)
+    ensure_test_clients(store, "acme", "beta")
     with store._connect() as connection:  # noqa: SLF001
         connection.executemany(
             """
@@ -1290,6 +1296,7 @@ def test_smart_action_bound_helpers_cover_invalid_and_normalized_values(settings
     context.provider = object()
     assert _provider_is_ai_assisted(context) is True
     store = Store(settings.data_path)
+    ensure_test_client(store, "acme")
     with store._connect() as connection:  # noqa: SLF001
         connection.execute(
             """

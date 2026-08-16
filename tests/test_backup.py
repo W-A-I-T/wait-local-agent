@@ -6,6 +6,7 @@ import pytest
 from cryptography.fernet import Fernet
 from typer.testing import CliRunner
 
+from tests.support import ingest_local
 from wait_local_agent import backup as backup_module
 from wait_local_agent.backup import (
     BACKUP_KEY_SECRET_NAME,
@@ -31,7 +32,7 @@ def test_encrypted_backup_restore_round_trip(settings, tmp_path: Path) -> None:
     vault = SecretVault.initialize(secure_settings.vault_path)
     vault.set(BACKUP_KEY_SECRET_NAME, Fernet.generate_key().decode("utf-8"))
     store = Store(secure_settings.data_path)
-    store.ingest_ticket_file(Path("examples/sample_tickets/tickets.json"))
+    ingest_local(store, Path("examples/sample_tickets/tickets.json"))
     original_bytes = secure_settings.data_path.read_bytes()
     encrypted_backup = tmp_path / "state.db.enc"
     restored_path = tmp_path / "restored.db"
@@ -80,7 +81,7 @@ def test_encrypted_backup_restore_cli_fails_cleanly_without_key(monkeypatch, tmp
     monkeypatch.setenv("WAIT_SECRETS_BACKEND", "fernet")
     monkeypatch.setenv("WAIT_VAULT_PATH", str(source_vault))
     SecretVault.initialize(source_vault).set(BACKUP_KEY_SECRET_NAME, Fernet.generate_key().decode("utf-8"))
-    Store(source_data).ingest_ticket_file(Path("examples/sample_tickets/tickets.json"))
+    ingest_local(Store(source_data), Path("examples/sample_tickets/tickets.json"))
 
     create = runner.invoke(app, ["backup", "create", str(encrypted_backup), "--encrypt"])
 
@@ -113,7 +114,7 @@ def test_plain_backup_bootstraps_missing_store_and_restore_requires_existing_sou
 
 def test_restore_exercise_reports_row_count_mismatch(settings, tmp_path: Path) -> None:
     store = Store(settings.data_path)
-    store.ingest_ticket_file(Path("examples/sample_tickets/tickets.json"))
+    ingest_local(store, Path("examples/sample_tickets/tickets.json"))
     empty_store = Store(tmp_path / "empty.db")
     backup_path = tmp_path / "empty-backup.db"
     backup_state(empty_store, backup_path)
@@ -268,7 +269,7 @@ def test_encrypted_restore_rejects_invalid_ciphertext(settings, tmp_path: Path) 
 
 def test_restore_exercise_uses_scratch_and_preserves_live_rows(settings, tmp_path: Path) -> None:
     store = Store(settings.data_path)
-    store.ingest_ticket_file(Path("examples/sample_tickets/tickets.json"))
+    ingest_local(store, Path("examples/sample_tickets/tickets.json"))
     backup_path = tmp_path / "exercise.db"
     backup_state(store, backup_path)
     before_ids = [ticket.id for ticket in store.list_tickets()]

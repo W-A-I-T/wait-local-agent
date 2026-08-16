@@ -4,6 +4,7 @@ from pathlib import Path
 
 from fastapi.testclient import TestClient
 
+from tests.support import ingest_local
 from wait_local_agent.api.app import create_app
 from wait_local_agent.rbac import Role, resolve_auth_context
 from wait_local_agent.store import Store
@@ -50,7 +51,7 @@ def test_route_enforcement_matches_rbac_contract(settings) -> None:
         }
     )
     store = Store(secure_settings.data_path)
-    store.ingest_ticket_file(Path("examples/sample_tickets/tickets.json"))
+    ingest_local(store, Path("examples/sample_tickets/tickets.json"))
     approval = store.create_approval_request(
         "TCK-1001",
         "ticket.assign",

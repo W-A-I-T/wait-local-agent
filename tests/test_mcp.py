@@ -8,6 +8,7 @@ import pytest
 from starlette.requests import Request
 from starlette.responses import Response
 
+from tests.support import ensure_test_clients
 from wait_local_agent.agents import ToolDefinition
 from wait_local_agent.api.app import create_app
 from wait_local_agent.mcp import (
@@ -44,6 +45,7 @@ def _secure_settings(settings):
 
 def _seed_tickets(settings) -> None:
     store = Store(settings.data_path)
+    ensure_test_clients(store, "acme", "beta")
     with store._connect() as connection:  # noqa: SLF001
         connection.executemany(
             """

@@ -11,6 +11,7 @@ from fastapi import HTTPException
 from fastapi.routing import APIRoute
 from fastapi.testclient import TestClient
 
+from tests.support import ensure_test_clients
 from wait_local_agent.api.app import (
     EndUserMessageRequest,
     _backfill_scope,
@@ -75,6 +76,7 @@ def _contains_entity_client_attribute(node: ast.AST, entity_names: set[str]) -> 
 
 
 def _seed_cross_client_state(store: Store) -> int:
+    ensure_test_clients(store, "alpha", "beta")
     with store._connect() as connection:  # noqa: SLF001
         connection.execute(
             """

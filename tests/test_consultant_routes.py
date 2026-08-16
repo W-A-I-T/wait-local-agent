@@ -10,6 +10,7 @@ from fastapi.routing import APIRoute
 from starlette.requests import Request
 
 import wait_local_agent.api.app as app_module
+from tests.support import ingest_local
 from wait_local_agent.agents import AgentService
 from wait_local_agent.api.app import (
     CopilotStudioPlanRequest,
@@ -351,7 +352,7 @@ def test_flagship_employee_onboarding_runs_review_evaluation_and_approval_gates(
     )
 
     store = Store(settings.data_path)
-    store.ingest_ticket_file(Path("examples/sample_tickets/tickets.json"))
+    ingest_local(store, Path("examples/sample_tickets/tickets.json"))
     with store._connect() as connection:  # noqa: SLF001
         connection.execute("update tickets set client_id = 'acme'")
     service = AgentService(store, settings, SmartActionService(store, settings))
@@ -911,7 +912,7 @@ def test_teams_message_draft_is_native_graph_approval_gated(settings) -> None:
 
 def test_supervisor_run_orders_persisted_children_and_returns_child_runs(settings) -> None:
     store = Store(settings.data_path)
-    store.ingest_ticket_file(Path("examples/sample_tickets/tickets.json"))
+    ingest_local(store, Path("examples/sample_tickets/tickets.json"))
     with store._connect() as connection:  # noqa: SLF001
         connection.execute("update tickets set client_id = 'acme'")
     service = AgentService(store, settings, SmartActionService(store, settings))
@@ -961,7 +962,7 @@ def test_supervisor_run_orders_persisted_children_and_returns_child_runs(setting
 
 def test_controlled_evaluation_runs_existing_agent_in_local_fixture_mode(settings) -> None:
     store = Store(settings.data_path)
-    store.ingest_ticket_file(Path("examples/sample_tickets/tickets.json"))
+    ingest_local(store, Path("examples/sample_tickets/tickets.json"))
     with store._connect() as connection:  # noqa: SLF001
         connection.execute("update tickets set client_id = 'acme'")
     service = AgentService(store, settings, SmartActionService(store, settings))
@@ -1030,7 +1031,7 @@ def test_controlled_evaluation_rejects_non_demo_or_write_enabled_settings(settin
 def test_employee_onboarding_demo_endpoint_composes_existing_local_fixture(settings) -> None:
     payload = json.loads(Path("examples/consultant/employee-onboarding-blueprint.json").read_text())
     store = Store(settings.data_path)
-    store.ingest_ticket_file(Path("examples/sample_tickets/tickets.json"))
+    ingest_local(store, Path("examples/sample_tickets/tickets.json"))
     with store._connect() as connection:  # noqa: SLF001 - bind the isolated fixture tenant.
         connection.execute("update tickets set client_id = 'acme'")
 
@@ -1064,7 +1065,7 @@ def test_employee_onboarding_demo_endpoint_resolves_persisted_blueprint_in_scope
         _technician(),
     )
     store = Store(settings.data_path)
-    store.ingest_ticket_file(Path("examples/sample_tickets/tickets.json"))
+    ingest_local(store, Path("examples/sample_tickets/tickets.json"))
     with store._connect() as connection:  # noqa: SLF001 - bind the isolated fixture tenant.
         connection.execute("update tickets set client_id = 'acme'")
 

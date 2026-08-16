@@ -33,6 +33,7 @@ def test_clients_migration_repairs_and_backfills_existing_directory(tmp_path: Pa
             (2, "clients_and_connectors"),
             (3, "provenance_and_ingestion"),
             (4, "canonical_assets_tenant_unique"),
+            (5, "ticket_identity_and_tenancy"),
         ]
         assert {
             str(row[0])
@@ -45,6 +46,9 @@ def test_clients_migration_repairs_and_backfills_existing_directory(tmp_path: Pa
             "select 1 from sqlite_master where type = 'index' and name = 'ux_ccm_verified'"
         ).fetchone() is not None
         assert connection.execute("pragma foreign_key_check").fetchall() == []
+        # Reintroduce legacy rows under the old FK regime, then exercise the
+        # same startup-repair and v5 migration ordering used for an upgrade.
+        connection.execute("pragma foreign_keys = off")
         connection.execute(
             "insert into tickets (id, client, subject, body, priority, status, client_id) "
             "values ('TCK-BACKFILL', 'Acme', 'subject', 'body', 'Low', 'Open', 'client-a')"
@@ -54,6 +58,9 @@ def test_clients_migration_repairs_and_backfills_existing_directory(tmp_path: Pa
             "(canonical_id, asset_type, display_name, client_id, first_seen, last_seen, attributes_json) "
             "values ('asset-backfill', 'server', 'Server', 'client-b', 'now', 'now', '{}')"
         )
+        store._apply_startup_repairs(connection)  # noqa: SLF001
+        store._apply_ticket_identity_migration(connection)  # noqa: SLF001
+        connection.execute("pragma foreign_keys = on")
 
     repaired = Store(path)
     clients = {client.client_id: client for client in repaired.list_clients(AllClients())}

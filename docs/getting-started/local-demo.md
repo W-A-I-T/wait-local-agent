@@ -18,10 +18,14 @@ scripts/demo_appliance.sh
 
 The script runs the shipped commands:
 
+The ingest command always supplies an explicit client. For a local demo, the
+CLI creates that named demo client if it does not exist; application code must
+still pass an existing active client to the store API.
+
 ```bash
 wait-local-agent doctor
 wait-local-agent knowledge ingest examples/sample_docs
-wait-local-agent ingest examples/sample_tickets
+wait-local-agent ingest examples/sample_tickets --client-id acme
 wait-local-agent tickets summarize TCK-1001
 wait-local-agent workflows templates
 wait-local-agent workflows run ticket-triage TCK-1001
@@ -90,7 +94,7 @@ wait-local-agent knowledge ingest demo/sample_runbooks
 
 WAIT_DATA_PATH=.wait-local-agent/demo.db \
 WAIT_ALLOWED_DOC_ROOT=demo/sample_runbooks \
-wait-local-agent ingest demo/sample_tickets
+wait-local-agent ingest demo/sample_tickets --client-id acme
 
 WAIT_DATA_PATH=.wait-local-agent/demo.db \
 WAIT_ALLOWED_DOC_ROOT=demo/sample_runbooks \

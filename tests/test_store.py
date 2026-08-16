@@ -6,6 +6,7 @@ from pathlib import Path
 
 import pytest
 
+import wait_local_agent.store as store_module
 from wait_local_agent.client_scope import AllClients, BoundClients
 from wait_local_agent.models import AgentDefinition
 from wait_local_agent.store import SMART_ACTION_APPROVAL_CAPABILITY, Store
@@ -73,9 +74,22 @@ def test_store_migrates_populated_prechange_schema_idempotently(tmp_path: Path) 
     assert "failed_entity_ids_json" in backfill_columns
     assert "max_concurrency" in backfill_columns
     assert "requester_id" in _columns(connection, "tickets")
+    ticket_info = {
+        str(row[1]): row
+        for row in connection.execute("pragma table_info(tickets)")
+    }
+    assert ticket_info["client_id"][3] == 1
+    ticket_indexes = connection.execute(
+        "select sql from sqlite_master where type = 'index' and name = 'ux_tickets_connector_external'"
+    ).fetchone()
+    assert ticket_indexes is not None
+    assert "where connector_instance_id is not null and external_id is not null" in str(ticket_indexes[0]).lower()
     assert "client_id" in knowledge_columns
     assert "client_id" in smart_action_columns
-    assert ticket is not None and ticket["client_id"] is None
+    assert ticket is not None and ticket["client_id"] == "__quarantine__"
+    assert connection.execute(
+        "select count(*) from ticket_status_history where ticket_id = 'TCK-1'"
+    ).fetchone()[0] == 0
     assert approval is not None and approval["client_id"] is None and approval["approver_id"] is None
     assert audit is not None and audit["client_id"] is None and audit["approver_id"] is None
     assert workflow is not None and workflow["client_id"] is None
@@ -115,6 +129,60 @@ def test_store_reads_legacy_agent_execution_timezone_column(tmp_path: Path) -> N
 
     assert created is not None
     assert created.execution_window_timezone == "America/Vancouver"
+
+
+def test_v5_duplicate_provider_identity_preflight_aborts(tmp_path: Path) -> None:
+    store = Store(tmp_path / "state.db")
+    store.create_client("client-a", "Acme")
+    with store._connect() as connection:  # noqa: SLF001
+        connection.execute("pragma foreign_keys = off")
+        connection.execute("drop index ux_tickets_connector_external")
+        for ticket_id in ("duplicate-a", "duplicate-b"):
+            connection.execute(
+                """
+                insert into tickets
+                  (id, client, subject, body, priority, status, client_id,
+                   connector_instance_id, external_id)
+                values (?, 'Acme', 'Subject', 'Body', 'low', 'new', 'client-a', 'instance-a', 'remote-a')
+                """,
+                (ticket_id,),
+            )
+        with pytest.raises(RuntimeError, match="instance-a.*remote-a"):
+            store._apply_ticket_identity_migration(connection)  # noqa: SLF001
+
+
+def test_v5_backfills_legacy_client_and_rebuilds_existing_ticket(tmp_path: Path) -> None:
+    store = Store(tmp_path / "state.db")
+    instance = store.create_connector_instance("halopsa", "Legacy")
+    with store._connect() as connection:  # noqa: SLF001
+        connection.execute("pragma foreign_keys = off")
+        connection.execute("drop index ux_tickets_connector_external")
+        connection.execute(
+            """
+            insert into tickets
+              (id, client, subject, body, priority, status, client_id,
+               connector_instance_id, external_id)
+            values ('legacy-client-ticket', 'Legacy', 'Subject', 'Body', 'low', 'new',
+                    'legacy-client', ?, 'external-legacy')
+            """,
+            (instance.connector_instance_id,),
+        )
+        store._apply_ticket_identity_migration(connection)  # noqa: SLF001
+
+    legacy_client = store.get_client(AllClients(), "legacy-client")
+    ticket = store.get_ticket("legacy-client-ticket", "legacy-client")
+    assert legacy_client is not None and legacy_client.status == "active"
+    assert ticket is not None
+    with store._connect() as connection:  # noqa: SLF001
+        assert connection.execute("pragma foreign_key_check").fetchall() == []
+        assert connection.execute("pragma integrity_check").fetchone()[0] == "ok"
+
+
+def test_store_rejects_unsupported_sqlite_version(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setattr(store_module.sqlite3, "sqlite_version_info", (3, 34, 0))
+
+    with pytest.raises(RuntimeError, match="SQLite 3.35.0 or newer"):
+        Store(tmp_path / "unsupported.db")
 
 
 def test_store_event_delivery_crud_is_idempotent_and_tenant_scoped(tmp_path: Path) -> None:
@@ -376,6 +444,8 @@ def test_store_client_scope_typed_surfaces_accept_explicit_scopes_and_reject_mis
 
 def test_store_client_filters_cover_required_list_surfaces(tmp_path: Path) -> None:
     store = Store(tmp_path / "state.db")
+    store.create_client("acme", "Acme")
+    store.create_client("beta", "Beta")
 
     with store._connect() as connection:  # noqa: SLF001
         connection.execute(

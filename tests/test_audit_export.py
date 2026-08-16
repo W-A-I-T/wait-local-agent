@@ -5,13 +5,14 @@ from pathlib import Path
 from fastapi.testclient import TestClient
 from typer.testing import CliRunner
 
+from tests.support import ingest_local
 from wait_local_agent.api.app import create_app
 from wait_local_agent.cli import app
 from wait_local_agent.store import Store
 
 
 def test_audit_export_api_json_and_csv(settings) -> None:
-    Store(settings.data_path).ingest_ticket_file(Path("examples/sample_tickets/tickets.json"))
+    ingest_local(Store(settings.data_path), Path("examples/sample_tickets/tickets.json"))
     client = TestClient(create_app(settings))
 
     json_export = client.get("/audit/export")
@@ -33,7 +34,7 @@ def test_audit_export_cli_json_and_csv(monkeypatch, tmp_path) -> None:
     monkeypatch.setenv("WAIT_DATA_PATH", str(data_path))
     runner = CliRunner()
 
-    runner.invoke(app, ["ingest", "examples/sample_tickets"])
+    runner.invoke(app, ["ingest", "examples/sample_tickets", "--client-id", "acme"])
     json_export = runner.invoke(app, ["audit", "export", str(json_path)])
     csv_export = runner.invoke(app, ["audit", "export", str(csv_path), "--format", "csv"])
 

@@ -709,12 +709,23 @@ def _scan_id_from_response(response: dict[str, object]) -> str:
 
 
 @app.command()
-def ingest(path: Path) -> None:
+def ingest(
+    path: Path,
+    client_id: Annotated[str, typer.Option("--client-id", help="Active client that owns the local tickets.")],
+) -> None:
     store = _store()
+    normalized_client_id = client_id.strip()
+    if not normalized_client_id:
+        raise typer.BadParameter("--client-id must be non-empty")
+    existing_client = store.get_client(AllClients(), normalized_client_id)
+    if existing_client is None:
+        store.create_client(normalized_client_id, f"Local demo client ({normalized_client_id})")
+    elif existing_client.status != "active":
+        raise typer.BadParameter("--client-id must refer to an active client")
     ticket_files = sorted(path.glob("*.json")) if path.is_dir() else [path]
     count = 0
     for ticket_file in ticket_files:
-        count += store.ingest_ticket_file(ticket_file)
+        count += store.ingest_ticket_file(ticket_file, client_id=normalized_client_id)
     typer.echo(f"ingested={count}")
 
 
