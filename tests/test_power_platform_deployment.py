@@ -499,6 +499,11 @@ def test_execution_covers_gates_path_confinement_and_command_failures(settings, 
 
     succeeded = execute_power_platform_stage(plan, "build", configured, approved=True, runner=success_runner)
     assert succeeded["status"] == "succeeded"
+    assert succeeded["deployment_started"] is False
+
+    imported = execute_power_platform_stage(plan, "dev", configured, approved=True, runner=success_runner)
+    assert imported["status"] == "succeeded"
+    assert imported["deployment_started"] is True
 
 
 def test_execution_requires_verifiable_artifact_and_uses_shell_free_runner(
