@@ -41,6 +41,10 @@ def allowed_legal_phrases() -> list[str]:
 
 
 def is_text_file(path: Path) -> bool:
+    # Task contracts are internal orchestration metadata, not shipped public
+    # surface. They may necessarily name implementation lanes and models.
+    if path.is_relative_to(ROOT / "ai" / "tasks"):
+        return False
     if any(part in SKIP_PARTS for part in path.parts):
         return False
     try:
