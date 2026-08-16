@@ -8,11 +8,13 @@
 
 <p align="center">
   <a href="https://github.com/W-A-I-T/wait-local-agent/actions/workflows/test.yml"><img src="https://github.com/W-A-I-T/wait-local-agent/actions/workflows/test.yml/badge.svg" alt="CI status"></a>
-  <a href="LICENSE"><img src="https://img.shields.io/github/license/W-A-I-T/wait-local-agent" alt="Apache-2.0 license"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/github/license/W-A-I-T/wait-local-agent" alt="AGPL-3.0-only license"></a>
   <a href="pyproject.toml"><img src="https://img.shields.io/badge/python-3.12%2B-3776AB?logo=python&amp;logoColor=white" alt="Python 3.12 or newer"></a>
-  <a href="CHANGELOG.md"><img src="https://img.shields.io/badge/version-v1.1.1-4c1" alt="Version v1.1.1"></a>
+  <a href="CHANGELOG.md"><img src="https://img.shields.io/badge/version-2.0.0--dev.0-4c1" alt="Version 2.0.0 development"></a>
   <a href="docs/README.md"><img src="https://img.shields.io/badge/docs-read_the_docs-536DFE" alt="Documentation"></a>
 </p>
+
+> **License transition:** the current `main` development line is licensed as a combined work under **AGPL-3.0-only**. Source published through commit `903cb595e8f735fcc306a68f2bee150fce58a416` remains available under Apache License 2.0 on the preserved `1.x` line. See [LICENSE_HISTORY.md](LICENSE_HISTORY.md).
 
 ## What is WAIT Local Agent?
 
@@ -37,7 +39,7 @@ explicit human approval. [Learn the architecture](docs/concepts/architecture.md)
 | 🔒 **Local-first**: SQLite, your hardware, and no cloud dependency. [Get started](docs/getting-started/local-demo.md) | ✅ **Approval-gated writes**: review a draft before a live mutation. [See the write gates](docs/concepts/approvals-and-write-gates.md) |
 | 🔌 **14 connector entries**: bounded PSA, RMM, documentation, and Microsoft surfaces. [View the matrix](docs/connectors/README.md) | 🏢 **Microsoft 365 and Power Platform consultant lane**: source packages and reviewable plans, not provider deployment. [Explore the lane](docs/consultant/README.md) |
 | 🧾 **Audit trail and evidence export**: preserve what happened and why. [Read the security model](docs/concepts/security-model.md) | 👥 **RBAC and tenant scoping**: keep operator permissions and client boundaries explicit. [Read the security model](docs/concepts/security-model.md) |
-| 🖥️ **Desktop app, Docker, and CLI**: choose the local surface that fits your team. [Choose an install path](docs/getting-started/quickstart-docker.md) | 🧩 **Open-core packs**: extend the runtime without blurring the public boundary. [Understand editions and packs](docs/concepts/open-core-boundary.md) |
+| 🖥️ **Desktop app, Docker, and CLI**: choose the local surface that fits your team. [Choose an install path](docs/getting-started/quickstart-docker.md) | 🧩 **Commercial packs**: extend the public runtime with separately licensed capabilities. [Understand editions and packs](docs/concepts/open-core-boundary.md) |
 
 ## Architecture
 
@@ -217,15 +219,12 @@ import or deployment.
 
 | Edition | What it means |
 | --- | --- |
-| **Community** | **C$0 · Apache-2.0 · this repository · self-hosted · genuinely useful, including multi-client use** |
-| **Professional** | Commercial packaging and support for teams adopting the local runtime. |
-| **MSP** | Commercial packaging and governed operational services for managed service teams. |
-| **Enterprise** | Commercial packaging, integration, and assurance support for larger environments. |
+| **Community** | **C$0 · AGPL-3.0-only · this public repository · self-hosted · commercially usable when the AGPL terms are followed** |
+| **Professional** | Separate commercial licensing, official packaging, support, and services for teams that need contractual commercial rights or operational assistance. |
+| **MSP** | Commercial rights and services for managed-service operation, including separately licensed packs/control-plane capabilities where purchased. |
+| **Enterprise** | Commercial licensing, integration, assurance, support, and enterprise capabilities under contract. |
 
-Professional, MSP, and Enterprise describe commercial packaging or services;
-they do not change the Community license or make multi-client Apache use
-conditional on payment. Provider reach and readiness must be verified for the
-specific environment. [Read the open-core boundary](docs/concepts/open-core-boundary.md).
+Community remains a real route: AGPL-3.0-only permits commercial use subject to its conditions, including the network-source obligations applicable to modified versions. Commercial agreements can separately provide private-modification rights, proprietary WAIT packs, managed-service terms, official builds, support, branding arrangements, white-labeling, or OEM rights where explicitly contracted. No custom `Powered by WAIT` Section 7 term is currently imposed by this repository. See [LICENSE_HISTORY.md](LICENSE_HISTORY.md) and [the public/commercial boundary](docs/concepts/open-core-boundary.md).
 
 ## Documentation
 
@@ -263,5 +262,6 @@ boundaries, redaction behavior, and tenant-scoped audit trail in more detail.
 
 ## License
 
-WAIT Local Agent is released under the Apache License 2.0.
-See [LICENSE](LICENSE) for the complete terms.
+The WAIT Local Agent **2.0 development line** is distributed as a combined work under **GNU Affero General Public License v3 only (`AGPL-3.0-only`)**. See [LICENSE](LICENSE).
+
+Source published through `903cb595e8f735fcc306a68f2bee150fce58a416` remains available under Apache License 2.0 on the preserved `1.x` line. See [LICENSE_HISTORY.md](LICENSE_HISTORY.md) for the version boundary and commercial-licensing explanation.
