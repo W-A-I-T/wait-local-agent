@@ -21,6 +21,12 @@ metadata. A `prod` approval applies the same gate to the preceding `test`
 stage. Missing or non-passing evidence is rejected before an approval request
 is created.
 
+After a successful approved execution, the local `build` stage continues to
+report `deployment_started: false`; a non-build stage reports
+`deployment_started: true` when its PAC command ran. This records the local
+execution boundary and does not by itself prove provider-side import success
+or production deployment.
+
 The promotion evidence shape is intentionally bounded:
 
 ```json

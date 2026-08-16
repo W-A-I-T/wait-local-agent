@@ -436,7 +436,7 @@ def execute_power_platform_stage(
         "commands": results,
         "artifact_digest": artifact_digest,
         "execution_started": True,
-        "deployment_started": bool(stage.get("deployment_started")),
+        "deployment_started": stage_id != "build" and bool(results),
     }
     return result
 

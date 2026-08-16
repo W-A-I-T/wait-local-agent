@@ -4,6 +4,12 @@ All notable changes to WAIT Local Agent will be documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+
+- Successful Power Platform deployment stages, such as solution imports, now
+  report `deployment_started: true` after a non-build PAC command runs instead
+  of echoing the plan's planning-time flag.
+
 ### Added
 
 - Connector-ingested tickets now resolve their client from verified connector
