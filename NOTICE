@@ -1,0 +1,14 @@
+WAIT Local Agent 2.x
+
+Community source license: GNU Affero General Public License v3 only (AGPL-3.0-only).
+Additional WAIT terms: see ADDITIONAL_TERMS.md.
+
+For WAIT-copyrighted material to which the additional terms apply, interactive user interfaces must preserve the reasonable visible attribution:
+
+    Powered by WAIT
+
+A separate written commercial license may expressly permit attribution removal, replacement, co-branding, partner branding, white-labeling, or OEM branding for covered deployments.
+
+Previously granted Apache-2.0 rights for the preserved 1.x baseline are not revoked. See LICENSE_HISTORY.md and LICENSES/Apache-2.0.txt.
+
+Copyright and attribution notices for third-party or inherited portions remain with their respective copyright holders.
