@@ -10,6 +10,10 @@ All notable changes to WAIT Local Agent will be documented in this file.
   `schema_migrations`, enables foreign-key enforcement, WAL, and a bounded busy
   timeout, and inventories FastAPI, Typer, and MCP surfaces against a committed
   classification manifest.
+- `LICENSE_HISTORY.md` records the source-license boundary between the preserved
+  Apache-2.0 1.x baseline and the AGPL-3.0-only 2.0 development line.
+- The Apache-2.0 license text is retained under `LICENSES/Apache-2.0.txt` for the
+  preserved baseline and applicable inherited notices.
 
 ### Changed
 
@@ -17,6 +21,15 @@ All notable changes to WAIT Local Agent will be documented in this file.
 - Non-demo appliances now default to `WAIT_DEMO_MODE=false` and refuse startup
   without `WAIT_ADMIN_TOKEN`, `WAIT_API_TOKEN`, or an active `msp_admin`
   principal credential.
+- The public `main` development line moves to the `2.0.0` development series and
+  is distributed as a combined work under GNU Affero General Public License v3
+  only (`AGPL-3.0-only`).
+- The previously published source through commit
+  `903cb595e8f735fcc306a68f2bee150fce58a416` remains available under Apache
+  License 2.0 on the preserved `1.x` line; the new source license does not
+  revoke those prior grants.
+- Commercial licensing remains a separate written agreement. No custom WAIT
+  Section 7 attribution term is imposed by the repository in this transition.
 
 ### Security
 
