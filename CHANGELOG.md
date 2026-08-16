@@ -11,6 +11,7 @@ All notable changes to WAIT Local Agent will be documented in this file.
   external company mappings remain unverified until an operator confirms
   them. A quarantine sentinel keeps unresolved identities visible for later
   review.
+- Authenticated operators can now review read-only event deliveries and event history under Automation → Events, including delivery status, targets, timestamps, and detail fields.
 - Admins can now inspect installed Extensions / Packs under System, including
   version, lock/trust state, license requirements, and CLI/router mount status.
 - Admins can now review read-only appliance health, update status, and latest hardening evidence from System → Appliance Health.
