@@ -65,6 +65,16 @@ identifiers, a payload digest, and a human-readable reason. The digest is a
 reference for comparison, not a copy of the provider payload. An operator can
 mark a quarantined record resolved after reviewing its identity decision.
 
+Connector-ingested tickets follow a resolve-then-write path. When a ticket has
+an external company identifier but no client assignment, WAIT uses only a
+verified mapping for that connector instance. A verified match assigns the
+client before the ticket is written. Without one, the ticket is kept out of
+the client data and placed in the quarantine ledger for review. Repeating the
+same unresolved ticket reuses its still-open quarantine entry, so ingestion
+does not create duplicate review items. Tickets that already have a client,
+or have no connector provenance, continue through the existing local/demo
+ingestion behavior.
+
 Canonical assets are unique per tenant by `(client_id, canonical_id)`, so the
 same canonical asset identifier can exist for different clients without a
 cross-tenant collision. Existing unscoped lookups remain available for

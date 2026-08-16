@@ -6,6 +6,9 @@ All notable changes to WAIT Local Agent will be documented in this file.
 
 ### Added
 
+- Connector-ingested tickets now resolve their client from verified connector
+  mappings and quarantine unmapped records instead of writing a mis-tenanted
+  ticket; existing explicit-client and local/demo ingestion remains unchanged.
 - Admins can now review per-connector sync health and triage unmapped records
   in the Operations → Sync / Reconciliation Center, including a confirm-gated
   action to mark a record as reviewed.

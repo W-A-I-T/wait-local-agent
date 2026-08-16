@@ -5,7 +5,7 @@ import json
 import re
 import sqlite3
 import uuid
-from dataclasses import dataclass, replace
+from dataclasses import asdict, dataclass, replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal, cast
@@ -43,6 +43,7 @@ from wait_local_agent.models import (
     ExecutionArtifact,
     ExecutionRun,
     ExecutionStep,
+    IngestSummary,
     KnowledgeChunk,
     KnowledgeDocument,
     KnowledgeDocumentWrite,
@@ -998,12 +999,30 @@ class Store:
             raise ValueError("reason must be non-empty")
         record_id = f"UMR-{uuid.uuid4().hex}"
         created_at = utc_now()
+        normalized_external_company_id = _normalize_client_id(external_company_id)
+        normalized_external_id = _normalize_client_id(external_id)
+        normalized_payload_digest = _normalize_client_id(payload_digest)
         with self._connect() as connection:
+            connection.execute("begin immediate")
             if connection.execute(
                 "select 1 from connector_instances where connector_instance_id = ?",
                 (normalized_instance_id,),
             ).fetchone() is None:
                 raise KeyError(normalized_instance_id)
+            existing = connection.execute(
+                """
+                select * from unmapped_records
+                where connector_instance_id = ?
+                  and external_id is ?
+                  and record_type = ?
+                  and resolved_at is null
+                order by created_at, record_id
+                limit 1
+                """,
+                (normalized_instance_id, normalized_external_id, normalized_record_type),
+            ).fetchone()
+            if existing is not None:
+                return _unmapped_record_from_row(existing)
             connection.execute(
                 """
                 insert into unmapped_records
@@ -1014,10 +1033,10 @@ class Store:
                 (
                     record_id,
                     normalized_instance_id,
-                    _normalize_client_id(external_company_id),
-                    _normalize_client_id(external_id),
+                    normalized_external_company_id,
+                    normalized_external_id,
                     normalized_record_type,
-                    _normalize_client_id(payload_digest),
+                    normalized_payload_digest,
                     normalized_reason,
                     created_at,
                 ),
@@ -2202,79 +2221,121 @@ class Store:
                 ),
             )
 
+    def ingest_tickets(
+        self,
+        tickets: list[Ticket],
+        *,
+        connector_instance_id: str | None = None,
+    ) -> IngestSummary:
+        normalized_method_instance_id = _normalize_client_id(connector_instance_id)
+        if connector_instance_id is not None and normalized_method_instance_id is None:
+            raise ValueError("connector_instance_id must be non-empty")
+        written = 0
+        quarantined = 0
+        for ticket in tickets:
+            ticket_instance_id = _normalize_client_id(ticket.connector_instance_id)
+            effective_instance_id = ticket_instance_id or normalized_method_instance_id
+            effective_external_client_id = _normalize_client_id(ticket.external_client_id)
+            effective_ticket = ticket
+            if (
+                _normalize_client_id(ticket.client_id) is None
+                and effective_instance_id is not None
+                and effective_external_client_id is not None
+            ):
+                if ticket_instance_id != effective_instance_id:
+                    effective_ticket = replace(ticket, connector_instance_id=effective_instance_id)
+                resolved_client_id = self.resolve_client_for(effective_instance_id, effective_external_client_id)
+                if resolved_client_id is None:
+                    self.record_unmapped(
+                        effective_instance_id,
+                        external_company_id=effective_external_client_id,
+                        external_id=_normalize_client_id(ticket.external_id) or ticket.id,
+                        record_type="ticket",
+                        payload_digest=_ticket_payload_digest(effective_ticket),
+                        reason="no_verified_mapping",
+                    )
+                    quarantined += 1
+                    continue
+                effective_ticket = replace(effective_ticket, client_id=resolved_client_id)
+            with self._connect() as connection:
+                self._write_ingested_ticket(connection, effective_ticket)
+            written += 1
+        return IngestSummary(written=written, quarantined=quarantined)
+
+    def _write_ingested_ticket(self, connection: sqlite3.Connection, ticket: Ticket) -> None:
+        now = utc_now()
+        created_at = ticket.created_at.strip() or now
+        updated_at = ticket.updated_at.strip() or created_at
+        existing = connection.execute(
+            "select status, client_id from tickets where id = ?", (ticket.id,)
+        ).fetchone()
+        connection.execute(
+            """
+            insert into tickets
+              (id, client, subject, body, priority, status, client_id,
+               requester_id, created_at, updated_at, source_system,
+               connector_instance_id, external_id, external_client_id)
+            values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            on conflict(id) do update set
+              client=excluded.client,
+              subject=excluded.subject,
+              body=excluded.body,
+              priority=excluded.priority,
+              status=excluded.status,
+              client_id=coalesce(excluded.client_id, tickets.client_id),
+              requester_id=coalesce(excluded.requester_id, tickets.requester_id),
+              created_at=case when tickets.created_at = '' then excluded.created_at else tickets.created_at end,
+              updated_at=excluded.updated_at,
+              source_system=coalesce(excluded.source_system, tickets.source_system),
+              connector_instance_id=coalesce(excluded.connector_instance_id, tickets.connector_instance_id),
+              external_id=coalesce(excluded.external_id, tickets.external_id),
+              external_client_id=coalesce(excluded.external_client_id, tickets.external_client_id)
+            """,
+            (
+                ticket.id,
+                ticket.client,
+                ticket.subject,
+                ticket.body,
+                ticket.priority,
+                ticket.status,
+                _normalize_client_id(ticket.client_id),
+                ticket.requester_id,
+                created_at,
+                updated_at,
+                _normalize_client_id(ticket.source_system),
+                _normalize_client_id(ticket.connector_instance_id),
+                _normalize_client_id(ticket.external_id),
+                _normalize_client_id(ticket.external_client_id),
+            ),
+        )
+        previous_status = str(existing["status"]) if existing is not None else ""
+        effective_client_id = _normalize_client_id(ticket.client_id) or (
+            _normalize_client_id(str(existing["client_id"]))
+            if existing is not None and existing["client_id"] is not None
+            else None
+        )
+        if existing is None or previous_status.strip().lower() != ticket.status.strip().lower():
+            self._record_ticket_status_history(
+                connection,
+                ticket_id=ticket.id,
+                client_id=effective_client_id,
+                from_status=previous_status,
+                to_status=ticket.status,
+                changed_at=updated_at or now,
+                source="ticket_ingest",
+            )
+        self._add_audit_event(
+            connection,
+            "ticket.ingested",
+            ticket.id,
+            f"Imported {ticket.subject}",
+            client_id=effective_client_id,
+        )
+
     def ingest_ticket_file(self, path: Path) -> int:
         payload = json.loads(path.read_text(encoding="utf-8"))
         tickets = [Ticket(**item) for item in payload]
-        with self._connect() as connection:
-            for ticket in tickets:
-                now = utc_now()
-                created_at = ticket.created_at.strip() or now
-                updated_at = ticket.updated_at.strip() or created_at
-                existing = connection.execute(
-                    "select status, client_id from tickets where id = ?", (ticket.id,)
-                ).fetchone()
-                connection.execute(
-                    """
-                    insert into tickets
-                      (id, client, subject, body, priority, status, client_id,
-                       requester_id, created_at, updated_at, source_system,
-                       connector_instance_id, external_id, external_client_id)
-                    values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    on conflict(id) do update set
-                      client=excluded.client,
-                      subject=excluded.subject,
-                      body=excluded.body,
-                      priority=excluded.priority,
-                      status=excluded.status,
-                      client_id=coalesce(excluded.client_id, tickets.client_id),
-                      requester_id=coalesce(excluded.requester_id, tickets.requester_id),
-                      created_at=case when tickets.created_at = '' then excluded.created_at else tickets.created_at end,
-                      updated_at=excluded.updated_at,
-                      source_system=coalesce(excluded.source_system, tickets.source_system),
-                      connector_instance_id=coalesce(excluded.connector_instance_id, tickets.connector_instance_id),
-                      external_id=coalesce(excluded.external_id, tickets.external_id),
-                      external_client_id=coalesce(excluded.external_client_id, tickets.external_client_id)
-                    """,
-                    (
-                        ticket.id,
-                        ticket.client,
-                        ticket.subject,
-                        ticket.body,
-                        ticket.priority,
-                        ticket.status,
-                        _normalize_client_id(ticket.client_id),
-                        ticket.requester_id,
-                        created_at,
-                        updated_at,
-                        _normalize_client_id(ticket.source_system),
-                        _normalize_client_id(ticket.connector_instance_id),
-                        _normalize_client_id(ticket.external_id),
-                        _normalize_client_id(ticket.external_client_id),
-                    ),
-                )
-                previous_status = str(existing["status"]) if existing is not None else ""
-                effective_client_id = _normalize_client_id(ticket.client_id) or (
-                    _normalize_client_id(str(existing["client_id"]))
-                    if existing is not None and existing["client_id"] is not None
-                    else None
-                )
-                if existing is None or previous_status.strip().lower() != ticket.status.strip().lower():
-                    self._record_ticket_status_history(
-                        connection,
-                        ticket_id=ticket.id,
-                        client_id=effective_client_id,
-                        from_status=previous_status,
-                        to_status=ticket.status,
-                        changed_at=updated_at or now,
-                        source="ticket_ingest",
-                    )
-                self._add_audit_event(
-                    connection,
-                    "ticket.ingested",
-                    ticket.id,
-                    f"Imported {ticket.subject}",
-                    client_id=effective_client_id,
-                )
+        self.ingest_tickets(tickets)
         return len(tickets)
 
     def list_tickets(self, client_id: ClientScope | str | None = _ALL_CLIENTS) -> list[Ticket]:
@@ -7955,6 +8016,16 @@ def _json_dumps_value(payload: object) -> str:
     from wait_local_agent.reports.renderers import redact_value
 
     return json.dumps(redact_value(payload), sort_keys=True, separators=(",", ":"))
+
+
+def _ticket_payload_digest(ticket: Ticket) -> str:
+    canonical_json = json.dumps(
+        asdict(ticket),
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    return hashlib.sha256(canonical_json.encode("utf-8")).hexdigest()
 
 
 def _json_value_or_empty(payload: object) -> object:
