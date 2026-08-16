@@ -54,12 +54,14 @@ from wait_local_agent.models import (
     ScheduledJob,
     SmartActionRun,
     SolutionBlueprint,
+    SyncCursor,
     TechnicianChatMessage,
     TechnicianChatSession,
     TemplateGalleryEntry,
     TemplateGalleryRevision,
     Ticket,
     TicketNote,
+    UnmappedRecord,
     WorkflowRun,
     WorkflowTemplate,
     utc_now,
@@ -144,6 +146,11 @@ class Store:
                     Migration(0, "baseline", self._apply_baseline_migration),
                     Migration(1, "principals", self._apply_principals_migration),
                     Migration(2, "clients_and_connectors", self._apply_clients_migration),
+                    Migration(
+                        3,
+                        "provenance_and_ingestion",
+                        self._apply_provenance_migration,
+                    ),
                 )
             )
             self._apply_startup_repairs(connection)
@@ -246,6 +253,49 @@ class Store:
             create unique index if not exists ux_ccm_verified
             on client_connector_mappings (connector_instance_id, external_company_id)
             where verified = 1
+            """
+        )
+
+    def _apply_provenance_migration(self, connection: sqlite3.Connection) -> None:
+        """Add ticket provenance, sync cursor, and unmapped-record state."""
+
+        for column_name, definition in (
+            ("source_system", "text"),
+            ("connector_instance_id", "text references connector_instances(connector_instance_id)"),
+            ("external_id", "text"),
+            ("external_client_id", "text"),
+        ):
+            self._ensure_column(connection, "tickets", column_name, definition)
+
+        connection.execute(
+            """
+            create table if not exists sync_cursors (
+                connector_instance_id text not null
+                  references connector_instances(connector_instance_id) on delete cascade,
+                cursor_type text not null,
+                cursor_value text,
+                status text not null default 'idle'
+                  check (status in ('idle', 'syncing', 'degraded', 'failed')),
+                last_synced_at text,
+                updated_at text not null,
+                primary key (connector_instance_id, cursor_type)
+            )
+            """
+        )
+        connection.execute(
+            """
+            create table if not exists unmapped_records (
+                record_id text primary key,
+                connector_instance_id text not null
+                  references connector_instances(connector_instance_id) on delete cascade,
+                external_company_id text,
+                external_id text,
+                record_type text not null,
+                payload_digest text,
+                reason text not null,
+                created_at text not null,
+                resolved_at text
+            )
             """
         )
 
@@ -757,6 +807,191 @@ class Store:
                 (normalized_instance_id, normalized_external_id),
             ).fetchall()
         return str(rows[0][0]) if len(rows) == 1 else None
+
+    def upsert_sync_cursor(
+        self,
+        connector_instance_id: str,
+        cursor_type: str,
+        *,
+        cursor_value: str | None,
+        status: str = "idle",
+        last_synced_at: str | None = None,
+    ) -> SyncCursor:
+        normalized_instance_id = _normalize_client_id(connector_instance_id)
+        normalized_cursor_type = _normalize_client_id(cursor_type)
+        normalized_status = status.strip().lower()
+        if normalized_instance_id is None:
+            raise ValueError("connector_instance_id must be non-empty")
+        if normalized_cursor_type is None:
+            raise ValueError("cursor_type must be non-empty")
+        if normalized_status not in {"idle", "syncing", "degraded", "failed"}:
+            raise ValueError("unsupported sync cursor status")
+        normalized_cursor_value = _normalize_client_id(cursor_value)
+        normalized_last_synced_at = _normalize_client_id(last_synced_at)
+        now = utc_now()
+        with self._connect() as connection:
+            if connection.execute(
+                "select 1 from connector_instances where connector_instance_id = ?",
+                (normalized_instance_id,),
+            ).fetchone() is None:
+                raise KeyError(normalized_instance_id)
+            connection.execute(
+                """
+                insert into sync_cursors
+                  (connector_instance_id, cursor_type, cursor_value, status, last_synced_at, updated_at)
+                values (?, ?, ?, ?, ?, ?)
+                on conflict(connector_instance_id, cursor_type) do update set
+                  cursor_value = excluded.cursor_value,
+                  status = excluded.status,
+                  last_synced_at = excluded.last_synced_at,
+                  updated_at = excluded.updated_at
+                """,
+                (
+                    normalized_instance_id,
+                    normalized_cursor_type,
+                    normalized_cursor_value,
+                    normalized_status,
+                    normalized_last_synced_at,
+                    now,
+                ),
+            )
+            row = connection.execute(
+                """
+                select * from sync_cursors
+                where connector_instance_id = ? and cursor_type = ?
+                """,
+                (normalized_instance_id, normalized_cursor_type),
+            ).fetchone()
+        if row is None:  # pragma: no cover - the upsert returned successfully
+            raise RuntimeError("sync cursor was not persisted")
+        return _sync_cursor_from_row(row)
+
+    def list_sync_cursors(self) -> list[SyncCursor]:
+        with self._connect() as connection:
+            rows = connection.execute(
+                """
+                select * from sync_cursors
+                order by connector_instance_id, cursor_type
+                """
+            ).fetchall()
+        return [_sync_cursor_from_row(row) for row in rows]
+
+    def get_sync_cursor(self, connector_instance_id: str, cursor_type: str) -> SyncCursor | None:
+        normalized_instance_id = _normalize_client_id(connector_instance_id)
+        normalized_cursor_type = _normalize_client_id(cursor_type)
+        if normalized_instance_id is None or normalized_cursor_type is None:
+            return None
+        with self._connect() as connection:
+            row = connection.execute(
+                """
+                select * from sync_cursors
+                where connector_instance_id = ? and cursor_type = ?
+                """,
+                (normalized_instance_id, normalized_cursor_type),
+            ).fetchone()
+        return _sync_cursor_from_row(row) if row else None
+
+    def record_unmapped(
+        self,
+        connector_instance_id: str,
+        external_company_id: str | None,
+        external_id: str | None,
+        record_type: str,
+        payload_digest: str | None,
+        reason: str,
+    ) -> UnmappedRecord:
+        normalized_instance_id = _normalize_client_id(connector_instance_id)
+        normalized_record_type = _normalize_client_id(record_type)
+        normalized_reason = _normalize_client_id(reason)
+        if normalized_instance_id is None:
+            raise ValueError("connector_instance_id must be non-empty")
+        if normalized_record_type is None:
+            raise ValueError("record_type must be non-empty")
+        if normalized_reason is None:
+            raise ValueError("reason must be non-empty")
+        record_id = f"UMR-{uuid.uuid4().hex}"
+        created_at = utc_now()
+        with self._connect() as connection:
+            if connection.execute(
+                "select 1 from connector_instances where connector_instance_id = ?",
+                (normalized_instance_id,),
+            ).fetchone() is None:
+                raise KeyError(normalized_instance_id)
+            connection.execute(
+                """
+                insert into unmapped_records
+                  (record_id, connector_instance_id, external_company_id, external_id,
+                   record_type, payload_digest, reason, created_at, resolved_at)
+                values (?, ?, ?, ?, ?, ?, ?, ?, null)
+                """,
+                (
+                    record_id,
+                    normalized_instance_id,
+                    _normalize_client_id(external_company_id),
+                    _normalize_client_id(external_id),
+                    normalized_record_type,
+                    _normalize_client_id(payload_digest),
+                    normalized_reason,
+                    created_at,
+                ),
+            )
+            row = connection.execute(
+                "select * from unmapped_records where record_id = ?", (record_id,)
+            ).fetchone()
+        if row is None:  # pragma: no cover - the insert returned successfully
+            raise RuntimeError("unmapped record was not persisted")
+        return _unmapped_record_from_row(row)
+
+    def list_unmapped_records(
+        self,
+        scope: ClientScope | None = None,
+        *,
+        connector_instance_id: str | None = None,
+    ) -> list[UnmappedRecord]:
+        clauses = ["1 = 1"]
+        params: list[object] = []
+        normalized_instance_id = _normalize_client_id(connector_instance_id)
+        if connector_instance_id is not None and normalized_instance_id is None:
+            raise ValueError("connector_instance_id must be non-empty")
+        if normalized_instance_id is not None:
+            clauses.append("u.connector_instance_id = ?")
+            params.append(normalized_instance_id)
+        if scope is not None and not isinstance(scope, AllClients):
+            client_predicate, client_params = _client_scope_predicate(scope, "ci.client_id")
+            clauses.append(client_predicate)
+            params.extend(client_params)
+        with self._connect() as connection:
+            rows = connection.execute(
+                f"""
+                select u.*
+                from unmapped_records u
+                join connector_instances ci
+                  on ci.connector_instance_id = u.connector_instance_id
+                where {' and '.join(clauses)}
+                order by u.created_at, u.record_id
+                """,  # nosec B608: clauses are fixed internal SQL; values are parameterized
+                params,
+            ).fetchall()
+        return [_unmapped_record_from_row(row) for row in rows]
+
+    def resolve_unmapped_record(self, record_id: str) -> UnmappedRecord | None:
+        normalized_record_id = _normalize_client_id(record_id)
+        if normalized_record_id is None:
+            return None
+        with self._connect() as connection:
+            connection.execute(
+                """
+                update unmapped_records
+                set resolved_at = coalesce(resolved_at, ?)
+                where record_id = ?
+                """,
+                (utc_now(), normalized_record_id),
+            )
+            row = connection.execute(
+                "select * from unmapped_records where record_id = ?",
+                (normalized_record_id,),
+            ).fetchone()
+        return _unmapped_record_from_row(row) if row else None
 
     def _apply_baseline_migration(self, connection: sqlite3.Connection) -> None:
         connection.execute(
@@ -1516,6 +1751,25 @@ class Store:
         self._ensure_column(connection, "tickets", "requester_id", "text")
         self._ensure_column(connection, "tickets", "created_at", "text not null default ''")
         self._ensure_column(connection, "tickets", "updated_at", "text not null default ''")
+        self._ensure_column(connection, "tickets", "source_system", "text")
+        self._ensure_column(
+            connection,
+            "tickets",
+            "connector_instance_id",
+            "text references connector_instances(connector_instance_id)",
+        )
+        self._ensure_column(connection, "tickets", "external_id", "text")
+        self._ensure_column(connection, "tickets", "external_client_id", "text")
+        connection.execute(
+            """
+            update tickets
+            set source_system = 'local'
+            where source_system is null
+              and connector_instance_id is null
+              and external_id is null
+              and external_client_id is null
+            """
+        )
         connection.execute(
             """
             insert into ticket_status_history
@@ -1876,8 +2130,9 @@ class Store:
                     """
                     insert into tickets
                       (id, client, subject, body, priority, status, client_id,
-                       requester_id, created_at, updated_at)
-                    values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                       requester_id, created_at, updated_at, source_system,
+                       connector_instance_id, external_id, external_client_id)
+                    values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     on conflict(id) do update set
                       client=excluded.client,
                       subject=excluded.subject,
@@ -1887,7 +2142,11 @@ class Store:
                       client_id=coalesce(excluded.client_id, tickets.client_id),
                       requester_id=coalesce(excluded.requester_id, tickets.requester_id),
                       created_at=case when tickets.created_at = '' then excluded.created_at else tickets.created_at end,
-                      updated_at=excluded.updated_at
+                      updated_at=excluded.updated_at,
+                      source_system=coalesce(excluded.source_system, tickets.source_system),
+                      connector_instance_id=coalesce(excluded.connector_instance_id, tickets.connector_instance_id),
+                      external_id=coalesce(excluded.external_id, tickets.external_id),
+                      external_client_id=coalesce(excluded.external_client_id, tickets.external_client_id)
                     """,
                     (
                         ticket.id,
@@ -1900,6 +2159,10 @@ class Store:
                         ticket.requester_id,
                         created_at,
                         updated_at,
+                        _normalize_client_id(ticket.source_system),
+                        _normalize_client_id(ticket.connector_instance_id),
+                        _normalize_client_id(ticket.external_id),
+                        _normalize_client_id(ticket.external_client_id),
                     ),
                 )
                 previous_status = str(existing["status"]) if existing is not None else ""
@@ -2306,6 +2569,10 @@ class Store:
         requester_id: str,
         subject: str,
         body: str,
+        source_system: str | None = "local",
+        connector_instance_id: str | None = None,
+        external_id: str | None = None,
+        external_client_id: str | None = None,
     ) -> Ticket:
         normalized_client_id = _normalize_client_id(client_id)
         if not normalized_client_id:
@@ -2323,8 +2590,9 @@ class Store:
                         """
                         insert into tickets
                           (id, client, subject, body, priority, status, client_id,
-                           requester_id, created_at, updated_at)
-                        values (?, ?, ?, ?, 'normal', 'new', ?, ?, ?, ?)
+                           requester_id, created_at, updated_at, source_system,
+                           connector_instance_id, external_id, external_client_id)
+                        values (?, ?, ?, ?, 'normal', 'new', ?, ?, ?, ?, ?, ?, ?, ?)
                         """,
                         (
                             ticket_id,
@@ -2335,6 +2603,10 @@ class Store:
                             _redact_text(requester_id.strip()),
                             now,
                             now,
+                            _normalize_client_id(source_system),
+                            _normalize_client_id(connector_instance_id),
+                            _normalize_client_id(external_id),
+                            _normalize_client_id(external_client_id),
                         ),
                     )
                     self._record_ticket_status_history(
@@ -7710,6 +7982,14 @@ def _connector_instance_from_row(row: sqlite3.Row) -> ConnectorInstance:
 
 def _mapping_from_row(row: sqlite3.Row) -> ClientConnectorMapping:
     return ClientConnectorMapping(**dict(row))
+
+
+def _sync_cursor_from_row(row: sqlite3.Row) -> SyncCursor:
+    return SyncCursor(**dict(row))
+
+
+def _unmapped_record_from_row(row: sqlite3.Row) -> UnmappedRecord:
+    return UnmappedRecord(**dict(row))
 
 
 def _validate_connector_config_json(config_json: str) -> str:

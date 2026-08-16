@@ -27,7 +27,12 @@ def test_principals_migration_is_additive_and_credentials_are_hashed(tmp_path: P
 
     with sqlite3.connect(store.path) as connection:
         versions = connection.execute("select version, name from schema_migrations order by version").fetchall()
-        assert versions == [(0, "baseline"), (1, "principals"), (2, "clients_and_connectors")]
+        assert versions == [
+            (0, "baseline"),
+            (1, "principals"),
+            (2, "clients_and_connectors"),
+            (3, "provenance_and_ingestion"),
+        ]
         assert connection.execute(
             "select credential_hash from principal_credentials where principal_id = 'customer-a'"
         ).fetchone() == (hash_credential("customer-secret"),)

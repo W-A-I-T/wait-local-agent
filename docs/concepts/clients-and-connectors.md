@@ -48,3 +48,23 @@ crossing a tenant boundary.
 The Clients, Connector Instances, and Client-Connector Mappings API routes
 are administrative and tenant-scoped surfaces. They are not a replacement for
 the approval and write gates used by provider actions.
+
+## Provenance and ingestion groundwork
+
+Tickets can carry optional provenance: the source system, connector instance,
+remote ticket ID, and remote company ID. These fields do not replace the local
+ticket identity or make a client assignment trustworthy by themselves. A
+ticket without connector provenance remains a local record, and an existing
+ticket can continue to have no client assignment.
+
+The local ingestion ledger records a cursor for each connector and record
+kind. A cursor describes progress and health only; this slice does not start a
+provider poller or write provider records automatically. Records that cannot
+be safely matched can be recorded in the quarantine ledger with their remote
+identifiers, a payload digest, and a human-readable reason. The digest is a
+reference for comparison, not a copy of the provider payload. An operator can
+mark a quarantined record resolved after reviewing its identity decision.
+
+Canonical-asset uniqueness is unchanged in this slice. A future migration will
+address tenant-aware uniqueness separately after its upsert and lookup paths
+are revised together.

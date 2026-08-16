@@ -6,6 +6,10 @@ All notable changes to WAIT Local Agent will be documented in this file.
 
 ### Added
 
+- Provenance fields now preserve a ticket's source system, connector instance,
+  remote ticket ID, and remote company ID without requiring a client mapping.
+  The ingestion foundation also adds connector cursors and an operator-facing
+  quarantine ledger for records that still need identity review.
 - A local Clients directory now anchors client identity, connector instances
   can be recorded alongside the existing Settings connector path, and
   external company mappings remain unverified until an operator confirms
