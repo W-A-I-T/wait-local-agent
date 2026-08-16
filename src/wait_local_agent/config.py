@@ -156,6 +156,7 @@ class Settings:
     update_pubkeys: tuple[str, ...] = ()
     mcp_allowed_origins: tuple[str, ...] = ()
     mcp_client_allowed_hosts: tuple[str, ...] = ()
+    connector_instance_allowed_hosts: tuple[str, ...] = ()
     halopsa_base_url: str = ""
     halopsa_client_id: str = ""
     halopsa_client_secret: str = ""
@@ -488,6 +489,11 @@ def load_settings() -> Settings:
         mcp_client_allowed_hosts=tuple(
             value.strip().casefold()
             for value in os.getenv("WAIT_MCP_CLIENT_ALLOWED_HOSTS", "").split(",")
+            if value.strip()
+        ),
+        connector_instance_allowed_hosts=tuple(
+            value.strip().casefold()
+            for value in os.getenv("WAIT_CONNECTOR_INSTANCE_ALLOWED_HOSTS", "").split(",")
             if value.strip()
         ),
         halopsa_base_url=_secret_value(

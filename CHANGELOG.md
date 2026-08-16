@@ -4,6 +4,12 @@ All notable changes to WAIT Local Agent will be documented in this file.
 
 ## [Unreleased]
 
+### Security
+
+- Per-connector-instance outbound calls now use a host allowlist, pinned-IP
+  DNS resolution, globally-routable address checks, proxy and redirect
+  blocking, identity content encoding, and a bounded response stream.
+
 ### Fixed
 
 - The Founder journey no longer reports an unknown or missing status as complete.
