@@ -5,10 +5,12 @@ separately governed commercial capabilities.
 
 The `main` branch is the **2.0 development line** and is distributed as a
 combined work under **GNU Affero General Public License v3 only
-(`AGPL-3.0-only`)**. The exact pre-transition Apache-2.0 baseline remains
-preserved on `1.x` and `archive/apache-2.0-final-2026-08-15`. Previously
-granted Apache rights remain in force. See [`../../LICENSE_HISTORY.md`](../../LICENSE_HISTORY.md)
-and [`../legal/README.md`](../legal/README.md).
+(`AGPL-3.0-only`)**, together with the applicable WAIT additional terms in
+[`../../ADDITIONAL_TERMS.md`](../../ADDITIONAL_TERMS.md). The exact
+pre-transition Apache-2.0 baseline remains preserved on `1.x` and
+`archive/apache-2.0-final-2026-08-15`. Previously granted Apache rights remain
+in force. See [`../../LICENSE_HISTORY.md`](../../LICENSE_HISTORY.md) and
+[`../legal/README.md`](../legal/README.md).
 
 ## Public repository scope
 
@@ -55,28 +57,36 @@ Previously granted Apache rights remain in force.
 
 ### 2.0 Community line
 
-The public `main` development line is now `AGPL-3.0-only`. Community remains a
-real self-hosted route and commercial use is permitted when the AGPL terms are
-followed. In particular, operators of modified network-accessible versions
-must satisfy the AGPL's source-availability requirements.
+The public `main` development line is `AGPL-3.0-only` plus the applicable WAIT
+Section 7 terms. Community remains a real self-hosted route and commercial use
+is permitted when the Community terms are followed. In particular, operators
+of modified network-accessible versions must satisfy the AGPL's
+source-availability requirements.
 
-The repository currently imposes **no custom WAIT Section 7 terms** beyond the
-standard AGPL text. A specific `Powered by WAIT` attribution rule, additional
-internal-use permission, or other WAIT-specific Community term is not effective
-unless it is later approved and deliberately added.
+For WAIT-copyrighted material covered by the additional terms, interactive
+user interfaces must preserve the reasonable visible attribution:
+
+> **Powered by WAIT**
+
+Community users may restyle or reposition that notice for accessibility,
+localization, responsive layout, or ordinary UI consistency so long as it
+remains reasonably visible and legible and does not misrepresent the origin of
+the covered WAIT material.
 
 ### Commercial route
 
 WAIT may separately offer written commercial licenses and proprietary packs for
-customers that need contractual rights or services beyond the AGPL route,
+customers that need contractual rights or services beyond the Community route,
 including private modifications, managed-service terms, official builds,
-support, branding arrangements, white-labeling, OEM distribution, centralized
-MSP functionality, or proprietary Change Governance/assurance capabilities.
+support, attribution removal or replacement, partner/co-branding,
+white-labeling, OEM distribution, centralized MSP functionality, or proprietary
+Change Governance/assurance capabilities.
 
 A commercial license is a separate agreement. Do not claim that every MSP is
-prohibited from using Community when it fully complies with AGPL, and do not
-imply that a generic Enterprise purchase automatically grants complete
-white-label or OEM rights.
+prohibited from using Community when it fully complies with AGPL and the
+applicable WAIT Section 7 terms, and do not imply that a generic Enterprise
+purchase automatically grants attribution removal, complete white-label, or
+OEM rights.
 
 ## Local install directory
 
@@ -86,7 +96,7 @@ must not be committed.
 ## Dependency policy
 
 - Record every direct, transitive, bundled, and generated dependency or asset.
-- Confirm compatibility with `AGPL-3.0-only` before merging into the 2.0 public line.
+- Confirm compatibility with `AGPL-3.0-only` and applicable additional terms before merging into the 2.0 public line.
 - Confirm WAIT has sufficient rights before including a component in a separately licensed commercial distribution.
 - Preserve applicable notices for code inherited from the Apache-2.0 baseline and other third-party material.
 - Do not copy code from another project merely because it is publicly visible.

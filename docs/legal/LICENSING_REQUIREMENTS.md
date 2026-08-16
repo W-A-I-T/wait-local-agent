@@ -1,33 +1,37 @@
 # Licensing requirements for WAIT Local Agent 2.0
 
-The base Community source license for the `2.0` development line is now **GNU Affero General Public License v3 only (`AGPL-3.0-only`)**. The standard AGPL text in the root [`LICENSE`](../../LICENSE) is effective for the public `main` line.
+The base Community source license for the `2.0` development line is **GNU Affero General Public License v3 only (`AGPL-3.0-only`)**. The standard AGPL text is in the root [`LICENSE`](../../LICENSE).
 
-This document records additional product and commercial requirements that are **not automatically part of the AGPL license**. Qualified software counsel must approve any future WAIT-specific Section 7 terms, additional permissions, commercial EULA, attribution rules, trademark policy, white-label rights, or OEM terms before they are represented as legally effective.
+WAIT also applies the additional terms in [`../../ADDITIONAL_TERMS.md`](../../ADDITIONAL_TERMS.md) under AGPLv3 Section 7 to copyrightable material for which the applicable copyright holder has sufficient authority to impose those terms.
 
-## Community route — effective base
+## Community route — effective
 
-Community is public-source, useful, self-hosted, and local-first under `AGPL-3.0-only`.
+Community is public-source, useful, self-hosted, and local-first under `AGPL-3.0-only` plus the applicable WAIT Section 7 terms.
 
 The current repository therefore:
 
-- permits use, modification, and commercial operation subject to AGPL-3.0-only;
+- permits use, modification, and commercial operation subject to AGPL-3.0-only and applicable Section 7 terms;
 - requires compliance with the AGPL's corresponding-source obligations, including Section 13 for modified network-accessible versions;
 - preserves applicable copyright and license notices;
+- requires a reasonable visible `Powered by WAIT` attribution in interactive user interfaces containing WAIT-copyrighted material covered by the additional terms;
+- prohibits origin misrepresentation for material covered by the additional terms;
+- does not grant general WAIT trademark rights beyond the limited use needed for the required attribution and ordinary nominative reference;
 - does not grant proprietary WAIT packs, official support, LTS, white-label rights, OEM distribution rights, or other commercial services merely through the Community license; and
-- does not currently impose a custom `Powered by WAIT` attribution requirement beyond the standard AGPL text.
+- preserves the prior Apache-2.0 grants for the frozen 1.x baseline.
 
-A commercial operator may use the Community route when it fully complies with AGPL-3.0-only. The product must not claim that every MSP is automatically prohibited from Community.
+A commercial operator may use the Community route when it fully complies with AGPL-3.0-only and the applicable WAIT additional terms. The product must not claim that every MSP is automatically prohibited from Community.
 
-## Future Community additions under review
+## Powered by WAIT attribution
 
-Product strategy may later add counsel-approved AGPL Section 7 terms or additional permissions concerning matters such as:
+The required Community attribution is:
 
-- preservation of a reasonable `Powered by WAIT` legal notice or attribution;
-- trademark and origin/misrepresentation protections;
-- an additional permission for an organization using WAIT for its own internal operations; and
-- documented source/notice presentation in interactive interfaces.
+> **Powered by WAIT**
 
-These items remain **requirements under review**, not effective license conditions, until approved text is deliberately committed.
+It must remain reasonably visible and legible during ordinary use in a persistent footer, About/Legal screen, settings/legal surface, or another comparably prominent and readily accessible product-attribution location.
+
+Accessibility, responsive-layout, localization, and ordinary styling changes are allowed if the words remain visible and legible. Community users may not intentionally remove, conceal, or replace the attribution in a way that misrepresents the origin of WAIT-copyrighted material covered by the term.
+
+The public operator and end-user interfaces implement this notice directly.
 
 ## Commercial route
 
@@ -42,15 +46,16 @@ A separately executed Commercial license may grant, according to the purchased e
 - premium updates, support, SLA, warranty, or indemnity where contracted;
 - advanced Change Governance and assurance capabilities;
 - enterprise identity, retention, high-availability, and integration features;
-- branding removal or partner/co-branding;
+- removal or replacement of the Community `Powered by WAIT` attribution when expressly licensed;
+- partner/co-branding;
 - white-label rights; and
 - OEM redistribution rights.
 
-Generic Enterprise purchase must not silently grant complete white-label or OEM rights. Those rights require explicit contract language and entitlements.
+Generic Enterprise purchase must not silently grant attribution removal, complete white-label, or OEM rights. Those rights require explicit contract language and entitlements.
 
 ## Branding entitlements
 
-The future commercial implementation should support explicit states rather than a single ambiguous flag:
+The commercial implementation should support explicit states rather than a single ambiguous flag:
 
 ```text
 wait
@@ -59,7 +64,7 @@ partner
 white_label
 ```
 
-Because no custom WAIT attribution term is currently in force under Community, these states must not be described as overriding a Community `Powered by WAIT` condition until such a condition is legally approved and added. Commercial branding rights can still govern WAIT-owned proprietary packs, official builds, trademarks, support assets, and separately licensed distributions.
+The Community default is `wait`, which preserves the required attribution. `co_branded`, `partner`, and `white_label` are commercial branding states and must not be enabled solely by changing a local Community preference; they require the applicable commercial rights.
 
 ## Version transition
 
@@ -68,7 +73,7 @@ WAIT Local Agent 1.x
 Apache-2.0 baseline preserved; previously granted rights remain in force
 
 WAIT Local Agent 2.0 development line
-AGPL-3.0-only Community source license is effective
+AGPL-3.0-only + applicable WAIT Section 7 additional terms
 
 WAIT Commercial License
 Separate written agreement; commercial exception/rights remain subject to counsel and provenance review

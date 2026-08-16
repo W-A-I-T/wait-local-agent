@@ -14,6 +14,10 @@ All notable changes to WAIT Local Agent will be documented in this file.
   Apache-2.0 1.x baseline and the AGPL-3.0-only 2.0 development line.
 - The Apache-2.0 license text is retained under `LICENSES/Apache-2.0.txt` for the
   preserved baseline and applicable inherited notices.
+- `ADDITIONAL_TERMS.md` and `NOTICE` add the WAIT Section 7 attribution,
+  origin, and trademark terms for applicable WAIT-copyrighted Community material.
+- The operator and end-user interfaces now render a visible `Powered by WAIT`
+  Community attribution.
 
 ### Changed
 
@@ -28,8 +32,12 @@ All notable changes to WAIT Local Agent will be documented in this file.
   `903cb595e8f735fcc306a68f2bee150fce58a416` remains available under Apache
   License 2.0 on the preserved `1.x` line; the new source license does not
   revoke those prior grants.
-- Commercial licensing remains a separate written agreement. No custom WAIT
-  Section 7 attribution term is imposed by the repository in this transition.
+- Community interactive interfaces containing covered WAIT material must retain
+  the reasonable visible `Powered by WAIT` attribution under the applicable
+  Section 7 terms. Attribution removal or replacement requires an express
+  separate commercial branding right.
+- Python package metadata ships the AGPL text, WAIT additional terms, NOTICE,
+  and preserved Apache license notice together.
 
 ### Security
 

@@ -9,6 +9,7 @@ description = "Local-first AI copilot runtime for MSPs and SMBs."
 readme = "README.md"
 requires-python = ">=3.12"
 license = "AGPL-3.0-only"
+license-files = ["LICENSE", "ADDITIONAL_TERMS.md", "NOTICE", "LICENSES/*"]
 authors = [{ name = "WAIT" }]
 dependencies = [
   "APScheduler==3.11.3",
