@@ -23,11 +23,19 @@ The Apache License 2.0 text is retained in [`LICENSES/Apache-2.0.txt`](LICENSES/
 
 ## 2.0 development line
 
-Source published from the 2.0 license-transition commit forward on the main development line is distributed as a combined work under the **GNU Affero General Public License version 3 only (`AGPL-3.0-only`)**, subject to any notices that must remain with inherited third-party or Apache-covered material.
+Source published from the 2.0 license-transition commit forward on the main development line is distributed as a combined work under the **GNU Affero General Public License version 3 only (`AGPL-3.0-only`)**, subject to applicable notices and the WAIT additional terms permitted by AGPLv3 Section 7 for material whose copyright holders authorize those terms.
 
-The operative Community license text is the root [`LICENSE`](LICENSE).
+The standard AGPL text is the root [`LICENSE`](LICENSE). The operative WAIT additional terms are in [`ADDITIONAL_TERMS.md`](ADDITIONAL_TERMS.md), and the distribution notice is in [`NOTICE`](NOTICE).
 
-No custom WAIT additional terms are imposed by this repository at this time. In particular, the planned `Powered by WAIT` attribution rule, partner/co-branding rules, and other Section 7 terms discussed in product planning are **not effective unless and until approved terms are separately added to the repository**.
+### Powered by WAIT attribution
+
+For WAIT-copyrighted material to which the additional terms apply, interactive user interfaces must preserve the reasonable visible attribution:
+
+> **Powered by WAIT**
+
+The repository's Community operator and end-user interfaces render that attribution. The additional terms allow normal accessibility, localization, and layout adaptation while prohibiting intentional removal, concealment, or origin misrepresentation.
+
+A separate written commercial branding agreement may expressly permit attribution removal, replacement, co-branding, partner branding, white-labeling, or OEM branding for deployments covered by that agreement.
 
 ## Commercial licensing
 
