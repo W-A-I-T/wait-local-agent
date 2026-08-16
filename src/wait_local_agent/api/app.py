@@ -1271,6 +1271,34 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         _require_msp_operator(context)
         return [asdict(instance) for instance in store.list_connector_instances()]
 
+    @app.get("/ingestion/sync-cursors")
+    def ingestion_sync_cursors(context: AdminAccess) -> list[dict[str, object]]:
+        _require_msp_operator(context)
+        return [asdict(cursor) for cursor in store.list_sync_cursors()]
+
+    @app.get("/ingestion/unmapped")
+    def ingestion_unmapped(
+        context: ViewerAccess,
+        connector_instance_id: str | None = None,
+    ) -> list[dict[str, object]]:
+        scope = resolve_client_scope(context, None, allow_all=True)
+        try:
+            records = store.list_unmapped_records(
+                scope,
+                connector_instance_id=connector_instance_id,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return [asdict(record) for record in records]
+
+    @app.post("/ingestion/unmapped/{record_id}/resolve")
+    def resolve_ingestion_unmapped(record_id: str, context: AdminAccess) -> dict[str, object]:
+        _require_msp_operator(context)
+        record = store.resolve_unmapped_record(record_id)
+        if record is None:
+            raise HTTPException(status_code=404, detail="unmapped record not found")
+        return asdict(record)
+
     @app.post("/connector-instances")
     def create_connector_instance(
         payload: ConnectorInstanceCreateRequest,

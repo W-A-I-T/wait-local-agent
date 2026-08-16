@@ -6,6 +6,9 @@ All notable changes to WAIT Local Agent will be documented in this file.
 
 ### Added
 
+- Operator endpoints now expose connector sync cursors and the quarantine
+  (unmapped-records) ledger, including a gated action to mark a record
+  resolved for review.
 - Canonical assets are now unique per tenant by `(client_id, canonical_id)`,
   allowing the same canonical asset identifier to exist independently across
   clients while preserving asset observation references.
