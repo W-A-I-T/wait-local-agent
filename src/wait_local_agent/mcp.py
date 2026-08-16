@@ -22,7 +22,7 @@ from wait_local_agent.smart_actions import SmartActionManifest
 
 MCP_PROTOCOL_VERSION = "2025-11-25"
 MCP_SERVER_NAME = "wait-local-agent"
-MCP_SERVER_VERSION = "1.1.1"
+MCP_SERVER_VERSION = "2.0.0-dev.0"
 MAX_MCP_REQUEST_BYTES = 256 * 1024
 MAX_MCP_RESULT_BYTES = 128 * 1024
 MAX_MCP_TOOLS_PAGE = 100
