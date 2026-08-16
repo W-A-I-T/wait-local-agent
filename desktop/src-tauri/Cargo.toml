@@ -1,11 +1,11 @@
 [package]
 name = "wait-local-agent-desktop"
-version = "1.1.1"
+version = "2.0.0-dev.0"
 description = "WAIT Local Agent desktop application"
 authors = ["WAIT"]
 edition = "2021"
 rust-version = "1.85.0"
-license = "Apache-2.0"
+license = "AGPL-3.0-only"
 publish = false
 
 [build-dependencies]
