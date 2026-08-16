@@ -13,6 +13,7 @@ import {
   GitBranch,
   LayoutDashboard,
   MessageSquare,
+  Network,
   Files,
   LibraryBig,
   ShieldCheck,
@@ -20,6 +21,8 @@ import {
   Workflow
 } from "lucide-react";
 import { NavLink } from "react-router-dom";
+import { useDashboard } from "./DashboardContext";
+import { RoleGate } from "../components/RoleGate";
 
 const navigation = [
   { to: "/", label: "Overview", icon: LayoutDashboard },
@@ -46,6 +49,8 @@ const navigation = [
 ];
 
 export function Sidebar() {
+  const { role, roleResolved } = useDashboard();
+
   return (
     <aside className="sidebar" aria-label="Workspace navigation">
       <div className="brand">
@@ -67,6 +72,12 @@ export function Sidebar() {
             {label}
           </NavLink>
         ))}
+        <RoleGate role={role} resolved={roleResolved} allowed={["admin"]}>
+          <NavLink to="/integrations/mcp" className={({ isActive }) => isActive ? "active" : undefined}>
+            <Network size={18} aria-hidden="true" />
+            MCP
+          </NavLink>
+        </RoleGate>
       </nav>
     </aside>
   );
