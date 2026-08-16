@@ -142,7 +142,7 @@
       "GET /reports": "exposed",
       "GET /reports/{report_id}": "exposed",
       "GET /reports/{report_id}/export": "exposed",
-      "GET /scheduled-jobs": "exposed",
+      "GET /scheduled-jobs": "embedded",
       "GET /secrets": "exposed",
       "GET /settings/providers": "exposed",
       "GET /settings/providers/health": "exposed",

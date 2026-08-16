@@ -38,6 +38,7 @@ const navigation = [
   { to: "/knowledge", label: "Knowledge", icon: BookOpenText },
   { to: "/workflows", label: "Workflows", icon: Workflow },
   { to: "/automation/events", label: "Events", icon: Activity },
+  { to: "/automation/schedules", label: "Schedules", icon: CalendarClock },
   { to: "/workflow-designer", label: "Workflow Designer", icon: Workflow },
   { to: "/templates", label: "Templates", icon: Files },
   { to: "/playbooks", label: "Playbooks", icon: LibraryBig },

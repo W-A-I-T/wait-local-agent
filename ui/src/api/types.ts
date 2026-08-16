@@ -993,8 +993,9 @@ export type AuditExportResponse = {
 
 export type ScheduledJob = {
   id: number;
-  job_kind: "workflow" | "agent" | "report";
+  job_kind: "workflow" | "playbook" | "agent" | "report";
   template_id: string | null;
+  playbook_id: string | null;
   agent_id: string | null;
   entity_id: string | null;
   cron: string;
@@ -1008,6 +1009,7 @@ export type ScheduledJob = {
   client_id: string | null;
   next_run_at: string | null;
   params?: Record<string, unknown> | null;
+  last_run?: string | null;
 };
 
 export type ScheduledJobRequestBody = {
