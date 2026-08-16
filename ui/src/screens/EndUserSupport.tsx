@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-// Additional terms: ../../../../ADDITIONAL_TERMS.md
+// Additional terms: ../../../ADDITIONAL_TERMS.md
 
 import { FormEvent, type CSSProperties, useState } from "react";
 import { AlertTriangle, CheckCircle2, KeyRound, LifeBuoy, Search, ShieldCheck } from "lucide-react";
