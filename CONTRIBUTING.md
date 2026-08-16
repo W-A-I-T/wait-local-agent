@@ -1,15 +1,12 @@
 # Contributing
 
-WAIT Local Agent is currently a C$0 Community edition under the Apache 2.0
-license. It is self-hosted and intended to provide useful local-first AI
-execution and change governance, including use across multiple client
-environments. Keep changes source-accurate, local-first, and safe by default.
+WAIT Local Agent `main` is the **2.0 development line** and is distributed as a combined work under **GNU Affero General Public License v3 only (`AGPL-3.0-only`)**. The preserved `1.x` baseline through commit `903cb595e8f735fcc306a68f2bee150fce58a416` remains available under Apache License 2.0. See [`LICENSE_HISTORY.md`](LICENSE_HISTORY.md).
 
-WAIT is planning a future major-version dual-licensing transition. That plan
-does not alter the license currently stated in [`LICENSE`](LICENSE). Review
-[`docs/legal/README.md`](docs/legal/README.md) and the transition checklist
-before proposing licensing, attribution, contributor-rights, commercial-pack,
-or WAIT-Sync migration changes.
+Keep changes source-accurate, local-first, and safe by default.
+
+WAIT also intends to offer separate commercial licenses. A pull request submitted under the repository's Community license does **not** by itself grant WAIT whatever additional rights may be necessary to relicense that contribution commercially. Until a counsel-approved CLA, copyright assignment, or equivalent contributor-rights process is published, maintainers may defer or decline material outside contributions that WAIT would need to include in both Community and Commercial distributions.
+
+Review [`docs/legal/README.md`](docs/legal/README.md), [`docs/legal/PROVENANCE_REVIEW.md`](docs/legal/PROVENANCE_REVIEW.md), and the transition checklist before proposing licensing, attribution, contributor-rights, commercial-pack, or WAIT-Sync migration changes.
 
 ## Development Environment
 
@@ -58,30 +55,23 @@ release script uses `npm ci`.
 
 ## Contributor Rules
 
-- Branch from `main`.
+- Branch from `main` unless you are intentionally maintaining the preserved Apache `1.x` line.
+- Contributions to `main` are accepted under `AGPL-3.0-only` unless an explicit, written repository policy says otherwise.
 - Do not add AI attribution, generated-by banners, or tool-credit lines in code, commits, PR text, screenshots, or docs.
 - Keep public docs, examples, and screenshots aligned with shipped behavior only.
 - Run `scripts/public_surface_audit.py` or the full validation gate before asking for review.
 - Identify copied, adapted, generated, or externally sourced material and confirm that WAIT may distribute it under the repository's effective license.
 
-## Licensing transition and contributor rights
+## Contributor rights and commercial dual licensing
 
-Contributions are governed by the license effective for the branch and version
-to which they are accepted. A proposed future license does not retroactively
-change the current Apache-2.0 terms.
+WAIT's separate Commercial licensing program requires WAIT to control sufficient rights to offer the applicable code under separate commercial terms. Community contribution under AGPL alone does not automatically provide those additional relicensing rights.
 
-Dual licensing requires WAIT to control sufficient rights to offer the same
-code under Community and Commercial terms. Until a counsel-approved CLA,
-copyright assignment, or equivalent contributor-rights process is published:
+Until a counsel-approved contributor-rights process is published:
 
-- maintainers may defer or decline outside contributions intended for the
-  future dual-licensed major version;
-- contributors must not assume that ordinary PR submission grants WAIT rights
-  beyond the currently effective repository terms;
-- maintainers must not assert that WAIT can commercially relicense an outside
-  contribution without a documented legal basis; and
-- code with uncertain authorship, copied expression, incompatible licensing,
-  or unclear contractor/employment ownership must not be merged.
+- maintainers may defer or decline outside contributions that need to ship in proprietary/commercial distributions;
+- contributors must not assume ordinary PR submission grants WAIT rights beyond the effective Community license;
+- maintainers must not assert WAIT can commercially relicense an outside contribution without a documented legal basis; and
+- code with uncertain authorship, copied expression, incompatible licensing, or unclear contractor/employment ownership must not be merged.
 
 The required review is tracked in
 [`docs/legal/PROVENANCE_REVIEW.md`](docs/legal/PROVENANCE_REVIEW.md).
