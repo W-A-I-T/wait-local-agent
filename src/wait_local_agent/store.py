@@ -2540,6 +2540,20 @@ class Store:
                     """,
                     (normalized_method_instance_id, normalized_external_id),
                 ).fetchone()
+                if existing is not None and str(existing["client_id"]) != resolved_client_id:
+                    self._record_unmapped(
+                        connection,
+                        normalized_method_instance_id,
+                        normalized_external_client_id,
+                        normalized_external_id,
+                        "ticket",
+                        _ticket_payload_digest(record),
+                        "ownership_conflict",
+                        utc_now(),
+                        f"UMR-{uuid.uuid4().hex}",
+                    )
+                    quarantined += 1
+                    continue
                 now = utc_now()
                 created_at = record.created_at.strip() or now
                 updated_at = record.updated_at.strip() or created_at

@@ -9,6 +9,9 @@ All notable changes to WAIT Local Agent will be documented in this file.
 - Per-connector-instance outbound calls now use a host allowlist, pinned-IP
   DNS resolution, globally-routable address checks, proxy and redirect
   blocking, identity content encoding, and a bounded response stream.
+- Provider-ticket ingestion no longer lets a re-reported external ticket under
+  a different company overwrite or re-attribute another client's ticket;
+  ownership collisions are recorded as `ownership_conflict` for reconciliation.
 
 ### Fixed
 
