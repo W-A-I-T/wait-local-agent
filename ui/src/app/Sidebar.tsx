@@ -20,6 +20,7 @@ import {
   Workflow
 } from "lucide-react";
 import { NavLink } from "react-router-dom";
+import { useDashboard } from "./DashboardContext";
 
 const navigation = [
   { to: "/", label: "Overview", icon: LayoutDashboard },
@@ -41,11 +42,16 @@ const navigation = [
   { to: "/reports", label: "Reports", icon: BarChart3 },
   { to: "/audit", label: "Audit", icon: FileSearch },
   { to: "/scheduled-jobs", label: "Scheduled Jobs", icon: CalendarClock },
-  { to: "/settings", label: "Settings", icon: Activity },
   { to: "/founder", label: "Founder", icon: Sparkles }
 ];
 
+const systemNavigation = [
+  { to: "/settings", label: "Settings", icon: Activity }
+];
+
 export function Sidebar() {
+  const { isAdmin } = useDashboard();
+
   return (
     <aside className="sidebar" aria-label="Workspace navigation">
       <div className="brand">
@@ -68,6 +74,23 @@ export function Sidebar() {
           </NavLink>
         ))}
       </nav>
+      <section className="sidebar-system" aria-label="System">
+        <span className="sidebar-section-label">System</span>
+        <nav aria-label="System navigation">
+          {systemNavigation.map(({ to, label, icon: Icon }) => (
+            <NavLink key={to} to={to} className={({ isActive }) => isActive ? "active" : undefined}>
+              <Icon size={18} aria-hidden="true" />
+              {label}
+            </NavLink>
+          ))}
+          {isAdmin ? (
+            <NavLink to="/system/appliance-health" className={({ isActive }) => isActive ? "active" : undefined}>
+              <ShieldCheck size={18} aria-hidden="true" />
+              Appliance Health
+            </NavLink>
+          ) : null}
+        </nav>
+      </section>
     </aside>
   );
 }

@@ -6,6 +6,7 @@ All notable changes to WAIT Local Agent will be documented in this file.
 
 ### Added
 
+- Admins can now review read-only appliance health, update status, and latest hardening evidence from System → Appliance Health.
 - The dashboard now exposes MSP Playbooks with tenant publication status, bounded preview and run actions, revision recovery, and event-subscription controls.
 - Versioned SQLite schema initialization now records an idempotent baseline in
   `schema_migrations`, enables foreign-key enforcement, WAL, and a bounded busy

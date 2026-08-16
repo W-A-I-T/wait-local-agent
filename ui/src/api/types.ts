@@ -908,6 +908,28 @@ export type HardeningRun = {
   results: HardeningCheckResult[];
 };
 
+export type ApplianceHealth = {
+  status: string;
+  write_actions_enabled: boolean;
+  http_probing_enabled: boolean;
+  cloud_fallback_enabled: boolean;
+  offline_mode: boolean;
+  llm_inference_enabled: boolean;
+  api_auth_required: boolean;
+  demo_mode: boolean;
+  secrets_backend: string;
+  scheduler_enabled: boolean;
+  halopsa_configured: boolean;
+  hudu_configured: boolean;
+  syncro_configured: boolean;
+  servicenow_configured: boolean;
+  autotask_configured: boolean;
+  itglue_configured: boolean;
+  confluence_configured: boolean;
+  sharepoint_configured: boolean;
+  m365_configured: boolean;
+};
+
 export type RestoreExercise = {
   id: number | null;
   exercise_id: string;
