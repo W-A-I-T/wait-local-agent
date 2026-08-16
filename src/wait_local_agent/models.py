@@ -112,6 +112,10 @@ class Ticket:
     requester_id: str | None = None
     created_at: str = ""
     updated_at: str = ""
+    source_system: str | None = None
+    connector_instance_id: str | None = None
+    external_id: str | None = None
+    external_client_id: str | None = None
 
 
 @dataclass(frozen=True)
@@ -798,6 +802,29 @@ class AssetObservationWrite:
     observation_type: str
     payload: dict[str, Any]
     confidence: float = 1.0
+
+
+@dataclass(frozen=True)
+class SyncCursor:
+    connector_instance_id: str
+    cursor_type: str
+    cursor_value: str | None
+    status: str
+    last_synced_at: str | None
+    updated_at: str
+
+
+@dataclass(frozen=True)
+class UnmappedRecord:
+    record_id: str
+    connector_instance_id: str
+    external_company_id: str | None
+    external_id: str | None
+    record_type: str
+    payload_digest: str | None
+    reason: str
+    created_at: str
+    resolved_at: str | None
 
 
 @dataclass(frozen=True)
