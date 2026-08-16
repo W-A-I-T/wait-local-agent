@@ -67,6 +67,40 @@ EVENT_RETRY_BATCH_SIZE = 10
 
 
 @dataclass(frozen=True)
+class Client:
+    client_id: str
+    name: str
+    status: str
+    created_at: str
+    updated_at: str
+
+
+@dataclass(frozen=True)
+class ConnectorInstance:
+    connector_instance_id: str
+    connector_type: str
+    display_name: str
+    client_id: str | None
+    credential_ref: str | None
+    config_json: str
+    status: str
+    created_at: str
+    updated_at: str
+
+
+@dataclass(frozen=True)
+class ClientConnectorMapping:
+    mapping_id: str
+    connector_instance_id: str
+    external_company_id: str
+    external_company_name: str | None
+    client_id: str
+    verified: int
+    created_at: str
+    updated_at: str
+
+
+@dataclass(frozen=True)
 class Ticket:
     id: str
     client: str

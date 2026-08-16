@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 import sqlite3
 import uuid
 from dataclasses import dataclass, replace
@@ -28,10 +29,13 @@ from wait_local_agent.models import (
     AssetObservation,
     AuditEvent,
     CanonicalAsset,
+    Client,
+    ClientConnectorMapping,
     CollectorRun,
     CollectorSource,
     ConfigDiff,
     ConfigSnapshot,
+    ConnectorInstance,
     ConsultantDiscoverySession,
     EndUserMessage,
     EventDelivery,
@@ -77,6 +81,12 @@ if TYPE_CHECKING:
 MAX_SEARCH_LIMIT = 25
 MAX_TECHNICIAN_CHAT_MESSAGES = 200
 _ALL_CLIENTS = AllClients()
+_CLIENT_STATUSES = {"active", "archived", "quarantine"}
+_CONNECTOR_INSTANCE_STATUSES = {"inactive", "active", "error", "disabled"}
+
+
+class ClientConnectorMappingConflictError(ValueError):
+    """Raised when a verified external company mapping already exists."""
 
 
 def _client_scope_predicate(scope: ClientScope | str | None, column: str = "client_id") -> tuple[str, list[object]]:
@@ -133,6 +143,7 @@ class Store:
                 (
                     Migration(0, "baseline", self._apply_baseline_migration),
                     Migration(1, "principals", self._apply_principals_migration),
+                    Migration(2, "clients_and_connectors", self._apply_clients_migration),
                 )
             )
             self._apply_startup_repairs(connection)
@@ -182,6 +193,59 @@ class Store:
             """
             create index if not exists idx_principal_credentials_active
             on principal_credentials (credential_hash, active)
+            """
+        )
+
+    def _apply_clients_migration(self, connection: sqlite3.Connection) -> None:
+        connection.execute(
+            """
+            create table if not exists clients (
+                client_id text primary key,
+                name text not null,
+                status text not null default 'active'
+                  check (status in ('active', 'archived', 'quarantine')),
+                created_at text not null,
+                updated_at text not null
+            )
+            """
+        )
+        connection.execute(
+            """
+            create table if not exists connector_instances (
+                connector_instance_id text primary key,
+                connector_type text not null,
+                display_name text not null,
+                client_id text references clients(client_id),
+                credential_ref text,
+                config_json text not null default '{}',
+                status text not null default 'inactive'
+                  check (status in ('inactive', 'active', 'error', 'disabled')),
+                created_at text not null,
+                updated_at text not null,
+                unique (connector_type, display_name)
+            )
+            """
+        )
+        connection.execute(
+            """
+            create table if not exists client_connector_mappings (
+                mapping_id text primary key,
+                connector_instance_id text not null
+                  references connector_instances(connector_instance_id) on delete cascade,
+                external_company_id text not null,
+                external_company_name text,
+                client_id text not null references clients(client_id),
+                verified integer not null default 0 check (verified in (0, 1)),
+                created_at text not null,
+                updated_at text not null
+            )
+            """
+        )
+        connection.execute(
+            """
+            create unique index if not exists ux_ccm_verified
+            on client_connector_mappings (connector_instance_id, external_company_id)
+            where verified = 1
             """
         )
 
@@ -318,6 +382,381 @@ class Store:
                 limit 1
                 """
             ).fetchone() is not None
+
+    def ensure_quarantine_client(self, connection: sqlite3.Connection | None = None) -> Client:
+        """Ensure and return the reserved client used for unmapped records."""
+
+        if connection is not None:
+            return self._ensure_quarantine_client(connection)
+        with self._connect() as active_connection:
+            return self._ensure_quarantine_client(active_connection)
+
+    def _ensure_quarantine_client(self, connection: sqlite3.Connection) -> Client:
+        now = utc_now()
+        connection.execute(
+            """
+            insert or ignore into clients (client_id, name, status, created_at, updated_at)
+            values ('__quarantine__', 'Unmapped / Quarantine', 'quarantine', ?, ?)
+            """,
+            (now, now),
+        )
+        row = connection.execute(
+            "select * from clients where client_id = '__quarantine__'"
+        ).fetchone()
+        if row is None:  # pragma: no cover - the insert is protected by the primary key
+            raise RuntimeError("quarantine client could not be created")
+        return _client_from_row(row)
+
+    def list_clients(self, scope: ClientScope) -> list[Client]:
+        client_predicate, client_params = _client_scope_predicate(scope)
+        with self._connect() as connection:
+            rows = connection.execute(
+                f"""
+                select * from clients
+                where {client_predicate}
+                order by name, client_id
+                """,  # nosec B608: predicate is fixed internal SQL; client IDs are parameterized
+                client_params,
+            ).fetchall()
+        return [_client_from_row(row) for row in rows]
+
+    def get_client(self, scope: ClientScope, client_id: str) -> Client | None:
+        normalized_id = _normalize_client_id(client_id)
+        if normalized_id is None:
+            return None
+        client_predicate, client_params = _client_scope_predicate(scope)
+        with self._connect() as connection:
+            row = connection.execute(
+                f"""
+                select * from clients
+                where client_id = ? and {client_predicate}
+                """,  # nosec B608: predicate is fixed internal SQL; client IDs are parameterized
+                [normalized_id, *client_params],
+            ).fetchone()
+        return _client_from_row(row) if row else None
+
+    def create_client(self, client_id: str, name: str) -> Client:
+        normalized_id = _normalize_client_id(client_id)
+        normalized_name = name.strip()
+        if normalized_id is None:
+            raise ValueError("client_id must be non-empty")
+        if normalized_id == "__quarantine__":
+            raise ValueError("__quarantine__ is reserved")
+        if not normalized_name:
+            raise ValueError("client name must be non-empty")
+        now = utc_now()
+        with self._connect() as connection:
+            connection.execute(
+                """
+                insert into clients (client_id, name, status, created_at, updated_at)
+                values (?, ?, 'active', ?, ?)
+                """,
+                (normalized_id, _redact_text(normalized_name), now, now),
+            )
+            row = connection.execute("select * from clients where client_id = ?", (normalized_id,)).fetchone()
+        if row is None:  # pragma: no cover - the insert returned successfully
+            raise RuntimeError("client could not be created")
+        return _client_from_row(row)
+
+    def set_client_status(self, scope: ClientScope, client_id: str, status: str) -> Client | None:
+        normalized_id = _normalize_client_id(client_id)
+        normalized_status = status.strip().lower()
+        if normalized_id is None:
+            return None
+        if normalized_status not in _CLIENT_STATUSES:
+            raise ValueError("unsupported client status")
+        client_predicate, client_params = _client_scope_predicate(scope)
+        with self._connect() as connection:
+            connection.execute(
+                f"""
+                update clients
+                set status = ?, updated_at = ?
+                where client_id = ? and {client_predicate}
+                """,  # nosec B608: predicate is fixed internal SQL; client IDs are parameterized
+                [normalized_status, utc_now(), normalized_id, *client_params],
+            )
+            row = connection.execute(
+                f"""
+                select * from clients
+                where client_id = ? and {client_predicate}
+                """,  # nosec B608: predicate is fixed internal SQL; client IDs are parameterized
+                [normalized_id, *client_params],
+            ).fetchone()
+        return _client_from_row(row) if row else None
+
+    def list_connector_instances(self) -> list[ConnectorInstance]:
+        with self._connect() as connection:
+            rows = connection.execute(
+                "select * from connector_instances order by connector_type, display_name, connector_instance_id"
+            ).fetchall()
+        return [_connector_instance_from_row(row) for row in rows]
+
+    def get_connector_instance(self, connector_instance_id: str) -> ConnectorInstance | None:
+        normalized_id = _normalize_client_id(connector_instance_id)
+        if normalized_id is None:
+            return None
+        with self._connect() as connection:
+            row = connection.execute(
+                "select * from connector_instances where connector_instance_id = ?", (normalized_id,)
+            ).fetchone()
+        return _connector_instance_from_row(row) if row else None
+
+    def create_connector_instance(
+        self,
+        connector_type: str,
+        display_name: str,
+        *,
+        client_id: str | None = None,
+        credential_ref: str | None = None,
+        config_json: str = "{}",
+    ) -> ConnectorInstance:
+        normalized_type = connector_type.strip()
+        normalized_name = display_name.strip()
+        normalized_client_id = _normalize_client_id(client_id)
+        normalized_credential_ref = _normalize_client_id(credential_ref)
+        if not normalized_type:
+            raise ValueError("connector_type must be non-empty")
+        if not normalized_name:
+            raise ValueError("display_name must be non-empty")
+        normalized_config = _validate_connector_config_json(config_json)
+        connector_instance_id = str(uuid.uuid4())
+        now = utc_now()
+        with self._connect() as connection:
+            if normalized_client_id is not None and connection.execute(
+                "select 1 from clients where client_id = ?", (normalized_client_id,)
+            ).fetchone() is None:
+                raise KeyError(normalized_client_id)
+            connection.execute(
+                """
+                insert into connector_instances
+                  (connector_instance_id, connector_type, display_name, client_id, credential_ref,
+                   config_json, status, created_at, updated_at)
+                values (?, ?, ?, ?, ?, ?, 'inactive', ?, ?)
+                """,
+                (
+                    connector_instance_id,
+                    _redact_text(normalized_type),
+                    _redact_text(normalized_name),
+                    normalized_client_id,
+                    normalized_credential_ref,
+                    normalized_config,
+                    now,
+                    now,
+                ),
+            )
+            row = connection.execute(
+                "select * from connector_instances where connector_instance_id = ?",
+                (connector_instance_id,),
+            ).fetchone()
+        if row is None:  # pragma: no cover - the insert returned successfully
+            raise RuntimeError("connector instance could not be created")
+        return _connector_instance_from_row(row)
+
+    def update_connector_instance(self, connector_instance_id: str, **fields: object) -> ConnectorInstance | None:
+        normalized_id = _normalize_client_id(connector_instance_id)
+        if normalized_id is None:
+            return None
+        allowed_fields = {
+            "connector_type",
+            "display_name",
+            "client_id",
+            "credential_ref",
+            "config_json",
+            "status",
+        }
+        unknown_fields = set(fields) - allowed_fields
+        if unknown_fields:
+            raise ValueError(f"unsupported connector instance fields: {', '.join(sorted(unknown_fields))}")
+        if not fields:
+            return self.get_connector_instance(normalized_id)
+        values: dict[str, object] = dict(fields)
+        if "connector_type" in values:
+            if values["connector_type"] is None:
+                raise ValueError("connector_type must be non-empty")
+            values["connector_type"] = str(values["connector_type"]).strip()
+            if not values["connector_type"]:
+                raise ValueError("connector_type must be non-empty")
+        if "display_name" in values:
+            if values["display_name"] is None:
+                raise ValueError("display_name must be non-empty")
+            values["display_name"] = str(values["display_name"]).strip()
+            if not values["display_name"]:
+                raise ValueError("display_name must be non-empty")
+        if "client_id" in values:
+            values["client_id"] = _normalize_client_id(cast(str | None, values["client_id"]))
+        if "credential_ref" in values:
+            values["credential_ref"] = _normalize_client_id(cast(str | None, values["credential_ref"]))
+        if "config_json" in values:
+            values["config_json"] = _validate_connector_config_json(str(values["config_json"]))
+        if "status" in values:
+            status = str(values["status"]).strip().lower()
+            if status not in _CONNECTOR_INSTANCE_STATUSES:
+                raise ValueError("unsupported connector instance status")
+            values["status"] = status
+        assignments = ", ".join(f"{field} = ?" for field in values)
+        parameters = [*values.values(), utc_now(), normalized_id]
+        with self._connect() as connection:
+            if values.get("client_id") is not None and connection.execute(
+                "select 1 from clients where client_id = ?", (values["client_id"],)
+            ).fetchone() is None:
+                raise KeyError(str(values["client_id"]))
+            connection.execute(
+                f"update connector_instances set {assignments}, updated_at = ? where connector_instance_id = ?",  # nosec B608: assignments use a fixed allowlist
+                parameters,
+            )
+            row = connection.execute(
+                "select * from connector_instances where connector_instance_id = ?", (normalized_id,)
+            ).fetchone()
+        return _connector_instance_from_row(row) if row else None
+
+    def list_client_connector_mappings(
+        self,
+        scope: ClientScope,
+        *,
+        connector_instance_id: str | None = None,
+    ) -> list[ClientConnectorMapping]:
+        client_predicate, client_params = _client_scope_predicate(scope)
+        normalized_instance_id = _normalize_client_id(connector_instance_id)
+        if connector_instance_id is not None and normalized_instance_id is None:
+            raise ValueError("connector_instance_id must be non-empty")
+        clauses = [client_predicate]
+        params: list[object] = list(client_params)
+        if normalized_instance_id is not None:
+            clauses.append("connector_instance_id = ?")
+            params.append(normalized_instance_id)
+        with self._connect() as connection:
+            rows = connection.execute(
+                f"""
+                select * from client_connector_mappings
+                where {' and '.join(clauses)}
+                order by connector_instance_id, external_company_id, mapping_id
+                """,  # nosec B608: clauses are fixed internal SQL; identifiers and client IDs are parameterized
+                params,
+            ).fetchall()
+        return [_mapping_from_row(row) for row in rows]
+
+    def create_client_connector_mapping(
+        self,
+        scope: ClientScope,
+        connector_instance_id: str,
+        external_company_id: str,
+        client_id: str,
+        *,
+        external_company_name: str | None = None,
+    ) -> ClientConnectorMapping:
+        normalized_instance_id = _normalize_client_id(connector_instance_id)
+        normalized_external_id = _normalize_client_id(external_company_id)
+        normalized_client_id = _normalize_client_id(client_id)
+        normalized_external_name = _normalize_client_id(external_company_name)
+        if normalized_instance_id is None:
+            raise ValueError("connector_instance_id must be non-empty")
+        if normalized_external_id is None:
+            raise ValueError("external_company_id must be non-empty")
+        if normalized_client_id is None:
+            raise ValueError("client_id must be non-empty")
+        client_predicate, client_params = _client_scope_predicate(scope)
+        mapping_id = str(uuid.uuid4())
+        now = utc_now()
+        with self._connect() as connection:
+            client_row = connection.execute(
+                f"select 1 from clients where client_id = ? and {client_predicate}",  # nosec B608: predicate is fixed internal SQL
+                [normalized_client_id, *client_params],
+            ).fetchone()
+            if client_row is None:
+                # Scope filtering deliberately collapses missing and foreign
+                # clients into the same not-found result.  Callers must not be
+                # able to probe the client directory through mapping writes.
+                raise KeyError(normalized_client_id)
+            if connection.execute(
+                "select 1 from connector_instances where connector_instance_id = ?", (normalized_instance_id,)
+            ).fetchone() is None:
+                raise KeyError(normalized_instance_id)
+            connection.execute(
+                """
+                insert into client_connector_mappings
+                  (mapping_id, connector_instance_id, external_company_id, external_company_name,
+                   client_id, verified, created_at, updated_at)
+                values (?, ?, ?, ?, ?, 0, ?, ?)
+                """,
+                (
+                    mapping_id,
+                    normalized_instance_id,
+                    normalized_external_id,
+                    _redact_text(normalized_external_name) if normalized_external_name else None,
+                    normalized_client_id,
+                    now,
+                    now,
+                ),
+            )
+            row = connection.execute(
+                "select * from client_connector_mappings where mapping_id = ?", (mapping_id,)
+            ).fetchone()
+        if row is None:  # pragma: no cover - the insert returned successfully
+            raise RuntimeError("client connector mapping could not be created")
+        return _mapping_from_row(row)
+
+    def verify_client_connector_mapping(self, scope: ClientScope, mapping_id: str) -> ClientConnectorMapping:
+        normalized_mapping_id = _normalize_client_id(mapping_id)
+        if normalized_mapping_id is None:
+            raise KeyError(mapping_id)
+        client_predicate, client_params = _client_scope_predicate(scope)
+        with self._connect() as connection:
+            row = connection.execute(
+                f"select * from client_connector_mappings where mapping_id = ? and {client_predicate}",  # nosec B608: predicate is fixed internal SQL
+                [normalized_mapping_id, *client_params],
+            ).fetchone()
+            if row is None:
+                # A mapping outside the caller's client scope is intentionally
+                # indistinguishable from an unknown mapping.
+                raise KeyError(normalized_mapping_id)
+            conflict = connection.execute(
+                """
+                select mapping_id from client_connector_mappings
+                where connector_instance_id = ? and external_company_id = ?
+                  and verified = 1 and mapping_id <> ?
+                limit 1
+                """,
+                (row["connector_instance_id"], row["external_company_id"], normalized_mapping_id),
+            ).fetchone()
+            if conflict is not None:
+                raise ClientConnectorMappingConflictError(
+                    "a different verified mapping already exists for this external company"
+                )
+            try:
+                connection.execute(
+                    f"""
+                    update client_connector_mappings
+                    set verified = 1, updated_at = ?
+                    where mapping_id = ? and {client_predicate}
+                    """,  # nosec B608: predicate is fixed internal SQL; client IDs are parameterized
+                    [utc_now(), normalized_mapping_id, *client_params],
+                )
+            except sqlite3.IntegrityError as exc:
+                raise ClientConnectorMappingConflictError(
+                    "a different verified mapping already exists for this external company"
+                ) from exc
+            verified_row = connection.execute(
+                "select * from client_connector_mappings where mapping_id = ?", (normalized_mapping_id,)
+            ).fetchone()
+        if verified_row is None:  # pragma: no cover - the update returned successfully
+            raise RuntimeError("mapping could not be verified")
+        return _mapping_from_row(verified_row)
+
+    def resolve_client_for(self, connector_instance_id: str, external_company_id: str) -> str | None:
+        normalized_instance_id = _normalize_client_id(connector_instance_id)
+        normalized_external_id = _normalize_client_id(external_company_id)
+        if normalized_instance_id is None or normalized_external_id is None:
+            return None
+        with self._connect() as connection:
+            rows = connection.execute(
+                """
+                select client_id from client_connector_mappings
+                where connector_instance_id = ? and external_company_id = ? and verified = 1
+                order by mapping_id
+                """,
+                (normalized_instance_id, normalized_external_id),
+            ).fetchall()
+        return str(rows[0][0]) if len(rows) == 1 else None
 
     def _apply_baseline_migration(self, connection: sqlite3.Connection) -> None:
         connection.execute(
@@ -1056,6 +1495,23 @@ class Store:
 
     def _apply_startup_repairs(self, connection: sqlite3.Connection) -> None:
         """Apply additive compatibility repairs and data backfills on every startup."""
+        if _table_exists(connection, "clients"):
+            self.ensure_quarantine_client(connection)
+            backfill_now = utc_now()
+            for source_table in ("tickets", "canonical_assets"):
+                if not _table_exists(connection, source_table) or not _table_has_column(
+                    connection, source_table, "client_id"
+                ):
+                    continue
+                connection.execute(
+                    f"""
+                    insert or ignore into clients (client_id, name, status, created_at, updated_at)
+                    select distinct client_id, client_id, 'active', ?, ?
+                    from {source_table}
+                    where client_id is not null
+                    """,  # nosec B608: source table names are a fixed internal allowlist
+                    (backfill_now, backfill_now),
+                )
         self._ensure_column(connection, "tickets", "client_id", "text")
         self._ensure_column(connection, "tickets", "requester_id", "text")
         self._ensure_column(connection, "tickets", "created_at", "text not null default ''")
@@ -7230,6 +7686,70 @@ def _normalize_client_id(client_id: str | None) -> str | None:
         return None
     normalized = client_id.strip()
     return normalized or None
+
+
+def _table_exists(connection: sqlite3.Connection, table_name: str) -> bool:
+    return connection.execute(
+        "select 1 from sqlite_master where type = 'table' and name = ?", (table_name,)
+    ).fetchone() is not None
+
+
+def _table_has_column(connection: sqlite3.Connection, table_name: str, column_name: str) -> bool:
+    return connection.execute(
+        "select 1 from pragma_table_info(?) where name = ?", (table_name, column_name)
+    ).fetchone() is not None
+
+
+def _client_from_row(row: sqlite3.Row) -> Client:
+    return Client(**dict(row))
+
+
+def _connector_instance_from_row(row: sqlite3.Row) -> ConnectorInstance:
+    return ConnectorInstance(**dict(row))
+
+
+def _mapping_from_row(row: sqlite3.Row) -> ClientConnectorMapping:
+    return ClientConnectorMapping(**dict(row))
+
+
+def _validate_connector_config_json(config_json: str) -> str:
+    try:
+        payload = json.loads(config_json)
+    except (TypeError, json.JSONDecodeError) as exc:
+        raise ValueError("config_json must be valid JSON") from exc
+    if not isinstance(payload, dict):
+        raise ValueError("config_json must contain a JSON object")
+    if _contains_sensitive_config_key(payload):
+        raise ValueError("config_json must not contain credentials or secrets")
+    return json.dumps(payload, sort_keys=True, separators=(",", ":"))
+
+
+def _contains_sensitive_config_key(value: object) -> bool:
+    sensitive_tokens = {
+        "key",
+        "token",
+        "secret",
+        "password",
+        "passwd",
+        "credential",
+        "authorization",
+        "bearer",
+        "private",
+    }
+    if isinstance(value, dict):
+        for key, nested in value.items():
+            normalized_key = re.sub(r"([A-Z]+)([A-Z][a-z])", r"\1 \2", str(key))
+            normalized_key = re.sub(r"([a-z0-9])([A-Z])", r"\1 \2", normalized_key)
+            tokens = tuple(token for token in re.split(r"[^A-Za-z0-9]+", normalized_key.lower()) if token)
+            if any(token in sensitive_tokens for token in tokens if token):
+                return True
+            if _contains_sensitive_config_key(nested):
+                return True
+    elif isinstance(value, list):
+        return any(_contains_sensitive_config_key(item) for item in value)
+    elif isinstance(value, str):
+        return _redact_text(value) != value
+    return False
 
 
 def _principal_role_label(role: str) -> str:

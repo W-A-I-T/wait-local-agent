@@ -296,6 +296,7 @@ def test_route_walk_requires_scope_for_client_bearing_routes(settings) -> None:
         "_approval_scope_visible",
         "_backfill_scope",
         "_operator_scope",
+        "_resolve_client_target_scope",
         "_resolve_detail_scope",
     }
 

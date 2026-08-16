@@ -6,6 +6,11 @@ All notable changes to WAIT Local Agent will be documented in this file.
 
 ### Added
 
+- A local Clients directory now anchors client identity, connector instances
+  can be recorded alongside the existing Settings connector path, and
+  external company mappings remain unverified until an operator confirms
+  them. A quarantine sentinel keeps unresolved identities visible for later
+  review.
 - Authenticated operators can now review read-only event deliveries and event history under Automation → Events, including delivery status, targets, timestamps, and detail fields.
 - Admins can now inspect installed Extensions / Packs under System, including
   version, lock/trust state, license requirements, and CLI/router mount status.

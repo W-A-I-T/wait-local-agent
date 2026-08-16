@@ -19,6 +19,7 @@ bounded by the current code and the verification notes in the relevant pages.
 
 - [Architecture](concepts/architecture.md) — runtime, provider-neutral consultant layer, and governed execution.
 - [Security model](concepts/security-model.md) — local-first security, tenancy, redaction, and threat boundaries.
+- [Clients and connector instances](concepts/clients-and-connectors.md) — the local client directory, connector estate, verified mappings, and quarantine handling.
 - [Public/commercial boundary](concepts/open-core-boundary.md) — AGPL 2.0 Community scope, preserved Apache 1.x history, commercial packs, and separate commercial licensing.
 - [Approvals and write gates](concepts/approvals-and-write-gates.md) — draft, review, approval, execution, and audit sequence.
 

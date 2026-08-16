@@ -5,6 +5,7 @@ import io
 import json
 import re
 import shutil
+import sqlite3
 import time
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import asynccontextmanager
@@ -247,7 +248,11 @@ from wait_local_agent.servicenow import ServiceNowClient, ServiceNowReadResponse
 from wait_local_agent.services import TicketIntelligenceService
 from wait_local_agent.sharepoint import SharePointClient, SharePointReadResponse
 from wait_local_agent.smart_actions import SmartActionService
-from wait_local_agent.store import Store, _normalize_client_id
+from wait_local_agent.store import (
+    ClientConnectorMappingConflictError,
+    Store,
+    _normalize_client_id,
+)
 from wait_local_agent.supervisor import (
     SupervisorPlanError,
     build_supervisor_delegation_plan,
@@ -894,6 +899,49 @@ class SecretSetRequest(BaseModel):
     value: str
 
 
+class ClientCreateRequest(BaseModel):
+    client_id: str = Field(min_length=1, max_length=128)
+    name: str = Field(min_length=1, max_length=256)
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class ClientStatusRequest(BaseModel):
+    status: Literal["active", "archived", "quarantine"]
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class ConnectorInstanceCreateRequest(BaseModel):
+    connector_type: str = Field(min_length=1, max_length=120)
+    display_name: str = Field(min_length=1, max_length=256)
+    client_id: str | None = Field(default=None, max_length=128)
+    credential_ref: str | None = Field(default=None, max_length=256)
+    config_json: str = Field(default="{}", max_length=20_000)
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class ConnectorInstanceUpdateRequest(BaseModel):
+    connector_type: str | None = Field(default=None, min_length=1, max_length=120)
+    display_name: str | None = Field(default=None, min_length=1, max_length=256)
+    client_id: str | None = Field(default=None, max_length=128)
+    credential_ref: str | None = Field(default=None, max_length=256)
+    config_json: str | None = Field(default=None, max_length=20_000)
+    status: Literal["inactive", "active", "error", "disabled"] | None = None
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class ClientConnectorMappingCreateRequest(BaseModel):
+    connector_instance_id: str = Field(min_length=1, max_length=128)
+    external_company_id: str = Field(min_length=1, max_length=256)
+    external_company_name: str | None = Field(default=None, max_length=256)
+    client_id: str = Field(min_length=1, max_length=128)
+
+    model_config = ConfigDict(extra="forbid")
+
+
 def create_app(settings: Settings | None = None) -> FastAPI:
     active_settings = settings or load_settings()
     if active_settings.demo_mode:
@@ -1178,6 +1226,161 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     ) -> list[dict[str, object]]:
         scope = resolve_client_scope(context, client_id, allow_all=True)
         return [asdict(ticket) for ticket in store.list_tickets(client_id=scope)]
+
+    @app.get("/clients")
+    def clients(context: ViewerAccess, client_id: str | None = None) -> list[dict[str, object]]:
+        scope = resolve_client_scope(context, client_id, allow_all=True)
+        return [asdict(client) for client in store.list_clients(scope)]
+
+    @app.post("/clients")
+    def create_client(payload: ClientCreateRequest, context: AdminAccess) -> dict[str, object]:
+        _require_msp_operator(context)
+        try:
+            return asdict(store.create_client(payload.client_id, payload.name))
+        except sqlite3.IntegrityError as exc:
+            raise HTTPException(status_code=409, detail="client already exists") from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @app.get("/clients/{client_id}")
+    def client_detail(client_id: str, context: ViewerAccess) -> dict[str, object]:
+        scope = _resolve_client_target_scope(context, client_id)
+        client = store.get_client(scope, client_id)
+        if client is None:
+            raise HTTPException(status_code=404, detail="client not found")
+        return asdict(client)
+
+    @app.patch("/clients/{client_id}")
+    def update_client_status(
+        client_id: str,
+        payload: ClientStatusRequest,
+        context: AdminAccess,
+    ) -> dict[str, object]:
+        _require_msp_operator(context)
+        scope = _resolve_client_target_scope(context, client_id)
+        try:
+            client = store.set_client_status(scope, client_id, payload.status)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        if client is None:
+            raise HTTPException(status_code=404, detail="client not found")
+        return asdict(client)
+
+    @app.get("/connector-instances")
+    def connector_instances(context: AdminAccess) -> list[dict[str, object]]:
+        _require_msp_operator(context)
+        return [asdict(instance) for instance in store.list_connector_instances()]
+
+    @app.post("/connector-instances")
+    def create_connector_instance(
+        payload: ConnectorInstanceCreateRequest,
+        context: AdminAccess,
+    ) -> dict[str, object]:
+        _require_msp_operator(context)
+        try:
+            instance = store.create_connector_instance(
+                payload.connector_type,
+                payload.display_name,
+                client_id=payload.client_id,
+                credential_ref=payload.credential_ref,
+                config_json=payload.config_json,
+            )
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail="client not found") from exc
+        except sqlite3.IntegrityError as exc:
+            raise HTTPException(status_code=409, detail="connector instance already exists") from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return asdict(instance)
+
+    @app.get("/connector-instances/{connector_instance_id}")
+    def connector_instance_detail(
+        connector_instance_id: str,
+        context: AdminAccess,
+    ) -> dict[str, object]:
+        _require_msp_operator(context)
+        instance = store.get_connector_instance(connector_instance_id)
+        if instance is None:
+            raise HTTPException(status_code=404, detail="connector instance not found")
+        return asdict(instance)
+
+    @app.patch("/connector-instances/{connector_instance_id}")
+    def update_connector_instance(
+        connector_instance_id: str,
+        payload: ConnectorInstanceUpdateRequest,
+        context: AdminAccess,
+    ) -> dict[str, object]:
+        _require_msp_operator(context)
+        try:
+            instance = store.update_connector_instance(
+                connector_instance_id,
+                **payload.model_dump(exclude_unset=True),
+            )
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail="client not found") from exc
+        except sqlite3.IntegrityError as exc:
+            raise HTTPException(status_code=409, detail="connector instance already exists") from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        if instance is None:
+            raise HTTPException(status_code=404, detail="connector instance not found")
+        return asdict(instance)
+
+    @app.get("/client-connector-mappings")
+    def client_connector_mappings(
+        context: ViewerAccess,
+        connector_instance_id: str | None = None,
+    ) -> list[dict[str, object]]:
+        scope = resolve_client_scope(context, None, allow_all=True)
+        try:
+            mappings = store.list_client_connector_mappings(
+                scope,
+                connector_instance_id=connector_instance_id,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return [asdict(mapping) for mapping in mappings]
+
+    @app.post("/client-connector-mappings")
+    def create_client_connector_mapping(
+        payload: ClientConnectorMappingCreateRequest,
+        context: ViewerAccess,
+    ) -> dict[str, object]:
+        scope = _resolve_client_target_scope(context, payload.client_id)
+        try:
+            mapping = store.create_client_connector_mapping(
+                scope,
+                payload.connector_instance_id,
+                payload.external_company_id,
+                payload.client_id,
+                external_company_name=payload.external_company_name,
+            )
+        except PermissionError as exc:
+            raise HTTPException(status_code=403, detail=str(exc)) from exc
+        except KeyError as exc:
+            detail = (
+                "client not found"
+                if str(exc.args[0]) == _normalize_client_id(payload.client_id)
+                else "connector instance not found"
+            )
+            raise HTTPException(status_code=404, detail=detail) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return asdict(mapping)
+
+    @app.post("/client-connector-mappings/{mapping_id}/verify")
+    def verify_client_connector_mapping(mapping_id: str, context: AdminAccess) -> dict[str, object]:
+        _require_msp_operator(context)
+        scope = resolve_client_scope(context, None)
+        try:
+            mapping = store.verify_client_connector_mapping(scope, mapping_id)
+        except ClientConnectorMappingConflictError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        except PermissionError as exc:
+            raise HTTPException(status_code=403, detail=str(exc)) from exc
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail="mapping not found") from exc
+        return asdict(mapping)
 
     @app.get("/smart-actions")
     def smart_actions(_: ViewerAccess) -> list[dict[str, object]]:
@@ -7286,6 +7489,20 @@ def _resolve_detail_scope(
         raise
 
 
+def _resolve_client_target_scope(context: AuthContext, requested_client_id: str) -> ClientScope:
+    """Resolve a client target without disclosing missing versus foreign IDs."""
+
+    try:
+        return resolve_client_scope(context, requested_client_id)
+    except HTTPException as exc:
+        if exc.status_code == 403 and exc.detail in {
+            "requested tenant is outside authenticated scope",
+            "authenticated principal has no tenant",
+        }:
+            raise HTTPException(status_code=404, detail="client not found") from exc
+        raise
+
+
 def _backfill_scope(context: AuthContext, requested_client_id: str | None) -> ClientScope:
     """Resolve the scope used by agent-backfill list and entity routes."""
 
@@ -7315,6 +7532,13 @@ def _required_client_id(context: AuthContext, requested_client_id: str | None) -
     if client_id is None:
         raise HTTPException(status_code=403, detail="client scope is required")
     return client_id
+
+
+def _require_msp_operator(context: AuthContext) -> None:
+    """Require the appliance operator scope used for authority-estate changes."""
+
+    if not context.demo_mode and not context.is_msp_admin:
+        raise HTTPException(status_code=403, detail="msp operator access required")
 
 
 def _operator_scope(
