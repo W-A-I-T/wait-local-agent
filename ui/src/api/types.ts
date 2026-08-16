@@ -1148,6 +1148,14 @@ export type PackInfo = {
   requires_license: boolean;
 };
 
+export type PackStatus = PackInfo & {
+  cli_available: boolean;
+  router_available: boolean;
+  mounted_cli: boolean;
+  mounted_router: boolean;
+  error: string | null;
+};
+
 export type SecretRecord = {
   key: string;
   configured: boolean;
