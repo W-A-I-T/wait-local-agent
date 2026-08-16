@@ -6,6 +6,9 @@ All notable changes to WAIT Local Agent will be documented in this file.
 
 ### Added
 
+- Admins can now review per-connector sync health and triage unmapped records
+  in the Operations → Sync / Reconciliation Center, including a confirm-gated
+  action to mark a record as reviewed.
 - Operator endpoints now expose connector sync cursors and the quarantine
   (unmapped-records) ledger, including a gated action to mark a record
   resolved for review.
