@@ -176,6 +176,21 @@ export type SmartActionRun = {
   client_id?: string | null;
 };
 
+export type SmartActionManifest = {
+  action_id: string;
+  title: string;
+  description: string;
+  kind: "deterministic" | "ai_assisted" | string;
+  input_schema: Record<string, unknown>;
+  output_schema: Record<string, unknown>;
+  requires_approval: boolean;
+  estimated_minutes_saved: number;
+  risk_level: string;
+  required_role: string;
+  access_mode: string;
+  approval_expiry_seconds: number;
+};
+
 export type WorkflowTemplate = {
   id: string;
   name: string;
@@ -908,6 +923,28 @@ export type HardeningRun = {
   results: HardeningCheckResult[];
 };
 
+export type ApplianceHealth = {
+  status: string;
+  write_actions_enabled: boolean;
+  http_probing_enabled: boolean;
+  cloud_fallback_enabled: boolean;
+  offline_mode: boolean;
+  llm_inference_enabled: boolean;
+  api_auth_required: boolean;
+  demo_mode: boolean;
+  secrets_backend: string;
+  scheduler_enabled: boolean;
+  halopsa_configured: boolean;
+  hudu_configured: boolean;
+  syncro_configured: boolean;
+  servicenow_configured: boolean;
+  autotask_configured: boolean;
+  itglue_configured: boolean;
+  confluence_configured: boolean;
+  sharepoint_configured: boolean;
+  m365_configured: boolean;
+};
+
 export type RestoreExercise = {
   id: number | null;
   exercise_id: string;
@@ -1109,6 +1146,14 @@ export type PackInfo = {
   version: string;
   locked: boolean;
   requires_license: boolean;
+};
+
+export type PackStatus = PackInfo & {
+  cli_available: boolean;
+  router_available: boolean;
+  mounted_cli: boolean;
+  mounted_router: boolean;
+  error: string | null;
 };
 
 export type SecretRecord = {

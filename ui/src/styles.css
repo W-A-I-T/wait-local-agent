@@ -308,6 +308,22 @@ a {
   display: block;
 }
 
+.sidebar-system {
+  border-top: 1px solid #31505a;
+  margin-top: 18px;
+  padding-top: 18px;
+}
+
+.sidebar-section-label {
+  color: #8ea99f;
+  display: block;
+  font-size: 0.74rem;
+  font-weight: 800;
+  letter-spacing: 0.1em;
+  margin: 0 12px 8px;
+  text-transform: uppercase;
+}
+
 .brand span {
   color: #b9cbc2;
   font-size: 0.88rem;
@@ -371,6 +387,69 @@ nav a:hover {
 .screen-stack {
   display: grid;
   gap: 18px;
+}
+
+.pack-list {
+  display: grid;
+  gap: 14px;
+}
+
+.pack-card {
+  border: 1px solid #e4ebe8;
+  border-radius: 8px;
+  display: grid;
+  gap: 16px;
+  padding: 16px;
+}
+
+.pack-card h3 {
+  margin: 0;
+}
+
+.pack-card-heading {
+  align-items: flex-start;
+  display: flex;
+  gap: 16px;
+  justify-content: space-between;
+}
+
+.pack-card-heading .screen-note {
+  margin: 4px 0 0;
+}
+
+.pack-badges {
+  align-items: flex-end;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  justify-content: flex-end;
+}
+
+.pack-detail-grid {
+  display: grid;
+  gap: 10px 14px;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  margin: 0;
+}
+
+.pack-detail-grid > div {
+  background: #f7faf8;
+  border: 1px solid #e4ebe8;
+  border-radius: 8px;
+  padding: 10px 12px;
+}
+
+.pack-detail-grid dt {
+  color: #60706a;
+  font-size: 0.78rem;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.pack-detail-grid dd {
+  margin-top: 5px;
+  overflow-wrap: anywhere;
 }
 
 .mcp-hero {
@@ -476,6 +555,157 @@ nav a:hover {
   color: #60706a;
   font-size: 0.84rem;
   font-weight: 700;
+}
+
+.smart-action-hero {
+  align-items: flex-start;
+  display: flex;
+  gap: 18px;
+  justify-content: space-between;
+}
+
+.smart-action-filters {
+  align-items: end;
+  display: grid;
+  gap: 12px;
+  grid-template-columns: minmax(240px, 1.6fr) repeat(3, minmax(140px, 1fr));
+  margin-bottom: 16px;
+}
+
+.smart-action-filters label {
+  color: #40504b;
+  display: grid;
+  font-weight: 800;
+  gap: 6px;
+}
+
+.smart-action-filters input,
+.smart-action-filters select {
+  border: 1px solid #dce5e1;
+  border-radius: 8px;
+  color: #253633;
+  min-width: 0;
+  padding: 9px 10px;
+}
+
+.smart-action-filters .search-box {
+  margin: 0;
+}
+
+.smart-action-filters .search-box input {
+  border: 0;
+  outline: 0;
+  padding: 0;
+  width: 100%;
+}
+
+.smart-action-table-wrap {
+  overflow-x: auto;
+}
+
+.smart-action-table {
+  border-collapse: collapse;
+  min-width: 960px;
+  width: 100%;
+}
+
+.smart-action-table th,
+.smart-action-table td {
+  border-bottom: 1px solid #e4ebe8;
+  padding: 12px;
+  text-align: left;
+  vertical-align: top;
+}
+
+.smart-action-table th {
+  color: #60706a;
+  font-size: 0.76rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.smart-action-row-trigger {
+  align-items: flex-start;
+  background: transparent;
+  border: 0;
+  color: #235d43;
+  display: grid;
+  gap: 5px;
+  padding: 0;
+  text-align: left;
+}
+
+.smart-action-row-trigger:hover {
+  color: #1f6f55;
+  text-decoration: underline;
+}
+
+.smart-action-row-trigger code,
+.smart-action-table code {
+  color: #60706a;
+  font-size: 0.82rem;
+}
+
+.smart-action-muted {
+  color: #60706a;
+  font-size: 0.88rem;
+}
+
+.smart-action-detail {
+  border-color: #b8c9c1;
+}
+
+.smart-action-detail > p {
+  margin-bottom: 18px;
+}
+
+.smart-action-detail-grid,
+.smart-action-schema-grid {
+  display: grid;
+  gap: 12px;
+}
+
+.smart-action-detail-grid {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  margin: 0 0 20px;
+}
+
+.smart-action-detail-grid > div {
+  background: #f7faf8;
+  border: 1px solid #e4ebe8;
+  border-radius: 8px;
+  padding: 10px;
+}
+
+.smart-action-detail-grid dt {
+  color: #60706a;
+  font-size: 0.76rem;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.smart-action-detail-grid dd {
+  margin: 6px 0 0;
+}
+
+.smart-action-schema-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.smart-action-code {
+  background: #1f2d2a;
+  border-radius: 8px;
+  color: #e8f5ef;
+  margin: 0;
+  max-height: 360px;
+  overflow: auto;
+  padding: 14px;
+}
+
+.smart-action-code code {
+  color: inherit;
+  white-space: pre;
 }
 
 .consultant-blueprint-list,
@@ -1988,6 +2218,10 @@ dd svg {
   .shell,
   .end-user-grid,
   .mcp-detail-grid,
+  .pack-detail-grid,
+  .smart-action-filters,
+  .smart-action-detail-grid,
+  .smart-action-schema-grid,
   .technician-chat-layout,
   .grid,
   .analytics-filters,
@@ -2083,8 +2317,15 @@ dd svg {
   }
 
   .mcp-hero,
-  .mcp-tool {
+  .pack-card-heading,
+  .mcp-tool,
+  .smart-action-hero {
     display: grid;
+  }
+
+  .pack-badges {
+    align-items: flex-start;
+    justify-content: flex-start;
   }
 
   .mcp-tool-meta {
