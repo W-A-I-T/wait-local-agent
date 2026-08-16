@@ -176,6 +176,21 @@ export type SmartActionRun = {
   client_id?: string | null;
 };
 
+export type SmartActionManifest = {
+  action_id: string;
+  title: string;
+  description: string;
+  kind: "deterministic" | "ai_assisted" | string;
+  input_schema: Record<string, unknown>;
+  output_schema: Record<string, unknown>;
+  requires_approval: boolean;
+  estimated_minutes_saved: number;
+  risk_level: string;
+  required_role: string;
+  access_mode: string;
+  approval_expiry_seconds: number;
+};
+
 export type WorkflowTemplate = {
   id: string;
   name: string;
