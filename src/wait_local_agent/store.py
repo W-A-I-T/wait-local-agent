@@ -99,6 +99,10 @@ class ClientConnectorMappingConflictError(ValueError):
     """Raised when a verified external company mapping already exists."""
 
 
+class QuarantinedTicketError(ValueError):
+    """Raised when an operation attempts to mutate a quarantined ticket."""
+
+
 def _client_scope_predicate(scope: ClientScope | str | None, column: str = "client_id") -> tuple[str, list[object]]:
     """Return a static SQL predicate and parameters for a required tenant scope."""
 
@@ -2700,6 +2704,16 @@ class Store:
         if row is None or str(row["status"]).strip().lower() != "active":
             raise ValueError("client_id must refer to an active client")
 
+    def _require_ticket_not_quarantined(self, connection: sqlite3.Connection, ticket_id: str) -> None:
+        row = connection.execute(
+            "select client_id from tickets where id = ?",
+            (ticket_id,),
+        ).fetchone()
+        if row is not None and str(row["client_id"] or "") == _QUARANTINE_CLIENT_ID:
+            raise QuarantinedTicketError(
+                f"ticket {ticket_id} is quarantined pending client mapping"
+            )
+
     def _write_ingested_ticket(self, connection: sqlite3.Connection, ticket: Ticket) -> None:
         now = utc_now()
         created_at = ticket.created_at.strip() or now
@@ -2850,6 +2864,7 @@ class Store:
             return None
         created_at = utc_now()
         with self._connect() as connection:
+            self._require_ticket_not_quarantined(connection, ticket_id)
             cursor = connection.execute(
                 """
                 insert into ticket_notes (ticket_id, client_id, author, body, created_at)
@@ -2909,6 +2924,8 @@ class Store:
         session_id = f"TCS-{uuid.uuid4().hex[:24].upper()}"
         now = utc_now()
         with self._connect() as connection:
+            if safe_ticket_id is not None:
+                self._require_ticket_not_quarantined(connection, safe_ticket_id)
             connection.execute(
                 """
                 insert into technician_chat_sessions
@@ -3010,6 +3027,7 @@ class Store:
             return None
         now = utc_now()
         with self._connect() as connection:
+            self._require_ticket_not_quarantined(connection, ticket_id)
             connection.execute(
                 """
                 update technician_chat_sessions
@@ -3040,6 +3058,8 @@ class Store:
             return None
         now = utc_now()
         with self._connect() as connection:
+            if existing.ticket_id is not None:
+                self._require_ticket_not_quarantined(connection, existing.ticket_id)
             connection.execute(
                 """
                 update technician_chat_sessions
@@ -3112,6 +3132,9 @@ class Store:
             ).fetchone()[0]
             if int(count) >= MAX_TECHNICIAN_CHAT_MESSAGES:
                 raise ValueError("technician chat session message limit reached")
+            ticket_for_message = safe_ticket_id or session.ticket_id
+            if ticket_for_message is not None:
+                self._require_ticket_not_quarantined(connection, ticket_for_message)
             cursor = connection.execute(
                 """
                 insert into technician_chat_messages
@@ -3207,6 +3230,7 @@ class Store:
             ticket_id = f"EUS-{uuid.uuid4().hex[:12].upper()}"
             try:
                 with self._connect() as connection:
+                    self._require_ticket_not_quarantined(connection, ticket_id)
                     connection.execute(
                         """
                         insert into tickets
@@ -3292,6 +3316,7 @@ class Store:
                 return None
             previous_status = str(current["status"])
             now = utc_now()
+            self._require_ticket_not_quarantined(connection, ticket_id)
             cursor = connection.execute(
                 """
                 update tickets set status = 'escalated', updated_at = ?
@@ -3348,6 +3373,7 @@ class Store:
             return None
         created_at = utc_now()
         with self._connect() as connection:
+            self._require_ticket_not_quarantined(connection, ticket_id)
             cursor = connection.execute(
                 """
                 insert into end_user_messages
@@ -3403,6 +3429,7 @@ class Store:
             return None
         created_at = utc_now()
         with self._connect() as connection:
+            self._require_ticket_not_quarantined(connection, ticket_id)
             cursor = connection.execute(
                 """
                 insert into end_user_messages
@@ -3597,6 +3624,7 @@ class Store:
         safe_comment = _redact_text(comment)
         ticket = self.get_ticket(ticket_id)
         with self._connect() as connection:
+            self._require_ticket_not_quarantined(connection, ticket_id)
             connection.execute(
                 """
                 insert into approvals (ticket_id, status, comment, updated_at)
@@ -3640,6 +3668,15 @@ class Store:
         payload_json = _json_dumps(payload)
         normalized_client_id = _normalize_client_id(client_id)
         with self._connect() as connection:
+            approval_ticket_id = _ticket_id_from_payload(payload)
+            if approval_ticket_id is None:
+                subject_ticket = connection.execute(
+                    "select id from tickets where id = ?",
+                    (subject_id,),
+                ).fetchone()
+                approval_ticket_id = str(subject_ticket["id"]) if subject_ticket is not None else None
+            if approval_ticket_id is not None:
+                self._require_ticket_not_quarantined(connection, approval_ticket_id)
             cursor = connection.execute(
                 """
                 insert into approval_requests
@@ -3707,6 +3744,9 @@ class Store:
             row = connection.execute("select * from approval_requests where id = ?", (request_id,)).fetchone()
             if row is None:
                 raise KeyError(request_id)
+            approval_ticket_id = _ticket_id_from_payload(_json_object_or_empty(str(row["payload_json"])))
+            if approval_ticket_id is not None:
+                self._require_ticket_not_quarantined(connection, approval_ticket_id)
             row = self._expire_approval_request(connection, row)
             current_status = str(row["status"])
             is_smart_action = str(row["action_type"]).startswith("smart_action:")
@@ -3766,6 +3806,9 @@ class Store:
             row = connection.execute("select * from approval_requests where id = ?", (request_id,)).fetchone()
             if row is None:
                 raise KeyError(request_id)
+            approval_ticket_id = _ticket_id_from_payload(_json_object_or_empty(str(row["payload_json"])))
+            if approval_ticket_id is not None:
+                self._require_ticket_not_quarantined(connection, approval_ticket_id)
             row = self._expire_approval_request(connection, row)
             if str(row["status"]) == "expired":
                 raise PermissionError("approval request has expired")
@@ -3818,6 +3861,9 @@ class Store:
             row = connection.execute("select * from approval_requests where id = ?", (request_id,)).fetchone()
             if row is None:
                 raise KeyError(request_id)
+            approval_ticket_id = _ticket_id_from_payload(_json_object_or_empty(str(row["payload_json"])))
+            if approval_ticket_id is not None:
+                self._require_ticket_not_quarantined(connection, approval_ticket_id)
             row = self._expire_approval_request(connection, row)
             if str(row["status"]) == "expired":
                 raise PermissionError("approval request has expired")
@@ -4002,6 +4048,8 @@ class Store:
         normalized_client_id = _normalize_client_id(client_id)
         payload_json = _json_dumps(payload)
         with self._connect() as connection:
+            if entity_type.strip().lower() == "ticket":
+                self._require_ticket_not_quarantined(connection, entity_id)
             cursor = connection.execute(
                 """
                 insert or ignore into event_deliveries
@@ -4285,6 +4333,7 @@ class Store:
         now = utc_now()
         normalized_client_id = _normalize_client_id(client_id)
         with self._connect() as connection:
+            self._require_ticket_not_quarantined(connection, ticket_id)
             cursor = connection.execute(
                 """
                 insert into workflow_runs
@@ -5489,6 +5538,8 @@ class Store:
         now = utc_now()
         normalized_client_id = _normalize_client_id(client_id)
         with self._connect() as connection:
+            for entity_id in entity_ids:
+                self._require_ticket_not_quarantined(connection, entity_id)
             cursor = connection.execute(
                 """
                 insert into agent_backfills
@@ -5644,6 +5695,7 @@ class Store:
         normalized_client_id = _normalize_client_id(client_id)
         state_json = _json_dumps(state)
         with self._connect() as connection:
+            self._require_ticket_not_quarantined(connection, entity_id)
             cursor = connection.execute(
                 """
                 insert into agent_runs
@@ -5787,6 +5839,9 @@ class Store:
         evidence_json = _json_dumps_value(evidence)
         approval_payload_json = _json_dumps(approval_payload)
         with self._connect() as connection:
+            approval_ticket_id = _ticket_id_from_payload(approval_payload)
+            if approval_ticket_id is not None:
+                self._require_ticket_not_quarantined(connection, approval_ticket_id)
             run_cursor = connection.execute(
                 """
                 insert into smart_action_runs
@@ -6050,6 +6105,9 @@ class Store:
         params_json = json.dumps(params, sort_keys=True)
         normalized_client_id = _normalize_client_id(client_id)
         with self._connect() as connection:
+            scheduled_ticket_id = _scheduled_ticket_id_for_job(job_kind, entity_id, params)
+            if scheduled_ticket_id is not None:
+                self._require_ticket_not_quarantined(connection, scheduled_ticket_id)
             cursor = connection.execute(
                 """
                 insert into scheduled_jobs
@@ -8513,6 +8571,34 @@ def _json_value_or_empty(payload: object) -> object:
 def _json_object_or_empty(payload: object) -> dict[str, object]:
     value = _json_value_or_empty(payload)
     return value if isinstance(value, dict) else {}
+
+
+def _ticket_id_from_payload(payload: dict[str, object]) -> str | None:
+    if not isinstance(payload, dict):
+        return None
+    ticket_id = payload.get("ticket_id")
+    if isinstance(ticket_id, str) and ticket_id.strip():
+        return ticket_id.strip()
+    nested = payload.get("payload")
+    if isinstance(nested, dict):
+        nested_ticket_id = nested.get("ticket_id")
+        if isinstance(nested_ticket_id, str) and nested_ticket_id.strip():
+            return nested_ticket_id.strip()
+    return None
+
+
+def _scheduled_ticket_id_for_job(
+    job_kind: str,
+    entity_id: str | None,
+    params: dict[str, object],
+) -> str | None:
+    if job_kind == "agent" and isinstance(entity_id, str) and entity_id.strip():
+        return entity_id.strip()
+    if job_kind in {"workflow", "playbook"}:
+        ticket_id = params.get("ticket_id")
+        if isinstance(ticket_id, str) and ticket_id.strip():
+            return ticket_id.strip()
+    return None
 
 
 def _json_list_or_empty(payload: object) -> list[object]:

@@ -8,6 +8,7 @@ service; this module does not create a second agent or provider engine.
 from __future__ import annotations
 
 import json
+import logging
 from collections.abc import Callable, Mapping
 from dataclasses import asdict, dataclass
 from datetime import date
@@ -25,7 +26,7 @@ from wait_local_agent.reports.msp import (
 )
 from wait_local_agent.reports.renderers import redact_text, redact_value
 from wait_local_agent.reports.service import ReportService
-from wait_local_agent.store import Store, _normalize_client_id
+from wait_local_agent.store import _QUARANTINE_CLIENT_ID, Store, _normalize_client_id
 from wait_local_agent.workflows import (
     WorkflowToolExecutor,
     get_workflow_template,
@@ -36,6 +37,7 @@ from wait_local_agent.workflows import (
 MAX_PLAYBOOK_PAYLOAD_FIELDS = 24
 MAX_PLAYBOOK_PAYLOAD_BYTES = 12_000
 MAX_PLAYBOOK_SUBSCRIPTION_FIELDS = 16
+LOGGER = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -732,6 +734,15 @@ def preview_msp_playbook(
     playbook = _required_playbook(store, playbook_id, client_id)
     payload = _bounded_playbook_payload(input_payload)
     effective_client_id = _validate_scope_and_ticket(store, playbook, ticket_id, client_id)
+    if ticket_id:
+        ticket = store.get_ticket(
+            ticket_id,
+            client_id=effective_client_id or AllClients(),
+            include_quarantine=True,
+        )
+        if ticket is not None and ticket.client_id == _QUARANTINE_CLIENT_ID:
+            LOGGER.warning("Skipping playbook %s for quarantined ticket %s", playbook_id, ticket_id)
+            return _empty_playbook_result(playbook, ticket_id, effective_client_id)
     steps = _preview_steps(playbook, payload)
     return {
         "format": "wait-local-agent.msp-playbook-preview",
@@ -796,6 +807,9 @@ def run_msp_playbook(
                     template_version=playbook.version,
                     input_payload=payload,
                 )
+                if workflow_run.id is None:
+                    LOGGER.warning("Skipping remaining playbook work for quarantined ticket %s", ticket_id)
+                    return _empty_playbook_result(playbook, ticket_id, effective_client_id)
                 if on_workflow_run is not None:
                     on_workflow_run(workflow_run)
                 step_result: dict[str, object] = {
@@ -863,6 +877,29 @@ def run_msp_playbook(
         "status": status,
         "stopped_after_step": stopped_after_step,
         "steps": results,
+        "unsupported": _unsupported_playbook_outputs(playbook),
+    }
+
+
+def _empty_playbook_result(
+    playbook: MspPlaybookDefinition,
+    ticket_id: str,
+    client_id: str | None,
+) -> dict[str, object]:
+    return {
+        "format": "wait-local-agent.msp-playbook-run",
+        "format_version": 1,
+        "run_id": None,
+        "execution_started": False,
+        "execution_mode": "skipped_quarantine",
+        "playbook_id": playbook.id,
+        "playbook_version": playbook.version,
+        "output_evidence": list(playbook.output_evidence),
+        "ticket_id": ticket_id,
+        "client_id": client_id,
+        "status": "skipped",
+        "stopped_after_step": None,
+        "steps": [],
         "unsupported": _unsupported_playbook_outputs(playbook),
     }
 
@@ -945,6 +982,7 @@ def _validate_scope_and_ticket(
         ticket = store.get_ticket(
             ticket_id,
             client_id=normalized_client_id if normalized_client_id is not None else AllClients(),
+            include_quarantine=True,
         )
         if ticket is None:
             raise LookupError(ticket_id)

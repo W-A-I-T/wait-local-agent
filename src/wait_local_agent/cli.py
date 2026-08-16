@@ -2972,6 +2972,9 @@ def run_workflow_gallery(entry_id: str, ticket_id: str) -> None:
         operator_instructions=entry.instructions,
         template_version=entry.version,
     )
+    if run.id is None:
+        typer.echo("ticket is quarantined pending client mapping")
+        return
     _dispatch_cli_workflow_completion(store, settings, run)
     typer.echo(
         f"run_id={run.id} status={run.status} ticket_id={run.ticket_id} "
@@ -3000,6 +3003,9 @@ def run_workflow(
         )
     except ValueError as exc:
         raise typer.BadParameter(str(exc)) from exc
+    if run.id is None:
+        typer.echo("ticket is quarantined pending client mapping")
+        return
     _dispatch_cli_workflow_completion(store, settings, run)
     typer.echo(f"run_id={run.id} status={run.status} ticket_id={run.ticket_id}")
 

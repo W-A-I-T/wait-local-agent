@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from typing import Protocol
 
 from wait_local_agent.client_scope import AllClients
@@ -9,10 +10,11 @@ from wait_local_agent.observability import ExecutionRecorder, StepRecord
 from wait_local_agent.reports.renderers import redact_text, redact_value
 from wait_local_agent.services import classify_ticket
 from wait_local_agent.smart_actions import ActionResult
-from wait_local_agent.store import Store, _normalize_client_id
+from wait_local_agent.store import _QUARANTINE_CLIENT_ID, Store, _normalize_client_id
 
 MAX_WORKFLOW_PAYLOAD_FIELDS = 16
 MAX_WORKFLOW_PAYLOAD_BYTES = 8_000
+LOGGER = logging.getLogger(__name__)
 
 
 class WorkflowToolExecutor(Protocol):
@@ -494,9 +496,24 @@ def run_workflow_template(
     ticket = store.get_ticket(
         ticket_id,
         client_id=normalized_client_id if normalized_client_id is not None else AllClients(),
+        include_quarantine=True,
     )
     if ticket is None:
         raise LookupError(ticket_id)
+    if ticket.client_id == _QUARANTINE_CLIENT_ID:
+        LOGGER.warning("Skipping workflow %s for quarantined ticket %s", template_id, ticket_id)
+        return WorkflowRun(
+            id=None,
+            template_id=template.id,
+            ticket_id=ticket.id,
+            status="failed",
+            message="ticket is quarantined pending client mapping",
+            approval_request_id=None,
+            created_at="",
+            updated_at="",
+            client_id=ticket.client_id,
+            template_version=template_version,
+        )
     effective_client_id = normalized_client_id if normalized_client_id is not None else ticket.client_id
     bounded_payload = _bounded_workflow_payload(
         template,

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from dataclasses import replace
 from datetime import UTC, date, datetime, timedelta
 from typing import TYPE_CHECKING, Any
@@ -24,7 +25,7 @@ from wait_local_agent.reports.msp import (
 from wait_local_agent.reports.renderers import redact_text
 from wait_local_agent.reports.service import ReportService
 from wait_local_agent.smart_actions import SmartActionService
-from wait_local_agent.store import Store
+from wait_local_agent.store import _QUARANTINE_CLIENT_ID, Store
 from wait_local_agent.workflows import run_workflow_template
 
 if TYPE_CHECKING:
@@ -32,6 +33,7 @@ if TYPE_CHECKING:
 
 
 _ALL_CLIENTS = AllClients()
+LOGGER = logging.getLogger(__name__)
 
 
 class SchedulerManager:
@@ -173,6 +175,14 @@ class SchedulerManager:
     async def _run_job(self, scheduled_job: ScheduledJob) -> None:
         params = _safe_json_object(scheduled_job.params_json)
         client_id = _string_or_none(params.get("client_id")) or scheduled_job.client_id
+        ticket_id = (
+            scheduled_job.entity_id
+            if scheduled_job.job_kind == "agent"
+            else _string_or_none(params.get("ticket_id"))
+        )
+        if self._is_quarantined_ticket(ticket_id, client_id):
+            LOGGER.warning("Skipping scheduled %s for quarantined ticket %s", scheduled_job.job_kind, ticket_id)
+            return
         if scheduled_job.job_kind == "playbook":
             await self._run_playbook_job(scheduled_job, params, client_id)
             return
@@ -197,6 +207,9 @@ class SchedulerManager:
                 tool_executor=self._smart_action_service,
                 input_payload=input_payload,
             )
+            if run.id is None:
+                LOGGER.warning("Skipping scheduled workflow for quarantined ticket %s", ticket_id)
+                return
         except Exception as exc:
             self._store.add_audit_event(
                 "scheduled_job.trigger_failed",
@@ -229,6 +242,9 @@ class SchedulerManager:
         """Run a scheduled playbook through the existing bounded coordinator."""
 
         ticket_id = _string_or_none(params.get("ticket_id"))
+        if self._is_quarantined_ticket(ticket_id, client_id):
+            LOGGER.warning("Skipping scheduled playbook for quarantined ticket %s", ticket_id)
+            return
         input_payload = params.get("input", {})
         try:
             if not isinstance(input_payload, dict):
@@ -285,6 +301,7 @@ class SchedulerManager:
                 params,
                 timezone=scheduled_job.timezone,
             )
+
             if self._smart_action_service is None:
                 raise RuntimeError("scheduled report execution is not configured")
             estimates = {
@@ -347,6 +364,9 @@ class SchedulerManager:
         params: dict[str, object],
         client_id: str | None,
     ) -> None:
+        if self._is_quarantined_ticket(scheduled_job.entity_id, client_id):
+            LOGGER.warning("Skipping scheduled agent for quarantined ticket %s", scheduled_job.entity_id)
+            return
         try:
             if self._agent_service is None:
                 raise RuntimeError("scheduled agent execution is not configured")
@@ -410,6 +430,16 @@ class SchedulerManager:
                 client_id=client_id,
                 actor="scheduler",
             )
+
+    def _is_quarantined_ticket(self, ticket_id: str | None, client_id: str | None) -> bool:
+        if not ticket_id:
+            return False
+        ticket = self._store.get_ticket(
+            ticket_id,
+            client_id=_ALL_CLIENTS,
+            include_quarantine=True,
+        )
+        return ticket is not None and ticket.client_id == _QUARANTINE_CLIENT_ID
 
     def _dispatch_completion(
         self,
