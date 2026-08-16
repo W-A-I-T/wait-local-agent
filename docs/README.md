@@ -5,6 +5,8 @@ This index groups the shipped documentation by the path an operator or
 contributor is most likely to follow. Capability and provider claims remain
 bounded by the current code and the verification notes in the relevant pages.
 
+> The `main` branch is the **2.0 development line** under `AGPL-3.0-only`. The preserved `1.x` baseline remains available under Apache License 2.0. See [license history](../LICENSE_HISTORY.md).
+
 ## Getting started
 
 - [Docker quickstart](getting-started/quickstart-docker.md) — run the Compose appliance.
@@ -17,7 +19,7 @@ bounded by the current code and the verification notes in the relevant pages.
 
 - [Architecture](concepts/architecture.md) — runtime, provider-neutral consultant layer, and governed execution.
 - [Security model](concepts/security-model.md) — local-first security, tenancy, redaction, and threat boundaries.
-- [Open-core boundary](concepts/open-core-boundary.md) — Apache 2.0 Community scope and edition framing.
+- [Public/commercial boundary](concepts/open-core-boundary.md) — AGPL 2.0 Community scope, preserved Apache 1.x history, commercial packs, and separate commercial licensing.
 - [Approvals and write gates](concepts/approvals-and-write-gates.md) — draft, review, approval, execution, and audit sequence.
 
 ## Connectors
@@ -84,4 +86,4 @@ bounded by the current code and the verification notes in the relevant pages.
 - [API reference](reference/api.md) — route-group overview and running OpenAPI docs.
 - [Environment variables](reference/environment-variables.md) — configuration source of truth.
 - [MCP reference](reference/mcp.md) — MCP route and policy boundary.
-
+- [Licensing and commercial transition](legal/README.md) — effective AGPL 2.0 source license, preserved Apache 1.x baseline, and remaining commercial-license work.
