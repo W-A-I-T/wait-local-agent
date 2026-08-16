@@ -389,6 +389,69 @@ nav a:hover {
   gap: 18px;
 }
 
+.pack-list {
+  display: grid;
+  gap: 14px;
+}
+
+.pack-card {
+  border: 1px solid #e4ebe8;
+  border-radius: 8px;
+  display: grid;
+  gap: 16px;
+  padding: 16px;
+}
+
+.pack-card h3 {
+  margin: 0;
+}
+
+.pack-card-heading {
+  align-items: flex-start;
+  display: flex;
+  gap: 16px;
+  justify-content: space-between;
+}
+
+.pack-card-heading .screen-note {
+  margin: 4px 0 0;
+}
+
+.pack-badges {
+  align-items: flex-end;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  justify-content: flex-end;
+}
+
+.pack-detail-grid {
+  display: grid;
+  gap: 10px 14px;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  margin: 0;
+}
+
+.pack-detail-grid > div {
+  background: #f7faf8;
+  border: 1px solid #e4ebe8;
+  border-radius: 8px;
+  padding: 10px 12px;
+}
+
+.pack-detail-grid dt {
+  color: #60706a;
+  font-size: 0.78rem;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.pack-detail-grid dd {
+  margin-top: 5px;
+  overflow-wrap: anywhere;
+}
+
 .mcp-hero {
   align-items: flex-start;
   display: flex;
@@ -2004,6 +2067,7 @@ dd svg {
   .shell,
   .end-user-grid,
   .mcp-detail-grid,
+  .pack-detail-grid,
   .technician-chat-layout,
   .grid,
   .analytics-filters,
@@ -2099,8 +2163,14 @@ dd svg {
   }
 
   .mcp-hero,
+  .pack-card-heading,
   .mcp-tool {
     display: grid;
+  }
+
+  .pack-badges {
+    align-items: flex-start;
+    justify-content: flex-start;
   }
 
   .mcp-tool-meta {

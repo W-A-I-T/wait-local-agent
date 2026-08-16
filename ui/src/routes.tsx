@@ -22,6 +22,7 @@ import { Settings } from "./screens/Settings";
 import { ApplianceHealth } from "./screens/ApplianceHealth";
 import { TechnicianChat } from "./screens/TechnicianChat";
 import { McpIntegration } from "./screens/McpIntegration";
+import { ExtensionsPacks } from "./screens/ExtensionsPacks";
 
 export function AppRoutes() {
   return (
@@ -48,6 +49,7 @@ export function AppRoutes() {
       <Route path="executions" element={<Executions />} />
       <Route path="settings" element={<Settings />} />
       <Route path="system/appliance-health" element={<ApplianceHealth />} />
+      <Route path="system/extensions" element={<ExtensionsPacks />} />
       <Route path="integrations/mcp" element={<McpIntegration />} />
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>

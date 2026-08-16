@@ -16,6 +16,7 @@ import {
   Network,
   Files,
   LibraryBig,
+  PackageOpen,
   ShieldCheck,
   Sparkles,
   Workflow
@@ -95,6 +96,12 @@ export function Sidebar() {
             <NavLink to="/system/appliance-health" className={({ isActive }) => isActive ? "active" : undefined}>
               <ShieldCheck size={18} aria-hidden="true" />
               Appliance Health
+            </NavLink>
+          </RoleGate>
+          <RoleGate role={role} resolved={roleResolved} allowed={["admin"]}>
+            <NavLink to="/system/extensions" className={({ isActive }) => isActive ? "active" : undefined}>
+              <PackageOpen size={18} aria-hidden="true" />
+              Extensions / Packs
             </NavLink>
           </RoleGate>
         </nav>

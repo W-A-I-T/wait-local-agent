@@ -6,6 +6,8 @@ All notable changes to WAIT Local Agent will be documented in this file.
 
 ### Added
 
+- Admins can now inspect installed Extensions / Packs under System, including
+  version, lock/trust state, license requirements, and CLI/router mount status.
 - Admins can now review read-only appliance health, update status, and latest hardening evidence from System → Appliance Health.
 - Admins can now discover the local MCP server under Integrations → MCP, copy a
   bearer-token connection configuration, and review the published tool catalog
