@@ -2,9 +2,19 @@ import { fireEvent, render, screen } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { Settings } from "../src/screens/Settings";
-import { FounderJourney } from "../src/surfaces/founder/FounderJourney";
+import { FounderJourney, uploadProgressLabel } from "../src/surfaces/founder/FounderJourney";
 
 const dashboardState = vi.hoisted(() => ({ loading: false, role: "admin" as "admin" | "viewer" }));
+const founderProjectorState = vi.hoisted(() => ({ returnNullLaunchPassport: false }));
+
+vi.mock("../src/api/founder", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../src/api/founder")>();
+  return {
+    ...actual,
+    projectLaunchPassportStatus: (value: unknown) =>
+      founderProjectorState.returnNullLaunchPassport ? null : actual.projectLaunchPassportStatus(value)
+  };
+});
 
 vi.mock("../src/app/DashboardContext", () => ({
   useDashboard: () => ({
@@ -17,11 +27,22 @@ vi.mock("../src/app/DashboardContext", () => ({
 afterEach(() => {
   dashboardState.loading = false;
   dashboardState.role = "admin";
+  founderProjectorState.returnNullLaunchPassport = false;
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
 });
 
 describe("wla-wp17 Launch Passport UI", () => {
+  it.each([
+    ["uploaded", "complete"],
+    ["completed", "complete"],
+    ["pending_upload", "accepted"],
+    ["failed", "not completed"],
+    ["unexpected", "not completed"]
+  ])("labels %s upload progress truthfully", (status, label) => {
+    expect(uploadProgressLabel(status)).toBe(label);
+  });
+
   it("shows the optional, not-configured connection state without treating it as a failure", async () => {
     vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
       const path = String(input);
@@ -197,7 +218,36 @@ describe("wla-wp17 Launch Passport UI", () => {
 
     expect(await screen.findByRole("heading", { name: "Results" })).toBeInTheDocument();
     expect(screen.getByText(/latest report reference is available/i)).toBeInTheDocument();
+    expect(screen.getByText("Upload complete. Your latest result is ready to review.")).toBeInTheDocument();
     expect(screen.getByText("Connected")).toBeInTheDocument();
+  });
+
+  it("does not label a missing launch-passport status as done", async () => {
+    founderProjectorState.returnNullLaunchPassport = true;
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+      const path = String(input);
+      if (path === "/founder/scan") return jsonResponse({ artifact_id: "art-1", status: "preview_ready" });
+      if (path === "/founder/upload-preview/art-1") return jsonResponse({ artifact_id: "art-1" });
+      if (path === "/founder/upload/art-1") return jsonResponse({ status: "uploaded" });
+      if (path === "/founder/lp-status") return jsonResponse({});
+      if (path === "/founder/results") return jsonResponse({ scans: [], latest_report: null });
+      throw new Error(`Unexpected request: ${path}`);
+    }));
+
+    render(<MemoryRouter><FounderJourney /></MemoryRouter>);
+
+    fireEvent.change(screen.getByPlaceholderText("/path/to/your-project"), { target: { value: "/workspace/project" } });
+    fireEvent.click(screen.getByRole("button", { name: "Next" }));
+    await screen.findByText("What will be shared");
+    fireEvent.click(screen.getByRole("button", { name: "Preview upload package" }));
+    await screen.findByText("Review complete. You can now confirm this exact upload package.");
+    fireEvent.click(screen.getByRole("button", { name: "Continue to confirmation" }));
+    await screen.findByRole("heading", { name: "Confirm this upload" });
+    fireEvent.click(screen.getByRole("button", { name: "Upload reviewed package" }));
+
+    expect(await screen.findByRole("heading", { name: "Results" })).toBeInTheDocument();
+    expect(screen.getByText("No status yet")).toBeInTheDocument();
+    expect(screen.queryByText("Done")).not.toBeInTheDocument();
   });
 
   it("handles object-enveloped scan results without rendering an undefined count", async () => {

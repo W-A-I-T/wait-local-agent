@@ -6,6 +6,7 @@ All notable changes to WAIT Local Agent will be documented in this file.
 
 ### Fixed
 
+- The Founder journey no longer reports an unknown or missing status as complete.
 - Successful Power Platform deployment stages, such as solution imports, now
   report `deployment_started: true` after a non-build PAC command runs instead
   of echoing the plan's planning-time flag.
