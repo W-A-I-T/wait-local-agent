@@ -37,6 +37,77 @@ def test_principals_migration_is_additive_and_credentials_are_hashed(tmp_path: P
     assert stored_hash == hash_credential("customer-secret")
 
 
+def test_store_principal_credential_accessors_report_msp_admin_and_hits(tmp_path: Path) -> None:
+    store = Store(tmp_path / "state.db")
+
+    assert store.has_msp_admin_credential() is False
+    assert store.find_principal_by_credential_hash(hash_credential("missing")) is None
+
+    store.create_principal("msp-admin", kind="staff")
+    credential_hash = store.add_principal_credential("msp-admin", "msp-secret")
+    store.add_principal_client_role("msp-admin", "acme", "admin")
+
+    principal = store.find_principal_by_credential_hash(credential_hash)
+    assert principal is not None
+    assert principal.principal_id == "msp-admin"
+    assert principal.principal_kind == "staff"
+    assert principal.client_roles == (("acme", "admin"),)
+    assert principal.global_roles == frozenset()
+    assert store.has_msp_admin_credential() is False
+
+    store.add_principal_global_role("msp-admin")
+
+    assert store.has_msp_admin_credential() is True
+    principal = store.find_principal_by_credential_hash(credential_hash)
+    assert principal is not None
+    assert principal.global_roles == frozenset({"msp_admin"})
+
+
+def test_store_principal_accessors_reject_invalid_values(tmp_path: Path) -> None:
+    store = Store(tmp_path / "state.db")
+
+    with pytest.raises(ValueError):
+        store.create_principal("", kind="staff")
+    with pytest.raises(ValueError):
+        store.create_principal("p1", kind="bogus")
+
+    with pytest.raises(ValueError):
+        store.add_principal_credential("", "tok")
+    with pytest.raises(KeyError):
+        store.add_principal_credential("missing-principal", "tok")
+
+    store.create_principal("p1", kind="staff")
+
+    with pytest.raises(ValueError):
+        store.add_principal_client_role("", "acme", "admin")
+    with pytest.raises(ValueError):
+        store.add_principal_client_role("p1", "", "admin")
+    with pytest.raises(ValueError):
+        store.add_principal_client_role("p1", "acme", "bogus-role")
+    with pytest.raises(KeyError):
+        store.add_principal_client_role("missing", "acme", "admin")
+
+    with pytest.raises(ValueError):
+        store.add_principal_global_role("", "msp_admin")
+    with pytest.raises(ValueError):
+        store.add_principal_global_role("p1", "not-msp-admin")
+    with pytest.raises(KeyError):
+        store.add_principal_global_role("missing", "msp_admin")
+
+    store.add_principal_credential("p1", "tok")
+    store.add_principal_client_role("p1", "acme", "admin")
+    store.add_principal_global_role("p1")
+
+    assert store.has_msp_admin_credential() is True
+    principal = store.find_principal_by_credential_hash(hash_credential("tok"))
+    assert principal == PrincipalAuthRecord(
+        principal_id="p1",
+        principal_kind="staff",
+        client_roles=(("acme", "admin"),),
+        global_roles=frozenset({"msp_admin"}),
+    )
+
+
 def test_principal_resolution_uses_memberships_and_denies_unknown_credentials(settings) -> None:
     store = Store(settings.data_path)
     store.create_principal("customer-a")
@@ -70,7 +141,7 @@ def test_generic_admin_membership_is_not_msp_admin(settings) -> None:
     assert context.is_msp_admin is False
 
 
-def test_bootstrap_admin_tokens_are_cross_client_but_principals_remain_bound(settings) -> None:
+def test_bootstrap_tokens_are_cross_client_but_principals_remain_bound(settings) -> None:
     secured = replace(
         settings,
         demo_mode=False,
@@ -78,19 +149,22 @@ def test_bootstrap_admin_tokens_are_cross_client_but_principals_remain_bound(set
         api_token="api-bootstrap",
         admin_token="admin-bootstrap",
         tech_token="tech-bootstrap",
+        viewer_token="viewer-bootstrap",
     )
 
-    for token in ("api-bootstrap", "admin-bootstrap"):
+    for token, role in (
+        ("api-bootstrap", Role.ADMIN),
+        ("admin-bootstrap", Role.ADMIN),
+        ("tech-bootstrap", Role.TECHNICIAN),
+        ("viewer-bootstrap", Role.VIEWER),
+    ):
         context = resolve_auth_context(secured, f"Bearer {token}")
-        assert context.role == Role.ADMIN
+        assert context.role == role
         assert context.is_msp_admin is True
         assert resolve_client_scope(context, "client-b").client_id == "client-b"
 
     technician = resolve_auth_context(secured, "Bearer tech-bootstrap")
     assert technician.client_ids == frozenset({"client-a"})
-    assert technician.is_msp_admin is False
-    with pytest.raises(HTTPException, match="outside authenticated scope"):
-        resolve_client_scope(technician, "client-b")
 
 
 def test_bound_non_admin_principal_cannot_select_foreign_client(settings) -> None:

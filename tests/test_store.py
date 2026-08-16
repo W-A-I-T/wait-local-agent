@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from wait_local_agent.client_scope import AllClients
+from wait_local_agent.client_scope import AllClients, BoundClients
 from wait_local_agent.models import AgentDefinition
 from wait_local_agent.store import SMART_ACTION_APPROVAL_CAPABILITY, Store
 from wait_local_agent.workflows import get_workflow_template
@@ -300,6 +300,80 @@ def test_store_template_gallery_revision_lookup_and_validation_edges(tmp_path: P
     assert [revision.version for revision in backfilled] == [1]
 
 
+def test_store_client_scope_typed_surfaces_accept_explicit_scopes_and_reject_missing_scope(
+    tmp_path: Path,
+) -> None:
+    store = Store(tmp_path / "state.db")
+    template = get_workflow_template("ticket-triage")
+    assert template is not None
+    acme_template = store.create_template_gallery_entry(template, provenance="acme", client_id="acme")
+    beta_template = store.create_template_gallery_entry(template, provenance="beta", client_id="beta")
+
+    acme_subscription = store.create_msp_playbook_subscription(
+        "ticket-intake-review", "ticket.created", "acme", {}
+    )
+    beta_subscription = store.create_msp_playbook_subscription(
+        "documentation-assisted-response", "ticket.updated", "beta", {}
+    )
+    acme_agent_run = store.create_agent_run("ticket-agent", "TCK-ACME", "tester", "completed", 1, {}, client_id="acme")
+    beta_agent_run = store.create_agent_run("ticket-agent", "TCK-BETA", "tester", "completed", 1, {}, client_id="beta")
+    acme_action_run = store.create_smart_action_run(
+        "ticket-triage", "tester", "success", "acme", {}, [], client_id="acme"
+    )
+    beta_action_run = store.create_smart_action_run(
+        "ticket-triage", "tester", "success", "beta", {}, [], client_id="beta"
+    )
+    acme_job = store.create_scheduled_job("ticket-triage", "0 9 * * *", {}, client_id="acme")
+    beta_job = store.create_scheduled_job("ticket-triage", "0 10 * * *", {}, client_id="beta")
+    acme_source = store.upsert_collector_source(
+        module_id="scope-fixture", name="Acme", config={"tenant": "acme"}, client_id="acme"
+    )
+    beta_source = store.upsert_collector_source(
+        module_id="scope-fixture", name="Beta", config={"tenant": "beta"}, client_id="beta"
+    )
+
+    all_clients = AllClients()
+    acme_clients = BoundClients(frozenset({"acme"}))
+    assert {entry.id for entry in store.list_template_gallery_entries(all_clients)} == {
+        acme_template.id,
+        beta_template.id,
+    }
+    assert [entry.id for entry in store.list_template_gallery_entries(acme_clients)] == [acme_template.id]
+    assert {item.id for item in store.list_msp_playbook_subscriptions(all_clients)} == {
+        acme_subscription.id,
+        beta_subscription.id,
+    }
+    assert [item.id for item in store.list_msp_playbook_subscriptions(acme_clients)] == [acme_subscription.id]
+    assert {run.id for run in store.list_agent_runs(all_clients)} == {acme_agent_run.id, beta_agent_run.id}
+    assert [run.id for run in store.list_agent_runs(acme_clients)] == [acme_agent_run.id]
+    assert {run.id for run in store.list_smart_action_runs(all_clients)} == {
+        acme_action_run.id,
+        beta_action_run.id,
+    }
+    assert [run.id for run in store.list_smart_action_runs(acme_clients)] == [acme_action_run.id]
+    assert {job.id for job in store.list_scheduled_jobs(all_clients)} == {acme_job.id, beta_job.id}
+    assert [job.id for job in store.list_scheduled_jobs(acme_clients)] == [acme_job.id]
+    assert {source.id for source in store.list_collector_sources(all_clients)} == {
+        acme_source.id,
+        beta_source.id,
+    }
+    assert [source.id for source in store.list_collector_sources(acme_clients)] == [acme_source.id]
+
+    scoped_lists = (
+        store.list_template_gallery_entries,
+        store.list_msp_playbook_subscriptions,
+        store.list_agent_runs,
+        store.list_smart_action_runs,
+        store.list_scheduled_jobs,
+        store.list_collector_sources,
+    )
+    for list_surface in scoped_lists:
+        with pytest.raises(ValueError, match="client scope|non-empty"):
+            list_surface(None)  # type: ignore[arg-type]
+        with pytest.raises(ValueError, match="client scope|non-empty"):
+            list_surface(" ")
+
+
 def test_store_client_filters_cover_required_list_surfaces(tmp_path: Path) -> None:
     store = Store(tmp_path / "state.db")
 
@@ -494,7 +568,7 @@ def test_store_scheduled_job_crud_and_client_filters(tmp_path: Path) -> None:
     assert resumed.paused is False
     assert deleted.id == beta.id
     assert [job.id for job in store.list_scheduled_jobs(client_id="acme")] == [acme.id]
-    assert [job.id for job in store.list_scheduled_jobs(client_id="")] == [acme.id]
+    assert [job.id for job in store.list_scheduled_jobs(client_id=AllClients())] == [acme.id]
     assert acme.timezone == "UTC"
     assert store.get_scheduled_job(beta.id or 0) is None
 
@@ -555,7 +629,7 @@ def test_store_smart_action_crud_filters_and_completion_guards(tmp_path: Path) -
     assert store.get_smart_action_run(acme_run.id, "acme") is not None
     assert store.get_smart_action_run(acme_run.id, "beta") is None
     assert [run.client_id for run in store.list_smart_action_runs(client_id="acme")] == ["acme"]
-    assert [run.client_id for run in store.list_smart_action_runs(client_id="")] == ["beta", "acme"]
+    assert [run.client_id for run in store.list_smart_action_runs(client_id=AllClients())] == ["beta", "acme"]
     assert store.set_smart_action_run_approval(acme_run.id, acme_approval.id).approval_id == acme_approval.id
 
     with pytest.raises(PermissionError, match="completed through SmartActionService"):

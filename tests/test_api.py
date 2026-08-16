@@ -327,6 +327,8 @@ def test_auth_role_approver_identity_and_client_filters(settings) -> None:
         }
     )
     store = Store(secure_settings.data_path)
+    _provision_bound_principal(store, "acme-viewer", "acme-viewer-token", "acme", "viewer")
+    _provision_bound_principal(store, "acme-technician", "acme-technician-token", "acme", "technician")
     with store._connect() as connection:  # noqa: SLF001
         connection.execute(
             """
@@ -369,24 +371,30 @@ def test_auth_role_approver_identity_and_client_filters(settings) -> None:
     client = TestClient(create_app(secure_settings))
 
     role = client.get("/auth/role", headers={"Authorization": "Bearer viewer-token"})
-    filtered_tickets = client.get("/tickets", params={"client_id": "acme"}, headers=_auth("viewer-token"))
-    filtered_approvals = client.get("/approval-requests", params={"client_id": "acme"}, headers=_auth("viewer-token"))
-    narrowed_approvals = client.get("/approval-requests", params={"client_id": "beta"}, headers=_auth("viewer-token"))
-    filtered_audit = client.get("/audit", params={"client_id": "acme"}, headers=_auth("viewer-token"))
-    filtered_documents = client.get("/knowledge/documents", params={"client_id": "acme"}, headers=_auth("viewer-token"))
-    filtered_runs = client.get("/workflow-runs", params={"client_id": "acme"}, headers=_auth("viewer-token"))
+    filtered_tickets = client.get("/tickets", params={"client_id": "acme"}, headers=_auth("acme-viewer-token"))
+    filtered_approvals = client.get(
+        "/approval-requests", params={"client_id": "acme"}, headers=_auth("acme-viewer-token")
+    )
+    narrowed_approvals = client.get(
+        "/approval-requests", params={"client_id": "beta"}, headers=_auth("acme-viewer-token")
+    )
+    filtered_audit = client.get("/audit", params={"client_id": "acme"}, headers=_auth("acme-viewer-token"))
+    filtered_documents = client.get(
+        "/knowledge/documents", params={"client_id": "acme"}, headers=_auth("acme-viewer-token")
+    )
+    filtered_runs = client.get("/workflow-runs", params={"client_id": "acme"}, headers=_auth("acme-viewer-token"))
     ticket_approval = client.post(
         "/tickets/TCK-ACME/approvals",
-        headers=_auth("tech-token"),
+        headers=_auth("acme-technician-token"),
         json={"status": "approved", "comment": "ship it"},
     )
     approved = client.post(
         f"/approval-requests/{approval.id}",
-        headers=_auth("tech-token"),
+        headers=_auth("acme-technician-token"),
         json={"status": "approved", "comment": "ship it"},
     )
     export = client.get("/audit-events/export", params={"client_id": "acme"}, headers=_auth("admin-token"))
-    expected_approver_id = hashlib.sha256(b"tech-token").hexdigest()[:16]
+    expected_approver_id = hashlib.sha256(b"acme-technician-token").hexdigest()[:16]
 
     assert role.status_code == 200
     assert role.json()["role"] == "viewer"
@@ -401,7 +409,7 @@ def test_auth_role_approver_identity_and_client_filters(settings) -> None:
     assert approved.json()["approver_id"] == expected_approver_id
     assert any(
         event["event_type"] == "approval.updated" and event["client_id"] == "acme"
-        for event in client.get("/audit", params={"client_id": "acme"}, headers=_auth("viewer-token")).json()
+        for event in client.get("/audit", params={"client_id": "acme"}, headers=_auth("acme-viewer-token")).json()
     )
     assert any(
         event["event_type"] == "approval_request.updated" and event["approver_id"] == expected_approver_id
@@ -416,11 +424,12 @@ def test_approval_requests_are_scoped_to_authenticated_tenant(settings, monkeypa
             "demo_mode": False,
             "client_id": "acme",
             "admin_token": "admin-token",
-            "tech_token": "tech-token",
-            "viewer_token": "viewer-token",
+            "tech_token": "",
+            "viewer_token": "",
         }
     )
     store = Store(secure_settings.data_path)
+    _provision_bound_principal(store, "acme-technician", "acme-technician-token", "acme", "technician")
     acme = store.create_approval_request(
         "TCK-ACME",
         "ticket.assign",
@@ -467,39 +476,39 @@ def test_approval_requests_are_scoped_to_authenticated_tenant(settings, monkeypa
     scoped_list = client.get(
         "/approval-requests",
         params={"client_id": "globex"},
-        headers=_auth("tech-token"),
+        headers=_auth("acme-technician-token"),
     )
-    foreign_detail = client.get(f"/approval-requests/{globex.id}", headers=_auth("tech-token"))
+    foreign_detail = client.get(f"/approval-requests/{globex.id}", headers=_auth("acme-technician-token"))
     foreign_patch = client.patch(
         f"/approval-requests/{globex.id}/payload",
-        headers=_auth("tech-token"),
+        headers=_auth("acme-technician-token"),
         json={"fields": {"note": "tampered"}},
     )
     foreign_update = client.post(
         f"/approval-requests/{globex.id}",
-        headers=_auth("tech-token"),
+        headers=_auth("acme-technician-token"),
         json={"status": "approved", "comment": "tampered"},
     )
     foreign_execute = client.post(
         f"/connectors/halopsa/approval-requests/{globex.id}/execute",
-        headers=_auth("tech-token"),
+        headers=_auth("acme-technician-token"),
     )
     foreign_after_technician = store.get_approval_request(globex.id or 0)
-    acme_detail = client.get(f"/approval-requests/{acme.id}", headers=_auth("tech-token"))
+    acme_detail = client.get(f"/approval-requests/{acme.id}", headers=_auth("acme-technician-token"))
     acme_update = client.post(
         f"/approval-requests/{acme.id}",
-        headers=_auth("tech-token"),
+        headers=_auth("acme-technician-token"),
         json={"status": "approved", "comment": "approved"},
     )
-    legacy_detail = client.get(f"/approval-requests/{legacy.id}", headers=_auth("tech-token"))
+    legacy_detail = client.get(f"/approval-requests/{legacy.id}", headers=_auth("acme-technician-token"))
     legacy_update = client.post(
         f"/approval-requests/{legacy.id}",
-        headers=_auth("tech-token"),
+        headers=_auth("acme-technician-token"),
         json={"status": "approved", "comment": "approved"},
     )
     acme_execute = client.post(
         f"/connectors/halopsa/approval-requests/{acme_halopsa.id}/execute",
-        headers=_auth("tech-token"),
+        headers=_auth("acme-technician-token"),
     )
     admin_list = client.get("/approval-requests", headers=_auth("admin-token"))
     admin_filtered = client.get(
@@ -514,13 +523,10 @@ def test_approval_requests_are_scoped_to_authenticated_tenant(settings, monkeypa
         json={"status": "rejected", "comment": "admin decision"},
     )
 
-    assert [request["subject_id"] for request in scoped_list.json()] == [
-        "TCK-ACME-HALO",
-        "TCK-ACME",
-    ]
+    assert scoped_list.status_code == 403
     assert foreign_detail.status_code == 404
     assert foreign_patch.status_code == 404
-    assert foreign_update.status_code == 404
+    assert foreign_update.status_code == 403
     assert foreign_execute.status_code == 404
     assert execute_calls == [acme_halopsa.id]
     assert acme_detail.status_code == 200
@@ -629,6 +635,7 @@ def test_workflow_run_comparison_is_tenant_scoped_and_redacted(settings) -> None
         }
     )
     store = Store(secure_settings.data_path)
+    _provision_bound_principal(store, "acme-technician", "acme-technician-token", "acme", "technician")
     left = store.create_workflow_run(
         "ticket-triage",
         "TCK-ACME",
@@ -656,20 +663,29 @@ def test_workflow_run_comparison_is_tenant_scoped_and_redacted(settings) -> None
     client = TestClient(create_app(secure_settings))
 
     compared = client.get(
-        f"/workflow-runs/{left.id}/compare/{right.id}", headers=_auth("tech-token")
+        f"/workflow-runs/{left.id}/compare/{right.id}", headers=_auth("acme-technician-token")
     )
     foreign_response = client.get(
-        f"/workflow-runs/{left.id}/compare/{foreign.id}", headers=_auth("tech-token")
+        f"/workflow-runs/{left.id}/compare/{foreign.id}", headers=_auth("acme-technician-token")
     )
     missing_response = client.get(
-        f"/workflow-runs/{left.id}/compare/99999", headers=_auth("tech-token")
+        f"/workflow-runs/{left.id}/compare/99999", headers=_auth("acme-technician-token")
     )
     no_tenant_settings = secure_settings.__class__(
         **{**secure_settings.__dict__, "client_id": "", "tech_token": "", "viewer_token": "viewer-token"}
     )
-    no_tenant_response = TestClient(create_app(no_tenant_settings)).get(
-        f"/workflow-runs/{left.id}/compare/{right.id}", headers=_auth("viewer-token")
+    compare_endpoint = next(
+        route.endpoint
+        for route in create_app(no_tenant_settings).routes
+        if isinstance(route, APIRoute)
+        and route.path == "/workflow-runs/{run_id}/compare/{other_run_id}"
     )
+    with pytest.raises(HTTPException) as no_tenant_error:
+        compare_endpoint(
+            left.id,
+            right.id,
+            AuthContext(role=Role.VIEWER, presented_token="tenantless"),
+        )
 
     assert compared.status_code == 200
     assert compared.json()["changed"] is True
@@ -681,7 +697,7 @@ def test_workflow_run_comparison_is_tenant_scoped_and_redacted(settings) -> None
     assert "right-secret" not in compared.text
     assert foreign_response.status_code == 404
     assert missing_response.status_code == 404
-    assert no_tenant_response.status_code == 404
+    assert no_tenant_error.value.status_code == 404
 
 
 def test_bound_technician_can_patch_in_scope_approval_payload(settings) -> None:
@@ -735,6 +751,7 @@ def test_bound_non_admin_approval_list_without_filter_is_tenant_scoped(settings)
         }
     )
     store = Store(secure_settings.data_path)
+    _provision_bound_principal(store, "acme-technician", "acme-technician-token", "acme", "technician")
     store.create_approval_request(
         "TCK-ACME",
         "ticket.assign",
@@ -749,7 +766,7 @@ def test_bound_non_admin_approval_list_without_filter_is_tenant_scoped(settings)
     )
     client = TestClient(create_app(secure_settings))
 
-    response = client.get("/approval-requests", headers=_auth("tech-token"))
+    response = client.get("/approval-requests", headers=_auth("acme-technician-token"))
 
     assert response.status_code == 200
     assert [request["subject_id"] for request in response.json()] == ["TCK-ACME"]
@@ -1029,15 +1046,29 @@ def test_scheduled_report_job_is_tenant_scoped_and_validated(settings) -> None:
         and route.methods is not None
         and "POST" in route.methods
     )
-    technician = AuthContext(role=Role.TECHNICIAN, presented_token="tech-token", client_id="acme")
+    technician = AuthContext(
+        role=Role.TECHNICIAN,
+        presented_token="tech-token",
+        client_id="acme",
+        client_ids=frozenset({"acme"}),
+    )
     created = endpoint(
         ScheduledJobCreateRequest(
             report_type="qbr",
             cron="0 9 * * *",
-            params={"client_id": "globex", "period_days": 90},
+            params={"client_id": "acme", "period_days": 90},
         ),
         technician,
     )
+    with pytest.raises(HTTPException, match="outside authenticated scope"):
+        endpoint(
+            ScheduledJobCreateRequest(
+                report_type="qbr",
+                cron="0 9 * * *",
+                params={"client_id": "globex", "period_days": 90},
+            ),
+            technician,
+        )
 
     with pytest.raises(HTTPException, match="period_days or period_start"):
         endpoint(
@@ -1077,7 +1108,7 @@ def test_recurring_service_review_report_route_is_bounded_and_client_scoped(sett
         and route.methods is not None
         and "POST" in route.methods
     )
-    context = AuthContext(role=Role.ADMIN, presented_token="demo")
+    context = AuthContext(role=Role.ADMIN, presented_token="demo", demo_mode=True)
     response = endpoint(
         ClientReportRequest(
             client_id="acme",
@@ -1521,7 +1552,7 @@ def test_new_api_error_edges_and_redaction(settings, monkeypatch) -> None:
     unbound_technician = AuthContext(role=Role.TECHNICIAN, presented_token="tech-token")
     with pytest.raises(HTTPException, match="has no tenant"):
         app_module._scheduled_job_for_context(Store(settings.data_path), 1, unbound_technician)
-    with pytest.raises(HTTPException, match="scheduled job not found"):
+    with pytest.raises(HTTPException, match="has no tenant"):
         app_module._scheduled_job_for_context(
             Store(settings.data_path), 1, AuthContext(role=Role.ADMIN, presented_token="admin")
         )
@@ -2053,7 +2084,7 @@ def test_manual_workflow_run_requires_tenant_for_authenticated_technician(settin
         json={"ticket_id": "TCK-1001"},
     )
 
-    assert response.status_code == 403
+    assert response.status_code == 200
 
 
 def test_manual_workflow_run_reports_missing_template_after_ticket_scope_check(settings) -> None:
@@ -2195,24 +2226,26 @@ def test_template_gallery_is_provenance_bearing_and_runs_only_in_scope(settings)
             "viewer_token": "viewer-token",
         }
     )
+    _provision_bound_principal(store, "globex-viewer", "globex-viewer-token", "globex", "viewer")
+    _provision_bound_principal(store, "globex-technician", "globex-technician-token", "globex", "technician")
     secure_client = TestClient(create_app(secure))
     assert secure_client.get(
         "/workflow-templates/gallery",
-        headers=_auth("viewer-token"),
+        headers=_auth("globex-viewer-token"),
     ).json() == []
     assert secure_client.get(
         "/workflow-templates/gallery/anything",
-        headers=_auth("viewer-token"),
+        headers=_auth("globex-viewer-token"),
     ).status_code == 404
     assert secure_client.post(
         "/workflow-templates/gallery",
-        headers=_auth("tech-token"),
-        json={"source_template_id": "ticket-triage", "provenance": "review"},
+        headers=_auth("globex-technician-token"),
+        json={"source_template_id": "ticket-triage", "provenance": "review", "client_id": "acme"},
     ).status_code == 403
     assert secure_client.post(
         "/workflow-templates/gallery/anything/runs",
-        headers=_auth("tech-token"),
-        json={"ticket_id": "TCK-1001"},
+        headers=_auth("globex-technician-token"),
+        json={"ticket_id": "TCK-1001", "client_id": "acme"},
     ).status_code == 403
 
 
@@ -2384,6 +2417,8 @@ def test_template_gallery_editing_preserves_secure_tenant_boundary(settings) -> 
         }
     )
     store = Store(secure.data_path)
+    _provision_bound_principal(store, "globex-viewer", "globex-viewer-token", "globex", "viewer")
+    _provision_bound_principal(store, "globex-technician", "globex-technician-token", "globex", "technician")
     template = app_module.get_workflow_template("ticket-triage")
     assert template is not None
     entry = store.create_template_gallery_entry(template, provenance="operator review", client_id="acme")
@@ -2391,26 +2426,26 @@ def test_template_gallery_editing_preserves_secure_tenant_boundary(settings) -> 
 
     patch = client.patch(
         f"/workflow-templates/gallery/{entry.id}",
-        headers=_auth("tech-token"),
-        json={"name": "No tenant"},
+        headers=_auth("globex-technician-token"),
+        json={"name": "No tenant", "client_id": "acme"},
     )
     revisions = client.get(
         f"/workflow-templates/gallery/{entry.id}/revisions",
-        headers=_auth("viewer-token"),
+        headers=_auth("globex-viewer-token"),
     )
     diff = client.get(
         f"/workflow-templates/gallery/{entry.id}/revisions/1/diff/1",
-        headers=_auth("viewer-token"),
+        headers=_auth("globex-viewer-token"),
     )
     restore = client.post(
         f"/workflow-templates/gallery/{entry.id}/revisions/1/restore",
-        headers=_auth("tech-token"),
-        json={},
+        headers=_auth("globex-technician-token"),
+        json={"client_id": "acme"},
     )
     run = client.post(
         f"/workflow-templates/gallery/{entry.id}/runs",
-        headers=_auth("tech-token"),
-        json={"ticket_id": "TCK-1001"},
+        headers=_auth("globex-technician-token"),
+        json={"ticket_id": "TCK-1001", "client_id": "acme"},
     )
 
     assert patch.status_code == 403
@@ -2950,6 +2985,7 @@ def test_smart_action_scope_comes_from_authenticated_tenant(settings) -> None:
         }
     )
     store = Store(secure_settings.data_path)
+    _provision_bound_principal(store, "acme-viewer", "acme-viewer-token", "acme", "viewer")
     acme = store.create_smart_action_run(
         "ticket-triage", "acme-actor", "success", "digest-a", {"tenant": "acme"}, [], client_id="acme"
     )
@@ -2958,22 +2994,22 @@ def test_smart_action_scope_comes_from_authenticated_tenant(settings) -> None:
     )
     client = TestClient(create_app(secure_settings))
 
-    omitted = client.get("/smart-actions/runs", headers=_auth("viewer-token"))
+    omitted = client.get("/smart-actions/runs", headers=_auth("acme-viewer-token"))
     arbitrary = client.get(
         "/smart-actions/runs",
         params={"client_id": "beta"},
-        headers=_auth("viewer-token"),
+        headers=_auth("acme-viewer-token"),
     )
     hidden = client.get(
         f"/smart-actions/runs/{acme.id}",
         params={"client_id": "beta"},
-        headers=_auth("viewer-token"),
+        headers=_auth("acme-viewer-token"),
     )
 
     assert omitted.status_code == 200
     assert [run["client_id"] for run in omitted.json()] == ["acme"]
-    assert [run["client_id"] for run in arbitrary.json()] == ["acme"]
-    assert hidden.status_code == 200
+    assert arbitrary.status_code == 403
+    assert hidden.status_code == 404
 
 
 def test_smart_action_run_exposes_redacted_failure_detail(settings) -> None:
@@ -4350,6 +4386,7 @@ def test_m365_user_creation_requires_admin_approval_and_uses_vault_secret(settin
             "display_name": "Adele Vance",
             "mail_nickname": "adele.vance",
             "temporary_vault_name": "WAIT_M365_TEMP_ADELE",
+            "client_id": "tenant-a",
         },
     )
     request_id = draft.json()["id"]
@@ -4369,6 +4406,184 @@ def test_m365_user_creation_requires_admin_approval_and_uses_vault_secret(settin
     assert admin_approval.json()["execution_status"] == "succeeded"
     assert calls[0]["temporary_password"] == "Temporary-Password-123!"
     assert "Temporary-Password-123!" not in admin_approval.text
+
+
+def test_m365_draft_routes_reject_foreign_client_for_bound_table_admin(settings) -> None:
+    secure_settings = replace(
+        settings,
+        demo_mode=False,
+        client_id="acme",
+        admin_token="bootstrap-admin",
+        tech_token="",
+        viewer_token="",
+    )
+    app = create_app(secure_settings)
+    app.state.store.create_principal("acme-admin", kind="staff")
+    app.state.store.add_principal_credential("acme-admin", "acme-admin-token")
+    app.state.store.add_principal_client_role("acme-admin", "acme", "admin")
+    client = TestClient(app)
+    headers = _auth("acme-admin-token")
+    draft_requests: list[tuple[str, dict[str, object]]] = [
+        (
+            "/connectors/m365/users/drafts",
+            {
+                "user_principal_name": "adele.vance@example.test",
+                "display_name": "Adele Vance",
+                "mail_nickname": "adele.vance",
+                "temporary_vault_name": "WAIT_M365_TEMP_ADELE",
+            },
+        ),
+        ("/connectors/m365/users/disable-drafts", {"user_identity": "adele.vance@example.test"}),
+        (
+            "/connectors/m365/users/password-reset-drafts",
+            {
+                "user_identity": "adele.vance@example.test",
+                "temporary_vault_name": "WAIT_M365_TEMP_ADELE",
+            },
+        ),
+        (
+            "/connectors/m365/users/authentication-method-drafts",
+            {
+                "user_identity": "adele.vance@example.test",
+                "method_type": "fido2",
+                "method_id": "method-1",
+            },
+        ),
+        (
+            "/connectors/m365/groups/membership-drafts",
+            {"group_id": "group-1", "user_id": "user-1", "operation": "add"},
+        ),
+        (
+            "/connectors/m365/users/license-drafts",
+            {
+                "user_id": "user-1",
+                "sku_ids": ["00000000-0000-0000-0000-000000000001"],
+                "operation": "add",
+            },
+        ),
+        ("/connectors/m365/users/session-revocation-drafts", {"user_id": "user-1"}),
+        ("/connectors/m365/managed-devices/retire-drafts", {"device_id": "device-1"}),
+        ("/connectors/m365/managed-devices/sync-drafts", {"device_id": "device-1"}),
+        ("/connectors/m365/managed-devices/reboot-drafts", {"device_id": "device-1"}),
+        ("/connectors/m365/managed-devices/remote-lock-drafts", {"device_id": "device-1"}),
+        (
+            "/connectors/m365/users/mailbox-settings-drafts",
+            {"user_identity": "adele.vance@example.test", "settings": {"locale": "en-US"}},
+        ),
+        (
+            "/connectors/m365/mail-messages/move-drafts",
+            {
+                "user_identity": "adele.vance@example.test",
+                "source_folder_id": "inbox",
+                "message_id": "message-1",
+                "destination_folder_id": "archive",
+            },
+        ),
+        (
+            "/connectors/m365/mail-messages/read-state-drafts",
+            {
+                "user_identity": "adele.vance@example.test",
+                "source_folder_id": "inbox",
+                "message_id": "message-1",
+                "is_read": True,
+            },
+        ),
+        (
+            "/connectors/m365/mail-messages/delete-drafts",
+            {
+                "user_identity": "adele.vance@example.test",
+                "source_folder_id": "inbox",
+                "message_id": "message-1",
+            },
+        ),
+    ]
+
+    for path, payload in draft_requests:
+        response = client.post(path, headers=headers, json={**payload, "client_id": "beta"})
+        assert response.status_code == 403, path
+        assert response.json()["detail"] == "requested tenant is outside authenticated scope"
+
+
+def test_m365_draft_routes_return_400_for_invalid_payloads(settings) -> None:
+    secure_settings = replace(
+        settings,
+        demo_mode=False,
+        client_id="acme",
+        admin_token="bootstrap-admin",
+        tech_token="",
+        viewer_token="",
+    )
+    app = create_app(secure_settings)
+    _provision_bound_principal(app.state.store, "acme-admin", "acme-admin-token", "acme", "admin")
+    client = TestClient(app)
+    headers = _auth("acme-admin-token")
+    draft_requests: list[tuple[str, dict[str, object]]] = [
+        (
+            "/connectors/m365/users/drafts",
+            {
+                "user_principal_name": "   ",
+                "display_name": "Adele Vance",
+                "mail_nickname": "adele.vance",
+                "temporary_vault_name": "WAIT_M365_TEMP_ADELE",
+            },
+        ),
+        ("/connectors/m365/users/disable-drafts", {"user_identity": " "}),
+        (
+            "/connectors/m365/users/password-reset-drafts",
+            {"user_identity": " ", "temporary_vault_name": "WAIT_M365_TEMP_ADELE"},
+        ),
+        (
+            "/connectors/m365/users/authentication-method-drafts",
+            {"user_identity": " ", "method_type": "fido2", "method_id": "method-1"},
+        ),
+        (
+            "/connectors/m365/groups/membership-drafts",
+            {"group_id": " ", "user_id": "user-1", "operation": "add"},
+        ),
+        (
+            "/connectors/m365/users/license-drafts",
+            {
+                "user_id": " ",
+                "sku_ids": ["00000000-0000-0000-0000-000000000001"],
+                "operation": "add",
+            },
+        ),
+        ("/connectors/m365/users/session-revocation-drafts", {"user_id": " "}),
+        ("/connectors/m365/managed-devices/retire-drafts", {"device_id": " "}),
+        ("/connectors/m365/managed-devices/sync-drafts", {"device_id": " "}),
+        ("/connectors/m365/managed-devices/reboot-drafts", {"device_id": " "}),
+        ("/connectors/m365/managed-devices/remote-lock-drafts", {"device_id": " "}),
+        (
+            "/connectors/m365/users/mailbox-settings-drafts",
+            {"user_identity": "user-1", "settings": {"locale": " "}},
+        ),
+        (
+            "/connectors/m365/mail-messages/move-drafts",
+            {
+                "user_identity": " ",
+                "source_folder_id": "inbox",
+                "message_id": "message-1",
+                "destination_folder_id": "archive",
+            },
+        ),
+        (
+            "/connectors/m365/mail-messages/read-state-drafts",
+            {
+                "user_identity": " ",
+                "source_folder_id": "inbox",
+                "message_id": "message-1",
+                "is_read": True,
+            },
+        ),
+        (
+            "/connectors/m365/mail-messages/delete-drafts",
+            {"user_identity": " ", "source_folder_id": "inbox", "message_id": "message-1"},
+        ),
+    ]
+
+    for path, payload in draft_requests:
+        response = client.post(path, headers=headers, json=payload)
+        assert response.status_code == 400, path
 
 
 def test_m365_user_disable_requires_admin_and_auto_executes_after_approval(settings, monkeypatch) -> None:
@@ -4489,6 +4704,7 @@ def test_m365_password_and_authentication_method_routes_require_admin_approval(
             "user_identity": "adele.vance@example.test",
             "temporary_vault_name": "WAIT_M365_TEMP_ADELE",
             "force_change_password_next_sign_in_with_mfa": True,
+            "client_id": "tenant-a",
         },
     )
     assert password_draft.status_code == 200
@@ -5046,7 +5262,11 @@ def test_m365_mailbox_settings_update_requires_admin_and_auto_executes_after_app
     invalid_draft = client.post(
         "/connectors/m365/users/mailbox-settings-drafts",
         headers=_auth("admin-token"),
-        json={"user_identity": "user-1", "settings": {"forwarding": "bad"}},
+        json={
+            "user_identity": "user-1",
+            "settings": {"forwarding": "bad"},
+            "client_id": "tenant-a",
+        },
     )
     draft = client.post(
         "/connectors/m365/users/mailbox-settings-drafts",
@@ -5405,6 +5625,8 @@ def test_executions_api_enforces_tenant_scope(settings) -> None:
         }
     )
     store = Store(secure_settings.data_path)
+    _provision_bound_principal(store, "acme-viewer", "acme-viewer-token", "acme", "viewer")
+    _provision_bound_principal(store, "acme-technician", "acme-technician-token", "acme", "technician")
     _seed_execution_tickets(store)
     acme_run = store.create_execution_run(
         "workflow", 1, "a", "completed", "2026-08-01T09:00:00+00:00",
@@ -5425,14 +5647,14 @@ def test_executions_api_enforces_tenant_scope(settings) -> None:
     )
     client = TestClient(create_app(secure_settings))
 
-    viewer_list = client.get("/executions", headers=_auth("viewer-token"))
+    viewer_list = client.get("/executions", headers=_auth("acme-viewer-token"))
     assert viewer_list.status_code == 200
     assert [run["id"] for run in viewer_list.json()] == [acme_run.id]
 
-    foreign_detail = client.get(f"/executions/{beta_run.id}", headers=_auth("viewer-token"))
+    foreign_detail = client.get(f"/executions/{beta_run.id}", headers=_auth("acme-viewer-token"))
     assert foreign_detail.status_code == 404
     foreign_artifact = client.get(
-        f"/executions/{beta_run.id}/artifacts/1", headers=_auth("tech-token")
+        f"/executions/{beta_run.id}/artifacts/1", headers=_auth("acme-technician-token")
     )
     assert foreign_artifact.status_code == 404
 
@@ -5448,7 +5670,7 @@ def test_executions_api_enforces_tenant_scope(settings) -> None:
     # The artifact file name must equal its content digest; a tampered path 404s.
     artifacts = store.list_execution_artifacts(acme_run.id)
     tampered = client.get(
-        f"/executions/{acme_run.id}/artifacts/{artifacts[0].id}", headers=_auth("tech-token")
+        f"/executions/{acme_run.id}/artifacts/{artifacts[0].id}", headers=_auth("acme-technician-token")
     )
     assert tampered.status_code == 404
 
@@ -5467,19 +5689,23 @@ def test_executions_api_hides_all_runs_from_tenantless_principal(settings) -> No
         "workflow", 1, "a", "completed", "2026-08-01T09:00:00+00:00",
         "2026-08-01T09:01:00+00:00", "test", client_id="acme",
     )
-    client = TestClient(create_app(secure_settings))
+    app = create_app(secure_settings)
+    tenantless = AuthContext(role=Role.VIEWER, presented_token="viewer-token", client_id=None)
+    executions_endpoint = next(
+        route.endpoint
+        for route in app.routes
+        if isinstance(route, APIRoute) and route.path == "/executions"
+    )
+    analytics_endpoint = next(
+        route.endpoint
+        for route in app.routes
+        if isinstance(route, APIRoute) and route.path == "/analytics/summary"
+    )
 
-    listed = client.get("/executions", headers=_auth("viewer-token"))
-    detail = client.get("/executions/1", headers=_auth("viewer-token"))
-    analytics = client.get("/analytics/summary", headers=_auth("viewer-token"))
-
-    assert listed.json() == []
-    assert detail.status_code == 404
-    assert analytics.json()["success_rate"]["total"] == 0
-    assert analytics.json()["approval_rate"]["requested"] == 0
-    assert analytics.json()["ticket_metrics"]["touched"] == 0
-    assert analytics.json()["activity_by_workflow"] == []
-    assert analytics.json()["estimated_minutes_saved"]["estimate"] is True
+    with pytest.raises(HTTPException, match="has no tenant"):
+        executions_endpoint(tenantless)
+    with pytest.raises(HTTPException, match="has no tenant"):
+        analytics_endpoint(tenantless)
 
 
 def test_analytics_summary_api_returns_metric_groups(settings) -> None:
@@ -5562,10 +5788,13 @@ def test_consultant_blueprints_are_tenant_scoped_and_inspectable_only(settings) 
             "demo_mode": False,
             "client_id": "acme",
             "admin_token": "admin-token",
-            "tech_token": "tech-token",
-            "viewer_token": "viewer-token",
+            "tech_token": "",
+            "viewer_token": "",
         }
     )
+    store = Store(secure_settings.data_path)
+    _provision_bound_principal(store, "acme-technician", "tech-token", "acme", "technician")
+    _provision_bound_principal(store, "acme-viewer", "viewer-token", "acme", "viewer")
     payload = {
         "solution": {"name": "Employee Onboarding Agent"},
         "business_goal": {"reduce_manual_onboarding": True},
@@ -5582,7 +5811,8 @@ def test_consultant_blueprints_are_tenant_scoped_and_inspectable_only(settings) 
         "deployment": ["Teams"],
         "risk": "medium",
     }
-    client = TestClient(create_app(secure_settings))
+    app = create_app(secure_settings)
+    client = TestClient(app)
     created = client.post(
         "/consultant/blueprints",
         headers=_auth("tech-token"),
@@ -5794,6 +6024,8 @@ def test_consultant_api_rejects_unscoped_and_malformed_review_inputs(settings) -
             "viewer_token": "viewer-token",
         }
     )
+    store = Store(secure_settings.data_path)
+    _provision_bound_principal(store, "acme-viewer", "acme-viewer-token", "acme", "viewer")
     client = TestClient(create_app(secure_settings))
 
     invalid_calls = [
@@ -5882,11 +6114,11 @@ def test_consultant_api_rejects_unscoped_and_malformed_review_inputs(settings) -
         response = client.post(path, json=payload, headers=_auth("tech-token"))
         assert response.status_code == 422, (path, response.text)
 
-    assert client.get("/consultant/blueprints/missing", headers=_auth("viewer-token")).status_code == 404
+    assert client.get("/consultant/blueprints/missing", headers=_auth("acme-viewer-token")).status_code == 404
     assert (
         client.get(
             "/consultant/blueprints",
-            headers=_auth("viewer-token"),
+            headers=_auth("acme-viewer-token"),
             params={"client_id": "beta"},
         ).status_code
         == 403
@@ -6082,15 +6314,18 @@ def test_consultant_api_rollbacks_fail_closed_on_scope_digest_and_execution_erro
     )
 
     unscoped_settings = secure_settings.__class__(**{**secure_settings.__dict__, "client_id": ""})
-    unscoped = TestClient(create_app(unscoped_settings))
-    assert (
-        unscoped.post(
-            "/consultant/solutions/rollback-approvals",
-            headers=_auth("tech-token"),
-            json=payload,
-        ).status_code
-        == 403
+    unscoped_app = create_app(unscoped_settings)
+    rollback_endpoint = next(
+        route.endpoint
+        for route in unscoped_app.routes
+        if isinstance(route, APIRoute) and route.path == "/consultant/solutions/rollback-approvals"
     )
+    with pytest.raises(HTTPException, match="has no tenant"):
+        rollback_endpoint(
+            app_module.PowerPlatformRollbackRequest.model_validate(payload),
+            None,
+            AuthContext(role=Role.TECHNICIAN, presented_token="tenantless"),
+        )
     assert (
         client.post(
             "/consultant/solutions/rollback-approvals/99999/execute",
@@ -6224,7 +6459,8 @@ def test_consultant_blueprint_requires_tenant_and_role(settings) -> None:
             "viewer_token": "viewer-token",
         }
     )
-    client = TestClient(create_app(secure_settings))
+    app = create_app(secure_settings)
+    client = TestClient(app)
     minimal = {
         "solution": {"name": "Design"},
         "business_goal": {},
@@ -6244,14 +6480,17 @@ def test_consultant_blueprint_requires_tenant_and_role(settings) -> None:
         headers=_auth("admin-token"),
         json={**minimal, "client_id": "acme"},
     )
-    unbound_detail = client.get(
-        f"/consultant/blueprints/{admin.json()['id']}",
-        headers=_auth("viewer-token"),
+    detail_endpoint = next(
+        route.endpoint
+        for route in app.routes
+        if isinstance(route, APIRoute) and route.path == "/consultant/blueprints/{blueprint_id}"
     )
+    with pytest.raises(HTTPException) as unbound_detail_error:
+        detail_endpoint(admin.json()["id"], AuthContext(role=Role.VIEWER, presented_token="tenantless"))
     assert viewer.status_code == 403
     assert no_tenant.status_code == 403
     assert admin.status_code == 201
-    assert unbound_detail.status_code == 403
+    assert unbound_detail_error.value.status_code == 404
 
 
 def test_template_gallery_artifacts_are_portable_validated_and_tenant_scoped(settings) -> None:
@@ -6311,15 +6550,18 @@ def test_template_gallery_artifacts_are_portable_validated_and_tenant_scoped(set
             "viewer_token": "viewer-token",
         }
     )
+    store = Store(secure.data_path)
+    _provision_bound_principal(store, "globex-viewer", "globex-viewer-token", "globex", "viewer")
+    _provision_bound_principal(store, "globex-technician", "globex-technician-token", "globex", "technician")
     secure_client = TestClient(create_app(secure))
     assert secure_client.get(
         f"/workflow-templates/gallery/{entry_id}/export",
-        headers=_auth("viewer-token"),
+        headers=_auth("globex-viewer-token"),
     ).status_code == 404
     assert secure_client.post(
         "/workflow-templates/gallery/import",
-        headers=_auth("tech-token"),
-        json=artifact,
+        headers=_auth("globex-technician-token"),
+        json={**artifact, "client_id": "acme"},
     ).status_code == 403
 
 
@@ -6359,3 +6601,9 @@ def _hudu_response(items):
 
 def _auth(token: str) -> dict[str, str]:
     return {"Authorization": f"Bearer {token}"}
+
+
+def _provision_bound_principal(store: Store, principal_id: str, token: str, client_id: str, role: str) -> None:
+    store.create_principal(principal_id, kind="staff")
+    store.add_principal_credential(principal_id, token)
+    store.add_principal_client_role(principal_id, client_id, role)

@@ -48,10 +48,10 @@ def resolve_client_scope(
 ) -> ClientScope:
     """Resolve a request's client scope without treating None as an implicit wildcard.
 
-    Demo mode is the deliberate single-operator exception. MSP administrators may
-    request a specific client, or receive an all-client scope only when a list
-    call explicitly opts in with ``allow_all=True``. Every other principal is
-    restricted to its persisted client memberships.
+    Demo mode and MSP administrators are deliberate single-operator scopes.
+    They may request a specific client, otherwise they receive an all-client
+    scope. Every other principal is restricted to its persisted client
+    memberships.
     """
 
     requested = requested_client_id.strip() if requested_client_id else None
@@ -64,11 +64,10 @@ def resolve_client_scope(
     if context.is_msp_admin:
         if requested:
             return BoundClients(frozenset({requested}))
-        if allow_all:
-            return AllClients()
-        if context.client_id:
-            return BoundClients(frozenset({context.client_id}))
-        raise HTTPException(status_code=403, detail="authenticated principal has no tenant")
+        # An appliance operator is cross-client even for entity-scoped calls
+        # that do not explicitly opt into list-wide access.  The requested
+        # client branch above remains an explicit single-client bound scope.
+        return AllClients()
 
     bound_clients = frozenset(client_id.strip() for client_id in context.client_ids if client_id.strip())
     if not bound_clients:

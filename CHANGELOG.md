@@ -29,6 +29,9 @@ All notable changes to WAIT Local Agent will be documented in this file.
   admin tokens and `msp_admin` principals can use explicit cross-client scopes,
   per-client principals remain tenant-bound, and store filters reject
   `None`/empty client IDs.
+- Entity routes now derive mutation scope from the stored tenant-bearing entity,
+  M365 draft handlers enforce the authenticated client scope, and legacy
+  untagged approvals remain restricted to demo mode and appliance operators.
 
 ## [1.1.1] - 2026-07-21
 

@@ -202,7 +202,8 @@ permissive exception for single-operator fixtures.
 Store tenant filters use a required client ID or an explicit `AllClients`/
 `BoundClients` value. `None` and empty strings are rejected, so an omitted
 filter cannot silently become an all-client query. Legacy approval records with
-no client tag are not visible or actionable outside demo mode.
+no client tag are visible or actionable only to demo-mode and global appliance
+operators; persisted per-client principals cannot access them.
 
 End-user support requires a separate token and explicit fixed scope:
 

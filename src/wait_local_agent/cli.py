@@ -2646,7 +2646,9 @@ def restore_msp_playbook_entry_command(
 def list_msp_playbook_subscriptions_command(client_id: str | None = None) -> None:
     """List tenant-scoped event-triggered MSP playbook subscriptions."""
 
-    subscriptions = _store().list_msp_playbook_subscriptions(client_id)
+    subscriptions = _store().list_msp_playbook_subscriptions(
+        client_id if client_id is not None else AllClients()
+    )
     typer.echo(json.dumps(
         [msp_playbook_subscription_view(item) for item in subscriptions],
         sort_keys=True,
@@ -2701,7 +2703,9 @@ def update_msp_playbook_subscription_command(
 @workflows_app.command("gallery")
 def list_workflow_gallery(client_id: str | None = None) -> None:
     store = Store(load_settings().data_path)
-    for entry in store.list_template_gallery_entries(client_id=client_id):
+    for entry in store.list_template_gallery_entries(
+        client_id=client_id if client_id is not None else AllClients()
+    ):
         typer.echo(
             f"{entry.id} source={entry.source_template_id} version={entry.version} "
             f"enabled={entry.enabled} client_id={entry.client_id or '-'} name={entry.name}"
@@ -2736,7 +2740,10 @@ def add_workflow_gallery(
 
 @workflows_app.command("gallery-export")
 def export_workflow_gallery(entry_id: str, client_id: str | None = None) -> None:
-    entry = _store().get_template_gallery_entry(entry_id, client_id)
+    entry = _store().get_template_gallery_entry(
+        entry_id,
+        client_id if client_id is not None else AllClients(),
+    )
     if entry is None:
         raise typer.BadParameter("template gallery entry not found", param_hint="entry_id")
     typer.echo(json.dumps(_gallery_export_payload(entry), sort_keys=True, indent=2))
@@ -2847,7 +2854,10 @@ def _set_workflow_gallery_enabled(entry_id: str, enabled: bool, client_id: str |
 @workflows_app.command("gallery-revisions")
 def list_workflow_gallery_revisions(entry_id: str, client_id: str | None = None) -> None:
     store = Store(load_settings().data_path)
-    revisions = store.list_template_gallery_revisions(entry_id, client_id)
+    revisions = store.list_template_gallery_revisions(
+        entry_id,
+        client_id if client_id is not None else AllClients(),
+    )
     if not revisions:
         raise typer.BadParameter("template gallery entry not found", param_hint="entry_id")
     for revision in revisions:
@@ -2862,11 +2872,15 @@ def diff_workflow_gallery(
     client_id: str | None = None,
 ) -> None:
     store = Store(load_settings().data_path)
-    entry = store.get_template_gallery_entry(entry_id, client_id)
+    entry = store.get_template_gallery_entry(
+        entry_id,
+        client_id if client_id is not None else AllClients(),
+    )
     if entry is None:
         raise typer.BadParameter("template gallery entry not found", param_hint="entry_id")
-    left = store.get_template_gallery_revision(entry_id, from_version, entry.client_id)
-    right = store.get_template_gallery_revision(entry_id, to_version, entry.client_id)
+    revision_scope = entry.client_id if entry.client_id is not None else AllClients()
+    left = store.get_template_gallery_revision(entry_id, from_version, revision_scope)
+    right = store.get_template_gallery_revision(entry_id, to_version, revision_scope)
     if left is None or right is None:
         raise typer.BadParameter("template gallery revision not found")
     left_definition = _safe_revision_definition(left.definition_json)
@@ -2913,7 +2927,11 @@ def restore_workflow_gallery_revision(
 ) -> None:
     store = Store(load_settings().data_path)
     try:
-        entry = store.restore_template_gallery_revision(entry_id, version, client_id)
+        entry = store.restore_template_gallery_revision(
+            entry_id,
+            version,
+            client_id if client_id is not None else AllClients(),
+        )
     except KeyError as exc:
         raise typer.BadParameter("template gallery revision not found") from exc
     typer.echo(f"id={entry.id} version={entry.version} enabled={entry.enabled} name={entry.name}")
@@ -3501,8 +3519,9 @@ def monitor_microsoft_agents(client_id: str | None = None) -> None:
     store = Store(settings.data_path)
     service = AgentService(store, settings, SmartActionService(store, settings))
     scoped_client_id = client_id or settings.client_id
+    scope = scoped_client_id if scoped_client_id else AllClients()
     result = build_agent_health_summary(
-        store.list_agent_runs(scoped_client_id),
+        store.list_agent_runs(scope),
         service.list_definitions(scoped_client_id),
         client_id=scoped_client_id,
     )
@@ -4070,7 +4089,10 @@ def show_agent_run(
     settings = load_settings()
     store = Store(settings.data_path)
     scoped_client_id = _cli_execution_scope(settings, token, client_id)
-    run = store.get_agent_run(run_id, client_id=scoped_client_id)
+    run = store.get_agent_run(
+        run_id,
+        client_id=scoped_client_id if scoped_client_id is not None else AllClients(),
+    )
     if run is None:
         raise typer.BadParameter("agent run not found")
     typer.echo(json.dumps(_agent_run_cli_view(run), sort_keys=True, indent=2))
@@ -4157,7 +4179,10 @@ def _agent_cli_run_context(
     run_id: int,
     client_id: str | None,
 ):
-    run = store.get_agent_run(run_id, client_id=client_id)
+    run = store.get_agent_run(
+        run_id,
+        client_id=client_id if client_id is not None else AllClients(),
+    )
     if run is None:
         raise typer.BadParameter("agent run not found")
     service = AgentService(store, settings, SmartActionService(store, settings))
@@ -4324,7 +4349,9 @@ def list_smart_action_runs(
 ) -> None:
     settings = load_settings()
     store = Store(settings.data_path)
-    for run in store.list_smart_action_runs(client_id=client_id):
+    for run in store.list_smart_action_runs(
+        client_id=client_id if client_id is not None else AllClients()
+    ):
         typer.echo(
             f"{run.id} {run.action_id} {run.status} actor={run.actor} "
             f"approval_id={run.approval_id}"

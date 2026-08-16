@@ -12,6 +12,7 @@ from apscheduler.triggers.date import DateTrigger
 from apscheduler.triggers.interval import IntervalTrigger
 
 from wait_local_agent.agents import AgentService
+from wait_local_agent.client_scope import AllClients, ClientScope
 from wait_local_agent.models import EVENT_RETRY_POLL_SECONDS, ScheduledJob
 from wait_local_agent.msp_playbooks import run_msp_playbook
 from wait_local_agent.reports.models import ReportType
@@ -28,6 +29,9 @@ from wait_local_agent.workflows import run_workflow_template
 
 if TYPE_CHECKING:
     from wait_local_agent.event_dispatch import EventDispatcher
+
+
+_ALL_CLIENTS = AllClients()
 
 
 class SchedulerManager:
@@ -112,7 +116,7 @@ class SchedulerManager:
             self._register_live_job(scheduled_job)
         return self._with_runtime_state(scheduled_job)
 
-    def list_jobs(self, client_id: str | None = None) -> list[ScheduledJob]:
+    def list_jobs(self, client_id: ClientScope | str = _ALL_CLIENTS) -> list[ScheduledJob]:
         return [self._with_runtime_state(job) for job in self._store.list_scheduled_jobs(client_id=client_id)]
 
     def pause(self, job_id: int) -> ScheduledJob:

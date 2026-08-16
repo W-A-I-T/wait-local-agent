@@ -95,11 +95,11 @@ def resolve_auth_context(
             else frozenset(),
             demo_mode=False,
         )
-    for candidate, role, is_msp_admin in (
-        (settings.api_token, Role.ADMIN, True),
-        (settings.admin_token, Role.ADMIN, True),
-        (settings.tech_token, Role.TECHNICIAN, False),
-        (settings.viewer_token, Role.VIEWER, False),
+    for candidate, role in (
+        (settings.api_token, Role.ADMIN),
+        (settings.admin_token, Role.ADMIN),
+        (settings.tech_token, Role.TECHNICIAN),
+        (settings.viewer_token, Role.VIEWER),
     ):
         if candidate and compare_digest(token, candidate):
             return AuthContext(
@@ -107,7 +107,10 @@ def resolve_auth_context(
                 presented_token=token,
                 client_id=configured_client_id,
                 client_ids=frozenset({configured_client_id}) if configured_client_id else frozenset(),
-                is_msp_admin=is_msp_admin,
+                # Bootstrap credentials authenticate the single-appliance
+                # operator.  The role still governs write authority; this
+                # flag only grants the operator cross-client read scope.
+                is_msp_admin=True,
                 demo_mode=False,
             )
 

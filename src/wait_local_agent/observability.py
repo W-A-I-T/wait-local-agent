@@ -22,7 +22,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal, TypedDict, cast
 
-from wait_local_agent.client_scope import AllClients
+from wait_local_agent.client_scope import AllClients, ClientScope
 from wait_local_agent.models import utc_now
 from wait_local_agent.reports.renderers import redact_text, redact_value
 from wait_local_agent.store import Store
@@ -437,7 +437,7 @@ def build_analytics_summary(
     *,
     started_from: str | None = None,
     started_to: str | None = None,
-    client_id: str | None = None,
+    client_id: ClientScope | str | None = None,
 ) -> dict[str, object]:
     """Aggregate execution analytics from the store at read time.
 
@@ -445,7 +445,9 @@ def build_analytics_summary(
     manifests; it is labeled as such and never presented as a measurement.
     Failure states are reported, never omitted.
     """
-    daily_rows = store.execution_daily_status_counts(started_from, started_to, client_id)
+    scope = AllClients() if client_id is None else client_id
+    visible_client_id = scope if isinstance(scope, str) else scope.client_id
+    daily_rows = store.execution_daily_status_counts(started_from, started_to, scope)
     buckets: dict[str, _DailyBucket] = {}
     status_counts: dict[str, int] = {}
     for day, status, count in daily_rows:
@@ -468,7 +470,7 @@ def build_analytics_summary(
         if status not in EXECUTION_SUCCESS_STATUSES
     ]
     success_counts = store.execution_smart_action_success_counts(
-        started_from, started_to, client_id
+        started_from, started_to, scope
     )
     minutes = sum(estimates.get(action_id, 0) * count for action_id, count in success_counts)
     activity_breakdown = [
@@ -479,23 +481,23 @@ def build_analytics_summary(
             "count": count,
         }
         for run_kind, trigger_source, status, count in store.execution_activity_counts(
-            started_from, started_to, client_id
+            started_from, started_to, scope
         )
     ]
     approval_status_counts = dict(
-        store.approval_activity_counts(started_from, started_to, client_id)
+        store.approval_activity_counts(started_from, started_to, scope)
     )
     approved = approval_status_counts.get("approved", 0)
     rejected = approval_status_counts.get("rejected", 0)
     decided = approved + rejected
-    ticket_activity = store.execution_ticket_activity(started_from, started_to, client_id)
-    lifecycle = store.ticket_lifecycle_metrics(started_from, started_to, client_id)
+    ticket_activity = store.execution_ticket_activity(started_from, started_to, scope)
+    lifecycle = store.ticket_lifecycle_metrics(started_from, started_to, scope)
     resolved_tickets = sum(
         1 for _, status in ticket_activity if status.strip().lower() in {"resolved", "closed"}
     )
     workflow_buckets: dict[tuple[str, str], dict[str, object]] = {}
     for run_kind, workflow_id, status, count in store.execution_workflow_activity(
-        started_from, started_to, client_id
+        started_from, started_to, scope
     ):
         workflow_bucket = workflow_buckets.setdefault(
             (run_kind, workflow_id),
@@ -523,14 +525,14 @@ def build_analytics_summary(
     activity_by_workflow.sort(key=lambda item: (str(item["run_kind"]), str(item["workflow_id"])))
     model_usage = _model_usage_summary(
         store.list_execution_runs(
-            client_id=client_id if client_id is not None else AllClients(),
+            client_id=scope,
             started_from=started_from,
             started_to=started_to,
         )
     )
     return {
         "range": {"from": started_from, "to": started_to},
-        "client_id": client_id,
+        "client_id": visible_client_id,
         "executions_over_time": [buckets[day] for day in sorted(buckets)],
         "success_rate": {
             "total": total,

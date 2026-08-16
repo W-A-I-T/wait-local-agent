@@ -108,11 +108,12 @@ class EventDispatcher:
         client_id: str | None = None,
         actor: str = "operator",
     ) -> EventDispatchResult:
-        delivery = self.store.claim_event_delivery_retry(delivery_id, client_id=client_id)
+        scope = client_id if client_id is not None else AllClients()
+        delivery = self.store.claim_event_delivery_retry(delivery_id, client_id=scope)
         effective_client_id = delivery.client_id
         payload = self.store.get_event_delivery_payload(
             delivery_id,
-            client_id=effective_client_id,
+            client_id=effective_client_id if effective_client_id is not None else AllClients(),
         )
         return self._process_delivery(
             delivery,

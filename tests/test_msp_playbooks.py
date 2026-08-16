@@ -755,17 +755,24 @@ def test_api_exposes_tenant_scoped_playbook_subscriptions(settings) -> None:
             "admin_token": "admin-token",
         }
     )
+    store = Store(secure.data_path)
+    store.create_principal("globex-viewer", kind="staff")
+    store.add_principal_credential("globex-viewer", "globex-viewer-token")
+    store.add_principal_client_role("globex-viewer", "globex", "viewer")
+    store.create_principal("globex-technician", kind="staff")
+    store.add_principal_credential("globex-technician", "globex-technician-token")
+    store.add_principal_client_role("globex-technician", "globex", "technician")
     secure_client = TestClient(create_app(secure))
-    viewer_headers = {"Authorization": "Bearer viewer-token"}
-    tech_headers = {"Authorization": "Bearer tech-token"}
+    viewer_headers = {"Authorization": "Bearer globex-viewer-token"}
+    tech_headers = {"Authorization": "Bearer globex-technician-token"}
     admin_headers = {"Authorization": "Bearer admin-token"}
-    assert secure_client.get("/msp/playbook-subscriptions", headers=viewer_headers).status_code == 403
+    assert secure_client.get("/msp/playbook-subscriptions", headers=viewer_headers).json() == []
     assert secure_client.get("/msp/playbook-subscriptions/missing", headers=viewer_headers).status_code == 404
     assert secure_client.post(
         "/msp/playbook-subscriptions",
         headers=tech_headers,
-        json={"playbook_id": "ticket-intake-review", "event_type": "ticket.created"},
-    ).status_code == 422
+        json={"playbook_id": "ticket-intake-review", "event_type": "ticket.created", "client_id": "acme"},
+    ).status_code == 403
     assert secure_client.patch(
         "/msp/playbook-subscriptions/missing",
         headers=tech_headers,
