@@ -12,6 +12,8 @@ All notable changes to WAIT Local Agent will be documented in this file.
 - Admins can now discover the local MCP server under Integrations → MCP, copy a
   bearer-token connection configuration, and review the published tool catalog
   with its risk, role, approval, and access metadata.
+- Authenticated operators can now search and filter the read-only Smart Action
+  catalog under Integrations → Smart Actions and inspect each action manifest.
 - The dashboard now exposes MSP Playbooks with tenant publication status, bounded preview and run actions, revision recovery, and event-subscription controls.
 - Versioned SQLite schema initialization now records an idempotent baseline in
   `schema_migrations`, enables foreign-key enforcement, WAL, and a bounded busy

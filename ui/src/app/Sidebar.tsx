@@ -82,6 +82,10 @@ export function Sidebar() {
             MCP
           </NavLink>
         </RoleGate>
+        <NavLink to="/integrations/smart-actions" className={({ isActive }) => isActive ? "active" : undefined}>
+          <Sparkles size={18} aria-hidden="true" />
+          Smart Actions
+        </NavLink>
       </nav>
       <section className="sidebar-system" aria-label="System">
         <span className="sidebar-section-label">System</span>

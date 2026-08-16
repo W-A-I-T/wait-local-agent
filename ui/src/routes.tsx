@@ -23,6 +23,7 @@ import { ApplianceHealth } from "./screens/ApplianceHealth";
 import { TechnicianChat } from "./screens/TechnicianChat";
 import { McpIntegration } from "./screens/McpIntegration";
 import { ExtensionsPacks } from "./screens/ExtensionsPacks";
+import { SmartActionCatalog } from "./screens/SmartActionCatalog";
 
 export function AppRoutes() {
   return (
@@ -51,6 +52,7 @@ export function AppRoutes() {
       <Route path="system/appliance-health" element={<ApplianceHealth />} />
       <Route path="system/extensions" element={<ExtensionsPacks />} />
       <Route path="integrations/mcp" element={<McpIntegration />} />
+      <Route path="integrations/smart-actions" element={<SmartActionCatalog />} />
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>
   );
