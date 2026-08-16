@@ -6,6 +6,9 @@ All notable changes to WAIT Local Agent will be documented in this file.
 
 ### Added
 
+- Canonical assets are now unique per tenant by `(client_id, canonical_id)`,
+  allowing the same canonical asset identifier to exist independently across
+  clients while preserving asset observation references.
 - Provenance fields now preserve a ticket's source system, connector instance,
   remote ticket ID, and remote company ID without requiring a client mapping.
   The ingestion foundation also adds connector cursors and an operator-facing

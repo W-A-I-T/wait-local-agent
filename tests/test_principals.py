@@ -32,6 +32,7 @@ def test_principals_migration_is_additive_and_credentials_are_hashed(tmp_path: P
             (1, "principals"),
             (2, "clients_and_connectors"),
             (3, "provenance_and_ingestion"),
+            (4, "canonical_assets_tenant_unique"),
         ]
         assert connection.execute(
             "select credential_hash from principal_credentials where principal_id = 'customer-a'"

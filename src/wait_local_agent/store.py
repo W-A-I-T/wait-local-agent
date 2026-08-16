@@ -151,6 +151,12 @@ class Store:
                         "provenance_and_ingestion",
                         self._apply_provenance_migration,
                     ),
+                    Migration(
+                        4,
+                        "canonical_assets_tenant_unique",
+                        self._apply_canonical_tenant_unique_migration,
+                        foreign_keys_off=True,
+                    ),
                 )
             )
             self._apply_startup_repairs(connection)
@@ -298,6 +304,87 @@ class Store:
             )
             """
         )
+
+    def _apply_canonical_tenant_unique_migration(self, connection: sqlite3.Connection) -> None:
+        """Rebuild canonical assets with tenant-scoped uniqueness while preserving IDs."""
+
+        for index_row in connection.execute("pragma index_list('canonical_assets')"):
+            if not bool(index_row[2]):
+                continue
+            index_name = str(index_row[1]).replace("'", "''")
+            index_columns = [
+                str(index_column[2])
+                for index_column in connection.execute(f"pragma index_info('{index_name}')")  # nosec B608: metadata name is quoted
+            ]
+            if index_columns == ["client_id", "canonical_id"]:
+                foreign_key_errors = connection.execute("pragma foreign_key_check").fetchall()
+                if foreign_key_errors:
+                    raise RuntimeError(f"canonical asset foreign-key check failed: {foreign_key_errors}")
+                return
+
+        duplicates = connection.execute(
+            """
+            select client_id, canonical_id, count(*) as duplicate_count
+            from canonical_assets
+            where client_id is not null
+            group by client_id, canonical_id
+            having count(*) > 1
+            order by client_id, canonical_id
+            """
+        ).fetchall()
+        if duplicates:
+            offending_pairs = [
+                (row[0], row[1], int(row[2]))
+                for row in duplicates
+            ]
+            raise RuntimeError(
+                "canonical_assets contains duplicate (client_id, canonical_id) pairs: "
+                f"{offending_pairs}"
+            )
+
+        user_indexes = [
+            str(row[0])
+            for row in connection.execute(
+                "select sql from sqlite_master "
+                "where type = 'index' and tbl_name = 'canonical_assets' and sql is not null "
+                "order by name"
+            )
+        ]
+        connection.execute(
+            """
+            create table canonical_assets_new (
+                id integer primary key autoincrement,
+                canonical_id text not null,
+                asset_type text not null,
+                display_name text not null,
+                client_id text,
+                owner text not null default '',
+                source_module text not null default '',
+                source_id text not null default '',
+                confidence real not null default 1.0,
+                first_seen text not null,
+                last_seen text not null,
+                attributes_json text not null,
+                unique (client_id, canonical_id)
+            )
+            """
+        )
+        asset_columns = (
+            "id, canonical_id, asset_type, display_name, client_id, owner, source_module, "
+            "source_id, confidence, first_seen, last_seen, attributes_json"
+        )
+        connection.execute(
+            f"insert into canonical_assets_new ({asset_columns}) "
+            f"select {asset_columns} from canonical_assets"  # nosec B608: fixed schema column list
+        )
+        connection.execute("drop table canonical_assets")
+        connection.execute("alter table canonical_assets_new rename to canonical_assets")
+        for index_sql in user_indexes:
+            connection.execute(index_sql)
+
+        foreign_key_errors = connection.execute("pragma foreign_key_check").fetchall()
+        if foreign_key_errors:
+            raise RuntimeError(f"canonical asset foreign-key check failed: {foreign_key_errors}")
 
     def create_principal(
         self,
@@ -6125,7 +6212,8 @@ class Store:
             asset_by_canonical_id[asset.canonical_id] = asset
         for observation in result.observations:
             obs_asset = asset_by_canonical_id.get(observation.canonical_id) or self.get_canonical_asset_by_canonical_id(
-                observation.canonical_id
+                observation.canonical_id,
+                client_id=client_id,
             )
             if obs_asset is None or obs_asset.id is None:
                 raise KeyError(f"asset {observation.canonical_id} not found")
@@ -6138,7 +6226,7 @@ class Store:
                 confidence=observation.confidence,
             )
         for snapshot in result.config_snapshots:
-            asset_id = self._asset_id_for_canonical_id(snapshot.canonical_id)
+            asset_id = self._asset_id_for_canonical_id(snapshot.canonical_id, client_id=client_id)
             self.add_config_snapshot(
                 run_id=run_id,
                 asset_id=asset_id,
@@ -6151,7 +6239,7 @@ class Store:
             self.add_config_diff(
                 baseline_snapshot_id=diff.baseline_snapshot_id,
                 candidate_snapshot_id=diff.candidate_snapshot_id,
-                asset_id=self._asset_id_for_canonical_id(diff.canonical_id),
+                asset_id=self._asset_id_for_canonical_id(diff.canonical_id, client_id=client_id),
                 diff_type=diff.diff_type,
                 severity=diff.severity,
                 summary=diff.summary,
@@ -6160,7 +6248,7 @@ class Store:
         for exercise in result.restore_exercises:
             self.add_restore_exercise(
                 run_id=run_id,
-                asset_id=self._asset_id_for_canonical_id(exercise.canonical_id),
+                asset_id=self._asset_id_for_canonical_id(exercise.canonical_id, client_id=client_id),
                 source_id=source_row_id,
                 exercise_id=exercise.exercise_id,
                 status=exercise.status,
@@ -6189,58 +6277,119 @@ class Store:
         now = utc_now()
         normalized_client_id = _normalize_client_id(client_id)
         attributes_json = _json_dumps(attributes)
+        values = (
+            canonical_id,
+            asset_type,
+            display_name,
+            normalized_client_id,
+            owner,
+            source_module,
+            source_id,
+            confidence,
+            now,
+            now,
+            attributes_json,
+        )
         with self._connect() as connection:
-            cursor = connection.execute(
-                """
-                insert into canonical_assets
-                  (
-                    canonical_id,
-                    asset_type,
-                    display_name,
-                    client_id,
-                    owner,
-                    source_module,
-                    source_id,
-                    confidence,
-                    first_seen,
-                    last_seen,
-                    attributes_json
-                  )
-                values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                on conflict(canonical_id) do update set
-                  asset_type=excluded.asset_type,
-                  display_name=excluded.display_name,
-                  client_id=coalesce(excluded.client_id, canonical_assets.client_id),
-                  owner=excluded.owner,
-                  source_module=excluded.source_module,
-                  source_id=excluded.source_id,
-                  confidence=excluded.confidence,
-                  last_seen=excluded.last_seen,
-                  attributes_json=excluded.attributes_json
-                """,
-                (
-                    canonical_id,
-                    asset_type,
-                    display_name,
-                    normalized_client_id,
-                    owner,
-                    source_module,
-                    source_id,
-                    confidence,
-                    now,
-                    now,
-                    attributes_json,
-                ),
-            )
-            asset_id = cursor.lastrowid
-            if asset_id is None or asset_id == 0:
+            if normalized_client_id is None:
                 row = connection.execute(
-                    "select id from canonical_assets where canonical_id = ?",
+                    "select id from canonical_assets where canonical_id = ? order by id limit 1",
                     (canonical_id,),
                 ).fetchone()
                 if row is None:
-                    raise RuntimeError("canonical asset upsert did not return an id")
-                asset_id = int(row["id"])
+                    connection.execute(
+                        """
+                        insert into canonical_assets
+                          (
+                            canonical_id,
+                            asset_type,
+                            display_name,
+                            client_id,
+                            owner,
+                            source_module,
+                            source_id,
+                            confidence,
+                            first_seen,
+                            last_seen,
+                            attributes_json
+                          )
+                        values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        """,
+                        values,
+                    )
+                    row = connection.execute(
+                        "select id from canonical_assets where canonical_id = ? order by id limit 1",
+                        (canonical_id,),
+                    ).fetchone()
+                else:
+                    connection.execute(
+                        """
+                        update canonical_assets
+                        set asset_type = ?,
+                            display_name = ?,
+                            client_id = coalesce(?, client_id),
+                            owner = ?,
+                            source_module = ?,
+                            source_id = ?,
+                            confidence = ?,
+                            last_seen = ?,
+                            attributes_json = ?
+                        where id = ?
+                        """,
+                        (
+                            asset_type,
+                            display_name,
+                            normalized_client_id,
+                            owner,
+                            source_module,
+                            source_id,
+                            confidence,
+                            now,
+                            attributes_json,
+                            int(row["id"]),
+                        ),
+                    )
+            else:
+                connection.execute(
+                    """
+                    insert into canonical_assets
+                      (
+                        canonical_id,
+                        asset_type,
+                        display_name,
+                        client_id,
+                        owner,
+                        source_module,
+                        source_id,
+                        confidence,
+                        first_seen,
+                        last_seen,
+                        attributes_json
+                      )
+                    values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    on conflict(client_id, canonical_id) do update set
+                      asset_type=excluded.asset_type,
+                      display_name=excluded.display_name,
+                      client_id=excluded.client_id,
+                      owner=excluded.owner,
+                      source_module=excluded.source_module,
+                      source_id=excluded.source_id,
+                      confidence=excluded.confidence,
+                      last_seen=excluded.last_seen,
+                      attributes_json=excluded.attributes_json
+                    """,
+                    values,
+                )
+                row = connection.execute(
+                    """
+                    select id from canonical_assets
+                    where client_id = ? and canonical_id = ?
+                    """,
+                    (normalized_client_id, canonical_id),
+                ).fetchone()
+            if row is None:
+                raise RuntimeError("canonical asset upsert did not return an id")
+            asset_id = int(row["id"])
         asset = self.get_canonical_asset(int(asset_id))
         if asset is None:
             raise RuntimeError("canonical asset was not persisted")
@@ -6254,12 +6403,26 @@ class Store:
             ).fetchone()
         return CanonicalAsset(**dict(row)) if row else None
 
-    def get_canonical_asset_by_canonical_id(self, canonical_id: str) -> CanonicalAsset | None:
+    def get_canonical_asset_by_canonical_id(
+        self,
+        canonical_id: str,
+        client_id: str | None = None,
+    ) -> CanonicalAsset | None:
         with self._connect() as connection:
-            row = connection.execute(
-                "select * from canonical_assets where canonical_id = ?",
-                (canonical_id,),
-            ).fetchone()
+            if client_id is None:
+                row = connection.execute(
+                    "select * from canonical_assets where canonical_id = ? order by id limit 1",
+                    (canonical_id,),
+                ).fetchone()
+            else:
+                row = connection.execute(
+                    """
+                    select * from canonical_assets
+                    where client_id = ? and canonical_id = ?
+                    order by id limit 1
+                    """,
+                    (client_id, canonical_id),
+                ).fetchone()
         return CanonicalAsset(**dict(row)) if row else None
 
     def list_canonical_assets(
@@ -7261,10 +7424,15 @@ class Store:
             for row in rows
         ]
 
-    def _asset_id_for_canonical_id(self, canonical_id: str | None) -> int | None:
+    def _asset_id_for_canonical_id(
+        self,
+        canonical_id: str | None,
+        *,
+        client_id: str | None = None,
+    ) -> int | None:
         if not canonical_id:
             return None
-        asset = self.get_canonical_asset_by_canonical_id(canonical_id)
+        asset = self.get_canonical_asset_by_canonical_id(canonical_id, client_id=client_id)
         if asset is None:
             raise KeyError(f"asset {canonical_id} not found")
         return asset.id
