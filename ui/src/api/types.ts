@@ -8,6 +8,29 @@ export type ConnectorStatus = {
   http_probing_enabled?: boolean;
 };
 
+export type ConnectorInstance = {
+  connector_instance_id: string;
+  connector_type: string;
+  display_name: string;
+  client_id: string | null;
+  credential_ref: string | null;
+  config_json: string;
+  status: string;
+  created_at: string;
+  updated_at: string;
+};
+
+export type ClientConnectorMapping = {
+  mapping_id: string;
+  connector_instance_id: string;
+  external_company_id: string;
+  external_company_name: string | null;
+  client_id: string;
+  verified: number;
+  created_at: string;
+  updated_at: string;
+};
+
 export type HaloReadResult = {
   status: string;
   message: string;

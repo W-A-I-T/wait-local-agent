@@ -26,6 +26,7 @@ import { ExtensionsPacks } from "./screens/ExtensionsPacks";
 import { SmartActionCatalog } from "./screens/SmartActionCatalog";
 import { Events } from "./screens/Events";
 import { Schedules } from "./screens/Schedules";
+import { ConnectorInstances } from "./screens/ConnectorInstances";
 
 export function AppRoutes() {
   return (
@@ -56,6 +57,7 @@ export function AppRoutes() {
       <Route path="system/appliance-health" element={<ApplianceHealth />} />
       <Route path="system/extensions" element={<ExtensionsPacks />} />
       <Route path="integrations/mcp" element={<McpIntegration />} />
+      <Route path="integrations/connector-instances" element={<ConnectorInstances />} />
       <Route path="integrations/smart-actions" element={<SmartActionCatalog />} />
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>
