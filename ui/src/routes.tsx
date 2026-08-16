@@ -19,6 +19,7 @@ import { Tickets } from "./screens/Tickets";
 import { Templates } from "./screens/Templates";
 import { Playbooks } from "./screens/Playbooks";
 import { Settings } from "./screens/Settings";
+import { ApplianceHealth } from "./screens/ApplianceHealth";
 import { TechnicianChat } from "./screens/TechnicianChat";
 import { McpIntegration } from "./screens/McpIntegration";
 
@@ -46,6 +47,7 @@ export function AppRoutes() {
       <Route path="backfills" element={<Backfills />} />
       <Route path="executions" element={<Executions />} />
       <Route path="settings" element={<Settings />} />
+      <Route path="system/appliance-health" element={<ApplianceHealth />} />
       <Route path="integrations/mcp" element={<McpIntegration />} />
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>

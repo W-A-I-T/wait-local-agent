@@ -308,6 +308,22 @@ a {
   display: block;
 }
 
+.sidebar-system {
+  border-top: 1px solid #31505a;
+  margin-top: 18px;
+  padding-top: 18px;
+}
+
+.sidebar-section-label {
+  color: #8ea99f;
+  display: block;
+  font-size: 0.74rem;
+  font-weight: 800;
+  letter-spacing: 0.1em;
+  margin: 0 12px 8px;
+  text-transform: uppercase;
+}
+
 .brand span {
   color: #b9cbc2;
   font-size: 0.88rem;

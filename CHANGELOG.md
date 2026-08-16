@@ -6,6 +6,7 @@ All notable changes to WAIT Local Agent will be documented in this file.
 
 ### Added
 
+- Admins can now review read-only appliance health, update status, and latest hardening evidence from System → Appliance Health.
 - Admins can now discover the local MCP server under Integrations → MCP, copy a
   bearer-token connection configuration, and review the published tool catalog
   with its risk, role, approval, and access metadata.
