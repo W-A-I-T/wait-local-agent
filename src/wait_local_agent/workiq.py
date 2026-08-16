@@ -280,7 +280,11 @@ class WorkIqClient:
     def __init__(self, settings: Settings, *, mcp_client: WorkIqMcpClient | None = None) -> None:
         self.settings = settings
         self._mcp_client = mcp_client
-        if self._mcp_client is None and settings.work_iq_mcp_endpoint:
+        if (
+            self._mcp_client is None
+            and settings.work_iq_mcp_endpoint
+            and settings.work_iq_mcp_access_token.strip()
+        ):
             self._mcp_client = McpClient(
                 McpClientConfig(
                     settings.work_iq_mcp_endpoint,
