@@ -663,9 +663,10 @@ class Store:
                 [normalized_client_id, *client_params],
             ).fetchone()
             if client_row is None:
-                if isinstance(scope, AllClients):
-                    raise KeyError(normalized_client_id)
-                raise PermissionError("client is outside authenticated scope")
+                # Scope filtering deliberately collapses missing and foreign
+                # clients into the same not-found result.  Callers must not be
+                # able to probe the client directory through mapping writes.
+                raise KeyError(normalized_client_id)
             if connection.execute(
                 "select 1 from connector_instances where connector_instance_id = ?", (normalized_instance_id,)
             ).fetchone() is None:
@@ -705,9 +706,9 @@ class Store:
                 [normalized_mapping_id, *client_params],
             ).fetchone()
             if row is None:
-                if isinstance(scope, AllClients):
-                    raise KeyError(normalized_mapping_id)
-                raise PermissionError("mapping is outside authenticated scope")
+                # A mapping outside the caller's client scope is intentionally
+                # indistinguishable from an unknown mapping.
+                raise KeyError(normalized_mapping_id)
             conflict = connection.execute(
                 """
                 select mapping_id from client_connector_mappings

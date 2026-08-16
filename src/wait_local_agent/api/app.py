@@ -1244,7 +1244,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.get("/clients/{client_id}")
     def client_detail(client_id: str, context: ViewerAccess) -> dict[str, object]:
-        scope = _resolve_detail_scope(context, client_id)
+        scope = _resolve_client_target_scope(context, client_id)
         client = store.get_client(scope, client_id)
         if client is None:
             raise HTTPException(status_code=404, detail="client not found")
@@ -1257,7 +1257,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         context: AdminAccess,
     ) -> dict[str, object]:
         _require_msp_operator(context)
-        scope = resolve_client_scope(context, client_id)
+        scope = _resolve_client_target_scope(context, client_id)
         try:
             client = store.set_client_status(scope, client_id, payload.status)
         except ValueError as exc:
@@ -1346,7 +1346,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         payload: ClientConnectorMappingCreateRequest,
         context: ViewerAccess,
     ) -> dict[str, object]:
-        scope = resolve_client_scope(context, payload.client_id)
+        scope = _resolve_client_target_scope(context, payload.client_id)
         try:
             mapping = store.create_client_connector_mapping(
                 scope,
@@ -1358,7 +1358,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         except PermissionError as exc:
             raise HTTPException(status_code=403, detail=str(exc)) from exc
         except KeyError as exc:
-            detail = "client not found" if str(exc.args[0]) == payload.client_id else "connector instance not found"
+            detail = (
+                "client not found"
+                if str(exc.args[0]) == _normalize_client_id(payload.client_id)
+                else "connector instance not found"
+            )
             raise HTTPException(status_code=404, detail=detail) from exc
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -7482,6 +7486,20 @@ def _resolve_detail_scope(
             "authenticated principal has no tenant",
         }:
             raise HTTPException(status_code=404, detail="resource not found") from exc
+        raise
+
+
+def _resolve_client_target_scope(context: AuthContext, requested_client_id: str) -> ClientScope:
+    """Resolve a client target without disclosing missing versus foreign IDs."""
+
+    try:
+        return resolve_client_scope(context, requested_client_id)
+    except HTTPException as exc:
+        if exc.status_code == 403 and exc.detail in {
+            "requested tenant is outside authenticated scope",
+            "authenticated principal has no tenant",
+        }:
+            raise HTTPException(status_code=404, detail="client not found") from exc
         raise
 
 

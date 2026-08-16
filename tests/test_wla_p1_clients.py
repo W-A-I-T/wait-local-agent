@@ -107,7 +107,7 @@ def test_client_connector_store_accessors_scope_and_verified_resolution(tmp_path
         "client-a",
     )
     assert [mapping.verified for mapping in store.list_client_connector_mappings(client_a)] == [0, 0]
-    with pytest.raises(PermissionError):
+    with pytest.raises(KeyError, match="client-b"):
         store.create_client_connector_mapping(
             client_a,
             instance.connector_instance_id,
@@ -214,7 +214,8 @@ def test_bound_admin_is_not_an_operator_and_cannot_cross_clients(settings) -> No
             "client_id": "client-b",
         },
     )
-    assert mapping.status_code == 403
+    assert mapping.status_code == 404
+    assert mapping.json()["detail"] == "client not found"
 
 
 def test_p1_store_accessors_fail_closed_and_normalize_ids(tmp_path: Path) -> None:
@@ -343,7 +344,7 @@ def test_p1_mapping_scope_resolution_and_partial_unique_integrity_conflict(tmp_p
     assert store.resolve_client_for(" ", "company-1") is None
     assert store.resolve_client_for(instance.connector_instance_id, " ") is None
     assert store.list_client_connector_mappings(BoundClients(frozenset({"client-b"}))) == []
-    with pytest.raises(PermissionError, match="outside authenticated scope"):
+    with pytest.raises(KeyError, match=first.mapping_id):
         store.verify_client_connector_mapping(BoundClients(frozenset({"client-b"})), first.mapping_id)
     with pytest.raises(KeyError):
         store.verify_client_connector_mapping(AllClients(), " ")
@@ -422,7 +423,9 @@ def test_p1_api_scope_and_operator_guards(settings) -> None:
     out_of_scope = client.get("/clients", params={"client_id": "client-b"}, headers=headers)
     assert out_of_scope.status_code == 403
     assert out_of_scope.json()["detail"] == "requested tenant is outside authenticated scope"
-    assert client.get("/clients/client-b", headers=headers).status_code == 404
+    out_of_scope_detail = client.get("/clients/client-b", headers=headers)
+    assert out_of_scope_detail.status_code == 404
+    assert out_of_scope_detail.json()["detail"] == "client not found"
     assert client.get("/clients/missing", headers=headers).status_code == 404
     assert client.post(
         "/clients", headers=headers, json={"client_id": "client-c", "name": "C"}
@@ -432,6 +435,17 @@ def test_p1_api_scope_and_operator_guards(settings) -> None:
         headers=headers,
         json={"connector_type": "hudu", "display_name": "Hudu"},
     ).status_code == 403
+    out_of_scope_mapping = client.post(
+        "/client-connector-mappings",
+        headers=headers,
+        json={
+            "connector_instance_id": instance.connector_instance_id,
+            "external_company_id": "company-b",
+            "client_id": "client-b",
+        },
+    )
+    assert out_of_scope_mapping.status_code == 404
+    assert out_of_scope_mapping.json()["detail"] == "client not found"
     assert client.post(
         f"/client-connector-mappings/{mapping.mapping_id}/verify", headers=headers
     ).status_code == 403
@@ -638,8 +652,13 @@ def test_p1_api_non_msp_admin_is_denied_mutations_and_scoped_verify(settings, mo
         ).status_code == 403
 
         monkeypatch.setattr(app_module, "_require_msp_operator", lambda _context: None)
+        out_of_scope_patch = client.patch(
+            "/clients/client-b", headers=headers, json={"status": "archived"}
+        )
+        assert out_of_scope_patch.status_code == 404
+        assert out_of_scope_patch.json()["detail"] == "client not found"
         forbidden_verify = client.post(
             f"/client-connector-mappings/{foreign_mapping.mapping_id}/verify", headers=headers
         )
-        assert forbidden_verify.status_code == 403
-        assert forbidden_verify.json()["detail"] == "mapping is outside authenticated scope"
+        assert forbidden_verify.status_code == 404
+        assert forbidden_verify.json()["detail"] == "mapping not found"
