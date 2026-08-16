@@ -13,6 +13,7 @@ class Migration:
     version: int
     name: str
     apply: MigrationApply
+    foreign_keys_off: bool = False
 
 
 class MigrationRunner:
@@ -40,18 +41,28 @@ class MigrationRunner:
         for migration in ordered:
             if migration.version in applied:
                 continue
-            self.connection.execute("begin")
+            foreign_keys_state: int | None = None
+            if migration.foreign_keys_off:
+                foreign_keys_state = int(self.connection.execute("pragma foreign_keys").fetchone()[0])
+                self.connection.execute("pragma foreign_keys = off")
             try:
-                migration.apply(self.connection)
-                self.connection.execute(
-                    "insert into schema_migrations (version, name, applied_at) values (?, ?, ?)",
-                    (migration.version, migration.name, datetime.now(UTC).isoformat()),
-                )
-            except BaseException:
-                self.connection.rollback()
-                raise
-            else:
-                self.connection.commit()
+                self.connection.execute("begin")
+                try:
+                    migration.apply(self.connection)
+                    self.connection.execute(
+                        "insert into schema_migrations (version, name, applied_at) values (?, ?, ?)",
+                        (migration.version, migration.name, datetime.now(UTC).isoformat()),
+                    )
+                except BaseException:
+                    self.connection.rollback()
+                    raise
+                else:
+                    self.connection.commit()
+            finally:
+                if foreign_keys_state is not None:
+                    self.connection.execute(
+                        f"pragma foreign_keys = {'on' if foreign_keys_state else 'off'}"
+                    )
             applied.add(migration.version)
 
     @staticmethod

@@ -65,6 +65,7 @@ identifiers, a payload digest, and a human-readable reason. The digest is a
 reference for comparison, not a copy of the provider payload. An operator can
 mark a quarantined record resolved after reviewing its identity decision.
 
-Canonical-asset uniqueness is unchanged in this slice. A future migration will
-address tenant-aware uniqueness separately after its upsert and lookup paths
-are revised together.
+Canonical assets are unique per tenant by `(client_id, canonical_id)`, so the
+same canonical asset identifier can exist for different clients without a
+cross-tenant collision. Existing unscoped lookups remain available for
+backward compatibility; new tenant-aware paths pass the client identifier.

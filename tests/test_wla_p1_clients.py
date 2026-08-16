@@ -32,6 +32,7 @@ def test_clients_migration_repairs_and_backfills_existing_directory(tmp_path: Pa
             (1, "principals"),
             (2, "clients_and_connectors"),
             (3, "provenance_and_ingestion"),
+            (4, "canonical_assets_tenant_unique"),
         ]
         assert {
             str(row[0])

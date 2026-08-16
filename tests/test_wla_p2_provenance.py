@@ -45,7 +45,7 @@ def test_v3_is_additive_idempotent_and_fk_clean(tmp_path: Path) -> None:
                     f"pragma index_info('{index_row[1]}')"  # nosec B608: index name comes from SQLite metadata
                 )
             ]
-            == ["canonical_id"]
+            == ["client_id", "canonical_id"]
             for index_row in canonical_indexes
         )
         assert connection.execute("pragma foreign_keys").fetchone()[0] == 1
@@ -62,7 +62,7 @@ def test_v3_is_additive_idempotent_and_fk_clean(tmp_path: Path) -> None:
 
     Store(tmp_path / "state.db")
     with store._connect() as connection:  # noqa: SLF001
-        assert connection.execute("select count(*) from schema_migrations").fetchone()[0] == 4
+        assert connection.execute("select count(*) from schema_migrations").fetchone()[0] == 5
         assert connection.execute("pragma foreign_key_check").fetchall() == []
 
 
