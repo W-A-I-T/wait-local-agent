@@ -296,7 +296,7 @@ export function FounderJourney() {
           {step === 3 ? (
             <div className="draft-form">
               <h3>Results</h3>
-              <StatusChip status={launchPassport?.status ?? "completed"} />
+              <StatusChip status={launchPassport?.status} />
               {results?.latest_report.available ? <p>Your latest report reference is available for this project.</p> : <p className="screen-note">No latest report reference was returned yet.</p>}
               {results ? <p className="screen-note">{results.scans.count} scan record{results.scans.count === 1 ? "" : "s"} available.</p> : null}
               <details className="technical-details">
@@ -311,7 +311,7 @@ export function FounderJourney() {
   );
 }
 
-function uploadProgressLabel(status: string): string {
+export function uploadProgressLabel(status: string): string {
   if (status === "uploaded" || status === "completed") {
     return "complete";
   }
@@ -321,5 +321,5 @@ function uploadProgressLabel(status: string): string {
   if (status === "failed") {
     return "not completed";
   }
-  return "complete";
+  return "not completed";
 }
