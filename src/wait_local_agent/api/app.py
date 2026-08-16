@@ -2426,7 +2426,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         context: ViewerAccess,
     ) -> list[dict[str, object]]:
         scope = _operator_scope(context, active_settings.client_id)
-        ticket = store.get_ticket(ticket_id, client_id=scope)
+        ticket = store.get_ticket(ticket_id, client_id=scope, include_quarantine=False)
         ticket_client_id = _normalize_client_id(ticket.client_id) if ticket is not None else None
         if ticket_client_id is None:
             raise HTTPException(status_code=404, detail="end-user ticket not found")
@@ -2557,7 +2557,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @app.get("/tickets/{ticket_id}/summary")
     def summarize_ticket(ticket_id: str, context: ViewerAccess) -> dict[str, object]:
         scope = resolve_client_scope(context, None)
-        if store.get_ticket(ticket_id, client_id=scope) is None:
+        if store.get_ticket(ticket_id, client_id=scope, include_quarantine=False) is None:
             raise HTTPException(status_code=404, detail="ticket not found")
         try:
             return asdict(service.summarize(ticket_id))
@@ -2568,7 +2568,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     def ticket_notes(ticket_id: str, context: ViewerAccess) -> list[dict[str, object]]:
         scoped_client_id = resolve_client_scope(context, None).client_id
         if scoped_client_id is None and context.role >= Role.ADMIN:
-            ticket = store.get_ticket(ticket_id)
+            ticket = store.get_ticket(ticket_id, include_quarantine=False)
             scoped_client_id = ticket.client_id if ticket is not None else None
         if scoped_client_id is None:
             return []
@@ -2588,7 +2588,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     def ticket_status_history(ticket_id: str, context: ViewerAccess) -> list[dict[str, object]]:
         scoped_client_id = resolve_client_scope(context, None).client_id
         if scoped_client_id is None and context.role >= Role.ADMIN:
-            ticket = store.get_ticket(ticket_id)
+            ticket = store.get_ticket(ticket_id, include_quarantine=False)
             scoped_client_id = ticket.client_id if ticket is not None else None
         if scoped_client_id is None:
             return []

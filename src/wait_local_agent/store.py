@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import re
 import sqlite3
 import uuid
@@ -84,8 +85,10 @@ if TYPE_CHECKING:
 MAX_SEARCH_LIMIT = 25
 MAX_TECHNICIAN_CHAT_MESSAGES = 200
 _ALL_CLIENTS = AllClients()
+_QUARANTINE_CLIENT_ID = "__quarantine__"
 _CLIENT_STATUSES = {"active", "archived", "quarantine"}
 _CONNECTOR_INSTANCE_STATUSES = {"inactive", "active", "error", "disabled"}
+LOGGER = logging.getLogger(__name__)
 
 # Derived once as uuid.uuid5(uuid.NAMESPACE_URL, "wait-local-agent:ticket-identity:v1").
 # This frozen literal is persisted indirectly through every connector ticket id.
@@ -112,6 +115,17 @@ def _client_scope_predicate(scope: ClientScope | str | None, column: str = "clie
         raise ValueError("client scope is required")
     placeholders = ", ".join("?" for _ in client_ids)
     return f"{column} in ({placeholders})", list(client_ids)
+
+
+def _quarantine_exclusion_predicate(column: str = "client_id") -> tuple[str, list[object]]:
+    """Return the parameterized predicate used to hide quarantine tickets."""
+
+    return f"{column} <> ?", [_QUARANTINE_CLIENT_ID]
+
+
+def _reject_reserved_client_id(client_id: str | None) -> None:
+    if client_id == _QUARANTINE_CLIENT_ID:
+        raise ValueError(f"{_QUARANTINE_CLIENT_ID} is reserved")
 
 
 @dataclass(frozen=True)
@@ -593,6 +607,7 @@ class Store:
             raise ValueError("principal_id must be non-empty")
         if normalized_client_id is None:
             raise ValueError("client_id must be non-empty")
+        _reject_reserved_client_id(normalized_client_id)
         if normalized_role not in {"end_user", "viewer", "technician", "admin"}:
             raise ValueError("unsupported principal client role")
         with self._connect() as connection:
@@ -690,12 +705,12 @@ class Store:
         connection.execute(
             """
             insert or ignore into clients (client_id, name, status, created_at, updated_at)
-            values ('__quarantine__', 'Unmapped / Quarantine', 'quarantine', ?, ?)
+            values (?, 'Unmapped / Quarantine', 'quarantine', ?, ?)
             """,
-            (now, now),
+            (_QUARANTINE_CLIENT_ID, now, now),
         )
         row = connection.execute(
-            "select * from clients where client_id = '__quarantine__'"
+            "select * from clients where client_id = ?", (_QUARANTINE_CLIENT_ID,)
         ).fetchone()
         if row is None:  # pragma: no cover - the insert is protected by the primary key
             raise RuntimeError("quarantine client could not be created")
@@ -734,8 +749,7 @@ class Store:
         normalized_name = name.strip()
         if normalized_id is None:
             raise ValueError("client_id must be non-empty")
-        if normalized_id == "__quarantine__":
-            raise ValueError("__quarantine__ is reserved")
+        _reject_reserved_client_id(normalized_id)
         if not normalized_name:
             raise ValueError("client name must be non-empty")
         now = utc_now()
@@ -757,6 +771,7 @@ class Store:
         normalized_status = status.strip().lower()
         if normalized_id is None:
             return None
+        _reject_reserved_client_id(normalized_id)
         if normalized_status not in _CLIENT_STATUSES:
             raise ValueError("unsupported client status")
         client_predicate, client_params = _client_scope_predicate(scope)
@@ -812,6 +827,7 @@ class Store:
             raise ValueError("connector_type must be non-empty")
         if not normalized_name:
             raise ValueError("display_name must be non-empty")
+        _reject_reserved_client_id(normalized_client_id)
         normalized_config = _validate_connector_config_json(config_json)
         connector_instance_id = str(uuid.uuid4())
         now = utc_now()
@@ -878,6 +894,7 @@ class Store:
                 raise ValueError("display_name must be non-empty")
         if "client_id" in values:
             values["client_id"] = _normalize_client_id(cast(str | None, values["client_id"]))
+            _reject_reserved_client_id(cast(str | None, values["client_id"]))
         if "credential_ref" in values:
             values["credential_ref"] = _normalize_client_id(cast(str | None, values["credential_ref"]))
         if "config_json" in values:
@@ -948,6 +965,7 @@ class Store:
             raise ValueError("external_company_id must be non-empty")
         if normalized_client_id is None:
             raise ValueError("client_id must be non-empty")
+        _reject_reserved_client_id(normalized_client_id)
         client_predicate, client_params = _client_scope_predicate(scope)
         mapping_id = str(uuid.uuid4())
         now = utc_now()
@@ -2278,6 +2296,58 @@ class Store:
         ):
             self._ensure_column(connection, "execution_artifacts", column_name, definition)
         self._backfill_agent_revisions(connection)
+        self._check_quarantine_bindings(connection)
+
+    @staticmethod
+    def _check_quarantine_bindings(connection: sqlite3.Connection) -> None:
+        """Log legacy quarantine assignments without changing upgraded data."""
+
+        for row in connection.execute(
+            """
+            select principal_id, client_id, role
+            from principal_client_roles
+            where client_id = ?
+            order by principal_id, role
+            """,
+            (_QUARANTINE_CLIENT_ID,),
+        ).fetchall():
+            LOGGER.warning(
+                "Reserved quarantine binding detected: principal_client_role principal_id=%s client_id=%s role=%s",
+                row["principal_id"],
+                row["client_id"],
+                row["role"],
+            )
+        for row in connection.execute(
+            """
+            select connector_instance_id, client_id
+            from connector_instances
+            where client_id = ?
+            order by connector_instance_id
+            """,
+            (_QUARANTINE_CLIENT_ID,),
+        ).fetchall():
+            LOGGER.warning(
+                "Reserved quarantine binding detected: connector_instance connector_instance_id=%s client_id=%s",
+                row["connector_instance_id"],
+                row["client_id"],
+            )
+        for row in connection.execute(
+            """
+            select mapping_id, connector_instance_id, external_company_id, client_id
+            from client_connector_mappings
+            where client_id = ?
+            order by mapping_id
+            """,
+            (_QUARANTINE_CLIENT_ID,),
+        ).fetchall():
+            LOGGER.warning(
+                "Reserved quarantine binding detected: client_connector_mapping mapping_id=%s "
+                "connector_instance_id=%s external_company_id=%s client_id=%s",
+                row["mapping_id"],
+                row["connector_instance_id"],
+                row["external_company_id"],
+                row["client_id"],
+            )
 
     @staticmethod
     def _ensure_column(connection: sqlite3.Connection, table_name: str, column_name: str, definition: str) -> None:
@@ -2715,21 +2785,44 @@ class Store:
         self.ingest_tickets(tickets, client_id=client_id)
         return len(tickets)
 
-    def list_tickets(self, client_id: ClientScope | str | None = _ALL_CLIENTS) -> list[Ticket]:
+    def list_tickets(
+        self,
+        client_id: ClientScope | str | None = _ALL_CLIENTS,
+        *,
+        include_quarantine: bool = False,
+    ) -> list[Ticket]:
         client_predicate, client_params = _client_scope_predicate(client_id)
+        clauses = [client_predicate]
+        params = list(client_params)
+        if isinstance(client_id, AllClients) and not include_quarantine:
+            quarantine_predicate, quarantine_params = _quarantine_exclusion_predicate()
+            clauses.append(quarantine_predicate)
+            params.extend(quarantine_params)
         with self._connect() as connection:
             rows = connection.execute(
-                f"select * from tickets where {client_predicate} order by id",  # nosec B608: predicate is a fixed internal string; client ids are parameterized
-                client_params,
+                f"select * from tickets where {' and '.join(clauses)} order by id",  # nosec B608: predicates are fixed internal strings; client ids are parameterized
+                params,
             ).fetchall()
         return [Ticket(**dict(row)) for row in rows]
 
-    def get_ticket(self, ticket_id: str, client_id: ClientScope | str | None = _ALL_CLIENTS) -> Ticket | None:
+    def get_ticket(
+        self,
+        ticket_id: str,
+        client_id: ClientScope | str | None = _ALL_CLIENTS,
+        *,
+        include_quarantine: bool = True,
+    ) -> Ticket | None:
         client_predicate, client_params = _client_scope_predicate(client_id)
+        clauses = ["id = ?", client_predicate]
+        params: list[object] = [ticket_id, *client_params]
+        if not include_quarantine:
+            quarantine_predicate, quarantine_params = _quarantine_exclusion_predicate()
+            clauses.append(quarantine_predicate)
+            params.extend(quarantine_params)
         with self._connect() as connection:
             row = connection.execute(
-                f"select * from tickets where id = ? and {client_predicate}",  # nosec B608: predicate is a fixed internal string; client ids are parameterized
-                (ticket_id, *client_params),
+                f"select * from tickets where {' and '.join(clauses)}",  # nosec B608: predicates are fixed internal strings; client ids are parameterized
+                params,
             ).fetchone()
         return Ticket(**dict(row)) if row else None
 
@@ -3419,6 +3512,10 @@ class Store:
         client_predicate, client_params = _client_scope_predicate(client_id, "h.client_id")
         clauses.append(client_predicate)
         params.extend(client_params)
+        if isinstance(client_id, AllClients):
+            quarantine_predicate, quarantine_params = _quarantine_exclusion_predicate("t.client_id")
+            clauses.append(quarantine_predicate)
+            params.extend(quarantine_params)
         if started_from:
             clauses.append("date(h.changed_at) >= date(?)")
             params.append(started_from)
@@ -7780,19 +7877,17 @@ class Store:
             if not candidates:
                 return []
             resolved: set[tuple[str, str]] = set()
+            quarantine_predicate, quarantine_params = _quarantine_exclusion_predicate()
             for ticket_id, candidate_client_id in candidates:
                 if candidate_client_id is None:
                     ticket_row = connection.execute(
-                        "select id, status from tickets where id = ?",
-                        (ticket_id,),
+                        f"select id, status from tickets where id = ? and {quarantine_predicate}",  # nosec B608: predicate is a fixed internal string; ids are parameterized
+                        (ticket_id, *quarantine_params),
                     ).fetchone()
                 else:
                     ticket_row = connection.execute(
-                        """
-                        select id, status from tickets
-                        where id = ? and client_id = ?
-                        """,
-                        (ticket_id, candidate_client_id),
+                        f"select id, status from tickets where id = ? and client_id = ? and {quarantine_predicate}",  # nosec B608: predicate is a fixed internal string; ids are parameterized
+                        (ticket_id, candidate_client_id, *quarantine_params),
                     ).fetchone()
                 if ticket_row is not None:
                     resolved.add((str(ticket_row["id"]), str(ticket_row["status"])))
