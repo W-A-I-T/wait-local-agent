@@ -3,17 +3,39 @@ from __future__ import annotations
 from dataclasses import replace
 
 import pytest
+from fastapi import HTTPException
 from fastapi.testclient import TestClient
 
 import wait_local_agent.api.app as app_module
-from wait_local_agent.api.app import _halopsa_client_mapping, _safe_external_ticket_id, create_app
+from wait_local_agent.api.app import (
+    _end_user_read_client_id,
+    _halopsa_client_mapping,
+    _safe_external_ticket_id,
+    create_app,
+)
 from wait_local_agent.halopsa import HaloReadResponse
 from wait_local_agent.models import HaloReadResult, HaloTicket, HaloWriteResult
+from wait_local_agent.rbac import AuthContext, Role
 from wait_local_agent.store import Store
 
 
 def _auth(token: str) -> dict[str, str]:
     return {"Authorization": f"Bearer {token}"}
+
+
+def test_end_user_read_scope_hides_unscoped_identity(settings) -> None:
+    context = AuthContext(
+        role=Role.END_USER,
+        presented_token="end-user-token",
+        principal_id="user-1",
+        client_ids=frozenset(),
+    )
+
+    with pytest.raises(HTTPException) as error:
+        _end_user_read_client_id(context)
+
+    assert error.value.status_code == 404
+    assert error.value.detail == "end-user ticket not found"
 
 
 def test_end_user_support_is_optional_scoped_and_status_only(settings) -> None:
@@ -518,8 +540,7 @@ def test_end_user_message_operator_routes_preserve_tenant_and_role_boundaries(se
     assert viewer_reply.status_code == 403
     assert requester_message.status_code == 200
     assert missing_reply.status_code == 404
-    assert wrong_ticket.status_code == 200
-    assert wrong_ticket.json() == []
+    assert wrong_ticket.status_code == 404
     assert operator_messages.status_code == 200
     assert [item["role"] for item in operator_messages.json()] == ["requester"]
     assert admin_messages.status_code == 200

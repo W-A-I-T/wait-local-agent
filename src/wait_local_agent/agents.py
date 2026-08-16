@@ -17,6 +17,7 @@ from datetime import datetime
 from typing import cast
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
+from wait_local_agent.client_scope import AllClients
 from wait_local_agent.config import Settings
 from wait_local_agent.models import (
     MAX_APPROVAL_EXPIRY_SECONDS,
@@ -165,7 +166,10 @@ class AgentService:
         if max_steps < 1 or max_steps > MAX_AGENT_STEPS:
             raise AgentDefinitionError(f"max_steps must be between 1 and {MAX_AGENT_STEPS}")
         normalized_client_id = _normalize_client_id(client_id)
-        ticket = self.store.get_ticket(entity_id, client_id=normalized_client_id)
+        ticket = self.store.get_ticket(
+            entity_id,
+            client_id=normalized_client_id if normalized_client_id is not None else AllClients(),
+        )
         if ticket is None:
             raise AgentDefinitionError("ticket was not found in the requested scope")
 
@@ -479,7 +483,10 @@ class AgentService:
         if definition.entity_type != SUPPORTED_ENTITY_TYPE:
             raise AgentDefinitionError("agent entity_type is not supported")
         client_id = _normalize_client_id(definition.client_id)
-        if self.store.get_ticket(entity_id, client_id=client_id) is None:
+        if self.store.get_ticket(
+            entity_id,
+            client_id=client_id if client_id is not None else AllClients(),
+        ) is None:
             raise AgentDefinitionError("ticket was not found in the agent scope")
         execution_context = self._build_context(definition, entity_id)
         if supervisor_context:
@@ -1154,7 +1161,10 @@ class AgentService:
         selector = getattr(self.smart_actions.provider, "select_next_tool", None)
         if not callable(selector):
             return None
-        ticket = self.store.get_ticket(entity_id, client_id=definition.client_id)
+        ticket = self.store.get_ticket(
+            entity_id,
+            client_id=definition.client_id if definition.client_id is not None else AllClients(),
+        )
         if ticket is None:
             return None
         try:
@@ -1180,7 +1190,10 @@ class AgentService:
     def _build_context(self, definition: AgentDefinition, entity_id: str) -> dict[str, object]:
         if not definition.context_sources:
             return {}
-        ticket = self.store.get_ticket(entity_id, client_id=definition.client_id)
+        ticket = self.store.get_ticket(
+            entity_id,
+            client_id=definition.client_id if definition.client_id is not None else AllClients(),
+        )
         if ticket is None:
             raise AgentDefinitionError("ticket was not found in the agent scope")
         context: dict[str, object] = {}
@@ -1643,7 +1656,10 @@ def _approval_policy_for_ticket(
         return {"type": "agent", "mode": "always"}
     if not definition.approval_rules:
         return None
-    ticket = store.get_ticket(entity_id, client_id=definition.client_id)
+    ticket = store.get_ticket(
+        entity_id,
+        client_id=definition.client_id if definition.client_id is not None else AllClients(),
+    )
     if ticket is None:
         return None
     for rule in _normalize_approval_rules(definition.approval_rules):

@@ -219,11 +219,14 @@ def test_chat_session_api_persists_follow_up_context_and_enforces_rbac(settings,
     )
     store = Store(secure_settings.data_path)
     _seed_tickets(store)
+    store.create_principal("acme-technician", kind="staff")
+    store.add_principal_credential("acme-technician", "acme-technician-token")
+    store.add_principal_client_role("acme-technician", "acme", "technician")
     client = TestClient(create_app(secure_settings))
 
     created = client.post(
         "/technician/chat/sessions",
-        headers=_auth("tech-token"),
+        headers=_auth("acme-technician-token"),
         json={"ticket_id": "TCK-ACME"},
     )
     assert created.status_code == 200
@@ -232,19 +235,19 @@ def test_chat_session_api_persists_follow_up_context_and_enforces_rbac(settings,
 
     triage = client.post(
         f"/technician/chat/sessions/{session_id}/messages",
-        headers=_auth("tech-token"),
+        headers=_auth("acme-technician-token"),
         json={"message": "triage"},
     )
     follow_up = client.post(
         f"/technician/chat/sessions/{session_id}/messages",
-        headers=_auth("tech-token"),
+        headers=_auth("acme-technician-token"),
         json={"message": "triage again"},
     )
     history = client.get(
         f"/technician/chat/sessions/{session_id}",
-        headers=_auth("tech-token"),
+        headers=_auth("acme-technician-token"),
     )
-    listed = client.get("/technician/chat/sessions", headers=_auth("tech-token"))
+    listed = client.get("/technician/chat/sessions", headers=_auth("acme-technician-token"))
 
     assert triage.status_code == 200
     assert triage.json()["session_id"] == session_id
@@ -257,7 +260,7 @@ def test_chat_session_api_persists_follow_up_context_and_enforces_rbac(settings,
 
     help_response = client.post(
         f"/technician/chat/sessions/{session_id}/messages",
-        headers=_auth("tech-token"),
+        headers=_auth("acme-technician-token"),
         json={"message": "help"},
     )
     assert help_response.status_code == 200
@@ -265,7 +268,7 @@ def test_chat_session_api_persists_follow_up_context_and_enforces_rbac(settings,
 
     script = client.post(
         f"/technician/chat/sessions/{session_id}/messages",
-        headers=_auth("tech-token"),
+        headers=_auth("acme-technician-token"),
         json={"message": "run approved script script-1 on device device-1"},
     )
     assert script.status_code == 200
@@ -274,19 +277,19 @@ def test_chat_session_api_persists_follow_up_context_and_enforces_rbac(settings,
 
     invalid = client.post(
         f"/technician/chat/sessions/{session_id}/messages",
-        headers=_auth("tech-token"),
+        headers=_auth("acme-technician-token"),
         json={"message": "run arbitrary shell command"},
     )
     history_after_invalid = client.get(
         f"/technician/chat/sessions/{session_id}",
-        headers=_auth("tech-token"),
+        headers=_auth("acme-technician-token"),
     )
     assert invalid.status_code == 422
     assert history_after_invalid.json()["messages"][-1]["status"] == "failed"
 
     missing_ticket = client.post(
         f"/technician/chat/sessions/{session_id}/messages",
-        headers=_auth("tech-token"),
+        headers=_auth("acme-technician-token"),
         json={"message": "triage", "ticket_id": "TCK-MISSING"},
     )
     assert missing_ticket.status_code == 404
@@ -303,18 +306,18 @@ def test_chat_session_api_persists_follow_up_context_and_enforces_rbac(settings,
     monkeypatch.setattr(SmartActionService, "invoke", unavailable)
     unavailable_action = client.post(
         f"/technician/chat/sessions/{session_id}/messages",
-        headers=_auth("tech-token"),
+        headers=_auth("acme-technician-token"),
         json={"message": "triage"},
     )
     assert unavailable_action.status_code == 404
 
     closed = client.post(
         f"/technician/chat/sessions/{session_id}/close",
-        headers=_auth("tech-token"),
+        headers=_auth("acme-technician-token"),
     )
     rejected = client.post(
         f"/technician/chat/sessions/{session_id}/messages",
-        headers=_auth("tech-token"),
+        headers=_auth("acme-technician-token"),
         json={"message": "help"},
     )
     assert closed.status_code == 200
@@ -332,6 +335,9 @@ def test_chat_session_api_admin_can_scope_and_cross_tenant_access_is_hidden(sett
     )
     store = Store(secure_settings.data_path)
     _seed_tickets(store)
+    store.create_principal("acme-technician", kind="staff")
+    store.add_principal_credential("acme-technician", "acme-technician-token")
+    store.add_principal_client_role("acme-technician", "acme", "technician")
     client = TestClient(create_app(secure_settings))
 
     beta = client.post(
@@ -349,7 +355,7 @@ def test_chat_session_api_admin_can_scope_and_cross_tenant_access_is_hidden(sett
     )
     tech_cross_tenant = client.get(
         f"/technician/chat/sessions/{beta_id}",
-        headers=_auth("tech-token"),
+        headers=_auth("acme-technician-token"),
     )
     admin_list = client.get(
         "/technician/chat/sessions",

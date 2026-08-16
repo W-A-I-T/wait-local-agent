@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from typing import Protocol
 
+from wait_local_agent.client_scope import AllClients
 from wait_local_agent.models import Ticket, WorkflowRun, WorkflowTemplate
 from wait_local_agent.observability import ExecutionRecorder, StepRecord
 from wait_local_agent.reports.renderers import redact_text, redact_value
@@ -490,7 +491,10 @@ def run_workflow_template(
     if template is None:
         raise KeyError(template_id)
     normalized_client_id = _normalize_client_id(client_id)
-    ticket = store.get_ticket(ticket_id, client_id=normalized_client_id)
+    ticket = store.get_ticket(
+        ticket_id,
+        client_id=normalized_client_id if normalized_client_id is not None else AllClients(),
+    )
     if ticket is None:
         raise LookupError(ticket_id)
     effective_client_id = normalized_client_id if normalized_client_id is not None else ticket.client_id

@@ -59,11 +59,21 @@ def _get_endpoint(settings, path: str):
 
 
 def _technician(client_id: str = "acme") -> AuthContext:
-    return AuthContext(role=Role.TECHNICIAN, presented_token="tech-token", client_id=client_id)
+    return AuthContext(
+        role=Role.TECHNICIAN,
+        presented_token="tech-token",
+        client_id=client_id,
+        client_ids=frozenset({client_id}) if client_id else frozenset(),
+    )
 
 
 def _admin(client_id: str = "acme") -> AuthContext:
-    return AuthContext(role=Role.ADMIN, presented_token="admin-token", client_id=client_id)
+    return AuthContext(
+        role=Role.ADMIN,
+        presented_token="admin-token",
+        client_id=client_id,
+        is_msp_admin=True,
+    )
 
 
 def _request() -> Request:

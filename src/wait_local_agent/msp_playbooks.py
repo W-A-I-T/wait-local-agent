@@ -15,6 +15,7 @@ from typing import Any
 from uuid import uuid4
 
 from wait_local_agent.agents import SUPPORTED_EVENT_TYPES
+from wait_local_agent.client_scope import AllClients
 from wait_local_agent.models import MspPlaybookSubscription, WorkflowRun
 from wait_local_agent.reports.models import ReportType
 from wait_local_agent.reports.msp import (
@@ -941,7 +942,10 @@ def _validate_scope_and_ticket(
     if needs_ticket and not ticket_id:
         raise ValueError("this playbook requires ticket_id")
     if ticket_id:
-        ticket = store.get_ticket(ticket_id, client_id=normalized_client_id)
+        ticket = store.get_ticket(
+            ticket_id,
+            client_id=normalized_client_id if normalized_client_id is not None else AllClients(),
+        )
         if ticket is None:
             raise LookupError(ticket_id)
         if (

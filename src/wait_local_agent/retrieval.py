@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from wait_local_agent.client_scope import AllClients
 from wait_local_agent.config import Settings
 from wait_local_agent.models import SourceReference, Ticket
 from wait_local_agent.store import Store
@@ -20,10 +21,14 @@ def retrieve_sources(
             chunks = search_backend_from_settings(settings, store).search(
                 f"{ticket.subject} {ticket.body}",
                 limit=3,
-                client_id=client_id,
+                client_id=client_id if client_id is not None else AllClients(),
             )
         else:
-            chunks = store.search_knowledge_chunks(f"{ticket.subject} {ticket.body}", limit=3)
+            chunks = store.search_knowledge_chunks(
+                f"{ticket.subject} {ticket.body}",
+                limit=3,
+                client_id=client_id if client_id is not None else AllClients(),
+            )
         if chunks:
             return [
                 SourceReference(

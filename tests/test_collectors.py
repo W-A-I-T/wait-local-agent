@@ -9,6 +9,7 @@ from typer.testing import CliRunner
 
 from wait_local_agent.api.app import create_app
 from wait_local_agent.cli import app
+from wait_local_agent.client_scope import AllClients
 from wait_local_agent.collectors import (
     CollectionStatus,
     CollectorManifest,
@@ -675,11 +676,14 @@ def test_store_collector_methods_cover_crud_filters_and_guards(settings) -> None
     assert store.get_collector_source(acme_source.id or 0) == updated_source
     assert store.get_collector_source(404) is None
     assert [source.name for source in store.list_collector_sources(client_id="acme")] == ["Acme renamed"]
-    assert {source.name for source in store.list_collector_sources(client_id="")} == {"Acme renamed", "Beta fixture"}
+    assert {source.name for source in store.list_collector_sources(client_id=AllClients())} == {
+        "Acme renamed",
+        "Beta fixture",
+    }
     assert completed.status == "completed"
     assert linked.report_id == "report-1"
     assert [run.id for run in store.list_collector_runs(client_id="acme")] == [acme_run.id]
-    assert [run.id for run in store.list_collector_runs(client_id="")] == [beta_run.id, acme_run.id]
+    assert [run.id for run in store.list_collector_runs(client_id=AllClients())] == [beta_run.id, acme_run.id]
     assert store.get_collector_run(404) is None
     assert store.get_canonical_asset(asset.id or 0) is not None
     assert store.get_canonical_asset(404) is None

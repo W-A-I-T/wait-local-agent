@@ -58,6 +58,18 @@ def _create(service: AgentService, *, client_id: str | None = "acme"):
     )
 
 
+def _provision_bound_principal(
+    store: Store,
+    principal_id: str,
+    token: str,
+    client_id: str,
+    role: str,
+) -> None:
+    store.create_principal(principal_id, kind="staff")
+    store.add_principal_credential(principal_id, token)
+    store.add_principal_client_role(principal_id, client_id, role)
+
+
 def test_tool_catalog_reuses_smart_action_contract(settings) -> None:
     service = _service(settings)
 
@@ -1804,20 +1816,23 @@ def test_collector_preview_tool_reuses_api_rbac_and_redacts_config(settings) -> 
             "viewer_token": "viewer-token",
         }
     )
+    store = Store(secure.data_path)
+    _provision_bound_principal(store, "acme-technician", "acme-technician-token", "acme", "technician")
+    _provision_bound_principal(store, "acme-viewer", "acme-viewer-token", "acme", "viewer")
     client = TestClient(create_app(secure))
     viewer = client.post(
         "/smart-actions/collector-preview/invoke",
-        headers={"Authorization": "Bearer viewer-token"},
+        headers={"Authorization": "Bearer acme-viewer-token"},
         json={"payload": {"module_id": "host-runtime", "config": {}}},
     )
     preview = client.post(
         "/smart-actions/collector-preview/invoke",
-        headers={"Authorization": "Bearer tech-token"},
+        headers={"Authorization": "Bearer acme-technician-token"},
         json={"payload": {"module_id": "host-runtime", "config": {}}},
     )
     result = client.post(
         "/smart-actions/collector-preview/invoke",
-        headers={"Authorization": "Bearer tech-token"},
+        headers={"Authorization": "Bearer acme-technician-token"},
         json={
             "payload": {
                 "module_id": "host-runtime",
@@ -1853,22 +1868,24 @@ def test_sentiment_and_escalation_tools_are_tenant_scoped_and_technician_gated(s
     )
     store = Store(secure.data_path)
     _seed(store, client_id="acme")
+    _provision_bound_principal(store, "acme-technician", "acme-technician-token", "acme", "technician")
+    _provision_bound_principal(store, "acme-viewer", "acme-viewer-token", "acme", "viewer")
     with store._connect() as connection:  # noqa: SLF001
         connection.execute("update tickets set client_id = 'beta' where id = 'TCK-1002'")
     client = TestClient(create_app(secure))
     viewer = client.post(
         "/smart-actions/ticket-sentiment/invoke",
-        headers={"Authorization": "Bearer viewer-token"},
+        headers={"Authorization": "Bearer acme-viewer-token"},
         json={"payload": {"ticket_id": "TCK-1001"}},
     )
     sentiment = client.post(
         "/smart-actions/ticket-sentiment/invoke",
-        headers={"Authorization": "Bearer tech-token"},
+        headers={"Authorization": "Bearer acme-technician-token"},
         json={"payload": {"ticket_id": "TCK-1001"}},
     )
     foreign = client.post(
         "/smart-actions/ticket-escalation/invoke",
-        headers={"Authorization": "Bearer tech-token"},
+        headers={"Authorization": "Bearer acme-technician-token"},
         json={"payload": {"ticket_id": "TCK-1002"}},
     )
 
@@ -1892,6 +1909,8 @@ def test_m365_identity_lookup_is_read_only_tenant_scoped_and_technician_gated(se
         }
     )
     store = Store(secure.data_path)
+    _provision_bound_principal(store, "acme-technician", "acme-technician-token", "acme", "technician")
+    _provision_bound_principal(store, "acme-viewer", "acme-viewer-token", "acme", "viewer")
     store.upsert_canonical_asset(
         canonical_id="m365:user:acme-1",
         asset_type="m365-user",
@@ -1931,22 +1950,22 @@ def test_m365_identity_lookup_is_read_only_tenant_scoped_and_technician_gated(se
     client = TestClient(create_app(secure))
     viewer = client.post(
         "/smart-actions/m365-identity-lookup/invoke",
-        headers={"Authorization": "Bearer viewer-token"},
+        headers={"Authorization": "Bearer acme-viewer-token"},
         json={"payload": {"identity": "admin"}},
     )
     acme = client.post(
         "/smart-actions/m365-identity-lookup/invoke",
-        headers={"Authorization": "Bearer tech-token"},
+        headers={"Authorization": "Bearer acme-technician-token"},
         json={"payload": {"identity": "admin"}},
     )
     beta = client.post(
         "/smart-actions/m365-identity-lookup/invoke",
-        headers={"Authorization": "Bearer tech-token"},
+        headers={"Authorization": "Bearer acme-technician-token"},
         json={"payload": {"identity": "admin@beta.example"}},
     )
     rmm = client.post(
         "/smart-actions/rmm-device-lookup/invoke",
-        headers={"Authorization": "Bearer tech-token"},
+        headers={"Authorization": "Bearer acme-technician-token"},
         json={"payload": {"query": "acme"}},
     )
 
@@ -2207,6 +2226,8 @@ def test_connector_read_tools_reuse_existing_clients_and_tenant_scope(settings, 
     )
     store = Store(secure.data_path)
     _seed(store, client_id="acme")
+    _provision_bound_principal(store, "acme-technician", "acme-technician-token", "acme", "technician")
+    _provision_bound_principal(store, "acme-viewer", "acme-viewer-token", "acme", "viewer")
     halo = SimpleNamespace(
         get_ticket=lambda ticket_id: SimpleNamespace(
             result=SimpleNamespace(status="ready", message="ok", count=1),
@@ -2225,22 +2246,22 @@ def test_connector_read_tools_reuse_existing_clients_and_tenant_scope(settings, 
 
     viewer = client.post(
         "/smart-actions/halopsa-ticket-lookup/invoke",
-        headers={"Authorization": "Bearer viewer-token"},
+        headers={"Authorization": "Bearer acme-viewer-token"},
         json={"payload": {"ticket_id": "TCK-1001"}},
     )
     ticket = client.post(
         "/smart-actions/halopsa-ticket-lookup/invoke",
-        headers={"Authorization": "Bearer tech-token"},
+        headers={"Authorization": "Bearer acme-technician-token"},
         json={"payload": {"ticket_id": "TCK-1001"}},
     )
     docs = client.post(
         "/smart-actions/hudu-documentation-search/invoke",
-        headers={"Authorization": "Bearer tech-token"},
+        headers={"Authorization": "Bearer acme-technician-token"},
         json={"payload": {"query": "vpn", "company_id": "acme"}},
     )
     foreign_docs = client.post(
         "/smart-actions/hudu-documentation-search/invoke",
-        headers={"Authorization": "Bearer tech-token"},
+        headers={"Authorization": "Bearer acme-technician-token"},
         json={"payload": {"query": "vpn", "company_id": "other"}},
     )
 
@@ -2756,17 +2777,20 @@ def test_agent_revision_restore_requires_tenant_for_authenticated_technicians(se
             "viewer_token": "viewer-token",
         }
     )
+    store = Store(secure.data_path)
+    _provision_bound_principal(store, "acme-technician", "acme-technician-token", "acme", "technician")
+    _provision_bound_principal(store, "acme-viewer", "acme-viewer-token", "acme", "viewer")
     client = TestClient(create_app(secure))
     response = client.post(
         "/agents/anything/revisions/1/restore",
-        headers={"Authorization": "Bearer tech-token"},
+        headers={"Authorization": "Bearer acme-technician-token"},
     )
     assert response.status_code == 404
     assert client.get(
         "/agents/anything/revisions/1/diff/2",
-        headers={"Authorization": "Bearer viewer-token"},
+        headers={"Authorization": "Bearer acme-viewer-token"},
     ).status_code == 404
     assert client.get(
         "/agents/anything/revisions",
-        headers={"Authorization": "Bearer viewer-token"},
+        headers={"Authorization": "Bearer acme-viewer-token"},
     ).json() == []
