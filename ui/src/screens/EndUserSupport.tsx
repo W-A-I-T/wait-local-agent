@@ -1,7 +1,11 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Additional terms: ../../../../ADDITIONAL_TERMS.md
+
 import { FormEvent, type CSSProperties, useState } from "react";
 import { AlertTriangle, CheckCircle2, KeyRound, LifeBuoy, Search, ShieldCheck } from "lucide-react";
 import { apiFetch, ApiRequestError } from "../api/client";
 import type { EndUserBranding, EndUserMessage, EndUserTicket } from "../api/types";
+import { WaitAttribution } from "../components/WaitAttribution";
 
 const tokenStorageKey = "wait-local-agent-end-user-token";
 const defaultBranding: EndUserBranding = {
@@ -213,6 +217,7 @@ export function EndUserSupport() {
           {ticket ? <div className="end-user-messages"><strong>Conversation</strong>{messages.length ? messages.map((item) => <p key={item.id}><strong>{item.role === "support" ? "Support" : "You"}</strong><span>{item.body}</span></p>) : <span>No follow-up messages yet.</span>}<form className="draft-form" onSubmit={(event) => void sendMessage(event)}><label>Send a follow-up<textarea required maxLength={10000} rows={3} value={replyBody} onChange={(event) => setReplyBody(event.target.value)} placeholder="Add information for your support team" /></label><button type="submit" disabled={busy !== null || !replyBody.trim()}>{busy === "message" ? "Sending…" : "Send message"}</button></form></div> : null}
         </section>
       </div>
+      <WaitAttribution />
     </main>
   );
 }
