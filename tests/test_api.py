@@ -14,6 +14,7 @@ from fastapi.routing import APIRoute
 from fastapi.testclient import TestClient
 
 import wait_local_agent.api.app as app_module
+from tests.support import ensure_test_client, ensure_test_clients, ingest_local
 from wait_local_agent.api.app import ClientReportRequest, ScheduledJobCreateRequest, create_app
 from wait_local_agent.autotask import AutotaskReadResponse
 from wait_local_agent.collectors import (
@@ -141,7 +142,7 @@ def test_api_auth_requires_bearer_token_when_demo_mode_disabled(settings) -> Non
 
 
 def test_provider_settings_and_tickets_list(settings) -> None:
-    Store(settings.data_path).ingest_ticket_file(Path("examples/sample_tickets/tickets.json"))
+    ingest_local(Store(settings.data_path), Path("examples/sample_tickets/tickets.json"))
     client = TestClient(create_app(settings))
 
     providers = client.get("/settings/providers")
@@ -267,7 +268,7 @@ def test_provider_settings_expose_operator_supplied_model_rates_without_secrets(
 
 
 def test_ticket_summary_and_approval_flow(settings) -> None:
-    Store(settings.data_path).ingest_ticket_file(Path("examples/sample_tickets/tickets.json"))
+    ingest_local(Store(settings.data_path), Path("examples/sample_tickets/tickets.json"))
     client = TestClient(create_app(settings))
 
     summary = client.get("/tickets/TCK-1001/summary")
@@ -327,6 +328,7 @@ def test_auth_role_approver_identity_and_client_filters(settings) -> None:
         }
     )
     store = Store(secure_settings.data_path)
+    ensure_test_clients(store, "acme", "beta")
     _provision_bound_principal(store, "acme-viewer", "acme-viewer-token", "acme", "viewer")
     _provision_bound_principal(store, "acme-technician", "acme-technician-token", "acme", "technician")
     with store._connect() as connection:  # noqa: SLF001
@@ -429,6 +431,7 @@ def test_approval_requests_are_scoped_to_authenticated_tenant(settings, monkeypa
         }
     )
     store = Store(secure_settings.data_path)
+    ensure_test_clients(store, "acme", "beta")
     _provision_bound_principal(store, "acme-technician", "acme-technician-token", "acme", "technician")
     acme = store.create_approval_request(
         "TCK-ACME",
@@ -797,6 +800,7 @@ def test_knowledge_api_ingest_list_and_search(settings) -> None:
 
 def test_knowledge_search_scopes_results_by_client_id(settings) -> None:
     store = Store(settings.data_path)
+    ensure_test_clients(store, "acme", "beta")
     store.upsert_knowledge_document(
         path="examples/sample_docs/acme.md",
         title="Acme Runbook",
@@ -836,7 +840,7 @@ def test_knowledge_api_rejects_outside_allowed_root(settings, tmp_path) -> None:
 
 
 def test_connector_workflow_approval_and_event_surfaces(settings) -> None:
-    Store(settings.data_path).ingest_ticket_file(Path("examples/sample_tickets/tickets.json"))
+    ingest_local(Store(settings.data_path), Path("examples/sample_tickets/tickets.json"))
     client = TestClient(create_app(settings))
 
     connectors = client.get("/connectors")
@@ -912,7 +916,7 @@ def test_connector_workflow_approval_and_event_surfaces(settings) -> None:
 
 def test_tool_backed_workflow_runs_existing_action_and_preserves_tenant_scope(settings) -> None:
     store = Store(settings.data_path)
-    store.ingest_ticket_file(Path("examples/sample_tickets/tickets.json"))
+    ingest_local(store, Path("examples/sample_tickets/tickets.json"))
     with store._connect() as connection:  # noqa: SLF001
         connection.execute("update tickets set client_id = ? where id = ?", ("acme", "TCK-1001"))
     client = TestClient(create_app(settings))
@@ -933,7 +937,7 @@ def test_tool_backed_workflow_runs_existing_action_and_preserves_tenant_scope(se
 
 def test_threshold_workflow_api_accepts_bounded_payload_and_rejects_missing_fields(settings) -> None:
     store = Store(settings.data_path)
-    store.ingest_ticket_file(Path("examples/sample_tickets/tickets.json"))
+    ingest_local(store, Path("examples/sample_tickets/tickets.json"))
     with store._connect() as connection:  # noqa: SLF001
         connection.execute("update tickets set client_id = ? where id = ?", ("acme", "TCK-1001"))
     client = TestClient(create_app(settings))
@@ -959,7 +963,7 @@ def test_threshold_workflow_api_accepts_bounded_payload_and_rejects_missing_fiel
 
 def test_workflow_run_inherits_ticket_client_id_when_request_omits_it(settings) -> None:
     store = Store(settings.data_path)
-    store.ingest_ticket_file(Path("examples/sample_tickets/tickets.json"))
+    ingest_local(store, Path("examples/sample_tickets/tickets.json"))
     with store._connect() as connection:  # noqa: SLF001
         connection.execute(
             "update tickets set client_id = ? where id = ?",
@@ -996,7 +1000,8 @@ def test_scheduled_job_inherits_ticket_client_id_when_request_omits_it(settings)
         }
     )
     store = Store(secure_settings.data_path)
-    store.ingest_ticket_file(Path("examples/sample_tickets/tickets.json"))
+    ensure_test_clients(store, "acme", "beta")
+    ingest_local(store, Path("examples/sample_tickets/tickets.json"))
     with store._connect() as connection:  # noqa: SLF001
         connection.execute(
             "update tickets set client_id = ? where id = ?",
@@ -1094,7 +1099,8 @@ def test_scheduled_report_job_is_tenant_scoped_and_validated(settings) -> None:
 
 def test_recurring_service_review_report_route_is_bounded_and_client_scoped(settings) -> None:
     store = Store(settings.data_path)
-    store.ingest_ticket_file(Path("examples/sample_tickets/tickets.json"))
+    ensure_test_client(store, "acme")
+    ingest_local(store, Path("examples/sample_tickets/tickets.json"))
     with store._connect() as connection:  # noqa: SLF001
         connection.execute(
             "update tickets set client_id = ? where id = ?",
@@ -1166,7 +1172,8 @@ def test_scheduled_job_inherits_ticket_client_id_when_request_has_blank_client_i
         }
     )
     store = Store(secure_settings.data_path)
-    store.ingest_ticket_file(Path("examples/sample_tickets/tickets.json"))
+    ensure_test_clients(store, "acme", "beta")
+    ingest_local(store, Path("examples/sample_tickets/tickets.json"))
     with store._connect() as connection:  # noqa: SLF001
         connection.execute(
             "update tickets set client_id = ? where id = ?",
@@ -1229,6 +1236,7 @@ def test_approval_detail_handles_invalid_payload_and_missing_write_health(settin
             pass
 
     store = Store(settings.data_path)
+    ensure_test_client(store, "acme")
     approval = store.create_approval_request(
         "TCK-1002",
         "halopsa.add_note",
@@ -1368,7 +1376,7 @@ def test_update_approval_request_recovers_from_runtime_error(settings, monkeypat
 
 
 def test_scheduled_job_api_validation_and_missing_jobs(settings) -> None:
-    Store(settings.data_path).ingest_ticket_file(Path("examples/sample_tickets/tickets.json"))
+    ingest_local(Store(settings.data_path), Path("examples/sample_tickets/tickets.json"))
     client = TestClient(create_app(settings))
 
     missing_template = client.post(
@@ -1398,7 +1406,7 @@ def test_scheduled_job_api_validation_and_missing_jobs(settings) -> None:
 
 
 def test_approval_detail_payload_edit_and_workflow_detail(settings) -> None:
-    Store(settings.data_path).ingest_ticket_file(Path("examples/sample_tickets/tickets.json"))
+    ingest_local(Store(settings.data_path), Path("examples/sample_tickets/tickets.json"))
     client = TestClient(create_app(settings))
     draft = client.post(
         "/connectors/halopsa/tickets/TCK-1002/drafts",
@@ -1569,7 +1577,7 @@ def test_approval_request_update_propagates_to_workflow_run(settings) -> None:
         }
     )
     store = Store(secure_settings.data_path)
-    store.ingest_ticket_file(Path("examples/sample_tickets/tickets.json"))
+    ingest_local(store, Path("examples/sample_tickets/tickets.json"))
     with store._connect() as connection:  # noqa: SLF001
         connection.execute("update tickets set client_id = 'acme'")
     client = TestClient(create_app(secure_settings))
@@ -1622,7 +1630,7 @@ def test_scheduled_job_routes_cover_rbac_validation_and_live_scheduler_registrat
         }
     )
     store = Store(secure_settings.data_path)
-    store.ingest_ticket_file(Path("examples/sample_tickets/tickets.json"))
+    ingest_local(store, Path("examples/sample_tickets/tickets.json"))
     with store._connect() as connection:  # noqa: SLF001
         connection.execute("update tickets set client_id = 'acme'")
 
@@ -1793,7 +1801,7 @@ def test_scheduled_playbook_route_validates_and_persists_report_target(settings)
 
 def test_scheduled_agent_route_requires_scheduled_definition_and_persists_target(settings) -> None:
     store = Store(settings.data_path)
-    store.ingest_ticket_file(Path("examples/sample_tickets/tickets.json"))
+    ingest_local(store, Path("examples/sample_tickets/tickets.json"))
     with store._connect() as connection:  # noqa: SLF001
         connection.execute("update tickets set client_id = ?", ("acme",))
     client = TestClient(create_app(settings))
@@ -1851,7 +1859,7 @@ def test_scheduled_agent_route_requires_scheduled_definition_and_persists_target
 
 def test_event_ingest_route_dispatches_idempotently_and_exposes_delivery_history(settings) -> None:
     store = Store(settings.data_path)
-    store.ingest_ticket_file(Path("examples/sample_tickets/tickets.json"))
+    ingest_local(store, Path("examples/sample_tickets/tickets.json"))
     with store._connect() as connection:  # noqa: SLF001
         connection.execute("update tickets set client_id = ?", ("acme",))
     client = TestClient(create_app(settings))
@@ -1946,7 +1954,7 @@ def test_event_ingest_route_dispatches_idempotently_and_exposes_delivery_history
 
 def test_event_delivery_retry_route_is_tenant_scoped_and_bounded(settings) -> None:
     store = Store(settings.data_path)
-    store.ingest_ticket_file(Path("examples/sample_tickets/tickets.json"))
+    ingest_local(store, Path("examples/sample_tickets/tickets.json"))
     with store._connect() as connection:  # noqa: SLF001
         connection.execute("update tickets set client_id = ?", ("acme",))
     delivery, _ = store.create_event_delivery(
@@ -1992,7 +2000,7 @@ def test_event_delivery_retry_route_is_tenant_scoped_and_bounded(settings) -> No
 
 def test_manual_workflow_run_emits_completion_event(settings) -> None:
     store = Store(settings.data_path)
-    store.ingest_ticket_file(Path("examples/sample_tickets/tickets.json"))
+    ingest_local(store, Path("examples/sample_tickets/tickets.json"))
     client = TestClient(create_app(settings))
 
     agent = client.post(
@@ -2041,7 +2049,7 @@ def test_manual_workflow_run_emits_completion_event(settings) -> None:
 
 def test_manual_workflow_completion_dispatch_failure_is_audited(settings, monkeypatch) -> None:
     store = Store(settings.data_path)
-    store.ingest_ticket_file(Path("examples/sample_tickets/tickets.json"))
+    ingest_local(store, Path("examples/sample_tickets/tickets.json"))
 
     def fail_dispatch(*_args, **_kwargs):
         raise RuntimeError("api-key=secret-value")
@@ -2075,7 +2083,7 @@ def test_manual_workflow_run_requires_tenant_for_authenticated_technician(settin
         }
     )
     store = Store(secure_settings.data_path)
-    store.ingest_ticket_file(Path("examples/sample_tickets/tickets.json"))
+    ingest_local(store, Path("examples/sample_tickets/tickets.json"))
     client = TestClient(create_app(secure_settings))
 
     response = client.post(
@@ -2089,7 +2097,7 @@ def test_manual_workflow_run_requires_tenant_for_authenticated_technician(settin
 
 def test_manual_workflow_run_reports_missing_template_after_ticket_scope_check(settings) -> None:
     store = Store(settings.data_path)
-    store.ingest_ticket_file(Path("examples/sample_tickets/tickets.json"))
+    ingest_local(store, Path("examples/sample_tickets/tickets.json"))
     client = TestClient(create_app(settings))
 
     response = client.post(
@@ -2103,7 +2111,7 @@ def test_manual_workflow_run_reports_missing_template_after_ticket_scope_check(s
 
 def test_manual_workflow_run_maps_runtime_ticket_lookup_failure(settings, monkeypatch) -> None:
     store = Store(settings.data_path)
-    store.ingest_ticket_file(Path("examples/sample_tickets/tickets.json"))
+    ingest_local(store, Path("examples/sample_tickets/tickets.json"))
 
     def fail_workflow(*_args, **_kwargs):
         raise LookupError("ticket disappeared")
@@ -2122,7 +2130,7 @@ def test_manual_workflow_run_maps_runtime_ticket_lookup_failure(settings, monkey
 
 def test_workflow_completion_event_filter_is_available_through_api(settings) -> None:
     store = Store(settings.data_path)
-    store.ingest_ticket_file(Path("examples/sample_tickets/tickets.json"))
+    ingest_local(store, Path("examples/sample_tickets/tickets.json"))
     with store._connect() as connection:  # noqa: SLF001
         connection.execute("update tickets set client_id = ?", ("acme",))
     client = TestClient(create_app(settings))
@@ -2166,7 +2174,7 @@ def test_workflow_completion_event_filter_is_available_through_api(settings) -> 
 
 def test_template_gallery_is_provenance_bearing_and_runs_only_in_scope(settings) -> None:
     store = Store(settings.data_path)
-    store.ingest_ticket_file(Path("examples/sample_tickets/tickets.json"))
+    ingest_local(store, Path("examples/sample_tickets/tickets.json"))
     with store._connect() as connection:  # noqa: SLF001
         connection.execute("update tickets set client_id = ?", ("acme",))
     client = TestClient(create_app(settings))
@@ -2251,7 +2259,7 @@ def test_template_gallery_is_provenance_bearing_and_runs_only_in_scope(settings)
 
 def test_template_gallery_instances_are_editable_versioned_and_disableable(settings, monkeypatch) -> None:
     store = Store(settings.data_path)
-    store.ingest_ticket_file(Path("examples/sample_tickets/tickets.json"))
+    ingest_local(store, Path("examples/sample_tickets/tickets.json"))
     with store._connect() as connection:  # noqa: SLF001
         connection.execute("update tickets set client_id = ? where id = ?", ("acme", "TCK-1001"))
     client = TestClient(create_app(settings))
@@ -2531,7 +2539,7 @@ def test_template_gallery_workflow_design_round_trips_and_restores(settings) -> 
 
 def test_bounded_agent_backfill_supports_pause_cancel_and_failed_reruns(settings, monkeypatch) -> None:
     store = Store(settings.data_path)
-    store.ingest_ticket_file(Path("examples/sample_tickets/tickets.json"))
+    ingest_local(store, Path("examples/sample_tickets/tickets.json"))
     with store._connect() as connection:  # noqa: SLF001
         connection.execute("update tickets set client_id = ?", ("acme",))
     client = TestClient(create_app(settings))
@@ -2907,6 +2915,14 @@ def test_event_history_filters_by_client_id(settings) -> None:
     )
     store = Store(secure_settings.data_path)
     with store._connect() as connection:  # noqa: SLF001
+        for cid in ("acme", "beta"):
+            connection.execute(
+                """
+                insert or ignore into clients (client_id, name, status, created_at, updated_at)
+                values (?, ?, 'active', ?, ?)
+                """,
+                (cid, cid.title(), "2026-01-01T00:00:00Z", "2026-01-01T00:00:00Z"),
+            )
         connection.execute(
             """
             insert into tickets (id, client, subject, body, priority, status, client_id)
@@ -2936,6 +2952,14 @@ def test_event_history_filters_by_client_id(settings) -> None:
 def test_smart_action_runs_and_ticket_lookup_are_client_scoped(settings) -> None:
     store = Store(settings.data_path)
     with store._connect() as connection:  # noqa: SLF001
+        for cid in ("acme", "beta"):
+            connection.execute(
+                """
+                insert or ignore into clients (client_id, name, status, created_at, updated_at)
+                values (?, ?, 'active', ?, ?)
+                """,
+                (cid, cid.title(), "2026-01-01T00:00:00Z", "2026-01-01T00:00:00Z"),
+            )
         connection.executemany(
             """
             insert into tickets (id, client, subject, body, priority, status, client_id)
@@ -3282,6 +3306,14 @@ def test_technician_chat_reuses_smart_actions_and_preserves_tenant_rbac(settings
     )
     store = Store(secure_settings.data_path)
     with store._connect() as connection:  # noqa: SLF001
+        for cid in ("acme", "beta"):
+            connection.execute(
+                """
+                insert or ignore into clients (client_id, name, status, created_at, updated_at)
+                values (?, ?, 'active', ?, ?)
+                """,
+                (cid, cid.title(), "2026-01-01T00:00:00Z", "2026-01-01T00:00:00Z"),
+            )
         connection.executemany(
             """
             insert into tickets (id, client, subject, body, priority, status, client_id)
@@ -3351,6 +3383,14 @@ def test_technician_chat_plan_blocked_results_are_explicit(settings) -> None:
 
     store = Store(settings.data_path)
     with store._connect() as connection:  # noqa: SLF001
+        for cid in ("acme",):
+            connection.execute(
+                """
+                insert or ignore into clients (client_id, name, status, created_at, updated_at)
+                values (?, ?, 'active', ?, ?)
+                """,
+                (cid, cid.title(), "2026-01-01T00:00:00Z", "2026-01-01T00:00:00Z"),
+            )
         connection.execute(
             """
             insert into tickets (id, client, subject, body, priority, status, client_id)
@@ -5545,7 +5585,7 @@ def test_knowledge_api_missing_path_returns_400(settings) -> None:
 
 
 def _seed_execution_tickets(store: Store) -> None:
-    store.ingest_ticket_file(Path("examples/sample_tickets/tickets.json"))
+    ingest_local(store, Path("examples/sample_tickets/tickets.json"))
 
 
 def test_executions_api_lists_and_details_runs(settings) -> None:
@@ -6574,7 +6614,7 @@ def test_ticket_status_history_api_exposes_recorded_transitions(settings, tmp_pa
         "\"updated_at\":\"2026-08-08T10:00:00+00:00\"}]",
         encoding="utf-8",
     )
-    Store(settings.data_path).ingest_ticket_file(ticket_file)
+    ingest_local(Store(settings.data_path), ticket_file)
     client = TestClient(create_app(settings))
 
     response = client.get("/tickets/TCK-HISTORY/status-history")

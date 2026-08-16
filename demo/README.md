@@ -16,7 +16,7 @@ wait-local-agent knowledge ingest demo/sample_runbooks
 
 WAIT_DATA_PATH=.wait-local-agent/demo.db \
 WAIT_ALLOWED_DOC_ROOT=demo/sample_runbooks \
-wait-local-agent ingest demo/sample_tickets
+wait-local-agent ingest demo/sample_tickets --client-id acme
 
 WAIT_DATA_PATH=.wait-local-agent/demo.db \
 WAIT_ALLOWED_DOC_ROOT=demo/sample_runbooks \

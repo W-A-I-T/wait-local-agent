@@ -7,6 +7,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 import wait_local_agent.store as store_module
+from tests.support import ensure_test_client, ensure_test_clients
 from wait_local_agent.api.app import create_app
 from wait_local_agent.smart_actions import SmartActionService
 from wait_local_agent.store import Store
@@ -17,6 +18,7 @@ def _auth(token: str) -> dict[str, str]:
 
 
 def _seed_tickets(store: Store) -> None:
+    ensure_test_clients(store, "acme", "beta")
     with store._connect() as connection:  # noqa: SLF001
         connection.executemany(
             """
@@ -99,6 +101,7 @@ def test_chat_session_store_is_tenant_and_principal_scoped_and_redacted(settings
 
 def test_chat_session_store_rejects_unscoped_or_invalid_inputs(settings) -> None:
     store = Store(settings.data_path)
+    ensure_test_client(store, "acme")
     with pytest.raises(ValueError, match="client scope"):
         store.create_technician_chat_session(client_id="", principal_id="tech")
     with pytest.raises(ValueError, match="principal"):

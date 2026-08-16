@@ -119,7 +119,7 @@ def test_demo_dataset_can_be_ingested(monkeypatch, tmp_path) -> None:
     runner = CliRunner()
 
     docs = runner.invoke(app, ["knowledge", "ingest", "demo/sample_runbooks"])
-    tickets = runner.invoke(app, ["ingest", "demo/sample_tickets"])
+    tickets = runner.invoke(app, ["ingest", "demo/sample_tickets", "--client-id", "acme"])
     summary = runner.invoke(app, ["tickets", "summarize", "DEMO-1001"])
 
     assert docs.exit_code == 0

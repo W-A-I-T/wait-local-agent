@@ -11,6 +11,7 @@ from typing import Any, cast
 import pytest
 
 import wait_local_agent.observability as observability
+from tests.support import ingest_local
 from wait_local_agent.models import utc_now
 from wait_local_agent.observability import (
     EXECUTION_STEP_PAYLOAD_CAP_BYTES,
@@ -29,7 +30,7 @@ from wait_local_agent.workflows import run_workflow_template
 
 
 def _seed_tickets(store: Store) -> None:
-    store.ingest_ticket_file(Path("examples/sample_tickets/tickets.json"))
+    ingest_local(store, Path("examples/sample_tickets/tickets.json"))
 
 
 def test_fresh_database_has_execution_tables(settings) -> None:

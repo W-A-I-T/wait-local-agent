@@ -12,6 +12,7 @@ from fastapi.testclient import TestClient
 
 import wait_local_agent.agents as agents_module
 import wait_local_agent.api.app as app_module
+from tests.support import ensure_test_client, ingest_local
 from wait_local_agent.agents import AgentDefinitionError, AgentService
 from wait_local_agent.api.app import create_app
 from wait_local_agent.models import (
@@ -29,8 +30,10 @@ from wait_local_agent.store import Store
 
 
 def _seed(store: Store, *, client_id: str | None = None) -> None:
-    store.ingest_ticket_file(Path("examples/sample_tickets/tickets.json"))
+    ingest_local(store, Path("examples/sample_tickets/tickets.json"))
+    ensure_test_client(store, "beta")
     if client_id is not None:
+        ensure_test_client(store, client_id)
         with store._connect() as connection:  # noqa: SLF001
             connection.execute("update tickets set client_id = ?", (client_id,))
 

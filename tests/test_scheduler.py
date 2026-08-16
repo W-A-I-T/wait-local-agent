@@ -9,6 +9,7 @@ from typing import cast
 
 import pytest
 
+from tests.support import ingest_local
 from wait_local_agent.agents import AgentService
 from wait_local_agent.config import Settings
 from wait_local_agent.event_dispatch import EventDispatcher
@@ -559,7 +560,7 @@ def test_scheduler_skips_agent_when_execution_window_is_closed(settings, tmp_pat
 def test_scheduler_start_respects_paused_jobs_and_workflow_variants(settings, tmp_path: Path) -> None:
     db_path = tmp_path / "state.db"
     store = Store(db_path)
-    store.ingest_ticket_file(Path("examples/sample_tickets/tickets.json"))
+    ingest_local(store, Path("examples/sample_tickets/tickets.json"))
     paused_job = store.create_scheduled_job(
         "ticket-triage",
         "0 9 * * *",
@@ -619,7 +620,7 @@ def test_inactive_ticket_follow_up_executes_local_note_only_after_approval(
     settings, tmp_path: Path
 ) -> None:
     store = Store(tmp_path / "follow-up.db")
-    store.ingest_ticket_file(Path("examples/sample_tickets/tickets.json"))
+    ingest_local(store, Path("examples/sample_tickets/tickets.json"))
     with store._connect() as connection:  # noqa: SLF001
         connection.execute("update tickets set client_id = 'acme'")
     service = SmartActionService(store, replace(settings, allow_write_actions=True))
@@ -666,7 +667,7 @@ def test_inactive_ticket_follow_up_preserves_draft_fallback_without_executor(
     settings, tmp_path: Path
 ) -> None:
     store = Store(tmp_path / "follow-up-draft.db")
-    store.ingest_ticket_file(Path("examples/sample_tickets/tickets.json"))
+    ingest_local(store, Path("examples/sample_tickets/tickets.json"))
     template = get_workflow_template("inactive-ticket-follow-up")
     assert template is not None
 
@@ -694,7 +695,7 @@ def test_inactive_ticket_follow_up_preserves_draft_fallback_without_executor(
 
 def test_p1_alert_executes_local_note_only_after_approval(settings, tmp_path: Path) -> None:
     store = Store(tmp_path / "p1-alert.db")
-    store.ingest_ticket_file(Path("examples/sample_tickets/tickets.json"))
+    ingest_local(store, Path("examples/sample_tickets/tickets.json"))
     with store._connect() as connection:  # noqa: SLF001
         connection.execute("update tickets set client_id = 'acme'")
     service = SmartActionService(store, replace(settings, allow_write_actions=True))
@@ -732,7 +733,7 @@ def test_p1_alert_executes_local_note_only_after_approval(settings, tmp_path: Pa
 def test_scheduler_runs_bounded_client_report_job(settings, tmp_path: Path) -> None:
     db_path = tmp_path / "scheduled-report.db"
     store = Store(db_path)
-    store.ingest_ticket_file(Path("examples/sample_tickets/tickets.json"))
+    ingest_local(store, Path("examples/sample_tickets/tickets.json"))
     with store._connect() as connection:  # noqa: SLF001
         connection.execute("update tickets set client_id = 'acme'")
     manager = SchedulerManager(
@@ -1418,4 +1419,4 @@ def test_scheduled_agent_validation_and_failure_paths_are_audited(settings, tmp_
 
 
 def _seed_tickets(db_path: Path) -> None:
-    Store(db_path).ingest_ticket_file(Path("examples/sample_tickets/tickets.json"))
+    ingest_local(Store(db_path), Path("examples/sample_tickets/tickets.json"))

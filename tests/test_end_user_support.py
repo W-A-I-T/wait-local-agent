@@ -7,6 +7,7 @@ from fastapi import HTTPException
 from fastapi.testclient import TestClient
 
 import wait_local_agent.api.app as app_module
+from tests.support import ensure_test_client
 from wait_local_agent.api.app import (
     _end_user_read_client_id,
     _halopsa_client_mapping,
@@ -55,6 +56,7 @@ def test_end_user_support_is_optional_scoped_and_status_only(settings) -> None:
         admin_token="admin-token",
         tech_token="tech-token",
     )
+    ensure_test_client(Store(enabled.data_path), "acme")
     client = TestClient(create_app(enabled))
 
     branding = client.get("/end-user/config", headers=_auth("end-user-token"))
@@ -191,6 +193,7 @@ def test_end_user_message_can_create_approved_halopsa_sync(settings, monkeypatch
         tech_token="tech-token",
         halopsa_client_map_json='{"acme":"halo-acme"}',
     )
+    ensure_test_client(Store(enabled.data_path), "acme")
     monkeypatch.setattr(app_module, "HaloPSAClient", FakeHaloClient)
     client = TestClient(create_app(enabled))
 
@@ -265,6 +268,7 @@ def test_end_user_halopsa_sync_rejects_invalid_or_out_of_scope_targets(settings,
         tech_token="tech-token",
         halopsa_client_map_json='{"acme":"halo-acme"}',
     )
+    ensure_test_client(Store(enabled.data_path), "acme")
     monkeypatch.setattr(app_module, "HaloPSAClient", FakeHaloClient)
     client = TestClient(create_app(enabled))
     created = client.post(
@@ -344,6 +348,7 @@ def test_end_user_support_prevents_requester_cross_access_and_is_disabled_by_def
         end_user_user_id="user-1",
         admin_token="admin-token",
     )
+    ensure_test_client(Store(enabled.data_path), "acme")
     client = TestClient(create_app(enabled))
     created = client.post(
         "/end-user/tickets",
@@ -454,6 +459,7 @@ def test_end_user_messages_do_not_expose_internal_ticket_notes(settings) -> None
         end_user_user_id="user-1",
         admin_token="admin-token",
     )
+    ensure_test_client(Store(enabled.data_path), "acme")
     client = TestClient(create_app(enabled))
     created = client.post(
         "/end-user/tickets",
@@ -495,6 +501,7 @@ def test_end_user_message_operator_routes_preserve_tenant_and_role_boundaries(se
         tech_token="tech-token",
         viewer_token="viewer-token",
     )
+    ensure_test_client(Store(enabled.data_path), "acme")
     client = TestClient(create_app(enabled))
     created = client.post(
         "/end-user/tickets",
@@ -551,6 +558,7 @@ def test_end_user_message_operator_routes_preserve_tenant_and_role_boundaries(se
 
 def test_end_user_store_rejects_unscoped_creation_and_missing_owned_ticket(settings) -> None:
     store = Store(settings.data_path)
+    ensure_test_client(store, "acme")
 
     try:
         store.create_end_user_ticket(
@@ -585,6 +593,7 @@ def test_end_user_store_rejects_unscoped_creation_and_missing_owned_ticket(setti
 
 def test_end_user_store_reports_unreadable_persistence(settings, monkeypatch) -> None:
     store = Store(settings.data_path)
+    ensure_test_client(store, "acme")
     monkeypatch.setattr(store, "get_ticket", lambda *args, **kwargs: None)
 
     with pytest.raises(RuntimeError, match="not persisted"):
@@ -598,6 +607,7 @@ def test_end_user_store_reports_unreadable_persistence(settings, monkeypatch) ->
 
 def test_end_user_store_rejects_invalid_messages_and_missing_tickets(settings) -> None:
     store = Store(settings.data_path)
+    ensure_test_client(store, "acme")
     with pytest.raises(ValueError, match="client scope"):
         store.create_end_user_message(
             "EUS-missing", client_id="", requester_id="user-1", body="body"

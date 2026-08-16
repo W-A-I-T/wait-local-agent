@@ -3,15 +3,16 @@
 WAIT keeps client identity separate from provider configuration. The local
 client directory is the authority for which organizations the runtime knows
 about. Existing tickets and discovered assets continue to use their current
-storage and behavior; this directory is additive groundwork for later
-ingestion and reconciliation work.
+storage and behavior; v5 preserves existing ticket IDs while backfilling
+legacy ownership into this directory before tenant enforcement.
 
 ## Client directory
 
 Each client has a name and a lifecycle status: active, archived, or
 quarantine. The reserved **Unmapped / Quarantine** entry is created when the
-runtime starts. It gives future ingestion a visible, reviewable destination
-for records whose provider identity has not been safely matched to a client.
+runtime starts. It gives ingestion a visible, reviewable destination for
+legacy tickets whose ownership is blank. Non-blank legacy ticket client IDs
+are backfilled as active directory entries when needed.
 
 The directory is tenant-scoped. A bound client principal can see only its
 own client records. MSP operators and the local demo can use the operator
@@ -27,9 +28,9 @@ only a reference to the existing local vault; credentials are not stored in
 the connector directory. Non-secret connection settings are kept separately
 from that reference.
 
-The existing boot-time Settings connector configuration remains in place in
-this phase. Connector instances are introduced alongside it and are not yet
-used to drive ingestion.
+The existing boot-time Settings connector configuration remains in place. A
+provider ingest must name one active connector instance, and the instance's
+connector type supplies the stored source-system value.
 
 ## Verified mappings
 
@@ -65,15 +66,21 @@ identifiers, a payload digest, and a human-readable reason. The digest is a
 reference for comparison, not a copy of the provider payload. An operator can
 mark a quarantined record resolved after reviewing its identity decision.
 
-Connector-ingested tickets follow a resolve-then-write path. When a ticket has
-an external company identifier but no client assignment, WAIT uses only a
-verified mapping for that connector instance. A verified match assigns the
-client before the ticket is written. Without one, the ticket is kept out of
-the client data and placed in the quarantine ledger for review. Repeating the
-same unresolved ticket reuses its still-open quarantine entry, so ingestion
-does not create duplicate review items. Tickets that already have a client,
-or have no connector provenance, continue through the existing local/demo
-ingestion behavior.
+Connector-ingested tickets follow a resolve-then-write path. The identity key
+is the trimmed, case-sensitive pair `(connector instance, provider ticket ID)`,
+so two provider estates can use the same remote ticket ID safely. WAIT uses
+only one verified mapping for the connector instance, requires the mapped
+client and connector instance to be active and consistent, and ignores any
+caller-supplied ticket ID or client assignment. A deterministic internal ID is
+computed for new records; an existing legacy row is updated in place and its
+persisted ID is used for status history and audit records.
+
+Without a verified mapping, the ticket is kept out of client data and recorded
+in the unmapped ledger. Repeating the same unresolved ticket updates its latest
+digest and reason and increments its occurrence count; PR1 does not create a
+quarantine ticket. Local/file ingestion is a separate path: it requires an
+explicit active `client_id`, rejects any connector provenance, sets the source
+to local, and refuses to overwrite another client's or a connector-owned row.
 
 Canonical assets are unique per tenant by `(client_id, canonical_id)`, so the
 same canonical asset identifier can exist for different clients without a

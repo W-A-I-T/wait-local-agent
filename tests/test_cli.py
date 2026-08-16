@@ -10,6 +10,7 @@ import pytest
 from typer.testing import CliRunner
 
 import wait_local_agent.cli as cli_module
+from tests.support import ensure_test_client, ingest_local
 from wait_local_agent.agents import AgentService
 from wait_local_agent.autotask import AutotaskReadResponse
 from wait_local_agent.cli import app
@@ -220,7 +221,8 @@ def test_microsoft_evaluation_cli_runs_existing_agent_in_controlled_mode(monkeyp
     monkeypatch.setenv("WAIT_DATA_PATH", str(tmp_path / "state.db"))
     settings = load_settings()
     store = Store(settings.data_path)
-    store.ingest_ticket_file(Path("examples/sample_tickets/tickets.json"))
+    ensure_test_client(store, "acme")
+    ingest_local(store, Path("examples/sample_tickets/tickets.json"))
     with store._connect() as connection:  # noqa: SLF001
         connection.execute("update tickets set client_id = 'acme'")
     service = AgentService(store, settings, SmartActionService(store, settings))
@@ -570,7 +572,7 @@ def test_cli_boundary_helpers_reject_bad_files_and_scope_tenants(tmp_path) -> No
 def test_technician_chat_command_invokes_existing_action(monkeypatch, tmp_path) -> None:
     monkeypatch.setenv("WAIT_DATA_PATH", str(tmp_path / "state.db"))
     settings = load_settings()
-    Store(settings.data_path).ingest_ticket_file(Path("examples/sample_tickets/tickets.json"))
+    ingest_local(Store(settings.data_path), Path("examples/sample_tickets/tickets.json"))
 
     result = CliRunner().invoke(app, ["technician-chat", "triage TCK-1001"])
 
@@ -582,7 +584,7 @@ def test_technician_chat_command_invokes_existing_action(monkeypatch, tmp_path) 
 def test_technician_chat_command_previews_bounded_plan(monkeypatch, tmp_path) -> None:
     monkeypatch.setenv("WAIT_DATA_PATH", str(tmp_path / "state.db"))
     settings = load_settings()
-    Store(settings.data_path).ingest_ticket_file(Path("examples/sample_tickets/tickets.json"))
+    ingest_local(Store(settings.data_path), Path("examples/sample_tickets/tickets.json"))
 
     result = CliRunner().invoke(
         app,
@@ -600,6 +602,7 @@ def test_technician_chat_command_persists_plan_preview(monkeypatch, tmp_path) ->
     monkeypatch.setenv("WAIT_DATA_PATH", str(tmp_path / "state.db"))
     settings = load_settings()
     store = Store(settings.data_path)
+    ensure_test_client(store, "acme")
     with store._connect() as connection:  # noqa: SLF001
         connection.execute(
             """
@@ -629,7 +632,7 @@ def test_technician_chat_command_persists_plan_preview(monkeypatch, tmp_path) ->
 def test_technician_chat_plan_reports_planner_failure(monkeypatch, tmp_path) -> None:
     monkeypatch.setenv("WAIT_DATA_PATH", str(tmp_path / "state.db"))
     settings = load_settings()
-    Store(settings.data_path).ingest_ticket_file(Path("examples/sample_tickets/tickets.json"))
+    ingest_local(Store(settings.data_path), Path("examples/sample_tickets/tickets.json"))
 
     def fail_plan(*_args, **_kwargs):
         raise ValueError("planner unavailable")
@@ -693,6 +696,7 @@ def test_technician_chat_persisted_action_and_parse_failure(monkeypatch, tmp_pat
     monkeypatch.setenv("WAIT_DATA_PATH", str(tmp_path / "state.db"))
     settings = load_settings()
     store = Store(settings.data_path)
+    ensure_test_client(store, "acme")
     with store._connect() as connection:  # noqa: SLF001
         connection.execute(
             """
@@ -796,7 +800,7 @@ def test_agents_run_and_show_run_share_persisted_failure_evidence(monkeypatch, t
     monkeypatch.setenv("WAIT_DATA_PATH", str(tmp_path / "state.db"))
     settings = load_settings()
     store = Store(settings.data_path)
-    store.ingest_ticket_file(Path("examples/sample_tickets/tickets.json"))
+    ingest_local(store, Path("examples/sample_tickets/tickets.json"))
     service = AgentService(store, settings, SmartActionService(store, settings))
     definition = service.create(
         name="CLI triage",
@@ -839,6 +843,7 @@ def test_agents_cancel_retry_and_resume_use_persisted_scope(monkeypatch, tmp_pat
         tech_token="tech-token",
     )
     store = Store(settings.data_path)
+    ensure_test_client(store, "acme")
     with store._connect() as connection:  # noqa: SLF001
         connection.execute(
             """
@@ -1380,7 +1385,7 @@ def test_ingest_and_summarize_commands(monkeypatch, tmp_path) -> None:
     monkeypatch.setenv("WAIT_DATA_PATH", str(tmp_path / "state.db"))
     runner = CliRunner()
 
-    ingest = runner.invoke(app, ["ingest", "examples/sample_tickets"])
+    ingest = runner.invoke(app, ["ingest", "examples/sample_tickets", "--client-id", "acme"])
     summary = runner.invoke(app, ["tickets", "summarize", "TCK-1001"])
 
     assert ingest.exit_code == 0
@@ -1393,7 +1398,7 @@ def test_audit_list_command(monkeypatch, tmp_path) -> None:
     monkeypatch.setenv("WAIT_DATA_PATH", str(tmp_path / "state.db"))
     runner = CliRunner()
 
-    runner.invoke(app, ["ingest", "examples/sample_tickets"])
+    runner.invoke(app, ["ingest", "examples/sample_tickets", "--client-id", "acme"])
     result = runner.invoke(app, ["audit", "list"])
 
     assert result.exit_code == 0
@@ -1439,7 +1444,7 @@ def test_connector_workflow_approval_event_and_backup_commands(monkeypatch, tmp_
     monkeypatch.setenv("WAIT_DATA_PATH", str(data_path))
     runner = CliRunner()
 
-    runner.invoke(app, ["ingest", "examples/sample_tickets"])
+    runner.invoke(app, ["ingest", "examples/sample_tickets", "--client-id", "acme"])
     connectors = runner.invoke(app, ["connectors", "list"])
     secrets = runner.invoke(app, ["connectors", "secrets"])
     templates = runner.invoke(app, ["workflows", "templates"])
@@ -2327,6 +2332,7 @@ def test_smart_action_cli_requires_rbac_for_invoke_and_approval(monkeypatch, tmp
     monkeypatch.setenv("WAIT_DEMO_MODE", "false")
     monkeypatch.setenv("WAIT_TECH_TOKEN", "tech-token")
     store = Store(data_path)
+    ensure_test_client(store, "acme")
     with store._connect() as connection:  # noqa: SLF001
         connection.execute(
             """
@@ -2366,10 +2372,11 @@ def test_smart_action_cli_commands_success_and_errors(monkeypatch, tmp_path) -> 
     data_path = tmp_path / "state.db"
     monkeypatch.setenv("WAIT_DATA_PATH", str(data_path))
     store = Store(data_path)
+    ensure_test_client(store, "acme")
     with store._connect() as connection:  # noqa: SLF001
         connection.execute(
-            "insert into tickets (id, client, subject, body, priority, status) values (?, ?, ?, ?, ?, ?)",
-            ("TCK-CMD", "Acme", "MFA reset", "Sign-in blocked", "High", "Open"),
+            "insert into tickets (id, client, subject, body, priority, status, client_id) values (?, ?, ?, ?, ?, ?, ?)",
+            ("TCK-CMD", "Acme", "MFA reset", "Sign-in blocked", "High", "Open", "acme"),
         )
     runner = CliRunner()
 
@@ -2435,6 +2442,8 @@ def test_smart_action_cli_tenant_scope_and_approval_view_guards(monkeypatch, tmp
     monkeypatch.setenv("WAIT_TECH_TOKEN", "tech-token")
     monkeypatch.setenv("WAIT_CLIENT_ID", "acme")
     store = Store(data_path)
+    ensure_test_client(store, "acme")
+    ensure_test_client(store, "beta")
     with store._connect() as connection:  # noqa: SLF001
         connection.execute(
             "insert into tickets (id, client, subject, body, priority, status, client_id) values (?, ?, ?, ?, ?, ?, ?)",
@@ -2476,7 +2485,7 @@ def _read_response(items):
 def test_executions_cli_lists_and_shows_runs(monkeypatch, tmp_path) -> None:
     monkeypatch.setenv("WAIT_DATA_PATH", str(tmp_path / "state.db"))
     store = Store(tmp_path / "state.db")
-    store.ingest_ticket_file(Path("examples/sample_tickets/tickets.json"))
+    ingest_local(store, Path("examples/sample_tickets/tickets.json"))
     from wait_local_agent.workflows import run_workflow_template
 
     run_workflow_template(store, "ticket-triage", "TCK-1001", actor="cli", trigger_source="cli")
@@ -2504,7 +2513,7 @@ def test_analytics_cli_summary_mirrors_api(monkeypatch, tmp_path) -> None:
     monkeypatch.setenv("WAIT_DATA_PATH", str(tmp_path / "state.db"))
     settings = load_settings()
     store = Store(settings.data_path)
-    store.ingest_ticket_file(Path("examples/sample_tickets/tickets.json"))
+    ingest_local(store, Path("examples/sample_tickets/tickets.json"))
     service = SmartActionService(store, settings)
     service.invoke("ticket-triage", {"ticket_id": "TCK-1001"}, "tech")
     service.invoke("ticket-triage", {"ticket_id": "NOPE"}, "tech")

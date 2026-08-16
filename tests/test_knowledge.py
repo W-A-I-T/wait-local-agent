@@ -10,6 +10,7 @@ import pytest
 from pypdf import PdfWriter
 from reportlab.pdfgen import canvas
 
+from tests.support import ensure_test_client, ingest_local
 from wait_local_agent.knowledge import (
     KnowledgeIngestionService,
     chunk_text,
@@ -126,7 +127,8 @@ def test_search_returns_ranked_chunks(settings, tmp_path) -> None:
     (doc_root / "printer.md").write_text("# Printer Triage\n\nRestart spooler.", encoding="utf-8")
     active_settings = replace(settings, allowed_doc_root=doc_root)
     store = Store(active_settings.data_path)
-    KnowledgeIngestionService(store, active_settings.allowed_doc_root).ingest_path(doc_root)
+    ensure_test_client(store, "acme")
+    KnowledgeIngestionService(store, active_settings.allowed_doc_root).ingest_path(doc_root, client_id="acme")
 
     results = store.search_knowledge_chunks("MFA sessions")
 
@@ -145,8 +147,8 @@ def test_ticket_summary_uses_indexed_sources(settings, tmp_path) -> None:
     )
     active_settings = replace(settings, allowed_doc_root=doc_root)
     store = Store(active_settings.data_path)
-    store.ingest_ticket_file(Path("examples/sample_tickets/tickets.json"))
-    KnowledgeIngestionService(store, active_settings.allowed_doc_root).ingest_path(doc_root)
+    ingest_local(store, Path("examples/sample_tickets/tickets.json"))
+    KnowledgeIngestionService(store, active_settings.allowed_doc_root).ingest_path(doc_root, client_id="acme")
     service = TicketIntelligenceService(
         store, active_settings, provider_from_settings(active_settings)
     )

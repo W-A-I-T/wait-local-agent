@@ -7,6 +7,7 @@ from pathlib import Path
 import pytest
 from fastapi import FastAPI
 
+from tests.support import ingest_local
 from wait_local_agent.agents import AgentService
 from wait_local_agent.api.app import create_app
 from wait_local_agent.backup import backup_state, restore_state
@@ -31,6 +32,7 @@ def test_store_migrations_are_idempotent_and_connection_pragmas_are_safe(tmp_pat
             (2, "clients_and_connectors"),
             (3, "provenance_and_ingestion"),
             (4, "canonical_assets_tenant_unique"),
+            (5, "ticket_identity_and_tenancy"),
         ]
         assert connection.execute("pragma foreign_keys").fetchone()[0] == 1
         assert connection.execute("pragma journal_mode").fetchone()[0].lower() == "wal"
@@ -38,7 +40,7 @@ def test_store_migrations_are_idempotent_and_connection_pragmas_are_safe(tmp_pat
 
     Store(path)
     with sqlite3.connect(path) as connection:
-        assert connection.execute("select count(*) from schema_migrations").fetchone()[0] == 5
+        assert connection.execute("select count(*) from schema_migrations").fetchone()[0] == 6
 
 
 def test_migration_failure_rolls_back_data_and_version_bump(tmp_path: Path) -> None:
@@ -78,7 +80,7 @@ def test_fresh_database_integrity_checks_are_clean(tmp_path: Path) -> None:
 
 def test_backup_restore_round_trip_under_wal(tmp_path: Path) -> None:
     source = Store(tmp_path / "source.db")
-    source.ingest_ticket_file(Path("examples/sample_tickets/tickets.json"))
+    ingest_local(source, Path("examples/sample_tickets/tickets.json"))
     backup_path = tmp_path / "backup.db"
     restored_path = tmp_path / "restored.db"
 

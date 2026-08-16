@@ -10,6 +10,7 @@ from fastapi.testclient import TestClient
 
 import wait_local_agent.api.app as api_app_module
 import wait_local_agent.msp_playbooks as msp_playbooks_module
+from tests.support import ingest_local
 from wait_local_agent.api.app import create_app
 from wait_local_agent.models import WorkflowTemplate
 from wait_local_agent.msp_playbooks import (
@@ -29,7 +30,7 @@ from wait_local_agent.workflows import run_workflow_template, validate_workflow_
 
 
 def _seed_client_ticket(store: Store) -> None:
-    store.ingest_ticket_file(Path("examples/sample_tickets/tickets.json"))
+    ingest_local(store, Path("examples/sample_tickets/tickets.json"))
     with store._connect() as connection:  # noqa: SLF001
         connection.execute("update tickets set client_id = ?", ("acme",))
 

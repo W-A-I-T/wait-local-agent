@@ -4,6 +4,8 @@ import json
 from pathlib import Path
 from typing import Any, cast
 
+from tests.support import ensure_test_clients, ingest_local
+from wait_local_agent.models import Ticket
 from wait_local_agent.observability import (
     ESTIMATED_MINUTES_SAVED_DERIVATION,
     MODEL_COST_DERIVATION,
@@ -14,7 +16,7 @@ from wait_local_agent.store import Store
 
 
 def _seed_tickets(store: Store) -> None:
-    store.ingest_ticket_file(Path("examples/sample_tickets/tickets.json"))
+    ingest_local(store, Path("examples/sample_tickets/tickets.json"))
 
 
 def _seed_executions(store: Store) -> None:
@@ -198,7 +200,16 @@ def test_analytics_summary_reports_approvals_tickets_and_workflow_views(settings
         ),
         encoding="utf-8",
     )
-    store.ingest_ticket_file(ticket_file)
+    payload = json.loads(ticket_file.read_text(encoding="utf-8"))
+    ensure_test_clients(store, "acme", "beta")
+    store.ingest_tickets(
+        [Ticket(**item) for item in payload if item["client_id"] == "acme"],
+        client_id="acme",
+    )
+    store.ingest_tickets(
+        [Ticket(**item) for item in payload if item["client_id"] == "beta"],
+        client_id="beta",
+    )
 
     workflow = store.create_workflow_run(
         "ticket-triage", "TCK-OPEN", "completed", "done", client_id="acme"
@@ -283,7 +294,7 @@ def test_ticket_lifecycle_metrics_use_explicit_status_transitions(settings, tmp_
         }]),
         encoding="utf-8",
     )
-    store.ingest_ticket_file(ticket_file)
+    ingest_local(store, ticket_file)
     ticket_file.write_text(
         json.dumps([{
             "id": "TCK-LIFECYCLE",
@@ -297,8 +308,8 @@ def test_ticket_lifecycle_metrics_use_explicit_status_transitions(settings, tmp_
         }]),
         encoding="utf-8",
     )
-    store.ingest_ticket_file(ticket_file)
-    store.ingest_ticket_file(ticket_file)
+    ingest_local(store, ticket_file)
+    ingest_local(store, ticket_file)
 
     history = store.list_ticket_status_history("TCK-LIFECYCLE", client_id="acme")
     assert [(item["from_status"], item["to_status"], item["source"]) for item in history] == [
@@ -323,7 +334,7 @@ def test_ticket_lifecycle_metrics_use_explicit_status_transitions(settings, tmp_
 
 def test_ticket_lifecycle_metrics_bound_duration_and_deduplicate_reopened_tickets(settings) -> None:
     store = Store(settings.data_path)
-    store.ingest_ticket_file(
+    ingest_local(store,
         Path("examples/sample_tickets/tickets.json")
     )
     with store._connect() as connection:  # noqa: SLF001

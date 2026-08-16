@@ -7,6 +7,7 @@ import pytest
 from fastapi.testclient import TestClient
 from typer.testing import CliRunner
 
+from tests.support import ingest_local
 from wait_local_agent.api.app import create_app
 from wait_local_agent.cli import app
 from wait_local_agent.reports.models import ReportType
@@ -54,7 +55,7 @@ def _seed_local_evidence(store: Store, tmp_path) -> None:
         ),
         encoding="utf-8",
     )
-    assert store.ingest_ticket_file(ticket_file) == 2
+    assert ingest_local(store, ticket_file) == 2
     action = store.create_smart_action_run(
         "ticket-triage",
         "technician",

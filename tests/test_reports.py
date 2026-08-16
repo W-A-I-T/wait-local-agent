@@ -10,6 +10,7 @@ from fastapi.testclient import TestClient
 from pypdf import PdfReader
 from typer.testing import CliRunner
 
+from tests.support import ingest_local
 from wait_local_agent.api.app import create_app
 from wait_local_agent.cli import app
 from wait_local_agent.reports.builders import (
@@ -150,7 +151,7 @@ def test_hardening_and_restore_reports_are_not_run_without_evidence(settings) ->
 
 def test_recurring_service_review_is_client_scoped_and_labels_missing_evidence(settings) -> None:
     store = Store(settings.data_path)
-    store.ingest_ticket_file(Path("examples/sample_tickets/tickets.json"))
+    ingest_local(store, Path("examples/sample_tickets/tickets.json"))
     with store._connect() as connection:  # noqa: SLF001
         connection.execute(
             "update tickets set client_id = ?, created_at = ?, updated_at = ? where id = ?",
@@ -462,7 +463,7 @@ def test_cli_generates_recurring_service_review(monkeypatch, tmp_path) -> None:
     monkeypatch.setenv("WAIT_DATA_PATH", str(data_path))
     monkeypatch.setenv("WAIT_DEMO_MODE", "true")
     store = Store(data_path)
-    store.ingest_ticket_file(Path("examples/sample_tickets/tickets.json"))
+    ingest_local(store, Path("examples/sample_tickets/tickets.json"))
     with store._connect() as connection:  # noqa: SLF001
         connection.execute("update tickets set client_id = 'acme'")
 

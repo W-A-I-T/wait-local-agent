@@ -4,6 +4,7 @@ from pathlib import Path
 
 from fastapi.testclient import TestClient
 
+from tests.support import ingest_local
 from wait_local_agent.api.app import create_app
 from wait_local_agent.store import Store
 
@@ -17,7 +18,7 @@ def test_general_route_rate_limit_returns_429_with_retry_after(settings) -> None
             "rate_limit_connector": "1/minute",
         }
     )
-    Store(limited_settings.data_path).ingest_ticket_file(Path("examples/sample_tickets/tickets.json"))
+    ingest_local(Store(limited_settings.data_path), Path("examples/sample_tickets/tickets.json"))
     client = TestClient(create_app(limited_settings))
 
     first = client.get("/tickets")
@@ -58,7 +59,7 @@ def test_rate_limit_can_be_disabled(settings) -> None:
             "rate_limit_connector": "1/minute",
         }
     )
-    Store(disabled_settings.data_path).ingest_ticket_file(Path("examples/sample_tickets/tickets.json"))
+    ingest_local(Store(disabled_settings.data_path), Path("examples/sample_tickets/tickets.json"))
     client = TestClient(create_app(disabled_settings))
 
     first = client.get("/tickets")
