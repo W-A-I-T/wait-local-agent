@@ -175,15 +175,35 @@ WAIT_DEMO_MODE=false
 WAIT_ADMIN_TOKEN=<strong-local-admin-token>
 ```
 
-`WAIT_API_TOKEN` remains an admin-equivalent bootstrap credential. Instead of
-an environment token, an operator may provision a principal credential with
-per-client roles. A principal may also have the global `msp_admin` role; only
-that global role grants cross-client administration. Principal credentials are
-stored as SHA-256 hashes, never as raw bearer credentials.
+`WAIT_API_TOKEN` remains an admin-equivalent bootstrap credential, as does
+`WAIT_ADMIN_TOKEN`; both have appliance-level cross-client authority. Instead
+of an environment token, an operator may provision a principal credential with
+per-client roles. A principal may also have the global `msp_admin` role for
+cross-client administration. Principal credentials are stored as SHA-256
+hashes, never as raw bearer credentials.
 
 When `WAIT_DEMO_MODE=true` is explicitly selected, the runtime uses a bounded
 demo client. Provider writes and Power Platform deployments remain disabled,
 and both `/secrets` endpoints return HTTP 403.
+
+### Client scope resolution
+
+Every client-bearing API path resolves one `ClientScope` from the authenticated
+principal before reading or writing tenant data. In non-demo mode, a principal
+with client memberships can select only a requested client in that membership;
+an empty membership and an outside request fail closed with HTTP 403. Generic
+admin role membership does not grant cross-client access. Only the global
+bootstrap admin credentials or the global `msp_admin` role may opt a list
+operation into an explicit all-client scope; detail and mutation operations
+still require a specific client. Per-client principal credentials remain bound
+to their persisted memberships. The local demo mode is the deliberate
+permissive exception for single-operator fixtures.
+
+Store tenant filters use a required client ID or an explicit `AllClients`/
+`BoundClients` value. `None` and empty strings are rejected, so an omitted
+filter cannot silently become an all-client query. Legacy approval records with
+no client tag are visible or actionable only to demo-mode and global appliance
+operators; persisted per-client principals cannot access them.
 
 End-user support requires a separate token and explicit fixed scope:
 

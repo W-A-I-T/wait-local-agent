@@ -6,6 +6,7 @@ import json
 from dataclasses import dataclass, field
 from typing import Literal, Protocol
 
+from wait_local_agent.client_scope import AllClients
 from wait_local_agent.config import Settings
 from wait_local_agent.store import Store
 
@@ -103,7 +104,9 @@ class LocalCollectorRmmAdapter:
 
     def list_devices(self, client_id: str | None = None) -> list[RmmDevice]:
         devices: list[RmmDevice] = []
-        for asset in self.store.list_canonical_assets(client_id=client_id):
+        for asset in self.store.list_canonical_assets(
+            client_id=client_id if client_id is not None else AllClients()
+        ):
             if asset.asset_type != "endpoint-agent":
                 continue
             try:

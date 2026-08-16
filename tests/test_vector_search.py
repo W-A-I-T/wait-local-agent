@@ -2,9 +2,13 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
+import pytest
+
+from wait_local_agent.client_scope import BoundClients
 from wait_local_agent.vector_search import (
     QdrantKnowledgeSearch,
     _chunk_from_payload,
+    _int_payload,
     validate_vector_settings,
 )
 
@@ -73,6 +77,44 @@ def test_qdrant_search_filters_chunks_by_client_id(settings) -> None:
     results = search.search("mailbox permissions", limit=3, client_id="acme")
 
     assert [chunk.title for chunk in results] == ["Acme"]
+
+
+def test_qdrant_search_filters_chunks_by_bound_clients(settings) -> None:
+    search = object.__new__(QdrantKnowledgeSearch)
+    search.settings = settings.__class__(**{**settings.__dict__, "qdrant_collection": "wait_knowledge_chunks"})
+
+    class FakeEmbedding:
+        def embed(self, values):
+            return iter([[0.1, 0.2] for _ in values])
+
+    class FakeClient:
+        def search(self, **kwargs):
+            assert kwargs["limit"] == 12
+            return [
+                SimpleNamespace(payload={"chunk_id": "1", "title": "Acme", "client_id": "acme"}),
+                SimpleNamespace(payload={"chunk_id": "2", "title": "Beta", "client_id": "beta"}),
+            ]
+
+    search._embedding = FakeEmbedding()
+    search._client = FakeClient()
+
+    results = search.search("mailbox permissions", limit=3, client_id=BoundClients(frozenset({"acme"})))
+
+    assert [chunk.title for chunk in results] == ["Acme"]
+
+
+@pytest.mark.parametrize("client_id", [None, ""])
+def test_qdrant_search_rejects_missing_client_id(settings, client_id: str | None) -> None:
+    search = object.__new__(QdrantKnowledgeSearch)
+    search.settings = settings
+
+    with pytest.raises(ValueError, match="client_id must be non-empty"):
+        search.search("mailbox permissions", client_id=client_id)
+
+
+@pytest.mark.parametrize("value", ["not-a-digit", None])
+def test_int_payload_returns_zero_for_invalid_values(value: object) -> None:
+    assert _int_payload({"chunk_id": value}, "chunk_id") == 0
 
 
 def test_validate_vector_settings_requires_http_for_remote_qdrant(settings) -> None:

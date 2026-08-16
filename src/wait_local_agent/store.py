@@ -9,6 +9,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal, cast
 
+from wait_local_agent.client_scope import AllClients, BoundClients, ClientScope
 from wait_local_agent.consultant import blueprint_payload, parse_solution_blueprint
 from wait_local_agent.migrations import Migration, MigrationRunner
 from wait_local_agent.models import (
@@ -75,6 +76,25 @@ if TYPE_CHECKING:
 
 MAX_SEARCH_LIMIT = 25
 MAX_TECHNICIAN_CHAT_MESSAGES = 200
+_ALL_CLIENTS = AllClients()
+
+
+def _client_scope_predicate(scope: ClientScope | str | None, column: str = "client_id") -> tuple[str, list[object]]:
+    """Return a static SQL predicate and parameters for a required tenant scope."""
+
+    if isinstance(scope, AllClients):
+        return "1 = 1", []
+    if isinstance(scope, BoundClients):
+        client_ids = tuple(sorted(scope.client_ids))
+    elif isinstance(scope, str):
+        normalized = _normalize_client_id(scope)
+        if normalized is None:
+            raise ValueError("client_id must be non-empty")
+        client_ids = (normalized,)
+    else:
+        raise ValueError("client scope is required")
+    placeholders = ", ".join("?" for _ in client_ids)
+    return f"{column} in ({placeholders})", list(client_ids)
 
 
 @dataclass(frozen=True)
@@ -1451,31 +1471,27 @@ class Store:
                 )
         return len(tickets)
 
-    def list_tickets(self, client_id: str | None = None) -> list[Ticket]:
-        normalized_client_id = _normalize_client_id(client_id)
+    def list_tickets(self, client_id: ClientScope | str | None = _ALL_CLIENTS) -> list[Ticket]:
+        client_predicate, client_params = _client_scope_predicate(client_id)
         with self._connect() as connection:
-            if normalized_client_id is None:
-                rows = connection.execute("select * from tickets order by id").fetchall()
-            else:
-                rows = connection.execute(
-                    "select * from tickets where client_id = ? order by id",
-                    (normalized_client_id,),
-                ).fetchall()
+            rows = connection.execute(
+                f"select * from tickets where {client_predicate} order by id",  # nosec B608: predicate is a fixed internal string; client ids are parameterized
+                client_params,
+            ).fetchall()
         return [Ticket(**dict(row)) for row in rows]
 
-    def get_ticket(self, ticket_id: str, client_id: str | None = None) -> Ticket | None:
-        normalized_client_id = _normalize_client_id(client_id)
+    def get_ticket(self, ticket_id: str, client_id: ClientScope | str | None = _ALL_CLIENTS) -> Ticket | None:
+        client_predicate, client_params = _client_scope_predicate(client_id)
         with self._connect() as connection:
-            if normalized_client_id is None:
-                row = connection.execute("select * from tickets where id = ?", (ticket_id,)).fetchone()
-            else:
-                row = connection.execute(
-                    "select * from tickets where id = ? and client_id = ?",
-                    (ticket_id, normalized_client_id),
-                ).fetchone()
+            row = connection.execute(
+                f"select * from tickets where id = ? and {client_predicate}",  # nosec B608: predicate is a fixed internal string; client ids are parameterized
+                (ticket_id, *client_params),
+            ).fetchone()
         return Ticket(**dict(row)) if row else None
 
-    def get_ticket_for_client(self, ticket_id: str, client_id: str | None = None) -> Ticket | None:
+    def get_ticket_for_client(
+        self, ticket_id: str, client_id: ClientScope | str | None = _ALL_CLIENTS
+    ) -> Ticket | None:
         return self.get_ticket(ticket_id, client_id)
 
     def create_ticket_note(
@@ -1591,23 +1607,22 @@ class Store:
         self,
         session_id: str,
         *,
-        client_id: str | None = None,
+        client_id: ClientScope | str | None = _ALL_CLIENTS,
         principal_id: str | None = None,
     ) -> TechnicianChatSession | None:
-        normalized_client_id = _normalize_client_id(client_id)
+        client_predicate, client_params = _client_scope_predicate(client_id)
         safe_principal_id = _redact_text(principal_id.strip()) if principal_id else None
         with self._connect() as connection:
             row = connection.execute(
-                """
+                f"""
                 select * from technician_chat_sessions
                 where id = ?
-                  and (? is null or client_id = ?)
+                  and {client_predicate}
                   and (? is null or principal_id = ?)
-                """,
+                """,  # nosec B608: predicate is a fixed internal string; client ids are parameterized
                 (
                     session_id,
-                    normalized_client_id,
-                    normalized_client_id,
+                    *client_params,
                     safe_principal_id,
                     safe_principal_id,
                 ),
@@ -1617,22 +1632,21 @@ class Store:
     def list_technician_chat_sessions(
         self,
         *,
-        client_id: str | None = None,
+        client_id: ClientScope | str | None = _ALL_CLIENTS,
         principal_id: str | None = None,
     ) -> list[TechnicianChatSession]:
-        normalized_client_id = _normalize_client_id(client_id)
+        client_predicate, client_params = _client_scope_predicate(client_id)
         safe_principal_id = _redact_text(principal_id.strip()) if principal_id else None
         with self._connect() as connection:
             rows = connection.execute(
-                """
+                f"""
                 select * from technician_chat_sessions
-                where (? is null or client_id = ?)
+                where {client_predicate}
                   and (? is null or principal_id = ?)
                 order by updated_at desc, id desc
-                """,
+                """,  # nosec B608: predicate is a fixed internal string; client ids are parameterized
                 (
-                    normalized_client_id,
-                    normalized_client_id,
+                    *client_params,
                     safe_principal_id,
                     safe_principal_id,
                 ),
@@ -1677,7 +1691,7 @@ class Store:
         self,
         session_id: str,
         *,
-        client_id: str | None = None,
+        client_id: ClientScope | str | None = _ALL_CLIENTS,
         principal_id: str | None = None,
     ) -> TechnicianChatSession | None:
         existing = self.get_technician_chat_session(
@@ -1722,6 +1736,14 @@ class Store:
         client_id: str | None = None,
         principal_id: str | None = None,
     ) -> TechnicianChatMessage:
+        if client_id is None:
+            if self.get_technician_chat_session(
+                session_id,
+                client_id=_ALL_CLIENTS,
+                principal_id=principal_id,
+            ) is None:
+                raise LookupError(session_id)
+            raise ValueError("technician chat messages require a client scope")
         session = self.get_technician_chat_session(
             session_id,
             client_id=client_id,
@@ -2134,14 +2156,13 @@ class Store:
         self,
         started_from: str | None,
         started_to: str | None,
-        client_id: str | None = None,
+        client_id: ClientScope | str = _ALL_CLIENTS,
     ) -> dict[str, object]:
-        normalized_client_id = _normalize_client_id(client_id)
         clauses = ["h.ticket_id = t.id"]
         params: list[object] = []
-        if normalized_client_id is not None:
-            clauses.append("h.client_id = ?")
-            params.append(normalized_client_id)
+        client_predicate, client_params = _client_scope_predicate(client_id, "h.client_id")
+        clauses.append(client_predicate)
+        params.extend(client_params)
         if started_from:
             clauses.append("date(h.changed_at) >= date(?)")
             params.append(started_from)
@@ -2494,17 +2515,14 @@ class Store:
         payload["execution_result_json"] = _redact_json_text(str(payload["execution_result_json"]))
         return ApprovalRequest(**payload)
 
-    def list_approval_requests(self, client_id: str | None = None) -> list[ApprovalRequest]:
-        normalized_client_id = _normalize_client_id(client_id)
+    def list_approval_requests(self, client_id: ClientScope | str | None = _ALL_CLIENTS) -> list[ApprovalRequest]:
+        client_predicate, client_params = _client_scope_predicate(client_id)
         requests: list[ApprovalRequest] = []
         with self._connect() as connection:
-            if normalized_client_id is None:
-                rows = connection.execute("select * from approval_requests order by id desc").fetchall()
-            else:
-                rows = connection.execute(
-                    "select * from approval_requests where client_id = ? order by id desc",
-                    (normalized_client_id,),
-                ).fetchall()
+            rows = connection.execute(
+                f"select * from approval_requests where {client_predicate} order by id desc",  # nosec B608: predicate is a fixed internal string; client ids are parameterized
+                client_params,
+            ).fetchall()
             for row in rows:
                 row = self._expire_approval_request(connection, row)
                 payload = dict(row)
@@ -2596,28 +2614,22 @@ class Store:
             ),
         )
 
-    def list_audit_events(self, client_id: str | None = None) -> list[AuditEvent]:
-        normalized_client_id = _normalize_client_id(client_id)
+    def list_audit_events(self, client_id: ClientScope | str | None = _ALL_CLIENTS) -> list[AuditEvent]:
+        client_predicate, client_params = _client_scope_predicate(client_id)
         with self._connect() as connection:
-            if normalized_client_id is None:
-                rows = connection.execute("select * from audit_events order by id desc").fetchall()
-            else:
-                rows = connection.execute(
-                    "select * from audit_events where client_id = ? order by id desc",
-                    (normalized_client_id,),
-                ).fetchall()
+            rows = connection.execute(
+                f"select * from audit_events where {client_predicate} order by id desc",  # nosec B608: predicate is a fixed internal string; client ids are parameterized
+                client_params,
+            ).fetchall()
         return [AuditEvent(**dict(row)) for row in rows]
 
-    def list_event_history(self, client_id: str | None = None) -> list[EventHistoryEntry]:
-        normalized_client_id = _normalize_client_id(client_id)
+    def list_event_history(self, client_id: ClientScope | str | None = _ALL_CLIENTS) -> list[EventHistoryEntry]:
+        client_predicate, client_params = _client_scope_predicate(client_id)
         with self._connect() as connection:
-            if normalized_client_id is None:
-                rows = connection.execute("select * from event_history order by id desc").fetchall()
-            else:
-                rows = connection.execute(
-                    "select * from event_history where client_id = ? order by id desc",
-                    (normalized_client_id,),
-                ).fetchall()
+            rows = connection.execute(
+                f"select * from event_history where {client_predicate} order by id desc",  # nosec B608: predicate is a fixed internal string; client ids are parameterized
+                client_params,
+            ).fetchall()
         return [_event_history_from_row(row) for row in rows]
 
     def create_event_delivery(
@@ -2761,50 +2773,29 @@ class Store:
         self,
         delivery_id: int,
         *,
-        client_id: str | None = None,
+        client_id: ClientScope | str = _ALL_CLIENTS,
     ) -> EventDelivery:
-        normalized_client_id = _normalize_client_id(client_id)
+        client_predicate, client_params = _client_scope_predicate(client_id)
         with self._connect() as connection:
-            if normalized_client_id is not None:
-                claimed = connection.execute(
-                    """
-                    update event_deliveries
-                    set status = 'retrying', retry_count = retry_count + 1,
-                        error_detail = '', next_retry_at = ''
-                    where id = ? and client_id = ?
-                      and status = 'failed'
-                      and retry_count < max_retries
-                    """,
-                    (delivery_id, normalized_client_id),
-                )
-                lookup = connection.execute(
-                    """
-                    select status, retry_count, max_retries
-                    from event_deliveries
-                    where id = ? and client_id = ?
-                    """,
-                    (delivery_id, normalized_client_id),
-                )
-            else:
-                claimed = connection.execute(
-                    """
-                    update event_deliveries
-                    set status = 'retrying', retry_count = retry_count + 1,
-                        error_detail = '', next_retry_at = ''
-                    where id = ?
-                      and status = 'failed'
-                      and retry_count < max_retries
-                    """,
-                    (delivery_id,),
-                )
-                lookup = connection.execute(
-                    """
-                    select status, retry_count, max_retries
-                    from event_deliveries
-                    where id = ?
-                    """,
-                    (delivery_id,),
-                )
+            claimed = connection.execute(
+                f"""
+                update event_deliveries
+                set status = 'retrying', retry_count = retry_count + 1,
+                    error_detail = '', next_retry_at = ''
+                where id = ? and {client_predicate}
+                  and status = 'failed'
+                  and retry_count < max_retries
+                """,  # nosec B608: predicate is a fixed internal string; values are parameterized
+                (delivery_id, *client_params),
+            )
+            lookup = connection.execute(
+                f"""
+                select status, retry_count, max_retries
+                from event_deliveries
+                where id = ? and {client_predicate}
+                """,  # nosec B608: predicate is a fixed internal string; values are parameterized
+                (delivery_id, *client_params),
+            )
             if claimed.rowcount != 1:
                 row = lookup.fetchone()
                 if row is None:
@@ -2812,7 +2803,7 @@ class Store:
                 if str(row["status"]) != "failed":
                     raise ValueError("only failed event deliveries can be retried")
                 raise ValueError("event delivery retry limit reached")
-        delivery = self.get_event_delivery(delivery_id, normalized_client_id)
+        delivery = self.get_event_delivery(delivery_id, client_id)
         if delivery is None:
             raise RuntimeError("event delivery was not persisted")
         return delivery
@@ -2821,20 +2812,14 @@ class Store:
         self,
         delivery_id: int,
         *,
-        client_id: str | None = None,
+        client_id: ClientScope | str = _ALL_CLIENTS,
     ) -> dict[str, object]:
-        normalized_client_id = _normalize_client_id(client_id)
+        client_predicate, client_params = _client_scope_predicate(client_id)
         with self._connect() as connection:
-            if normalized_client_id is None:
-                row = connection.execute(
-                    "select payload_json from event_deliveries where id = ?",
-                    (delivery_id,),
-                ).fetchone()
-            else:
-                row = connection.execute(
-                    "select payload_json from event_deliveries where id = ? and client_id = ?",
-                    (delivery_id, normalized_client_id),
-                ).fetchone()
+            row = connection.execute(
+                f"select payload_json from event_deliveries where id = ? and {client_predicate}",  # nosec B608: predicate is a fixed internal string; values are parameterized
+                (delivery_id, *client_params),
+            ).fetchone()
         if row is None:
             raise KeyError(delivery_id)
         payload = json.loads(str(row["payload_json"]))
@@ -2842,28 +2827,26 @@ class Store:
             raise ValueError("event delivery payload must be an object")
         return cast(dict[str, object], payload)
 
-    def get_event_delivery(self, delivery_id: int, client_id: str | None = None) -> EventDelivery | None:
-        normalized_client_id = _normalize_client_id(client_id)
+    def get_event_delivery(
+        self, delivery_id: int, client_id: ClientScope | str = _ALL_CLIENTS
+    ) -> EventDelivery | None:
+        client_predicate, client_params = _client_scope_predicate(client_id)
         with self._connect() as connection:
-            if normalized_client_id is None:
-                row = connection.execute("select * from event_deliveries where id = ?", (delivery_id,)).fetchone()
-            else:
-                row = connection.execute(
-                    "select * from event_deliveries where id = ? and client_id = ?",
-                    (delivery_id, normalized_client_id),
-                ).fetchone()
+            row = connection.execute(
+                f"select * from event_deliveries where id = ? and {client_predicate}",  # nosec B608: predicate is a fixed internal string; values are parameterized
+                (delivery_id, *client_params),
+            ).fetchone()
         return _event_delivery_from_row(row) if row else None
 
-    def list_event_deliveries(self, client_id: str | None = None) -> list[EventDelivery]:
-        normalized_client_id = _normalize_client_id(client_id)
+    def list_event_deliveries(
+        self, client_id: ClientScope | str = _ALL_CLIENTS
+    ) -> list[EventDelivery]:
+        client_predicate, client_params = _client_scope_predicate(client_id)
         with self._connect() as connection:
-            if normalized_client_id is None:
-                rows = connection.execute("select * from event_deliveries order by id desc").fetchall()
-            else:
-                rows = connection.execute(
-                    "select * from event_deliveries where client_id = ? order by id desc",
-                    (normalized_client_id,),
-                ).fetchall()
+            rows = connection.execute(
+                f"select * from event_deliveries where {client_predicate} order by id desc",  # nosec B608: predicate is a fixed internal string; values are parameterized
+                client_params,
+            ).fetchall()
         return [_event_delivery_from_row(row) for row in rows]
 
     def list_due_event_delivery_ids(
@@ -2871,12 +2854,11 @@ class Store:
         *,
         now: str | None = None,
         limit: int = 10,
-        client_id: str | None = None,
+        client_id: ClientScope | str = _ALL_CLIENTS,
     ) -> list[int]:
         if isinstance(limit, bool) or not isinstance(limit, int) or limit < 1 or limit > 100:
             raise ValueError("event delivery retry limit must be between 1 and 100")
         due_at = now or utc_now()
-        normalized_client_id = _normalize_client_id(client_id)
         clauses = [
             "status = 'failed'",
             "retry_count < max_retries",
@@ -2884,9 +2866,9 @@ class Store:
             "next_retry_at <= ?",
         ]
         params: list[object] = [due_at]
-        if normalized_client_id is not None:
-            clauses.append("client_id = ?")
-            params.append(normalized_client_id)
+        client_predicate, client_params = _client_scope_predicate(client_id)
+        clauses.append(client_predicate)
+        params.extend(client_params)
         params.append(limit)
         with self._connect() as connection:
             rows = connection.execute(
@@ -2901,18 +2883,18 @@ class Store:
         agent_id: str,
         event_type: str,
         entity_id: str,
-        client_id: str | None = None,
+        client_id: ClientScope | str | None = _ALL_CLIENTS,
     ) -> bool:
-        normalized_client_id = _normalize_client_id(client_id)
+        client_predicate, client_params = _client_scope_predicate(client_id)
         with self._connect() as connection:
             rows = connection.execute(
-                """
+                f"""
                 select agent_ids_json from event_deliveries
                 where event_type = ? and entity_id = ?
                   and status in ('completed', 'failed')
-                  and (? is null or client_id = ?)
-                """,
-                (event_type, entity_id, normalized_client_id, normalized_client_id),
+                  and {client_predicate}
+                """,  # nosec B608: predicate is a fixed internal string; client ids are parameterized
+                (event_type, entity_id, *client_params),
             ).fetchall()
         return any(agent_id in _json_string_list(row["agent_ids_json"]) for row in rows)
 
@@ -2922,17 +2904,17 @@ class Store:
         agent_id: str,
         event_type: str,
         entity_id: str,
-        client_id: str | None = None,
+        client_id: ClientScope | str | None = _ALL_CLIENTS,
     ) -> bool:
-        normalized_client_id = _normalize_client_id(client_id)
+        client_predicate, client_params = _client_scope_predicate(client_id)
         with self._connect() as connection:
             rows = connection.execute(
-                """
+                f"""
                 select agent_ids_json from event_deliveries
                 where event_type = ? and entity_id = ? and status = 'completed'
-                  and (? is null or client_id = ?)
-                """,
-                (event_type, entity_id, normalized_client_id, normalized_client_id),
+                  and {client_predicate}
+                """,  # nosec B608: predicate is a fixed internal string; client ids are parameterized
+                (event_type, entity_id, *client_params),
             ).fetchall()
         return any(agent_id in _json_string_list(row["agent_ids_json"]) for row in rows)
 
@@ -3010,28 +2992,22 @@ class Store:
             raise RuntimeError("workflow run was not persisted")
         return run
 
-    def get_workflow_run(self, run_id: int, client_id: str | None = None) -> WorkflowRun | None:
-        normalized_client_id = _normalize_client_id(client_id)
+    def get_workflow_run(self, run_id: int, client_id: ClientScope | str | None = _ALL_CLIENTS) -> WorkflowRun | None:
+        client_predicate, client_params = _client_scope_predicate(client_id)
         with self._connect() as connection:
-            if normalized_client_id is None:
-                row = connection.execute("select * from workflow_runs where id = ?", (run_id,)).fetchone()
-            else:
-                row = connection.execute(
-                    "select * from workflow_runs where id = ? and client_id = ?",
-                    (run_id, normalized_client_id),
-                ).fetchone()
+            row = connection.execute(
+                f"select * from workflow_runs where id = ? and {client_predicate}",  # nosec B608: predicate is a fixed internal string; client ids are parameterized
+                (run_id, *client_params),
+            ).fetchone()
         return WorkflowRun(**dict(row)) if row else None
 
-    def list_workflow_runs(self, client_id: str | None = None) -> list[WorkflowRun]:
-        normalized_client_id = _normalize_client_id(client_id)
+    def list_workflow_runs(self, client_id: ClientScope | str | None = _ALL_CLIENTS) -> list[WorkflowRun]:
+        client_predicate, client_params = _client_scope_predicate(client_id)
         with self._connect() as connection:
-            if normalized_client_id is None:
-                rows = connection.execute("select * from workflow_runs order by id desc").fetchall()
-            else:
-                rows = connection.execute(
-                    "select * from workflow_runs where client_id = ? order by id desc",
-                    (normalized_client_id,),
-                ).fetchall()
+            rows = connection.execute(
+                f"select * from workflow_runs where {client_predicate} order by id desc",  # nosec B608: predicate is a fixed internal string; client ids are parameterized
+                client_params,
+            ).fetchall()
         return [WorkflowRun(**dict(row)) for row in rows]
 
     def create_solution_blueprint(self, blueprint: SolutionBlueprint) -> SolutionBlueprint:
@@ -3200,23 +3176,22 @@ class Store:
         self,
         session_id: str,
         *,
-        client_id: str | None = None,
+        client_id: ClientScope | str | None = _ALL_CLIENTS,
         principal_id: str | None = None,
     ) -> ConsultantDiscoverySession | None:
-        normalized_client_id = _normalize_client_id(client_id)
+        client_predicate, client_params = _client_scope_predicate(client_id)
         safe_principal_id = _redact_text(principal_id.strip()) if principal_id else None
         with self._connect() as connection:
             row = connection.execute(
-                """
+                f"""
                 select * from consultant_discovery_sessions
                 where id = ?
-                  and (? is null or client_id = ?)
+                  and {client_predicate}
                   and (? is null or principal_id = ?)
-                """,
+                """,  # nosec B608: predicate is a fixed internal string; client ids are parameterized
                 (
                     session_id,
-                    normalized_client_id,
-                    normalized_client_id,
+                    *client_params,
                     safe_principal_id,
                     safe_principal_id,
                 ),
@@ -3354,7 +3329,10 @@ class Store:
                 f"template {template_id} added to local gallery",
                 client_id=normalized_client_id,
             )
-        entry = self.get_template_gallery_entry(entry_id, normalized_client_id)
+        entry = self.get_template_gallery_entry(
+            entry_id,
+            normalized_client_id if normalized_client_id is not None else _ALL_CLIENTS,
+        )
         if entry is None:
             raise RuntimeError("template gallery entry was not persisted")
         return entry
@@ -3370,7 +3348,10 @@ class Store:
         definition: dict[str, object] | None = None,
         client_id: str | None = None,
     ) -> TemplateGalleryEntry:
-        existing = self.get_template_gallery_entry(entry_id, client_id)
+        existing = self.get_template_gallery_entry(
+            entry_id,
+            client_id if client_id is not None else _ALL_CLIENTS,
+        )
         if existing is None:
             raise KeyError(entry_id)
         next_name = _gallery_text(name, field="name", limit=120) if name is not None else existing.name
@@ -3439,7 +3420,10 @@ class Store:
                 f"template {existing.source_template_id} updated to version {next_version}",
                 client_id=normalized_client_id,
             )
-        updated = self.get_template_gallery_entry(entry_id, normalized_client_id)
+        updated = self.get_template_gallery_entry(
+            entry_id,
+            normalized_client_id if normalized_client_id is not None else _ALL_CLIENTS,
+        )
         if updated is None:
             raise RuntimeError("template gallery entry was not persisted")
         return updated
@@ -3465,48 +3449,33 @@ class Store:
     def get_template_gallery_entry(
         self,
         entry_id: str,
-        client_id: str | None = None,
+        client_id: ClientScope | str = _ALL_CLIENTS,
     ) -> TemplateGalleryEntry | None:
-        normalized_client_id = _normalize_client_id(client_id)
+        client_predicate, client_params = _client_scope_predicate(client_id)
         with self._connect() as connection:
-            if normalized_client_id is None:
-                row = connection.execute(
-                    "select * from template_gallery_entries where id = ?",
-                    (entry_id,),
-                ).fetchone()
-            else:
-                row = connection.execute(
-                    """
-                    select * from template_gallery_entries
-                    where id = ? and client_id = ?
-                    """,
-                    (entry_id, normalized_client_id),
-                ).fetchone()
+            row = connection.execute(
+                f"select * from template_gallery_entries where id = ? and {client_predicate}",  # nosec B608: fixed predicate; values are parameterized
+                (entry_id, *client_params),
+            ).fetchone()
         return _template_gallery_entry_from_row(row) if row else None
 
     def list_template_gallery_entries(
         self,
-        client_id: str | None = None,
+        client_id: ClientScope | str = _ALL_CLIENTS,
     ) -> list[TemplateGalleryEntry]:
-        normalized_client_id = _normalize_client_id(client_id)
+        client_predicate, client_params = _client_scope_predicate(client_id)
         with self._connect() as connection:
-            if normalized_client_id is None:
-                rows = connection.execute("select * from template_gallery_entries order by name, id").fetchall()
-            else:
-                rows = connection.execute(
-                    """
-                    select * from template_gallery_entries
-                    where client_id = ? order by name, id
-                    """,
-                    (normalized_client_id,),
-                ).fetchall()
+            rows = connection.execute(
+                f"select * from template_gallery_entries where {client_predicate} order by name, id",  # nosec B608: fixed predicate; values are parameterized
+                client_params,
+            ).fetchall()
         return [_template_gallery_entry_from_row(row) for row in rows]
 
     def get_template_gallery_revision(
         self,
         entry_id: str,
         version: int,
-        client_id: str | None = None,
+        client_id: ClientScope | str = _ALL_CLIENTS,
     ) -> TemplateGalleryRevision | None:
         entry = self.get_template_gallery_entry(entry_id, client_id)
         if entry is None:
@@ -3524,7 +3493,7 @@ class Store:
     def list_template_gallery_revisions(
         self,
         entry_id: str,
-        client_id: str | None = None,
+        client_id: ClientScope | str = _ALL_CLIENTS,
     ) -> list[TemplateGalleryRevision]:
         entry = self.get_template_gallery_entry(entry_id, client_id)
         if entry is None:
@@ -3543,12 +3512,16 @@ class Store:
         self,
         entry_id: str,
         version: int,
-        client_id: str | None = None,
+        client_id: ClientScope | str = _ALL_CLIENTS,
     ) -> TemplateGalleryEntry:
         existing = self.get_template_gallery_entry(entry_id, client_id)
         if existing is None:
             raise KeyError(entry_id)
-        revision = self.get_template_gallery_revision(entry_id, version, existing.client_id)
+        revision = self.get_template_gallery_revision(
+            entry_id,
+            version,
+            existing.client_id if existing.client_id is not None else _ALL_CLIENTS,
+        )
         if revision is None:
             raise KeyError(f"{entry_id}:{version}")
         definition = _json_object_or_empty(revision.definition_json)
@@ -3864,41 +3837,29 @@ class Store:
     def get_msp_playbook_subscription(
         self,
         subscription_id: str,
-        client_id: str | None = None,
+        client_id: ClientScope | str = _ALL_CLIENTS,
     ) -> MspPlaybookSubscription | None:
-        normalized_client_id = _normalize_client_id(client_id)
+        client_predicate, client_params = _client_scope_predicate(client_id)
         with self._connect() as connection:
-            if normalized_client_id is None:
-                row = connection.execute(
-                    "select * from msp_playbook_subscriptions where id = ?",
-                    (subscription_id,),
-                ).fetchone()
-            else:
-                row = connection.execute(
-                    """
-                    select * from msp_playbook_subscriptions
-                    where id = ? and client_id = ?
-                    """,
-                    (subscription_id, normalized_client_id),
-                ).fetchone()
+            row = connection.execute(
+                f"select * from msp_playbook_subscriptions where id = ? and {client_predicate}",  # nosec B608: fixed predicate; values are parameterized
+                (subscription_id, *client_params),
+            ).fetchone()
         return _msp_playbook_subscription_from_row(row) if row else None
 
     def list_msp_playbook_subscriptions(
         self,
-        client_id: str | None = None,
+        client_id: ClientScope | str = _ALL_CLIENTS,
         *,
         event_type: str | None = None,
     ) -> list[MspPlaybookSubscription]:
-        normalized_client_id = _normalize_client_id(client_id)
-        clauses: list[str] = []
-        params: list[object] = []
-        if normalized_client_id is not None:
-            clauses.append("client_id = ?")
-            params.append(normalized_client_id)
+        client_predicate, client_params = _client_scope_predicate(client_id)
+        clauses: list[str] = [client_predicate]
+        params: list[object] = list(client_params)
         if event_type is not None:
             clauses.append("event_type = ?")
             params.append(event_type)
-        where = f" where {' and '.join(clauses)}" if clauses else ""
+        where = f" where {' and '.join(clauses)}"
         with self._connect() as connection:
             rows = connection.execute(
                 f"select * from msp_playbook_subscriptions{where} order by client_id, playbook_id, id"  # nosec B608: static query fragments only
@@ -4205,7 +4166,10 @@ class Store:
                 f"agent {agent_id} backfill queued for {len(entity_ids)} entity(s)",
                 client_id=normalized_client_id,
             )
-        backfill = self.get_agent_backfill(backfill_id, normalized_client_id)
+        backfill = self.get_agent_backfill(
+            backfill_id,
+            normalized_client_id if normalized_client_id is not None else _ALL_CLIENTS,
+        )
         if backfill is None:
             raise RuntimeError("agent backfill was not persisted")
         return backfill
@@ -4213,41 +4177,32 @@ class Store:
     def get_agent_backfill(
         self,
         backfill_id: int,
-        client_id: str | None = None,
+        client_id: ClientScope | str = _ALL_CLIENTS,
     ) -> AgentBackfill | None:
-        normalized_client_id = _normalize_client_id(client_id)
+        client_predicate, client_params = _client_scope_predicate(client_id)
         with self._connect() as connection:
-            if normalized_client_id is None:
-                row = connection.execute(
-                    "select * from agent_backfills where id = ?",
-                    (backfill_id,),
-                ).fetchone()
-            else:
-                row = connection.execute(
-                    """
-                    select * from agent_backfills
-                    where id = ? and client_id = ?
-                    """,
-                    (backfill_id, normalized_client_id),
-                ).fetchone()
+            row = connection.execute(
+                f"select * from agent_backfills where id = ? and {client_predicate}",  # nosec B608: predicate is a fixed internal string; values are parameterized
+                (backfill_id, *client_params),
+            ).fetchone()
         return _agent_backfill_from_row(row) if row else None
 
-    def list_agent_backfills(self, client_id: str | None = None) -> list[AgentBackfill]:
-        normalized_client_id = _normalize_client_id(client_id)
+    def list_agent_backfills(
+        self, client_id: ClientScope | str = _ALL_CLIENTS
+    ) -> list[AgentBackfill]:
+        client_predicate, client_params = _client_scope_predicate(client_id)
         with self._connect() as connection:
-            if normalized_client_id is None:
-                rows = connection.execute("select * from agent_backfills order by id desc").fetchall()
-            else:
-                rows = connection.execute(
-                    "select * from agent_backfills where client_id = ? order by id desc",
-                    (normalized_client_id,),
-                ).fetchall()
+            rows = connection.execute(
+                f"select * from agent_backfills where {client_predicate} order by id desc",  # nosec B608: predicate is a fixed internal string; values are parameterized
+                client_params,
+            ).fetchall()
         return [_agent_backfill_from_row(row) for row in rows]
 
     def update_agent_backfill(
         self,
         backfill_id: int,
         *,
+        client_id: ClientScope | str,
         status: str,
         next_index: int,
         processed_count: int,
@@ -4257,15 +4212,16 @@ class Store:
         failed_entity_ids: list[str],
         error_detail: str,
     ) -> AgentBackfill:
+        client_predicate, client_params = _client_scope_predicate(client_id)
         with self._connect() as connection:
             cursor = connection.execute(
-                """
+                f"""
                 update agent_backfills
                 set status = ?, next_index = ?, processed_count = ?,
                     succeeded_count = ?, failed_count = ?, run_ids_json = ?,
                     failed_entity_ids_json = ?, error_detail = ?, updated_at = ?
-                where id = ?
-                """,
+                where id = ? and {client_predicate}
+                """,  # nosec B608: predicate is a fixed internal string; values are parameterized
                 (
                     status,
                     next_index,
@@ -4277,11 +4233,12 @@ class Store:
                     _redact_text(error_detail),
                     utc_now(),
                     backfill_id,
+                    *client_params,
                 ),
             )
             if cursor.rowcount != 1:
                 raise KeyError(backfill_id)
-        backfill = self.get_agent_backfill(backfill_id)
+        backfill = self.get_agent_backfill(backfill_id, client_id)
         if backfill is None:
             raise RuntimeError("agent backfill was not persisted")
         return backfill
@@ -4290,26 +4247,30 @@ class Store:
         self,
         backfill_id: int,
         failed_entity_ids: list[str],
+        *,
+        client_id: ClientScope | str,
     ) -> AgentBackfill:
+        client_predicate, client_params = _client_scope_predicate(client_id)
         with self._connect() as connection:
             cursor = connection.execute(
-                """
+                f"""
                 update agent_backfills
                 set entity_ids_json = ?, status = 'queued', next_index = 0,
                     processed_count = 0, succeeded_count = 0, failed_count = 0,
                     failed_entity_ids_json = '[]', error_detail = ?, updated_at = ?
-                where id = ?
-                """,
+                where id = ? and {client_predicate}
+                """,  # nosec B608: predicate is a fixed internal string; values are parameterized
                 (
                     _json_dumps_value(failed_entity_ids),
                     "",
                     utc_now(),
                     backfill_id,
+                    *client_params,
                 ),
             )
             if cursor.rowcount != 1:
                 raise KeyError(backfill_id)
-        backfill = self.get_agent_backfill(backfill_id)
+        backfill = self.get_agent_backfill(backfill_id, client_id)
         if backfill is None:
             raise RuntimeError("agent backfill was not persisted")
         return backfill
@@ -4389,28 +4350,24 @@ class Store:
             raise RuntimeError("agent run was not persisted")
         return run
 
-    def get_agent_run(self, run_id: int, client_id: str | None = None) -> AgentRun | None:
-        normalized_client_id = _normalize_client_id(client_id)
+    def get_agent_run(
+        self, run_id: int, client_id: ClientScope | str = _ALL_CLIENTS
+    ) -> AgentRun | None:
+        client_predicate, client_params = _client_scope_predicate(client_id)
         with self._connect() as connection:
-            if normalized_client_id is None:
-                row = connection.execute("select * from agent_runs where id = ?", (run_id,)).fetchone()
-            else:
-                row = connection.execute(
-                    "select * from agent_runs where id = ? and client_id = ?",
-                    (run_id, normalized_client_id),
-                ).fetchone()
+            row = connection.execute(
+                f"select * from agent_runs where id = ? and {client_predicate}",  # nosec B608: fixed predicate; values are parameterized
+                (run_id, *client_params),
+            ).fetchone()
         return _agent_run_from_row(row) if row else None
 
-    def list_agent_runs(self, client_id: str | None = None) -> list[AgentRun]:
-        normalized_client_id = _normalize_client_id(client_id)
+    def list_agent_runs(self, client_id: ClientScope | str = _ALL_CLIENTS) -> list[AgentRun]:
+        client_predicate, client_params = _client_scope_predicate(client_id)
         with self._connect() as connection:
-            if normalized_client_id is None:
-                rows = connection.execute("select * from agent_runs order by id desc").fetchall()
-            else:
-                rows = connection.execute(
-                    "select * from agent_runs where client_id = ? order by id desc",
-                    (normalized_client_id,),
-                ).fetchall()
+            rows = connection.execute(
+                f"select * from agent_runs where {client_predicate} order by id desc",  # nosec B608: fixed predicate; values are parameterized
+                client_params,
+            ).fetchall()
         return [_agent_run_from_row(row) for row in rows]
 
     def create_smart_action_run(
@@ -4633,28 +4590,26 @@ class Store:
             raise RuntimeError("smart action run was not persisted")
         return run
 
-    def get_smart_action_run(self, run_id: int, client_id: str | None = None) -> SmartActionRun | None:
-        normalized_client_id = _normalize_client_id(client_id)
+    def get_smart_action_run(
+        self, run_id: int, client_id: ClientScope | str = _ALL_CLIENTS
+    ) -> SmartActionRun | None:
+        client_predicate, client_params = _client_scope_predicate(client_id)
         with self._connect() as connection:
-            if normalized_client_id is None:
-                row = connection.execute("select * from smart_action_runs where id = ?", (run_id,)).fetchone()
-            else:
-                row = connection.execute(
-                    "select * from smart_action_runs where id = ? and client_id = ?",
-                    (run_id, normalized_client_id),
-                ).fetchone()
+            row = connection.execute(
+                f"select * from smart_action_runs where id = ? and {client_predicate}",  # nosec B608: fixed predicate; values are parameterized
+                (run_id, *client_params),
+            ).fetchone()
         return SmartActionRun(**dict(row)) if row else None
 
-    def list_smart_action_runs(self, client_id: str | None = None) -> list[SmartActionRun]:
-        normalized_client_id = _normalize_client_id(client_id)
+    def list_smart_action_runs(
+        self, client_id: ClientScope | str = _ALL_CLIENTS
+    ) -> list[SmartActionRun]:
+        client_predicate, client_params = _client_scope_predicate(client_id)
         with self._connect() as connection:
-            if normalized_client_id is None:
-                rows = connection.execute("select * from smart_action_runs order by id desc").fetchall()
-            else:
-                rows = connection.execute(
-                    "select * from smart_action_runs where client_id = ? order by id desc",
-                    (normalized_client_id,),
-                ).fetchall()
+            rows = connection.execute(
+                f"select * from smart_action_runs where {client_predicate} order by id desc",  # nosec B608: fixed predicate; values are parameterized
+                client_params,
+            ).fetchall()
         return [SmartActionRun(**dict(row)) for row in rows]
 
     def record_rmm_execution_scope(
@@ -4812,16 +4767,15 @@ class Store:
             ).fetchone()
         return _scheduled_job_from_row(row) if row else None
 
-    def list_scheduled_jobs(self, client_id: str | None = None) -> list[ScheduledJob]:
-        normalized_client_id = _normalize_client_id(client_id)
+    def list_scheduled_jobs(
+        self, client_id: ClientScope | str = _ALL_CLIENTS
+    ) -> list[ScheduledJob]:
+        client_predicate, client_params = _client_scope_predicate(client_id)
         with self._connect() as connection:
-            if normalized_client_id is None:
-                rows = connection.execute("select * from scheduled_jobs order by id desc").fetchall()
-            else:
-                rows = connection.execute(
-                    "select * from scheduled_jobs where client_id = ? order by id desc",
-                    (normalized_client_id,),
-                ).fetchall()
+            rows = connection.execute(
+                f"select * from scheduled_jobs where {client_predicate} order by id desc",  # nosec B608: fixed predicate; values are parameterized
+                client_params,
+            ).fetchall()
         return [_scheduled_job_from_row(row) for row in rows]
 
     def update_scheduled_job_paused(self, job_id: int, paused: bool) -> ScheduledJob:
@@ -5099,16 +5053,15 @@ class Store:
             row = connection.execute("select * from knowledge_documents where id = ?", (document_id,)).fetchone()
         return KnowledgeDocument(**dict(row)) if row else None
 
-    def list_knowledge_documents(self, client_id: str | None = None) -> list[KnowledgeDocument]:
-        normalized_client_id = _normalize_client_id(client_id)
+    def list_knowledge_documents(
+        self, client_id: ClientScope | str | None = _ALL_CLIENTS
+    ) -> list[KnowledgeDocument]:
+        client_predicate, client_params = _client_scope_predicate(client_id)
         with self._connect() as connection:
-            if normalized_client_id is None:
-                rows = connection.execute("select * from knowledge_documents order by title, path").fetchall()
-            else:
-                rows = connection.execute(
-                    "select * from knowledge_documents where client_id = ? order by title, path",
-                    (normalized_client_id,),
-                ).fetchall()
+            rows = connection.execute(
+                f"select * from knowledge_documents where {client_predicate} order by title, path",  # nosec B608: predicate is a fixed internal string; client ids are parameterized
+                client_params,
+            ).fetchall()
         return [KnowledgeDocument(**dict(row)) for row in rows]
 
     def knowledge_chunk_count(self) -> int:
@@ -5120,16 +5073,16 @@ class Store:
         self,
         query: str,
         limit: int = 3,
-        client_id: str | None = None,
+        client_id: ClientScope | str | None = _ALL_CLIENTS,
     ) -> list[KnowledgeChunk]:
         bounded_limit = _bounded_search_limit(limit)
         fts_query = _fts_query(query)
         if not fts_query:
             return []
-        normalized_client_id = _normalize_client_id(client_id)
+        client_predicate, client_params = _client_scope_predicate(client_id, "d.client_id")
         with self._connect() as connection:
             rows = connection.execute(
-                """
+                f"""
                 select
                   c.id,
                   c.document_id,
@@ -5144,11 +5097,11 @@ class Store:
                 join knowledge_chunks c on c.id = cast(knowledge_chunks_fts.chunk_id as integer)
                 join knowledge_documents d on d.id = c.document_id
                 where knowledge_chunks_fts match ?
-                  and (? is null or d.client_id = ?)
+                  and {client_predicate}
                 order by rank, d.title, c.chunk_index
                 limit ?
-                """,
-                (fts_query, normalized_client_id, normalized_client_id, bounded_limit),
+                """,  # nosec B608: predicate is a fixed internal string; client ids are parameterized
+                (fts_query, *client_params, bounded_limit),
             ).fetchall()
         return [
             KnowledgeChunk(
@@ -5256,22 +5209,15 @@ class Store:
             ).fetchone()
         return CollectorSource(**dict(row)) if row else None
 
-    def list_collector_sources(self, client_id: str | None = None) -> list[CollectorSource]:
-        normalized_client_id = _normalize_client_id(client_id)
+    def list_collector_sources(
+        self, client_id: ClientScope | str = _ALL_CLIENTS
+    ) -> list[CollectorSource]:
+        client_predicate, client_params = _client_scope_predicate(client_id)
         with self._connect() as connection:
-            if normalized_client_id is None:
-                rows = connection.execute(
-                    "select * from collector_sources order by updated_at desc, id desc"
-                ).fetchall()
-            else:
-                rows = connection.execute(
-                    """
-                    select * from collector_sources
-                    where client_id = ?
-                    order by updated_at desc, id desc
-                    """,
-                    (normalized_client_id,),
-                ).fetchall()
+            rows = connection.execute(
+                f"select * from collector_sources where {client_predicate} order by updated_at desc, id desc",  # nosec B608: fixed predicate; values are parameterized
+                client_params,
+            ).fetchall()
         return [CollectorSource(**dict(row)) for row in rows]
 
     def create_collector_run(
@@ -5391,24 +5337,22 @@ class Store:
             raise RuntimeError("collector run was not persisted")
         return run
 
-    def get_collector_run(self, run_id: int) -> CollectorRun | None:
+    def get_collector_run(self, run_id: int, client_id: ClientScope | str | None = _ALL_CLIENTS) -> CollectorRun | None:
+        client_predicate, client_params = _client_scope_predicate(client_id)
         with self._connect() as connection:
             row = connection.execute(
-                "select * from collector_runs where id = ?",
-                (run_id,),
+                f"select * from collector_runs where id = ? and {client_predicate}",  # nosec B608: predicate is a fixed internal string; client ids are parameterized
+                (run_id, *client_params),
             ).fetchone()
         return CollectorRun(**dict(row)) if row else None
 
-    def list_collector_runs(self, client_id: str | None = None) -> list[CollectorRun]:
-        normalized_client_id = _normalize_client_id(client_id)
+    def list_collector_runs(self, client_id: ClientScope | str | None = _ALL_CLIENTS) -> list[CollectorRun]:
+        client_predicate, client_params = _client_scope_predicate(client_id)
         with self._connect() as connection:
-            if normalized_client_id is None:
-                rows = connection.execute("select * from collector_runs order by id desc").fetchall()
-            else:
-                rows = connection.execute(
-                    "select * from collector_runs where client_id = ? order by id desc",
-                    (normalized_client_id,),
-                ).fetchall()
+            rows = connection.execute(
+                f"select * from collector_runs where {client_predicate} order by id desc",  # nosec B608: predicate is a fixed internal string; client ids are parameterized
+                client_params,
+            ).fetchall()
         return [CollectorRun(**dict(row)) for row in rows]
 
     def set_collector_run_report(self, run_id: int, report_id: str) -> CollectorRun:
@@ -5594,31 +5538,33 @@ class Store:
         self,
         *,
         run_id: int | None = None,
-        client_id: str | None = None,
+        client_id: ClientScope | str | None = _ALL_CLIENTS,
     ) -> list[CanonicalAsset]:
-        normalized_client_id = _normalize_client_id(client_id)
         with self._connect() as connection:
             if run_id is None:
+                client_predicate, client_params = _client_scope_predicate(client_id)
                 rows = connection.execute(
-                    """
+                    f"""
                     select * from canonical_assets
-                    where (? is null or client_id = ?)
+                    where {client_predicate}
                     order by display_name, canonical_id
-                    """,
-                    (normalized_client_id, normalized_client_id),
+                    """,  # nosec B608: predicate is a fixed internal string; client ids are parameterized
+                    client_params,
                 ).fetchall()
             else:
+                client_predicate, client_params = _client_scope_predicate(client_id, "a.client_id")
                 rows = connection.execute(
-                    """
+                    f"""
                     select distinct a.*
                     from canonical_assets a
                     left join asset_observations o on o.asset_id = a.id
                     left join config_snapshots s on s.asset_id = a.id
                     left join restore_exercises r on r.asset_id = a.id
-                    where o.run_id = ? or s.run_id = ? or r.run_id = ?
+                    where (o.run_id = ? or s.run_id = ? or r.run_id = ?)
+                      and {client_predicate}
                     order by a.display_name, a.canonical_id
-                    """,
-                    (run_id, run_id, run_id),
+                    """,  # nosec B608: predicate is a fixed internal string; client ids are parameterized
+                    (run_id, run_id, run_id, *client_params),
                 ).fetchall()
         return [CanonicalAsset(**dict(row)) for row in rows]
 
@@ -6057,16 +6003,15 @@ class Store:
             raise RuntimeError("execution run was not persisted")
         return run
 
-    def get_execution_run(self, run_id: int, client_id: str | None = None) -> ExecutionRun | None:
-        normalized_client_id = _normalize_client_id(client_id)
+    def get_execution_run(
+        self, run_id: int, client_id: ClientScope | str | None = _ALL_CLIENTS
+    ) -> ExecutionRun | None:
+        client_predicate, client_params = _client_scope_predicate(client_id)
         with self._connect() as connection:
-            if normalized_client_id is None:
-                row = connection.execute("select * from execution_runs where id = ?", (run_id,)).fetchone()
-            else:
-                row = connection.execute(
-                    "select * from execution_runs where id = ? and client_id = ?",
-                    (run_id, normalized_client_id),
-                ).fetchone()
+            row = connection.execute(
+                f"select * from execution_runs where id = ? and {client_predicate}",  # nosec B608: predicate is a fixed internal string; client ids are parameterized
+                (run_id, *client_params),
+            ).fetchone()
         return _execution_run_from_row(row) if row else None
 
     def find_execution_run(self, run_kind: str, source_run_id: int) -> ExecutionRun | None:
@@ -6096,7 +6041,7 @@ class Store:
 
     def list_execution_runs(
         self,
-        client_id: str | None = None,
+        client_id: ClientScope | str | None = _ALL_CLIENTS,
         *,
         run_kind: str | None = None,
         status: str | None = None,
@@ -6105,10 +6050,9 @@ class Store:
     ) -> list[ExecutionRun]:
         clauses: list[str] = []
         params: list[object] = []
-        normalized_client_id = _normalize_client_id(client_id)
-        if normalized_client_id is not None:
-            clauses.append("client_id = ?")
-            params.append(normalized_client_id)
+        client_predicate, client_params = _client_scope_predicate(client_id)
+        clauses.append(client_predicate)
+        params.extend(client_params)
         if run_kind:
             clauses.append("run_kind = ?")
             params.append(run_kind)
@@ -6234,20 +6178,40 @@ class Store:
             raise RuntimeError("execution artifact was not persisted")
         return artifact
 
-    def get_execution_artifact(self, artifact_id: int) -> ExecutionArtifact | None:
+    def get_execution_artifact(
+        self,
+        artifact_id: int,
+        client_id: ClientScope | str = _ALL_CLIENTS,
+    ) -> ExecutionArtifact | None:
+        client_predicate, client_params = _client_scope_predicate(client_id, "er.client_id")
         with self._connect() as connection:
-            row = connection.execute("select * from execution_artifacts where id = ?", (artifact_id,)).fetchone()
+            row = connection.execute(
+                f"""
+                select ea.*
+                from execution_artifacts ea
+                join execution_runs er on er.id = ea.execution_run_id
+                where ea.id = ? and {client_predicate}
+                """,  # nosec B608: predicate is a fixed internal string; values are parameterized
+                (artifact_id, *client_params),
+            ).fetchone()
         return _execution_artifact_from_row(row) if row else None
 
-    def list_execution_artifacts(self, execution_run_id: int) -> list[ExecutionArtifact]:
+    def list_execution_artifacts(
+        self,
+        execution_run_id: int,
+        client_id: ClientScope | str = _ALL_CLIENTS,
+    ) -> list[ExecutionArtifact]:
+        client_predicate, client_params = _client_scope_predicate(client_id, "er.client_id")
         with self._connect() as connection:
             rows = connection.execute(
-                """
-                select * from execution_artifacts
-                where execution_run_id = ?
-                order by id
-                """,
-                (execution_run_id,),
+                f"""
+                select ea.*
+                from execution_artifacts ea
+                join execution_runs er on er.id = ea.execution_run_id
+                where ea.execution_run_id = ? and {client_predicate}
+                order by ea.id
+                """,  # nosec B608: predicate is a fixed internal string; values are parameterized
+                (execution_run_id, *client_params),
             ).fetchall()
         return [_execution_artifact_from_row(row) for row in rows]
 
@@ -6255,7 +6219,7 @@ class Store:
         self,
         started_from: str | None,
         started_to: str | None,
-        client_id: str | None = None,
+        client_id: ClientScope | str = _ALL_CLIENTS,
     ) -> list[tuple[str, str, int]]:
         clauses, params = _execution_range_filters(started_from, started_to, client_id)
         with self._connect() as connection:
@@ -6290,7 +6254,7 @@ class Store:
         self,
         started_from: str | None,
         started_to: str | None,
-        client_id: str | None = None,
+        client_id: ClientScope | str = _ALL_CLIENTS,
     ) -> list[tuple[str, int]]:
         clauses, params = _execution_range_filters(started_from, started_to, client_id)
         prefix = " where" if not clauses else f"{clauses} and"
@@ -6326,7 +6290,7 @@ class Store:
         self,
         started_from: str | None,
         started_to: str | None,
-        client_id: str | None = None,
+        client_id: ClientScope | str = _ALL_CLIENTS,
     ) -> list[tuple[str, str, str, int]]:
         """Return explainable activity counts without double-counting recorded runs."""
         clauses, params = _execution_range_filters(started_from, started_to, client_id)
@@ -6366,7 +6330,7 @@ class Store:
         self,
         started_from: str | None,
         started_to: str | None,
-        client_id: str | None = None,
+        client_id: ClientScope | str = _ALL_CLIENTS,
     ) -> list[tuple[str, int]]:
         """Return approval request counts by current decision status."""
         clauses, params = _approval_range_filters(started_from, started_to, client_id)
@@ -6387,7 +6351,7 @@ class Store:
         self,
         started_from: str | None,
         started_to: str | None,
-        client_id: str | None = None,
+        client_id: ClientScope | str = _ALL_CLIENTS,
     ) -> list[tuple[str, str]]:
         """Return distinct tickets referenced by scoped execution records.
 
@@ -6506,7 +6470,7 @@ class Store:
         self,
         started_from: str | None,
         started_to: str | None,
-        client_id: str | None = None,
+        client_id: ClientScope | str = _ALL_CLIENTS,
     ) -> list[tuple[str, str, str, int]]:
         """Return execution counts grouped by workflow/action identifier."""
         clauses, params = _execution_range_filters(started_from, started_to, client_id)
@@ -7187,14 +7151,13 @@ def _execution_artifact_from_row(row: sqlite3.Row) -> ExecutionArtifact:
 def _execution_range_filters(
     started_from: str | None,
     started_to: str | None,
-    client_id: str | None,
+    client_id: ClientScope | str,
 ) -> tuple[str, list[object]]:
     clauses: list[str] = []
     params: list[object] = []
-    normalized_client_id = _normalize_client_id(client_id)
-    if normalized_client_id is not None:
-        clauses.append("er.client_id = ?")
-        params.append(normalized_client_id)
+    client_predicate, client_params = _client_scope_predicate(client_id, "er.client_id")
+    clauses.append(client_predicate)
+    params.extend(client_params)
     if started_from:
         clauses.append("date(er.started_at) >= date(?)")
         params.append(started_from)
@@ -7223,14 +7186,13 @@ def _solution_blueprint_from_row(row: sqlite3.Row) -> SolutionBlueprint:
 def _approval_range_filters(
     started_from: str | None,
     started_to: str | None,
-    client_id: str | None,
+    client_id: ClientScope | str,
 ) -> tuple[str, list[object]]:
     clauses: list[str] = []
     params: list[object] = []
-    normalized_client_id = _normalize_client_id(client_id)
-    if normalized_client_id is not None:
-        clauses.append("client_id = ?")
-        params.append(normalized_client_id)
+    client_predicate, client_params = _client_scope_predicate(client_id)
+    clauses.append(client_predicate)
+    params.extend(client_params)
     if started_from:
         clauses.append("date(created_at) >= date(?)")
         params.append(started_from)

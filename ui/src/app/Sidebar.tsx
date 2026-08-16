@@ -13,6 +13,7 @@ import {
   GitBranch,
   LayoutDashboard,
   MessageSquare,
+  Network,
   Files,
   LibraryBig,
   ShieldCheck,
@@ -21,6 +22,7 @@ import {
 } from "lucide-react";
 import { NavLink } from "react-router-dom";
 import { useDashboard } from "./DashboardContext";
+import { RoleGate } from "../components/RoleGate";
 
 const navigation = [
   { to: "/", label: "Overview", icon: LayoutDashboard },
@@ -50,7 +52,7 @@ const systemNavigation = [
 ];
 
 export function Sidebar() {
-  const { isAdmin } = useDashboard();
+  const { role, roleResolved } = useDashboard();
 
   return (
     <aside className="sidebar" aria-label="Workspace navigation">
@@ -73,6 +75,12 @@ export function Sidebar() {
             {label}
           </NavLink>
         ))}
+        <RoleGate role={role} resolved={roleResolved} allowed={["admin"]}>
+          <NavLink to="/integrations/mcp" className={({ isActive }) => isActive ? "active" : undefined}>
+            <Network size={18} aria-hidden="true" />
+            MCP
+          </NavLink>
+        </RoleGate>
       </nav>
       <section className="sidebar-system" aria-label="System">
         <span className="sidebar-section-label">System</span>
@@ -83,12 +91,12 @@ export function Sidebar() {
               {label}
             </NavLink>
           ))}
-          {isAdmin ? (
+          <RoleGate role={role} resolved={roleResolved} allowed={["admin"]}>
             <NavLink to="/system/appliance-health" className={({ isActive }) => isActive ? "active" : undefined}>
               <ShieldCheck size={18} aria-hidden="true" />
               Appliance Health
             </NavLink>
-          ) : null}
+          </RoleGate>
         </nav>
       </section>
     </aside>

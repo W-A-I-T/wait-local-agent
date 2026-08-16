@@ -7,6 +7,9 @@ All notable changes to WAIT Local Agent will be documented in this file.
 ### Added
 
 - Admins can now review read-only appliance health, update status, and latest hardening evidence from System → Appliance Health.
+- Admins can now discover the local MCP server under Integrations → MCP, copy a
+  bearer-token connection configuration, and review the published tool catalog
+  with its risk, role, approval, and access metadata.
 - The dashboard now exposes MSP Playbooks with tenant publication status, bounded preview and run actions, revision recovery, and event-subscription controls.
 - Versioned SQLite schema initialization now records an idempotent baseline in
   `schema_migrations`, enables foreign-key enforcement, WAL, and a bounded busy
@@ -48,6 +51,13 @@ All notable changes to WAIT Local Agent will be documented in this file.
 - Principal identity supports per-client roles and a global `msp_admin` role;
   principal credentials are stored as SHA-256 hashes rather than raw
   credentials.
+- Client-bearing API routes now resolve one fail-closed `ClientScope`; bootstrap
+  admin tokens and `msp_admin` principals can use explicit cross-client scopes,
+  per-client principals remain tenant-bound, and store filters reject
+  `None`/empty client IDs.
+- Entity routes now derive mutation scope from the stored tenant-bearing entity,
+  M365 draft handlers enforce the authenticated client scope, and legacy
+  untagged approvals remain restricted to demo mode and appliance operators.
 
 ## [1.1.1] - 2026-07-21
 

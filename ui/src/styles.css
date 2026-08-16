@@ -389,6 +389,111 @@ nav a:hover {
   gap: 18px;
 }
 
+.mcp-hero {
+  align-items: flex-start;
+  display: flex;
+  gap: 18px;
+  justify-content: space-between;
+}
+
+.mcp-hero h2 {
+  margin-bottom: 8px;
+}
+
+.mcp-detail-grid {
+  display: grid;
+  gap: 12px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.mcp-detail-grid > div {
+  background: #f7faf8;
+  border: 1px solid #e4ebe8;
+  border-radius: 8px;
+  padding: 12px;
+}
+
+.mcp-detail-grid dt,
+.mcp-detail-grid dd {
+  margin: 0;
+}
+
+.mcp-detail-grid dt {
+  color: #60706a;
+  font-size: 0.78rem;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.mcp-detail-grid dd {
+  margin-top: 6px;
+}
+
+.mcp-steps {
+  display: grid;
+  gap: 8px;
+  margin: 0 0 14px;
+  padding-left: 22px;
+}
+
+.mcp-code {
+  background: #1f2d2a;
+  border-radius: 8px;
+  color: #e8f5ef;
+  margin: 0;
+  overflow-x: auto;
+  padding: 14px;
+}
+
+.mcp-code code {
+  color: inherit;
+}
+
+.mcp-tool-list {
+  display: grid;
+  gap: 10px;
+}
+
+.mcp-tool {
+  align-items: flex-start;
+  border: 1px solid #e4ebe8;
+  border-radius: 8px;
+  display: flex;
+  gap: 18px;
+  justify-content: space-between;
+  padding: 14px;
+}
+
+.mcp-tool h3,
+.mcp-tool p {
+  margin-top: 0;
+}
+
+.mcp-tool p:last-child {
+  margin-bottom: 0;
+}
+
+.mcp-tool-id {
+  color: #60706a;
+  font-size: 0.86rem;
+}
+
+.mcp-tool-meta {
+  align-items: flex-end;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  justify-content: flex-end;
+  min-width: 180px;
+}
+
+.mcp-role {
+  color: #60706a;
+  font-size: 0.84rem;
+  font-weight: 700;
+}
+
 .consultant-blueprint-list,
 .consultant-component-list,
 .workflow-graph-list {
@@ -1898,6 +2003,7 @@ dd svg {
 @media (max-width: 760px) {
   .shell,
   .end-user-grid,
+  .mcp-detail-grid,
   .technician-chat-layout,
   .grid,
   .analytics-filters,
@@ -1990,6 +2096,17 @@ dd svg {
   .document-row {
     align-items: flex-start;
     flex-direction: column;
+  }
+
+  .mcp-hero,
+  .mcp-tool {
+    display: grid;
+  }
+
+  .mcp-tool-meta {
+    align-items: flex-start;
+    justify-content: flex-start;
+    min-width: 0;
   }
 
   .topbar > div:first-child,
