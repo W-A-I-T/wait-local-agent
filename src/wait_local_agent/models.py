@@ -119,6 +119,12 @@ class Ticket:
 
 
 @dataclass(frozen=True)
+class IngestSummary:
+    written: int
+    quarantined: int
+
+
+@dataclass(frozen=True)
 class TicketNote:
     id: int | None
     ticket_id: str
