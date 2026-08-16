@@ -1,14 +1,35 @@
-# Licensing transition
+# Licensing and commercial transition
 
-> Planning only. The currently effective repository license remains Apache-2.0 until approved replacement terms and synchronized metadata are merged and released.
+WAIT Local Agent now has a versioned source-license boundary.
 
-The final Apache baseline is preserved at commit `903cb595e8f735fcc306a68f2bee150fce58a416` on branches `1.x` and `archive/apache-2.0-final-2026-08-15`.
+## Effective source licenses
 
-The planned future major version uses a dual-licensing model:
+- The preserved `1.x` baseline through commit `903cb595e8f735fcc306a68f2bee150fce58a416` remains available under **Apache License 2.0**.
+- The `2.0` development line on `main` is distributed as a combined work under **GNU Affero General Public License v3 only (`AGPL-3.0-only`)**.
 
-- a public WAIT Community license; and
-- a separately executed WAIT Commercial license for contracted commercial rights.
+Previously granted Apache rights are not revoked. See [`../../LICENSE_HISTORY.md`](../../LICENSE_HISTORY.md) for the exact transition record and [`../../LICENSE`](../../LICENSE) for the currently effective Community license on the 2.0 development line.
 
-Before any license-changing pull request is merged, WAIT must complete copyright and contributor-rights review, dependency and asset license inventory, WAIT-Sync provenance review, approved Community and Commercial terms, contributor agreement design, attribution/trademark review, synchronized package metadata, and release validation.
+## Commercial licensing
 
-Issue #310 is the product and licensing source of truth. This directory records implementation prerequisites; it does not itself change the license.
+WAIT may separately offer commercial licenses for customers that need contractual rights or services beyond the AGPL Community route, including private modifications, proprietary packs, managed-service terms, official builds, support, branding arrangements, white-labeling, and OEM rights.
+
+No commercial exception is granted merely by this documentation. Commercial rights require a separate written agreement and applicable entitlement.
+
+## Additional WAIT terms
+
+The repository does **not** currently impose custom WAIT Section 7 terms beyond the standard AGPL-3.0-only text. Planned requirements such as a specific `Powered by WAIT` attribution, co-branding, partner branding, or additional Community permissions remain product/legal requirements until qualified software counsel approves them and they are deliberately added in a later change.
+
+## Remaining transition work
+
+The source-license switch does not complete the broader dual-licensing program. WAIT still needs to complete:
+
+- contributor and copyright provenance review;
+- dependency and bundled-asset license inventory;
+- WAIT-Sync provenance and secret-history review before migration;
+- a counsel-reviewed Commercial License/EULA;
+- a contributor-rights mechanism for future dual licensing;
+- trademark, attribution, official-build, white-label, and OEM terms;
+- a reproducible SBOM and third-party notices; and
+- synchronized Launch Passport commercial/provisioning copy.
+
+Issue #310 remains the product and licensing source of truth. The checklist in this directory tracks the remaining commercial and release work.
