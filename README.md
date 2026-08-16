@@ -78,7 +78,7 @@ flowchart LR
 | --- | --- | --- |
 | Dashboard and desktop | Give an operator a visible workspace. | Served from the local machine. |
 | FastAPI and CLI | Accept bounded requests and expose the same runtime services. | Local API on `127.0.0.1:8788` unless you configure otherwise. |
-| SQLite store | Keep tickets, drafts, approvals, runs, knowledge, and audit events. | A local file or Docker volume. |
+| SQLite store | Keep tickets, drafts, approvals, runs, knowledge, clients, connector mappings, and audit events. | A local file or Docker volume. |
 | Connector adapters | Read approved provider surfaces and carry out allowlisted actions. | No outbound call until probing is enabled. |
 
 The normal path is easy to follow: start with local demo data, examine a
@@ -86,6 +86,13 @@ draft, review the policy decision, and only then choose whether a provider
 connection should be enabled. A team can keep the runtime offline for
 documentation, workflow, and audit work, then configure one connector at a
 time as its operating practices mature.
+
+Client identity is kept in a small local directory. Connector instances can
+be shared across the MSP or associated with one client, while external
+companies are linked to clients only after an operator verifies the mapping.
+Records that cannot yet be identified have a quarantine destination, so an
+unresolved provider identity is visible for review instead of being silently
+assigned.
 
 The core modules are visible in the repository: `api/app.py` serves the API,
 `cli.py` exposes the command line, `rbac.py` and `smart_actions.py` enforce

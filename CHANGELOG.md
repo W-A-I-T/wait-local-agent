@@ -6,6 +6,11 @@ All notable changes to WAIT Local Agent will be documented in this file.
 
 ### Added
 
+- A local Clients directory now anchors client identity, connector instances
+  can be recorded alongside the existing Settings connector path, and
+  external company mappings remain unverified until an operator confirms
+  them. A quarantine sentinel keeps unresolved identities visible for later
+  review.
 - Admins can now discover the local MCP server under Integrations → MCP, copy a
   bearer-token connection configuration, and review the published tool catalog
   with its risk, role, approval, and access metadata.
