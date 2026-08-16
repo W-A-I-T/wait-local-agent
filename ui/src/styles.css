@@ -575,6 +575,70 @@ nav a:hover {
   margin-bottom: 8px;
 }
 
+.connector-instances-hero {
+  align-items: flex-start;
+  display: flex;
+  gap: 18px;
+  justify-content: space-between;
+}
+
+.connector-instances-hero h2 {
+  margin-bottom: 8px;
+}
+
+.connector-instances-table-wrap {
+  overflow-x: auto;
+}
+
+.connector-instances-table {
+  border-collapse: collapse;
+  min-width: 760px;
+  width: 100%;
+}
+
+.connector-instances-table th,
+.connector-instances-table td {
+  border-bottom: 1px solid #e4ebe8;
+  padding: 12px;
+  text-align: left;
+  vertical-align: top;
+}
+
+.connector-instances-table th {
+  color: #60706a;
+  font-size: 0.76rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.connector-instance-select {
+  align-items: flex-start;
+  background: transparent;
+  border: 0;
+  color: #235d43;
+  display: grid;
+  gap: 5px;
+  padding: 0;
+  text-align: left;
+}
+
+.connector-instance-select:hover,
+.connector-instance-select[aria-pressed="true"] {
+  color: #1f6f55;
+  text-decoration: underline;
+}
+
+.connector-instance-select code,
+.connector-instances-table code {
+  color: #60706a;
+  font-size: 0.82rem;
+  overflow-wrap: anywhere;
+}
+
+.connector-instance-mappings {
+  border-color: #b8c9c1;
+}
+
 .schedules-hero {
   align-items: flex-start;
   display: flex;
@@ -2604,6 +2668,7 @@ dd svg {
   .mcp-tool,
   .smart-action-hero,
   .events-hero,
+  .connector-instances-hero,
   .schedules-hero {
     display: grid;
   }

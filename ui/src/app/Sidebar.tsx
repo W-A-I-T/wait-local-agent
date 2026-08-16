@@ -84,6 +84,12 @@ export function Sidebar() {
             MCP
           </NavLink>
         </RoleGate>
+        <RoleGate role={role} resolved={roleResolved} allowed={["admin"]}>
+          <NavLink to="/integrations/connector-instances" className={({ isActive }) => isActive ? "active" : undefined}>
+            <Database size={18} aria-hidden="true" />
+            Connector Instances
+          </NavLink>
+        </RoleGate>
         <NavLink to="/integrations/smart-actions" className={({ isActive }) => isActive ? "active" : undefined}>
           <Sparkles size={18} aria-hidden="true" />
           Smart Actions
