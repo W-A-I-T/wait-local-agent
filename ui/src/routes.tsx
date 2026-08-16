@@ -17,6 +17,7 @@ import { Workflows } from "./screens/Workflows";
 import { WorkflowDesigner } from "./screens/WorkflowDesigner";
 import { Tickets } from "./screens/Tickets";
 import { Templates } from "./screens/Templates";
+import { Playbooks } from "./screens/Playbooks";
 import { Settings } from "./screens/Settings";
 import { TechnicianChat } from "./screens/TechnicianChat";
 
@@ -29,6 +30,7 @@ export function AppRoutes() {
       <Route path="workflows" element={<Workflows />} />
       <Route path="workflow-designer" element={<WorkflowDesigner />} />
       <Route path="templates" element={<Templates />} />
+      <Route path="playbooks" element={<Playbooks />} />
       <Route path="consultant" element={<Consultant />} />
       <Route path="collectors" element={<Collectors />} />
       <Route path="reports" element={<Reports />} />

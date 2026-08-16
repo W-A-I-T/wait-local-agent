@@ -1114,6 +1114,17 @@ button:disabled {
   grid-template-columns: minmax(160px, 1fr) minmax(150px, 1fr) auto;
 }
 
+.playbook-row {
+  grid-template-columns: minmax(220px, 1.3fr) minmax(140px, 0.7fr) minmax(220px, 1.2fr) minmax(120px, 0.6fr);
+}
+
+.playbook-row > .template-actions,
+.playbook-row > .grid,
+.playbook-row > .technical-details,
+.playbook-row > details {
+  grid-column: 1 / -1;
+}
+
 .document-row strong,
 .document-row span,
 .source-results strong,

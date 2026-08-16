@@ -193,6 +193,73 @@ export type WorkflowTemplate = {
   };
 };
 
+export type MspPlaybookStep = {
+  id: string;
+  name: string;
+  kind: "workflow" | "report" | string;
+  description: string;
+  workflow_template_id?: string | null;
+  report_type?: string | null;
+  required_inputs: string[];
+};
+
+export type MspPlaybook = {
+  id: string;
+  name: string;
+  version: number;
+  trigger: string;
+  description: string;
+  risk_level: string;
+  steps: MspPlaybookStep[];
+  output_evidence: string[];
+  local_fixture?: boolean;
+};
+
+export type MspPlaybookEntry = {
+  id: string;
+  source_playbook_id: string;
+  definition: MspPlaybook;
+  provenance: string;
+  enabled: boolean;
+  version: number;
+  created_at: string;
+  updated_at: string;
+  client_id?: string | null;
+};
+
+export type MspPlaybookRevision = {
+  id: number;
+  playbook_id: string;
+  version: number;
+  snapshot: {
+    definition?: MspPlaybook;
+    provenance?: string;
+    enabled?: boolean;
+  };
+  created_at: string;
+  client_id?: string | null;
+};
+
+export type MspPlaybookRevisionDiff = {
+  playbook_id: string;
+  from_version: number;
+  to_version: number;
+  changed_fields: string[];
+  from: Record<string, unknown>;
+  to: Record<string, unknown>;
+};
+
+export type MspPlaybookSubscription = {
+  id: string;
+  playbook_id: string;
+  event_type: string;
+  client_id: string;
+  input_mapping: Record<string, string>;
+  enabled: boolean;
+  created_at: string;
+  updated_at: string;
+};
+
 export type ConsultantBlueprint = {
   id: string;
   client_id: string;

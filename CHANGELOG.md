@@ -6,6 +6,7 @@ All notable changes to WAIT Local Agent will be documented in this file.
 
 ### Added
 
+- The dashboard now exposes MSP Playbooks with tenant publication status, bounded preview and run actions, revision recovery, and event-subscription controls.
 - Versioned SQLite schema initialization now records an idempotent baseline in
   `schema_migrations`, enables foreign-key enforcement, WAL, and a bounded busy
   timeout, and inventories FastAPI, Typer, and MCP surfaces against a committed
