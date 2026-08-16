@@ -25,6 +25,7 @@ import { McpIntegration } from "./screens/McpIntegration";
 import { ExtensionsPacks } from "./screens/ExtensionsPacks";
 import { SmartActionCatalog } from "./screens/SmartActionCatalog";
 import { Events } from "./screens/Events";
+import { Schedules } from "./screens/Schedules";
 
 export function AppRoutes() {
   return (
@@ -34,6 +35,7 @@ export function AppRoutes() {
       <Route path="knowledge" element={<Knowledge />} />
       <Route path="workflows" element={<Workflows />} />
       <Route path="automation/events" element={<Events />} />
+      <Route path="automation/schedules" element={<Schedules />} />
       <Route path="workflow-designer" element={<WorkflowDesigner />} />
       <Route path="templates" element={<Templates />} />
       <Route path="playbooks" element={<Playbooks />} />
