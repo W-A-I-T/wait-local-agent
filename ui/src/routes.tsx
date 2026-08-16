@@ -27,6 +27,7 @@ import { SmartActionCatalog } from "./screens/SmartActionCatalog";
 import { Events } from "./screens/Events";
 import { Schedules } from "./screens/Schedules";
 import { ConnectorInstances } from "./screens/ConnectorInstances";
+import { SyncReconciliation } from "./screens/SyncReconciliation";
 
 export function AppRoutes() {
   return (
@@ -59,6 +60,7 @@ export function AppRoutes() {
       <Route path="integrations/mcp" element={<McpIntegration />} />
       <Route path="integrations/connector-instances" element={<ConnectorInstances />} />
       <Route path="integrations/smart-actions" element={<SmartActionCatalog />} />
+      <Route path="operations/reconciliation" element={<SyncReconciliation />} />
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>
   );

@@ -116,6 +116,12 @@ export function Sidebar() {
               Extensions / Packs
             </NavLink>
           </RoleGate>
+          <RoleGate role={role} resolved={roleResolved} allowed={["admin"]}>
+            <NavLink to="/operations/reconciliation" className={({ isActive }) => isActive ? "active" : undefined}>
+              <Database size={18} aria-hidden="true" />
+              Sync / Reconciliation
+            </NavLink>
+          </RoleGate>
         </nav>
       </section>
     </aside>

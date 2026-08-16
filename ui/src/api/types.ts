@@ -20,6 +20,27 @@ export type ConnectorInstance = {
   updated_at: string;
 };
 
+export type SyncCursor = {
+  connector_instance_id: string;
+  cursor_type: string;
+  cursor_value: string | null;
+  status: "idle" | "syncing" | "degraded" | "failed";
+  last_synced_at: string | null;
+  updated_at: string;
+};
+
+export type UnmappedRecord = {
+  record_id: string;
+  connector_instance_id: string;
+  external_company_id: string | null;
+  external_id: string | null;
+  record_type: string;
+  payload_digest: string | null;
+  reason: string;
+  created_at: string;
+  resolved_at: string | null;
+};
+
 export type ClientConnectorMapping = {
   mapping_id: string;
   connector_instance_id: string;
