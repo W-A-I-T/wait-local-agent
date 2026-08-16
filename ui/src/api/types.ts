@@ -142,6 +142,9 @@ export type EventHistory = {
   subject_id: string;
   status: string;
   message: string;
+  payload_json: string;
+  created_at: string;
+  client_id?: string | null;
 };
 
 export type EventDelivery = {
@@ -150,15 +153,23 @@ export type EventDelivery = {
   event_type: string;
   entity_type: string;
   entity_id: string;
+  payload?: Record<string, unknown>;
   status: string;
   error_detail?: string;
   matched_agent_count?: number;
+  agent_ids?: unknown[];
+  run_ids?: unknown[];
+  matched_playbook_count?: number;
+  playbook_ids?: unknown[];
+  playbook_run_ids?: unknown[];
+  playbook_attempts?: Record<string, unknown>;
+  agent_attempts?: Record<string, unknown>;
   retry_count: number;
   max_retries: number;
   retry_delay_seconds: number;
   next_retry_at?: string | null;
-  received_at?: string;
-  processed_at?: string;
+  received_at: string;
+  processed_at: string;
   client_id?: string | null;
 };
 

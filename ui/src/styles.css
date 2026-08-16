@@ -564,6 +564,139 @@ nav a:hover {
   justify-content: space-between;
 }
 
+.events-hero {
+  align-items: flex-start;
+  display: flex;
+  gap: 18px;
+  justify-content: space-between;
+}
+
+.events-hero h2 {
+  margin-bottom: 8px;
+}
+
+.events-table-wrap {
+  overflow-x: auto;
+}
+
+.events-table {
+  border-collapse: collapse;
+  min-width: 760px;
+  width: 100%;
+}
+
+.events-table th,
+.events-table td {
+  border-bottom: 1px solid #e4ebe8;
+  padding: 12px;
+  text-align: left;
+  vertical-align: top;
+}
+
+.events-table th {
+  color: #60706a;
+  font-size: 0.76rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.events-row-trigger {
+  align-items: flex-start;
+  background: transparent;
+  border: 0;
+  color: #235d43;
+  display: grid;
+  gap: 5px;
+  padding: 0;
+  text-align: left;
+}
+
+.events-row-trigger:hover {
+  color: #1f6f55;
+  text-decoration: underline;
+}
+
+.events-row-trigger code,
+.events-table code {
+  color: #60706a;
+  font-size: 0.82rem;
+}
+
+.events-detail {
+  border-color: #b8c9c1;
+}
+
+.events-detail-grid {
+  display: grid;
+  gap: 12px;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  margin: 0 0 20px;
+}
+
+.events-detail-grid > div {
+  background: #f7faf8;
+  border: 1px solid #e4ebe8;
+  border-radius: 8px;
+  padding: 10px;
+}
+
+.events-detail-grid dt {
+  color: #60706a;
+  font-size: 0.76rem;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.events-detail-grid dd {
+  margin: 6px 0 0;
+  overflow-wrap: anywhere;
+}
+
+.events-code {
+  background: #1f2d2a;
+  border-radius: 8px;
+  color: #e8f5ef;
+  margin: 0;
+  max-height: 300px;
+  overflow: auto;
+  padding: 14px;
+}
+
+.events-code code {
+  color: inherit;
+  white-space: pre-wrap;
+}
+
+.events-history-list {
+  display: grid;
+  gap: 10px;
+}
+
+.events-history-row {
+  border: 1px solid #e4ebe8;
+  border-radius: 8px;
+  display: grid;
+  gap: 8px;
+  padding: 12px;
+}
+
+.events-history-meta {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 12px;
+}
+
+.events-history-meta span {
+  color: #60706a;
+  font-size: 0.84rem;
+}
+
+.events-history-row p {
+  margin: 0;
+}
+
 .smart-action-filters {
   align-items: end;
   display: grid;
@@ -2319,7 +2452,8 @@ dd svg {
   .mcp-hero,
   .pack-card-heading,
   .mcp-tool,
-  .smart-action-hero {
+  .smart-action-hero,
+  .events-hero {
     display: grid;
   }
 

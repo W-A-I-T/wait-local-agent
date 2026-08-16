@@ -37,6 +37,7 @@ const navigation = [
   { to: "/executions", label: "Executions", icon: Activity },
   { to: "/knowledge", label: "Knowledge", icon: BookOpenText },
   { to: "/workflows", label: "Workflows", icon: Workflow },
+  { to: "/automation/events", label: "Events", icon: Activity },
   { to: "/workflow-designer", label: "Workflow Designer", icon: Workflow },
   { to: "/templates", label: "Templates", icon: Files },
   { to: "/playbooks", label: "Playbooks", icon: LibraryBig },
