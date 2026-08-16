@@ -16,6 +16,33 @@ WAIT Local Agent is designed to be safe by default. Potentially dangerous capabi
 | `WAIT_ALLOW_OCR` | `false` | OCR processing of scanned documents |
 | `WAIT_END_USER_SUPPORT_ENABLED` | `false` | Optional scoped end-user ticket routes |
 
+## SSRF containment for connector instances
+
+Operator-configured connector instance origins are accepted only when their
+host is in `WAIT_CONNECTOR_INSTANCE_ALLOWED_HOSTS`. Non-loopback origins must
+use HTTPS. The dedicated outbound client validates the URL again for every
+request, disables environment proxies and redirects, resolves DNS once, and
+connects only to a validated globally-routable IPv4 or IPv6 address while
+preserving the original hostname for the HTTP `Host` header and TLS SNI.
+Loopback is disabled by default and, when explicitly enabled for development
+or tests, every resolved address must still be loopback.
+
+Responses request identity content encoding, reject other content encodings,
+and are capped at 8 MiB of raw bytes. A fresh HTTP transport is used for each
+request and closed with its response stream, preventing pooled connections
+from being reused across connector origins. DNS resolver timeouts remain a
+system-level residual because the preliminary blocking resolver call occurs
+outside HTTPX's connect timeout.
+
+Configure the operator allowlist as a comma-separated host list:
+
+```text
+WAIT_CONNECTOR_INSTANCE_ALLOWED_HOSTS=psa.example.com,api.example.com
+```
+
+The allowlist is an operator boundary, not a substitute for egress filtering;
+network controls should still deny cloud metadata and private address ranges.
+
 HaloPSA live writes require all of the following: `WAIT_ALLOW_HTTP_PROBING=true`, `WAIT_ALLOW_WRITE_ACTIONS=true`, complete connector credentials, and an approved `ApprovalRequest` record.
 
 Power Platform solution stages additionally require `WAIT_ALLOW_WRITE_ACTIONS=true`,
