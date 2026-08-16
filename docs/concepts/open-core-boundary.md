@@ -1,65 +1,118 @@
-# Open-Core Boundary
+# Public and Commercial Boundary
 
-WAIT Local Agent is the public open-core repository. It stays Apache 2.0 and self-hosted.
+WAIT Local Agent is one customer-facing product with a public runtime and
+separately governed commercial capabilities.
 
-## Public repo scope
+The `main` branch is the **2.0 development line** and is distributed as a
+combined work under **GNU Affero General Public License v3 only
+(`AGPL-3.0-only`)**, together with the applicable WAIT additional terms in
+[`../../ADDITIONAL_TERMS.md`](../../ADDITIONAL_TERMS.md). The exact
+pre-transition Apache-2.0 baseline remains preserved on `1.x` and
+`archive/apache-2.0-final-2026-08-15`. Previously granted Apache rights remain
+in force. See [`../../LICENSE_HISTORY.md`](../../LICENSE_HISTORY.md) and
+[`../legal/README.md`](../legal/README.md).
+
+## Public repository scope
 
 This repository may contain:
 
-- local runtime, API, CLI, dashboard, and Docker Compose appliance
-- SQLite store, knowledge index, approval engine, event history, and audit export
-- HaloPSA read paths and approval-gated HaloPSA write execution
-- Hudu read-only documentation context
-- workflow schema and open-core workflow templates
-- connector framework and tests
-- launch docs, sample data, scripts, and issue templates
+- local runtime, API, CLI, dashboard, and Docker Compose appliance;
+- SQLite store, knowledge index, approval engine, event history, and audit export;
+- deliberately selected Community connector implementations;
+- workflow schemas and Community workflow templates;
+- connector and commercial-pack interfaces;
+- useful baseline Change Governance schemas and deterministic capabilities;
+- tests, launch documentation, sample data, scripts, and issue templates; and
+- license/edition status and legal-notice surfaces required by the Community license.
 
-## Out of scope for this repo
+Public source does not mean every commercial entitlement, proprietary pack, or
+official-service commitment belongs in this repository.
 
-Do not add paid or proprietary pack internals here. That includes:
+## Private commercial scope
 
-- MSP Pack implementation beyond open-core interfaces
-- Founder Pack project scanner, evidence vault, LP bundle implementation, or investor workflow internals
-- private RMM connector implementation
-- private white-label branding implementation
-- paid license enforcement implementation beyond open-core interface stubs
-- proprietary templates, scripts, or client-specific automations
+Do not add proprietary implementation internals to this public repository.
+That includes:
 
-Private pack work belongs in `W-A-I-T/wait-local-agent-packs` (https://github.com/W-A-I-T/wait-local-agent-packs — private) or another private repository.
+- MSP Pack implementation beyond public interfaces and deliberately approved Community functionality;
+- advanced Change Governance Pro policies, adjudication, historical intelligence, and commercial reports;
+- Founder Pack project scanner, evidence vault, Launch Passport bundle implementation, or investor workflow internals;
+- private or commercially supported connector profiles that are not intentionally released as Community functionality;
+- centralized MSP Control, fleet management, billing, and cross-client policy internals;
+- NIS2, European Assurance, OEM, and enterprise pack internals;
+- private white-label branding implementation;
+- proprietary templates, scripts, or client-specific automations; and
+- private signing keys, licensing secrets, or server-side entitlement implementation.
 
-## Editions
+Private pack work belongs in `W-A-I-T/wait-local-agent-packs` or another
+approved private repository. Private packs are plug-ins loaded by this runtime;
+they must not create a second API server, identity system, tenant model,
+approval engine, persistence layer, or audit system.
 
-Community is the C$0 Apache 2.0 edition in this repository. It is genuinely
-useful for local-first execution and change governance, including use across
-multiple client environments; Apache licensing does not require payment for
-that multi-client use.
+## Editions and licensing
 
-Professional, MSP, and Enterprise are product framing for separately governed
-commercial packaging, support, deployment, or integration choices. They do not
-change the Community license or turn this repository's open-core runtime into
-an MSP-only product. Commercial availability, provider reach, and compliance
-readiness must be verified separately from this boundary document.
+### Preserved 1.x line
+
+The preserved 1.x baseline remains available under Apache License 2.0.
+Previously granted Apache rights remain in force.
+
+### 2.0 Community line
+
+The public `main` development line is `AGPL-3.0-only` plus the applicable WAIT
+Section 7 terms. Community remains a real self-hosted route and commercial use
+is permitted when the Community terms are followed. In particular, operators
+of modified network-accessible versions must satisfy the AGPL's
+source-availability requirements.
+
+For WAIT-copyrighted material covered by the additional terms, interactive
+user interfaces must preserve the reasonable visible attribution:
+
+> **Powered by WAIT**
+
+Community users may restyle or reposition that notice for accessibility,
+localization, responsive layout, or ordinary UI consistency so long as it
+remains reasonably visible and legible and does not misrepresent the origin of
+the covered WAIT material.
+
+### Commercial route
+
+WAIT may separately offer written commercial licenses and proprietary packs for
+customers that need contractual rights or services beyond the Community route,
+including private modifications, managed-service terms, official builds,
+support, attribution removal or replacement, partner/co-branding,
+white-labeling, OEM distribution, centralized MSP functionality, or proprietary
+Change Governance/assurance capabilities.
+
+A commercial license is a separate agreement. Do not claim that every MSP is
+prohibited from using Community when it fully complies with AGPL and the
+applicable WAIT Section 7 terms, and do not imply that a generic Enterprise
+purchase automatically grants attribution removal, complete white-label, or
+OEM rights.
 
 ## Local install directory
 
-`packs/` is gitignored. It is reserved for local proprietary pack installs and should not be committed.
+`packs/` is gitignored. It is reserved for local proprietary pack installs and
+must not be committed.
 
 ## Dependency policy
 
-- Prefer Apache 2.0, MIT, BSD, and similarly permissive dependencies.
-- Do not copy AGPL code into this repository.
-- Treat `alga-psa` and similar AGPL projects as architecture references only unless WAIT explicitly accepts AGPL obligations.
-- Run a license inventory before release when dependencies change.
+- Record every direct, transitive, bundled, and generated dependency or asset.
+- Confirm compatibility with `AGPL-3.0-only` and applicable additional terms before merging into the 2.0 public line.
+- Confirm WAIT has sufficient rights before including a component in a separately licensed commercial distribution.
+- Preserve applicable notices for code inherited from the Apache-2.0 baseline and other third-party material.
+- Do not copy code from another project merely because it is publicly visible.
+- Treat GPL, AGPL, source-available, and custom-licensed projects as requiring explicit compatibility review.
+- Run a reproducible license inventory, third-party-notice build, and SBOM gate when dependencies change.
 
-This pass added `cryptography` for the local Fernet vault. It is a permissive dependency family and must still be confirmed by the release license check.
+The remaining commercial-transition checklist is maintained in
+[`../legal/TRANSITION_CHECKLIST.md`](../legal/TRANSITION_CHECKLIST.md).
 
 ## Runtime boundary
 
-Open-core behavior remains safe by default:
+Public-runtime behavior remains safe by default:
 
-- no live writes by default
-- no HTTP probing by default
-- no cloud fallback by default
-- no model inference by default
-- no proprietary pack code by default
-- all HaloPSA mutations require a draft and approval before execution
+- no live writes by default;
+- no HTTP probing by default;
+- no cloud fallback by default;
+- no model inference by default;
+- no proprietary pack code by default; and
+- all applicable mutations require draft, policy, tenant, role, and approval checks before execution.

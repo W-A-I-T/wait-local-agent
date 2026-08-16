@@ -1,7 +1,11 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Additional terms: ../../../ADDITIONAL_TERMS.md
+
 import { AlertTriangle, CheckCircle2, KeyRound, RefreshCw, XCircle } from "lucide-react";
 import { useDashboard } from "./DashboardContext";
 import { Sidebar } from "./Sidebar";
 import { AppRoutes } from "../routes";
+import { WaitAttribution } from "../components/WaitAttribution";
 
 export function AppShell() {
   const {
@@ -85,6 +89,7 @@ export function AppShell() {
         ) : null}
 
         <AppRoutes />
+        <WaitAttribution />
       </section>
     </main>
   );
