@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-// Additional terms: ../../../../ADDITIONAL_TERMS.md
+// Additional terms: ../../../ADDITIONAL_TERMS.md
 
 import { AlertTriangle, CheckCircle2, KeyRound, RefreshCw, XCircle } from "lucide-react";
 import { useDashboard } from "./DashboardContext";
