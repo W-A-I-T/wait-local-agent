@@ -22,6 +22,56 @@ from wait_local_agent.reports.service import ReportService
 from wait_local_agent.store import Store
 
 
+def _insert_smart_action_runs(
+    store: Store,
+    runs: list[tuple[str, str, str, int | None]],
+    *,
+    client_id: str = "acme",
+) -> None:
+    with store._connect() as connection:  # noqa: SLF001
+        for action_id, status, created_at, approval_id in runs:
+            connection.execute(
+                """
+                insert into smart_action_runs
+                  (action_id, actor, status, payload_digest, output_json,
+                   evidence_json, approval_id, created_at, updated_at, client_id, error_detail)
+                values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    action_id,
+                    "technician",
+                    status,
+                    "digest",
+                    "{}",
+                    "[]",
+                    approval_id,
+                    created_at,
+                    created_at,
+                    client_id,
+                    "",
+                ),
+            )
+
+
+def _action_run_rows(
+    action_id: str,
+    statuses: list[str],
+    *,
+    date_prefix: str = "2026-08",
+    approval_indexes: set[int] | None = None,
+) -> list[tuple[str, str, str, int | None]]:
+    approved = approval_indexes or set()
+    return [
+        (
+            action_id,
+            status,
+            f"{date_prefix}-{index + 1:02d}T10:00:00+00:00",
+            index + 100 if index in approved else None,
+        )
+        for index, status in enumerate(statuses)
+    ]
+
+
 def _seed_local_evidence(store: Store, tmp_path) -> None:
     ticket_file = tmp_path / "tickets.json"
     ticket_file.write_text(
@@ -56,15 +106,15 @@ def _seed_local_evidence(store: Store, tmp_path) -> None:
         encoding="utf-8",
     )
     assert ingest_local(store, ticket_file) == 2
-    action = store.create_smart_action_run(
-        "ticket-triage",
-        "technician",
-        "success",
-        "digest",
-        {"status": "success"},
-        [],
-        client_id="acme",
+    _insert_smart_action_runs(
+        store,
+        _action_run_rows(
+            "ticket-triage",
+            ["success", "completed", "success", "success", "failed"],
+            approval_indexes={0, 2},
+        ),
     )
+    action = store.list_smart_action_runs(client_id="acme")[0]
     assert action.client_id == "acme"
     store.create_execution_run(
         "smart_action",
@@ -100,8 +150,107 @@ def test_qbr_and_automation_reports_use_local_evidence_and_label_estimates(setti
     assert qbr_sections[0].findings[0]["ticket_count"] == 2
     assert qbr_sections[2].findings[0]["estimated_minutes_saved"]["estimate"] is True
     assert qbr_metadata["evidence_status"] in {"partial", "completed"}
-    assert opportunity_sections[0].findings[0]["action_id"] == "ticket-triage"
+    candidate = opportunity_sections[0].findings[0]
+    assert candidate["action_id"] == "ticket-triage"
+    assert candidate["attempts"] == 5
+    assert candidate["successes"] == 4
+    assert candidate["failures"] == 1
+    assert candidate["success_rate"] == pytest.approx(0.8)
+    assert candidate["approval_burden"] == 2
+    assert candidate["estimated_minutes_saved"] == 16
+    assert candidate["estimate"] is True
+    assert "repeated" not in candidate["candidate_reason"].lower()
+    assert qbr_sections[2].findings[0]["top_candidates"][0]["successful_runs"] == 4
+    assert "repeated" not in qbr_sections[2].recommendations[0].lower()
     assert opportunity_metadata["estimated_minutes_saved"]["estimate"] is True
+
+
+def test_automation_opportunity_excludes_below_threshold_actions(settings) -> None:
+    store = Store(settings.data_path)
+    _insert_smart_action_runs(
+        store,
+        _action_run_rows("one-success", ["success"])
+        + _action_run_rows("four-attempts", ["success"] * 4)
+        + _action_run_rows("low-rate", ["success", "success", "success", "failed", "failed"])
+        + _action_run_rows("qualifying", ["success", "completed", "success", "success", "failed"])
+        + _action_run_rows("zero-savings", ["success", "success", "success", "success", "failed"]),
+    )
+
+    sections, metadata = build_automation_opportunity_report(
+        store,
+        {"qualifying": 5, "zero-savings": 0},
+        client_id="acme",
+        period_start="2026-08-01",
+        period_end="2026-08-31",
+    )
+
+    assert [finding["action_id"] for finding in sections[0].findings] == ["qualifying"]
+    assert metadata["evidence_status"] == "completed"
+
+
+def test_automation_opportunity_window_is_fail_closed(settings) -> None:
+    store = Store(settings.data_path)
+    _insert_smart_action_runs(
+        store,
+        _action_run_rows(
+            "windowed",
+            ["success", "completed", "success", "success", "failed"],
+            date_prefix="2026-07",
+        ),
+    )
+
+    short_sections, short_metadata = build_automation_opportunity_report(
+        store,
+        {"windowed": 4},
+        client_id="acme",
+        period_start="2026-08-01",
+        period_end="2026-08-30",
+    )
+    long_sections, long_metadata = build_automation_opportunity_report(
+        store,
+        {"windowed": 4},
+        client_id="acme",
+        period_start="2026-08-01",
+        period_end="2026-11-01",
+    )
+    valid_sections, valid_metadata = build_automation_opportunity_report(
+        store,
+        {"windowed": 4},
+        client_id="acme",
+        period_start="2026-07-01",
+        period_end="2026-08-30",
+    )
+
+    assert short_sections[0].findings == []
+    assert short_metadata["evidence_status"] == "window_out_of_range"
+    assert short_metadata["window_days"] == 29
+    assert long_sections[0].findings == []
+    assert long_metadata["evidence_status"] == "window_out_of_range"
+    assert long_metadata["window_days"] == 92
+    assert [finding["action_id"] for finding in valid_sections[0].findings] == ["windowed"]
+    assert valid_metadata["evidence_status"] == "completed"
+
+
+def test_automation_opportunity_counts_approval_burden(settings) -> None:
+    store = Store(settings.data_path)
+    _insert_smart_action_runs(
+        store,
+        _action_run_rows(
+            "approval-heavy",
+            ["success", "completed", "success", "success", "failed"],
+            approval_indexes={0, 1, 4},
+        ),
+    )
+
+    sections, _ = build_automation_opportunity_report(
+        store,
+        {"approval-heavy": 3},
+        client_id="acme",
+        period_start="2026-08-01",
+        period_end="2026-08-31",
+    )
+
+    assert sections[0].findings[0]["approval_burden"] == 3
 
 
 def test_msp_reports_fail_closed_for_empty_and_malformed_period_evidence(settings) -> None:
