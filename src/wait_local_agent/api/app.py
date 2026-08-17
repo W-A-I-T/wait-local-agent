@@ -249,8 +249,11 @@ from wait_local_agent.services import TicketIntelligenceService
 from wait_local_agent.sharepoint import SharePointClient, SharePointReadResponse
 from wait_local_agent.smart_actions import SmartActionService
 from wait_local_agent.store import (
+    _QUARANTINE_CLIENT_ID,
     ClientConnectorMappingConflictError,
     QuarantinedTicketError,
+    QuarantineRetenantStateError,
+    QuarantineRetenantTargetError,
     Store,
     _normalize_client_id,
 )
@@ -943,6 +946,12 @@ class ClientConnectorMappingCreateRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
+class QuarantineReclassificationRequest(BaseModel):
+    client_id: str = Field(min_length=1, max_length=128)
+
+    model_config = ConfigDict(extra="forbid")
+
+
 def create_app(settings: Settings | None = None) -> FastAPI:
     active_settings = settings or load_settings()
     if active_settings.demo_mode:
@@ -1293,6 +1302,33 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         return [asdict(record) for record in records]
 
+    @app.get("/ingestion/quarantined")
+    def ingestion_quarantined(
+        context: ViewerAccess,
+        connector_instance_id: str | None = None,
+    ) -> list[dict[str, object]]:
+        scope = resolve_client_scope(context, None, allow_all=True)
+        normalized_instance_id = _normalize_client_id(connector_instance_id)
+        if connector_instance_id is not None and normalized_instance_id is None:
+            raise HTTPException(status_code=400, detail="connector_instance_id must be non-empty")
+        if isinstance(scope, BoundClients):
+            # Quarantine is not a client membership.  Bound viewers must name an
+            # instance pinned to one of their ordinary client memberships.
+            if normalized_instance_id is None:
+                return []
+            instance = store.get_connector_instance(normalized_instance_id)
+            if (
+                instance is None
+                or instance.client_id == _QUARANTINE_CLIENT_ID
+                or instance.client_id not in scope.client_ids
+            ):
+                return []
+        try:
+            tickets = store.list_quarantined_tickets(normalized_instance_id)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return [asdict(ticket) for ticket in tickets]
+
     @app.post("/ingestion/unmapped/{record_id}/resolve")
     def resolve_ingestion_unmapped(record_id: str, context: AdminAccess) -> dict[str, object]:
         _require_msp_operator(context)
@@ -1300,6 +1336,19 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         if record is None:
             raise HTTPException(status_code=404, detail="unmapped record not found")
         return asdict(record)
+
+    @app.post("/ingestion/quarantined/{ticket_id}/reclassify")
+    def reclassify_ingestion_quarantined(
+        ticket_id: str,
+        payload: QuarantineReclassificationRequest,
+        context: AdminAccess,
+    ) -> dict[str, str]:
+        _require_msp_operator(context)
+        try:
+            store.reclassify_quarantined_ticket(ticket_id, payload.client_id)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return {"ticket_id": ticket_id, "client_id": payload.client_id.strip()}
 
     @app.post("/connector-instances")
     def create_connector_instance(
@@ -1403,14 +1452,27 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         _require_msp_operator(context)
         scope = resolve_client_scope(context, None)
         try:
-            mapping = store.verify_client_connector_mapping(scope, mapping_id)
+            verification = store.verify_client_connector_mapping(
+                scope,
+                mapping_id,
+                return_retenanted_count=True,
+            )
         except ClientConnectorMappingConflictError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        except QuarantineRetenantTargetError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        except QuarantineRetenantStateError as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from exc
         except PermissionError as exc:
             raise HTTPException(status_code=403, detail=str(exc)) from exc
         except KeyError as exc:
             raise HTTPException(status_code=404, detail="mapping not found") from exc
-        return asdict(mapping)
+        if not isinstance(verification, tuple):  # pragma: no cover - opt-in route return is always a tuple
+            raise RuntimeError("mapping verification did not return re-tenant count")
+        mapping, retenanted_count = verification
+        response = asdict(mapping)
+        response["retenanted_count"] = retenanted_count
+        return response
 
     @app.get("/smart-actions")
     def smart_actions(_: ViewerAccess) -> list[dict[str, object]]:

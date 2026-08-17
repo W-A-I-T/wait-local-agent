@@ -75,12 +75,15 @@ caller-supplied ticket ID or client assignment. A deterministic internal ID is
 computed for new records; an existing legacy row is updated in place and its
 persisted ID is used for status history and audit records.
 
-Without a verified mapping, the ticket is kept out of client data and recorded
-in the unmapped ledger. Repeating the same unresolved ticket updates its latest
-digest and reason and increments its occurrence count; PR1 does not create a
-quarantine ticket. Local/file ingestion is a separate path: it requires an
-explicit active `client_id`, rejects any connector provenance, sets the source
-to local, and refuses to overwrite another client's or a connector-owned row.
+Without a verified mapping, the ticket is kept out of client data, persisted
+under the reserved `__quarantine__` tenant, and recorded in the unmapped
+ledger. Repeating the same unresolved ticket updates its latest digest and
+reason and increments its occurrence count. Mapping verification re-tenants
+matching tickets and seeds their initial status history; provenance-less
+legacy quarantine rows have an operator-only per-ticket reclassification path.
+Local/file ingestion is a separate path: it requires an explicit active
+`client_id`, rejects any connector provenance, sets the source to local, and
+refuses to overwrite another client's or a connector-owned row.
 
 Canonical assets are unique per tenant by `(client_id, canonical_id)`, so the
 same canonical asset identifier can exist for different clients without a

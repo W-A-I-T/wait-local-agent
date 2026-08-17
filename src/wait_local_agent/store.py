@@ -9,7 +9,7 @@ import uuid
 from dataclasses import asdict, dataclass, replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import TYPE_CHECKING, Literal, cast
+from typing import TYPE_CHECKING, Literal, cast, overload
 
 from wait_local_agent.client_scope import AllClients, BoundClients, ClientScope
 from wait_local_agent.consultant import blueprint_payload, parse_solution_blueprint
@@ -101,6 +101,14 @@ class ClientConnectorMappingConflictError(ValueError):
 
 class QuarantinedTicketError(ValueError):
     """Raised when an operation attempts to mutate a quarantined ticket."""
+
+
+class QuarantineRetenantStateError(ValueError):
+    """Raised when quarantine re-tenancy conflicts with stored state."""
+
+
+class QuarantineRetenantTargetError(ValueError):
+    """Raised when a re-tenancy target is the reserved quarantine client."""
 
 
 def _client_scope_predicate(scope: ClientScope | str | None, column: str = "client_id") -> tuple[str, list[object]]:
@@ -1011,7 +1019,31 @@ class Store:
             raise RuntimeError("client connector mapping could not be created")
         return _mapping_from_row(row)
 
-    def verify_client_connector_mapping(self, scope: ClientScope, mapping_id: str) -> ClientConnectorMapping:
+    @overload
+    def verify_client_connector_mapping(
+        self,
+        scope: ClientScope,
+        mapping_id: str,
+        *,
+        return_retenanted_count: Literal[False] = False,
+    ) -> ClientConnectorMapping: ...
+
+    @overload
+    def verify_client_connector_mapping(
+        self,
+        scope: ClientScope,
+        mapping_id: str,
+        *,
+        return_retenanted_count: Literal[True],
+    ) -> tuple[ClientConnectorMapping, int]: ...
+
+    def verify_client_connector_mapping(
+        self,
+        scope: ClientScope,
+        mapping_id: str,
+        *,
+        return_retenanted_count: bool = False,
+    ) -> ClientConnectorMapping | tuple[ClientConnectorMapping, int]:
         normalized_mapping_id = _normalize_client_id(mapping_id)
         if normalized_mapping_id is None:
             raise KeyError(mapping_id)
@@ -1051,12 +1083,184 @@ class Store:
                 raise ClientConnectorMappingConflictError(
                     "a different verified mapping already exists for this external company"
                 ) from exc
+            retenanted_count = self.retenant_quarantined_tickets(
+                connection,
+                str(row["connector_instance_id"]),
+                str(row["external_company_id"]),
+                str(row["client_id"]),
+            )
             verified_row = connection.execute(
                 "select * from client_connector_mappings where mapping_id = ?", (normalized_mapping_id,)
             ).fetchone()
         if verified_row is None:  # pragma: no cover - the update returned successfully
             raise RuntimeError("mapping could not be verified")
-        return _mapping_from_row(verified_row)
+        mapping = _mapping_from_row(verified_row)
+        if return_retenanted_count:
+            return mapping, retenanted_count
+        return mapping
+
+    def retenant_quarantined_tickets(
+        self,
+        connection: sqlite3.Connection,
+        connector_instance_id: str,
+        external_company_id: str,
+        client_id: str,
+    ) -> int:
+        """Move matching quarantined tickets into a verified active client."""
+
+        normalized_instance_id = _normalize_client_id(connector_instance_id)
+        normalized_external_company_id = _normalize_client_id(external_company_id)
+        normalized_client_id = _normalize_client_id(client_id)
+        if normalized_instance_id is None or normalized_external_company_id is None:
+            raise ValueError("connector instance and external company are required")
+
+        tickets = connection.execute(
+            """
+            select id, external_id, status
+            from tickets
+            where client_id = ?
+              and connector_instance_id = ?
+              and external_client_id = ?
+            order by id
+            """,
+            (
+                _QUARANTINE_CLIENT_ID,
+                normalized_instance_id,
+                normalized_external_company_id,
+            ),
+        ).fetchall()
+        if not tickets:
+            return 0
+
+        if normalized_client_id is None:
+            raise QuarantineRetenantStateError("target client must exist and be active")
+        if normalized_client_id == _QUARANTINE_CLIENT_ID:
+            raise QuarantineRetenantTargetError(f"{_QUARANTINE_CLIENT_ID} is reserved")
+
+        target = connection.execute(
+            "select status from clients where client_id = ?",
+            (normalized_client_id,),
+        ).fetchone()
+        if target is None or str(target["status"]).strip().lower() != "active":
+            raise QuarantineRetenantStateError("target client must exist and be active")
+
+        instance = connection.execute(
+            "select client_id from connector_instances where connector_instance_id = ?",
+            (normalized_instance_id,),
+        ).fetchone()
+        if instance is None:
+            raise QuarantineRetenantStateError("connector instance not found")
+        pinned_client_id = _normalize_client_id(instance["client_id"])
+        if pinned_client_id is not None and pinned_client_id != normalized_client_id:
+            raise QuarantineRetenantStateError("connector instance client conflicts with the verified mapping")
+        verification_time = utc_now()
+        count = 0
+        for ticket in tickets:
+            ticket_id = str(ticket["id"])
+            connection.execute(
+                "update tickets set client_id = ? where id = ? and client_id = ?",
+                (normalized_client_id, ticket_id, _QUARANTINE_CLIENT_ID),
+            )
+            connection.execute(
+                """
+                update unmapped_records
+                set resolved_at = coalesce(resolved_at, ?)
+                where connector_instance_id = ?
+                  and external_company_id = ?
+                  and external_id = ?
+                """,
+                (
+                    verification_time,
+                    normalized_instance_id,
+                    normalized_external_company_id,
+                    ticket["external_id"],
+                ),
+            )
+            self._record_ticket_status_history(
+                connection,
+                ticket_id=ticket_id,
+                client_id=normalized_client_id,
+                from_status="",
+                to_status=str(ticket["status"]),
+                changed_at=verification_time,
+                source="mapping_verification",
+            )
+            self._add_audit_event(
+                connection,
+                "ticket.tenanted",
+                ticket_id,
+                "Quarantined ticket assigned after mapping verification",
+                client_id=normalized_client_id,
+            )
+            count += 1
+        return count
+
+    def reclassify_quarantined_ticket(self, ticket_id: str, client_id: str) -> None:
+        """Operator-reclassify one provenance-less legacy quarantine ticket."""
+
+        normalized_ticket_id = _normalize_client_id(ticket_id)
+        normalized_client_id = _normalize_client_id(client_id)
+        if normalized_ticket_id is None:
+            raise ValueError("ticket_id must be non-empty")
+        if normalized_client_id is None:
+            raise ValueError("target client must exist and be active")
+        if normalized_client_id == _QUARANTINE_CLIENT_ID:
+            raise ValueError(f"{_QUARANTINE_CLIENT_ID} is reserved")
+        with self._connect() as connection:
+            connection.execute("begin immediate")
+            target = connection.execute(
+                "select status from clients where client_id = ?",
+                (normalized_client_id,),
+            ).fetchone()
+            if target is None or str(target["status"]).strip().lower() != "active":
+                raise ValueError("target client must exist and be active")
+            ticket = connection.execute(
+                "select status, client_id from tickets where id = ?",
+                (normalized_ticket_id,),
+            ).fetchone()
+            if ticket is None:
+                raise ValueError("ticket not found")
+            if str(ticket["client_id"] or "") != _QUARANTINE_CLIENT_ID:
+                raise ValueError("ticket is not quarantined")
+            verification_time = utc_now()
+            connection.execute(
+                "update tickets set client_id = ? where id = ? and client_id = ?",
+                (normalized_client_id, normalized_ticket_id, _QUARANTINE_CLIENT_ID),
+            )
+            self._record_ticket_status_history(
+                connection,
+                ticket_id=normalized_ticket_id,
+                client_id=normalized_client_id,
+                from_status="",
+                to_status=str(ticket["status"]),
+                changed_at=verification_time,
+                source="mapping_verification",
+            )
+            self._add_audit_event(
+                connection,
+                "ticket.tenanted",
+                normalized_ticket_id,
+                "Legacy quarantined ticket reclassified by operator",
+                client_id=normalized_client_id,
+            )
+
+    def list_quarantined_tickets(self, connector_instance_id: str | None = None) -> list[Ticket]:
+        """List only tickets still held by the reserved quarantine client."""
+
+        normalized_instance_id = _normalize_client_id(connector_instance_id)
+        if connector_instance_id is not None and normalized_instance_id is None:
+            raise ValueError("connector_instance_id must be non-empty")
+        clauses = ["client_id = ?"]
+        params: list[object] = [_QUARANTINE_CLIENT_ID]
+        if normalized_instance_id is not None:
+            clauses.append("connector_instance_id = ?")
+            params.append(normalized_instance_id)
+        with self._connect() as connection:
+            rows = connection.execute(
+                f"select * from tickets where {' and '.join(clauses)} order by id",  # nosec B608: clauses are fixed internal SQL; values are parameterized
+                params,
+            ).fetchall()
+        return [Ticket(**dict(row)) for row in rows]
 
     def resolve_client_for(self, connector_instance_id: str, external_company_id: str) -> str | None:
         normalized_instance_id = _normalize_client_id(connector_instance_id)
@@ -1283,7 +1487,13 @@ class Store:
             clauses.append("u.connector_instance_id = ?")
             params.append(normalized_instance_id)
         if scope is not None and not isinstance(scope, AllClients):
-            client_predicate, client_params = _client_scope_predicate(scope, "ci.client_id")
+            ordinary_client_ids = frozenset(scope.client_ids) - {_QUARANTINE_CLIENT_ID}
+            if not ordinary_client_ids:
+                return []
+            client_predicate, client_params = _client_scope_predicate(
+                BoundClients(ordinary_client_ids),
+                "ci.client_id",
+            )
             clauses.append(client_predicate)
             params.extend(client_params)
         with self._connect() as connection:
@@ -2573,6 +2783,13 @@ class Store:
                     (normalized_method_instance_id, normalized_external_client_id),
                 ).fetchall()
                 if len(mappings) != 1:
+                    persisted_id, _, persisted = self._upsert_provider_ticket(
+                        connection,
+                        record,
+                        connector_instance_id=normalized_method_instance_id,
+                        source_system=derived_source_system,
+                        client_id=_QUARANTINE_CLIENT_ID,
+                    )
                     self._record_unmapped(
                         connection,
                         normalized_method_instance_id,
@@ -2584,6 +2801,13 @@ class Store:
                         utc_now(),
                         f"UMR-{uuid.uuid4().hex}",
                     )
+                    if persisted:
+                        self._add_audit_event(
+                            connection,
+                            "ticket.quarantined",
+                            persisted_id,
+                            "Provider ticket held pending client mapping",
+                        )
                     quarantined += 1
                     continue
                 resolved_client_id = str(mappings[0]["client_id"])
@@ -2596,25 +2820,14 @@ class Store:
                 if instance_client_id is not None and instance_client_id != resolved_client_id:
                     raise ValueError("connector instance client conflicts with the verified mapping")
 
-                ticket_id = str(
-                    uuid.uuid5(
-                        WAIT_TICKET_NS,
-                        json.dumps(
-                            [normalized_method_instance_id, normalized_external_id],
-                            separators=(",", ":"),
-                            ensure_ascii=False,
-                        ),
-                    )
+                persisted_id, previous_status, persisted = self._upsert_provider_ticket(
+                    connection,
+                    record,
+                    connector_instance_id=normalized_method_instance_id,
+                    source_system=derived_source_system,
+                    client_id=resolved_client_id,
                 )
-                existing = connection.execute(
-                    """
-                    select id, status, client_id
-                    from tickets
-                    where connector_instance_id = ? and external_id = ?
-                    """,
-                    (normalized_method_instance_id, normalized_external_id),
-                ).fetchone()
-                if existing is not None and str(existing["client_id"]) != resolved_client_id:
+                if not persisted:
                     self._record_unmapped(
                         connection,
                         normalized_method_instance_id,
@@ -2628,62 +2841,14 @@ class Store:
                     )
                     quarantined += 1
                     continue
-                now = utc_now()
-                created_at = record.created_at.strip() or now
-                updated_at = record.updated_at.strip() or created_at
-                returned = connection.execute(
-                    """
-                    insert into tickets
-                      (id, client, subject, body, priority, status, client_id,
-                       requester_id, created_at, updated_at, source_system,
-                       connector_instance_id, external_id, external_client_id)
-                    values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    on conflict(connector_instance_id, external_id)
-                      where connector_instance_id is not null and external_id is not null
-                    do update set
-                      client = excluded.client,
-                      subject = excluded.subject,
-                      body = excluded.body,
-                      priority = excluded.priority,
-                      status = excluded.status,
-                      client_id = excluded.client_id,
-                      requester_id = excluded.requester_id,
-                      created_at = case when tickets.created_at = '' then excluded.created_at
-                                        else tickets.created_at end,
-                      updated_at = excluded.updated_at,
-                      source_system = excluded.source_system,
-                      external_client_id = excluded.external_client_id
-                    returning id
-                    """,
-                    (
-                        ticket_id,
-                        record.client,
-                        record.subject,
-                        record.body,
-                        record.priority,
-                        record.status,
-                        resolved_client_id,
-                        record.requester_id,
-                        created_at,
-                        updated_at,
-                        derived_source_system,
-                        normalized_method_instance_id,
-                        normalized_external_id,
-                        normalized_external_client_id,
-                    ),
-                ).fetchone()
-                if returned is None:  # pragma: no cover - SQLite RETURNING follows a successful upsert
-                    raise RuntimeError("provider ticket upsert did not return an id")
-                persisted_id = str(returned[0])
-                previous_status = str(existing["status"]) if existing is not None else ""
-                if existing is None or previous_status.strip().lower() != record.status.strip().lower():
+                if previous_status == "" or previous_status.strip().lower() != record.status.strip().lower():
                     self._record_ticket_status_history(
                         connection,
                         ticket_id=persisted_id,
                         client_id=resolved_client_id,
                         from_status=previous_status,
                         to_status=record.status,
-                        changed_at=updated_at,
+                        changed_at=record.updated_at.strip() or record.created_at.strip() or utc_now(),
                         source="ticket_ingest",
                     )
                 self._add_audit_event(
@@ -2695,6 +2860,86 @@ class Store:
                 )
                 written += 1
         return IngestSummary(written=written, quarantined=quarantined)
+
+    def _upsert_provider_ticket(
+        self,
+        connection: sqlite3.Connection,
+        record: Ticket,
+        *,
+        connector_instance_id: str,
+        source_system: str,
+        client_id: str,
+    ) -> tuple[str, str, bool]:
+        """Upsert a provider ticket while preserving its first persisted owner."""
+
+        ticket_id = str(
+            uuid.uuid5(
+                WAIT_TICKET_NS,
+                json.dumps(
+                    [connector_instance_id, str(record.external_id).strip()],
+                    separators=(",", ":"),
+                    ensure_ascii=False,
+                ),
+            )
+        )
+        existing = connection.execute(
+            """
+            select id, status, client_id
+            from tickets
+            where connector_instance_id = ? and external_id = ?
+            """,
+            (connector_instance_id, _normalize_client_id(record.external_id)),
+        ).fetchone()
+        if existing is not None and _normalize_client_id(existing["client_id"]) != client_id:
+            return str(existing["id"]), str(existing["status"]), False
+
+        now = utc_now()
+        created_at = record.created_at.strip() or now
+        updated_at = record.updated_at.strip() or created_at
+        returned = connection.execute(
+            """
+            insert into tickets
+              (id, client, subject, body, priority, status, client_id,
+               requester_id, created_at, updated_at, source_system,
+               connector_instance_id, external_id, external_client_id)
+            values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            on conflict(connector_instance_id, external_id)
+              where connector_instance_id is not null and external_id is not null
+            do update set
+              client = excluded.client,
+              subject = excluded.subject,
+              body = excluded.body,
+              priority = excluded.priority,
+              status = excluded.status,
+              client_id = excluded.client_id,
+              requester_id = excluded.requester_id,
+              created_at = case when tickets.created_at = '' then excluded.created_at
+                                else tickets.created_at end,
+              updated_at = excluded.updated_at,
+              source_system = excluded.source_system,
+              external_client_id = excluded.external_client_id
+            returning id
+            """,
+            (
+                ticket_id,
+                record.client,
+                record.subject,
+                record.body,
+                record.priority,
+                record.status,
+                client_id,
+                record.requester_id,
+                created_at,
+                updated_at,
+                source_system,
+                connector_instance_id,
+                _normalize_client_id(record.external_id),
+                _normalize_client_id(record.external_client_id),
+            ),
+        ).fetchone()
+        if returned is None:  # pragma: no cover - SQLite RETURNING follows a successful upsert
+            raise RuntimeError("provider ticket upsert did not return an id")
+        return str(returned[0]), str(existing["status"]) if existing is not None else "", True
 
     def _require_active_client(self, client_id: str) -> None:
         with self._connect() as connection:
