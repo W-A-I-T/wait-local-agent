@@ -20,6 +20,15 @@ export type ConnectorInstance = {
   updated_at: string;
 };
 
+export type PollSummary = {
+  connector_instance_id: string;
+  pages_fetched: number;
+  written: number;
+  quarantined: number;
+  status: "idle" | "degraded" | "failed" | "skipped_locked";
+  reason: string | null;
+};
+
 export type ClientDirectoryEntry = {
   client_id: string;
   name: string;

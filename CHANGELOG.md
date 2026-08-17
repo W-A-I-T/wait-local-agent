@@ -40,6 +40,8 @@ All notable changes to WAIT Local Agent will be documented in this file.
 
 ### Added
 
+- Administrators can now trigger a manual connector "Sync now" from the
+  Connector Instances screen and review its poll summary inline.
 - Founder Launch Passport scans now return a deterministic scan-to-scan delta
   for dependencies, manifests, and files, including added, removed, changed,
   and unknown classifications plus a predecessor link.
