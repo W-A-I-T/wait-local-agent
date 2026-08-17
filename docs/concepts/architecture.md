@@ -442,6 +442,12 @@ status, and priority only; client identity is not returned.
 
 ## Pack Loader and Founder Surface
 
+Open founder scans return a deterministic `founder_delta_v1` comparing the
+current evidence bundle with the immediately preceding scan for the same
+project. It covers production dependency names, manifest hashes, and file
+hashes. If a previously collected module is empty or missing in the current
+scan, prior entries are marked `unknown` rather than removed.
+
 - Pack discovery from importable `packs.*` modules and the top-level `sync` package
 - `wait-local-agent packs list`, `status`, and `install` are part of the public core
 - Signed tarball install requires `WAIT_PACK_SIGNING_SECRET`
