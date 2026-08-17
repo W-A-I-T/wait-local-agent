@@ -79,6 +79,30 @@ identifiers, a payload digest, and a human-readable reason. The digest is a
 reference for comparison, not a copy of the provider payload. An operator can
 mark a quarantined record resolved after reviewing its identity decision.
 
+### Poll cursor leases
+
+Migration v6 adds nullable internal `lease_token` and `lease_expires_at` columns
+to each sync cursor. They are fencing metadata, not public cursor fields: the
+cursor model and `/ingestion/sync-cursors` response continue to expose only the
+connector, cursor value, status, historical successful-sync time, and update
+time.
+
+A poll worker claims a cursor in one `BEGIN IMMEDIATE` transaction. A claim is
+`granted` when the row is new or its prior lease is stale, `locked` when a fresh
+lease is held, and `instance_missing` when the connector instance no longer
+exists. Claiming preserves the prior cursor value and `last_synced_at`, including
+for legacy `syncing` rows whose expiry is null. Finishing is fenced by the
+claim token and releases both lease columns; a stale worker cannot finish over
+its successor. Degraded and failed finishes preserve the historical successful
+sync time, while a clean idle finish may provide a new one.
+
+The legacy `upsert_sync_cursor` writer refuses to overwrite a live lease. This
+store slice does not start polling or scheduling, and it does not introduce an
+incremental provider cursor; those behaviors remain future work (including the
+planned A-PR6 cursor semantics). Provider timestamps still default to the
+persisted record write time, and any future poller deadline remains a bounded
+soft deadline around one in-flight request.
+
 Connector-ingested tickets follow a resolve-then-write path. The identity key
 is the trimmed, case-sensitive pair `(connector instance, provider ticket ID)`,
 so two provider estates can use the same remote ticket ID safely. WAIT uses

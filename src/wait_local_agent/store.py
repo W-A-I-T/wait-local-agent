@@ -3,11 +3,13 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import math
 import re
 import sqlite3
 import uuid
 from dataclasses import asdict, dataclass, replace
 from datetime import UTC, datetime, timedelta
+from enum import StrEnum
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal, cast, overload
 
@@ -93,6 +95,22 @@ LOGGER = logging.getLogger(__name__)
 # Derived once as uuid.uuid5(uuid.NAMESPACE_URL, "wait-local-agent:ticket-identity:v1").
 # This frozen literal is persisted indirectly through every connector ticket id.
 WAIT_TICKET_NS = uuid.UUID("7ab19543-3db8-506a-af8c-341787eb5cdc")
+
+_SYNC_CURSOR_PUBLIC_COLUMNS = (
+    "connector_instance_id, cursor_type, cursor_value, status, last_synced_at, updated_at"
+)
+
+
+class PollLeaseClaimResult(StrEnum):
+    """Outcome of an atomic connector poll-lease claim."""
+
+    GRANTED = "granted"
+    LOCKED = "locked"
+    INSTANCE_MISSING = "instance_missing"
+
+
+class SyncCursorLeaseConflictError(RuntimeError):
+    """Raised when the legacy cursor writer would overwrite a live poll lease."""
 
 
 class ClientConnectorMappingConflictError(ValueError):
@@ -196,6 +214,7 @@ class Store:
                         self._apply_ticket_identity_migration,
                         foreign_keys_off=True,
                     ),
+                    Migration(6, "poll_lease", self._apply_poll_lease_migration),
                 )
             )
             self._apply_startup_repairs(connection)
@@ -568,6 +587,13 @@ class Store:
         integrity = str(connection.execute("pragma integrity_check").fetchone()[0])
         if integrity != "ok":
             raise RuntimeError(f"SQLite integrity check failed after v5 migration: {integrity}")
+
+    @staticmethod
+    def _apply_poll_lease_migration(connection: sqlite3.Connection) -> None:
+        """Add nullable fencing columns without rebuilding the cursor table."""
+
+        Store._ensure_column(connection, "sync_cursors", "lease_token", "text")
+        Store._ensure_column(connection, "sync_cursors", "lease_expires_at", "text")
 
     def create_principal(
         self,
@@ -1299,12 +1325,23 @@ class Store:
         normalized_cursor_value = _normalize_client_id(cursor_value)
         normalized_last_synced_at = _normalize_client_id(last_synced_at)
         now = utc_now()
+        now_datetime = _parse_lease_timestamp(now)
         with self._connect() as connection:
+            connection.execute("begin immediate")
             if connection.execute(
                 "select 1 from connector_instances where connector_instance_id = ?",
                 (normalized_instance_id,),
             ).fetchone() is None:
                 raise KeyError(normalized_instance_id)
+            existing = connection.execute(
+                "select status, lease_expires_at from sync_cursors "
+                "where connector_instance_id = ? and cursor_type = ?",
+                (normalized_instance_id, normalized_cursor_type),
+            ).fetchone()
+            if existing is not None and _lease_is_active(existing, now_datetime):
+                raise SyncCursorLeaseConflictError(
+                    "cannot overwrite sync cursor while an active poll lease is held"
+                )
             connection.execute(
                 """
                 insert into sync_cursors
@@ -1314,7 +1351,9 @@ class Store:
                   cursor_value = excluded.cursor_value,
                   status = excluded.status,
                   last_synced_at = excluded.last_synced_at,
-                  updated_at = excluded.updated_at
+                  updated_at = excluded.updated_at,
+                  lease_token = null,
+                  lease_expires_at = null
                 """,
                 (
                     normalized_instance_id,
@@ -1326,10 +1365,11 @@ class Store:
                 ),
             )
             row = connection.execute(
-                """
-                select * from sync_cursors
+                f"""
+                select {_SYNC_CURSOR_PUBLIC_COLUMNS}
+                from sync_cursors
                 where connector_instance_id = ? and cursor_type = ?
-                """,
+                """,  # nosec B608: the projection is a fixed internal schema column list
                 (normalized_instance_id, normalized_cursor_type),
             ).fetchone()
         if row is None:  # pragma: no cover - the upsert returned successfully
@@ -1339,10 +1379,10 @@ class Store:
     def list_sync_cursors(self) -> list[SyncCursor]:
         with self._connect() as connection:
             rows = connection.execute(
-                """
-                select * from sync_cursors
+                f"""
+                select {_SYNC_CURSOR_PUBLIC_COLUMNS} from sync_cursors
                 order by connector_instance_id, cursor_type
-                """
+                """  # nosec B608: the projection is a fixed internal schema column list
             ).fetchall()
         return [_sync_cursor_from_row(row) for row in rows]
 
@@ -1353,13 +1393,138 @@ class Store:
             return None
         with self._connect() as connection:
             row = connection.execute(
+                f"""
+                select {_SYNC_CURSOR_PUBLIC_COLUMNS} from sync_cursors
+                where connector_instance_id = ? and cursor_type = ?
+                """,  # nosec B608: the projection is a fixed internal schema column list
+                (normalized_instance_id, normalized_cursor_type),
+            ).fetchone()
+        return _sync_cursor_from_row(row) if row else None
+
+    def claim_poll_lease(
+        self,
+        connector_instance_id: str,
+        cursor_type: str,
+        *,
+        token: str,
+        ttl_seconds: float,
+        now: str,
+    ) -> PollLeaseClaimResult:
+        """Atomically claim a connector poll lease, preserving cursor progress."""
+
+        normalized_instance_id = _normalize_client_id(connector_instance_id)
+        normalized_cursor_type = _normalize_client_id(cursor_type)
+        normalized_token = _normalize_lease_token(token)
+        if normalized_instance_id is None:
+            raise ValueError("connector_instance_id must be non-empty")
+        if normalized_cursor_type is None:
+            raise ValueError("cursor_type must be non-empty")
+        now_datetime = _parse_lease_timestamp(now)
+        if not isinstance(ttl_seconds, (int, float)) or isinstance(ttl_seconds, bool):
+            raise ValueError("ttl_seconds must be a finite positive number")
+        if not math.isfinite(ttl_seconds) or ttl_seconds <= 0:
+            raise ValueError("ttl_seconds must be a finite positive number")
+        lease_expires_at = (now_datetime + timedelta(seconds=ttl_seconds)).isoformat()
+
+        with self._connect() as connection:
+            connection.execute("begin immediate")
+            if connection.execute(
+                "select 1 from connector_instances where connector_instance_id = ?",
+                (normalized_instance_id,),
+            ).fetchone() is None:
+                return PollLeaseClaimResult.INSTANCE_MISSING
+
+            row = connection.execute(
                 """
-                select * from sync_cursors
+                select status, cursor_value, last_synced_at, lease_expires_at
+                from sync_cursors
                 where connector_instance_id = ? and cursor_type = ?
                 """,
                 (normalized_instance_id, normalized_cursor_type),
             ).fetchone()
-        return _sync_cursor_from_row(row) if row else None
+            if row is not None and _lease_is_active(row, now_datetime):
+                return PollLeaseClaimResult.LOCKED
+
+            if row is None:
+                connection.execute(
+                    """
+                    insert into sync_cursors
+                      (connector_instance_id, cursor_type, cursor_value, status, last_synced_at,
+                       updated_at, lease_token, lease_expires_at)
+                    values (?, ?, null, 'syncing', null, ?, ?, ?)
+                    """,
+                    (normalized_instance_id, normalized_cursor_type, now, normalized_token, lease_expires_at),
+                )
+            else:
+                connection.execute(
+                    """
+                    update sync_cursors
+                    set status = 'syncing', lease_token = ?, lease_expires_at = ?, updated_at = ?
+                    where connector_instance_id = ? and cursor_type = ?
+                    """,
+                    (
+                        normalized_token,
+                        lease_expires_at,
+                        now,
+                        normalized_instance_id,
+                        normalized_cursor_type,
+                    ),
+                )
+        return PollLeaseClaimResult.GRANTED
+
+    def finish_poll_lease(
+        self,
+        connector_instance_id: str,
+        cursor_type: str,
+        *,
+        token: str,
+        status: Literal["idle", "degraded", "failed"],
+        cursor_value: str | None,
+        last_synced_at: str | None,
+        now: str,
+    ) -> bool:
+        """Release a poll lease only when its fencing token still owns the row."""
+
+        normalized_instance_id = _normalize_client_id(connector_instance_id)
+        normalized_cursor_type = _normalize_client_id(cursor_type)
+        normalized_token = _normalize_lease_token(token)
+        normalized_status = status.strip().lower()
+        if normalized_instance_id is None:
+            raise ValueError("connector_instance_id must be non-empty")
+        if normalized_cursor_type is None:
+            raise ValueError("cursor_type must be non-empty")
+        if normalized_status not in {"idle", "degraded", "failed"}:
+            raise ValueError("unsupported terminal sync cursor status")
+        _parse_lease_timestamp(now)
+        normalized_cursor_value = _normalize_client_id(cursor_value)
+        normalized_last_synced_at = _normalize_client_id(last_synced_at)
+
+        with self._connect() as connection:
+            connection.execute("begin immediate")
+            if connection.execute(
+                "select 1 from connector_instances where connector_instance_id = ?",
+                (normalized_instance_id,),
+            ).fetchone() is None:
+                return False
+            updated = connection.execute(
+                """
+                update sync_cursors
+                set status = ?, cursor_value = ?, last_synced_at = ?, updated_at = ?,
+                    lease_token = null, lease_expires_at = null
+                where connector_instance_id = ? and cursor_type = ?
+                  and status = 'syncing' and lease_token = ?
+                """,
+                (
+                    normalized_status,
+                    normalized_cursor_value,
+                    normalized_last_synced_at,
+                    now,
+                    normalized_instance_id,
+                    normalized_cursor_type,
+                    normalized_token,
+                ),
+            )
+        return updated.rowcount == 1
 
     def record_unmapped(
         self,
@@ -9030,7 +9195,42 @@ def _mapping_from_row(row: sqlite3.Row) -> ClientConnectorMapping:
 
 
 def _sync_cursor_from_row(row: sqlite3.Row) -> SyncCursor:
-    return SyncCursor(**dict(row))
+    return SyncCursor(
+        connector_instance_id=str(row["connector_instance_id"]),
+        cursor_type=str(row["cursor_type"]),
+        cursor_value=cast(str | None, row["cursor_value"]),
+        status=str(row["status"]),
+        last_synced_at=cast(str | None, row["last_synced_at"]),
+        updated_at=str(row["updated_at"]),
+    )
+
+
+def _normalize_lease_token(token: str) -> str:
+    if not isinstance(token, str) or not token.strip():
+        raise ValueError("token must be a non-empty string")
+    return token.strip()
+
+
+def _parse_lease_timestamp(value: str) -> datetime:
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError("timestamp must be a non-empty ISO timestamp")
+    try:
+        parsed = datetime.fromisoformat(value)
+    except ValueError as exc:
+        raise ValueError("timestamp must be a valid ISO timestamp") from exc
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=UTC)
+    return parsed
+
+
+def _lease_is_active(row: sqlite3.Row, now: datetime) -> bool:
+    if str(row["status"]) != "syncing" or row["lease_expires_at"] is None:
+        return False
+    try:
+        expires_at = _parse_lease_timestamp(str(row["lease_expires_at"]))
+    except ValueError:
+        return False
+    return expires_at >= now
 
 
 def _unmapped_record_from_row(row: sqlite3.Row) -> UnmappedRecord:
