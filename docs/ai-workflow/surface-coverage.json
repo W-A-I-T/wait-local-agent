@@ -211,6 +211,7 @@
       "POST /connectors/connectwise/approval-requests/{request_id}/execute": "exposed",
       "POST /connectors/connectwise/tickets/{ticket_id}/drafts": "exposed",
       "POST /connector-instances": "admin",
+      "POST /connectors/instances/{connector_instance_id}/sync": "admin",
       "POST /connectors/halopsa/approval-requests/{request_id}/execute": "exposed",
       "POST /connectors/halopsa/tickets/{ticket_id}/drafts": "exposed",
       "POST /connectors/m365/approval-requests/{request_id}/execute": "exposed",
