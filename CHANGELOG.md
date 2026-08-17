@@ -20,6 +20,9 @@ All notable changes to WAIT Local Agent will be documented in this file.
   quarantine tenant while still preventing a re-reported external ticket under
   a different company from overwriting or re-attributing another client's
   ticket; ownership collisions remain recorded for reconciliation.
+- Provider-ticket audit entries no longer copy provider subjects into the
+  unredacted audit stream; ingested tickets use a static detail and internal
+  ticket identifier.
 
 ### Fixed
 
@@ -46,6 +49,9 @@ All notable changes to WAIT Local Agent will be documented in this file.
   Operations → Sync / Reconciliation Center.
 - A per-connector-instance read-client factory for HaloPSA and ConnectWise
   with vault-resolved credentials and strict per-instance isolation.
+- A bounded synchronous HaloPSA/ConnectWise ingestion poller with provider
+  adapters, raw-page EOF validation, sticky degradation, retry/deadline
+  controls, and token-fenced lease revalidation before each page write.
 - Connector-ingested tickets now resolve their client from verified connector
   mappings and persist unresolved records in the reviewable quarantine tenant;
   mapping verification re-tenants matching tickets. Ticket identity is stable
@@ -73,7 +79,7 @@ All notable changes to WAIT Local Agent will be documented in this file.
   cursors. Store-level claims are serialized with `BEGIN IMMEDIATE`, distinguish
   granted, locked, and missing-instance outcomes, preserve prior progress, and
   prevent stale workers or legacy cursor writes from overwriting a successor's
-  lease. The poller and scheduler remain out of scope for this slice.
+  lease. The scheduler and route wiring remain out of scope for this slice.
 - A local Clients directory now anchors client identity, connector instances
   can be recorded alongside the existing Settings connector path, and
   external company mappings remain unverified until an operator confirms

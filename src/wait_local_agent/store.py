@@ -3020,7 +3020,7 @@ class Store:
                     connection,
                     "ticket.ingested",
                     persisted_id,
-                    f"Imported {record.subject}",
+                    f"Imported provider ticket {persisted_id}",
                     client_id=resolved_client_id,
                 )
                 written += 1

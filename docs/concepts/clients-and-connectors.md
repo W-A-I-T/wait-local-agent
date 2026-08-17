@@ -42,8 +42,9 @@ outbound requests then use DNS-pinned transport with globally routable-address
 checks. HaloPSA derives and validates its token endpoint from the API origin,
 so an instance cannot redirect its OAuth secret to another allowlisted host.
 
-This factory prepares a client for a later ingestion/poller boundary. It does
-not start polling, schedule work, or write provider records.
+The synchronous ingestion poller uses this factory for one active instance at a
+time. The factory itself still does not start polling, schedule work, or write
+provider records.
 
 ## Verified mappings
 
@@ -72,12 +73,13 @@ ticket without connector provenance remains a local record, and an existing
 ticket can continue to have no client assignment.
 
 The local ingestion ledger records a cursor for each connector and record
-kind. A cursor describes progress and health only; this slice does not start a
-provider poller or write provider records automatically. Records that cannot
-be safely matched can be recorded in the quarantine ledger with their remote
-identifiers, a payload digest, and a human-readable reason. The digest is a
-reference for comparison, not a copy of the provider payload. An operator can
-mark a quarantined record resolved after reviewing its identity decision.
+kind. The synchronous poller claims the connector-poll cursor, reads bounded
+provider pages, and sends only adapter-normalized records through the existing
+resolve-or-quarantine sink. Records that cannot be safely matched can be
+recorded in the quarantine ledger with their remote identifiers, a payload
+digest, and a human-readable reason. The digest is a reference for comparison,
+not a copy of the provider payload. An operator can mark a quarantined record
+resolved after reviewing its identity decision.
 
 ### Poll cursor leases
 
@@ -97,11 +99,30 @@ its successor. Degraded and failed finishes preserve the historical successful
 sync time, while a clean idle finish may provide a new one.
 
 The legacy `upsert_sync_cursor` writer refuses to overwrite a live lease. This
-store slice does not start polling or scheduling, and it does not introduce an
-incremental provider cursor; those behaviors remain future work (including the
-planned A-PR6 cursor semantics). Provider timestamps still default to the
-persisted record write time, and any future poller deadline remains a bounded
-soft deadline around one in-flight request.
+store slice does not introduce an incremental provider cursor; that behavior
+remains future work (including the planned A-PR6 cursor semantics). Provider
+timestamps still default to the persisted record write time. The poller uses a
+soft monotonic deadline: one in-flight provider request may run to its client
+timeout, but retry sleeps are clipped to the remaining budget.
+
+### Poll lifecycle and status
+
+Only a `ready` response with HTTP 2xx and `raw_count == 0` is end-of-pages. A
+page with raw rows continues the sweep even when every normalized row is
+dropped. Any dropped row, transient provider condition, deadline exhaustion, or
+page-cap exhaustion makes the sweep `degraded`; that degradation is sticky
+through a later valid empty page. Blocked reads, throttling, timeouts, connect
+failures, and 5xx responses are degraded. Redirects, malformed envelopes,
+configuration or authentication failures, inactive instances, and sink
+invariant failures are `failed`. A verified 2xx empty page with no drops is
+`idle`.
+
+Before each non-empty page is sent to the sink, the poller re-reads the
+internal lease token and expiry. If another worker has taken the lease, the
+stale sweep stops before another page write and finishes as degraded. This
+pragmatic fence bounds a stale worker to at most one in-flight page; the next
+full sweep corrects that page through the idempotent provider upsert. Atomic
+in-sink token fencing remains future work (A-PR6).
 
 Connector-ingested tickets follow a resolve-then-write path. The identity key
 is the trimmed, case-sensitive pair `(connector instance, provider ticket ID)`,

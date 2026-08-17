@@ -1,19 +1,22 @@
-# A-PR3b review notes
+# A-PR3c review notes
 
-Scope reviewed: `src/wait_local_agent/store.py`, cursor/lease tests, migration
-expectation updates, and ingestion documentation only.
+Scope reviewed: provider adapters, synchronous ingestion poller, and the small
+provider-subject audit leak fix in the existing sink.
 
-The lease boundary is serialized per SQLite database connection with
-`BEGIN IMMEDIATE`. The active-lease test is status-aware and treats a null
-expiry on a legacy `syncing` row as stale. Claiming only changes status and
-lease metadata, so cursor progress and historical successful-sync metadata are
-preserved. Terminal writes require both `status = 'syncing'` and the exact
-lease token, preventing a stale worker from changing its successor's row.
+The adapter registry is case-folded and uses Halo's positional pagination and
+ConnectWise's keyword-only pagination. Both adapters validate trimmed remote
+ticket and company identifiers before constructing records and preserve the
+store invariants (`client_id=None`, `source_system=None`, and the polled
+`connector_instance_id`).
 
-Public hydration uses an explicit projection of the six `SyncCursor` fields;
-the internal lease columns are not part of the dataclass or API serialization.
-The legacy upsert path takes the same write lock and raises a clear conflict
-when it would overwrite an unexpired lease.
+The poller treats only a ready HTTP 2xx empty raw page as EOF. Raw pages with
+all rows dropped continue and make degradation sticky. It classifies blocked,
+throttled, timeout/connect, 408, and 5xx conditions as degraded; malformed,
+redirect, configuration/auth, inactive-instance, and sink-invariant failures
+as failed; and a clean verified EOF as idle. Lease release is best-effort and
+occurs before the static audit event.
 
-This review intentionally does not cover A-PR3a client changes or A-PR3c
-adapters/poller behavior.
+The pragmatic fence revalidates the exact unexpired token immediately before
+each page write. A stale worker therefore performs no subsequent writes; one
+page already in flight can be corrected by the next full idempotent sweep.
+Atomic token fencing inside the sink remains intentionally deferred to A-PR6.
