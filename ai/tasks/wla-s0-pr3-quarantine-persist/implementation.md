@@ -18,14 +18,42 @@ S0-PR3b items 1–2 are implemented as pre-activation hardening:
   exclusion, including both ticket-resolution branches and lifecycle metrics.
 - The summary, agent, event-dispatch, and playbook paths were verified to reach
   ticket reads through `get_ticket`; no direct ticket query was added to those
-  modules. Provider-ticket ingestion, persistence, and re-tenant behavior are
-  unchanged and remain assigned to later PRs.
+  modules.
+
+## S0-PR3d — activate quarantine persistence
+
+Items 5–9 are implemented without a schema or migration change:
+
+- Unresolved provider tickets are persisted under `__quarantine__` through a
+  shared deterministic composite-key upsert. The S0-PR3a ownership invariant
+  remains fail-closed: a real-client owner is never overwritten, and only the
+  triage occurrence is recorded in that case. Quarantine persistence writes a
+  neutral `ticket.quarantined` audit and no status history.
+- Mapping verification re-tenants matching quarantine tickets in its existing
+  transaction, resolves their triage rows, seeds one
+  `mapping_verification` status snapshot, and writes a `ticket.tenanted` audit
+  under the verified client. `/verify` adds `retenanted_count`; inactive or
+  pinned-instance conflicts return 409 and the reserved target returns 400.
+- `/ingestion/quarantined` is a ViewerAccess read scoped by connector instance
+  and its ordinary client binding. It never treats `__quarantine__` as an
+  authenticated tenant membership. Operators can reclassify one legacy,
+  provenance-less quarantine ticket through
+  `/ingestion/quarantined/{ticket_id}/reclassify`.
+
+Legacy quarantine rows without connector/company provenance cannot be reached
+by mapping verification. Operator reclassification is the only supported
+assignment mechanism for those rows. Rows never reclassified remain hidden
+from normal ticket reads and immobilized by the S0-PR3c operation guards
+(fail-closed).
 
 ## Files
 
 - `src/wait_local_agent/store.py`
+- `src/wait_local_agent/api/app.py`
+- `tests/test_wla_s0_quarantine_persist.py`
 - `tests/test_wla_s0_quarantine_reserve.py`
 - `CHANGELOG.md`
+- `docs/concepts/clients-and-connectors.md`
 - `ai/tasks/wla-s0-pr3-quarantine-persist/implementation.md`
 
 ## S0-PR3c — block operations while quarantined

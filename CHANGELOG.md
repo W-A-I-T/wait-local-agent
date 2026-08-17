@@ -13,9 +13,10 @@ All notable changes to WAIT Local Agent will be documented in this file.
 - Per-connector-instance outbound calls now use a host allowlist, pinned-IP
   DNS resolution, globally-routable address checks, proxy and redirect
   blocking, identity content encoding, and a bounded response stream.
-- Provider-ticket ingestion no longer lets a re-reported external ticket under
-  a different company overwrite or re-attribute another client's ticket;
-  ownership collisions are recorded as `ownership_conflict` for reconciliation.
+- Provider-ticket ingestion persists unresolved tickets under the reserved
+  quarantine tenant while still preventing a re-reported external ticket under
+  a different company from overwriting or re-attributing another client's
+  ticket; ownership collisions remain recorded for reconciliation.
 
 ### Fixed
 
@@ -27,9 +28,10 @@ All notable changes to WAIT Local Agent will be documented in this file.
 ### Added
 
 - Connector-ingested tickets now resolve their client from verified connector
-  mappings and keep unmapped records in the review ledger instead of writing a
-  quarantine ticket; ticket identity is now stable per connector instance and
-  local ingestion requires an explicit active client.
+  mappings and persist unresolved records in the reviewable quarantine tenant;
+  mapping verification re-tenants matching tickets. Ticket identity is stable
+  per connector instance and local ingestion requires an explicit active
+  client.
 - Admins can now review per-connector sync health and triage unmapped records
   in the Operations → Sync / Reconciliation Center, including a confirm-gated
   action to mark a record as reviewed.
