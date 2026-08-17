@@ -23,6 +23,10 @@ All notable changes to WAIT Local Agent will be documented in this file.
 
 ### Fixed
 
+- Automation-opportunity reports now require at least 5 attempts, 3 successes,
+  an 80% success rate, positive declared savings, and a 30–90 day window;
+  candidate rows expose attempts, failures, success rate, and approval burden
+  instead of labeling a single success as repeated.
 - The Founder journey no longer reports an unknown or missing status as complete.
 - Successful Power Platform deployment stages, such as solution imports, now
   report `deployment_started: true` after a non-build PAC command runs instead

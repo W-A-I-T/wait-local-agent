@@ -9,6 +9,15 @@ from wait_local_agent.observability import build_analytics_summary
 from wait_local_agent.reports.models import ReportSection
 from wait_local_agent.store import Store
 
+# An automation opportunity needs enough evidence to support a review, rather
+# than treating an isolated successful action as a repeatable pattern.
+AUTOMATION_OPPORTUNITY_MIN_ATTEMPTS = 5
+AUTOMATION_OPPORTUNITY_MIN_SUCCESSES = 3
+AUTOMATION_OPPORTUNITY_MIN_SUCCESS_RATE = 0.80
+AUTOMATION_OPPORTUNITY_MIN_WINDOW_DAYS = 30
+AUTOMATION_OPPORTUNITY_MAX_WINDOW_DAYS = 90
+AUTOMATION_OPPORTUNITY_MAX_CANDIDATES = 20
+
 
 def build_qbr_report(
     store: Store,
@@ -144,7 +153,7 @@ def build_qbr_report(
                 }
             ],
             recommendations=(
-                ["Review repeated successful actions as candidates for a bounded, approval-aware workflow."]
+                ["Review successful actions as candidates for a bounded, approval-aware workflow."]
                 if action_candidates
                 else ["Collect more local execution history before ranking automation candidates."]
             ),
@@ -171,21 +180,39 @@ def build_automation_opportunity_report(
     period_start: str,
     period_end: str,
 ) -> tuple[list[ReportSection], dict[str, Any]]:
-    """Rank repeated successful local actions as reviewable workflow candidates."""
+    """Rank threshold-qualified local actions as reviewable workflow candidates."""
 
     start, end = _period(period_start, period_end)
-    candidates = _successful_action_candidates(store, estimates, client_id, start, end)
-    executions = [
-        run
-        for run in store.list_execution_runs(client_id=client_id)
-        if _in_period(run.started_at, start, end)
-    ]
+    window_days = (end - start).days
+    window_out_of_range = not (
+        AUTOMATION_OPPORTUNITY_MIN_WINDOW_DAYS
+        <= window_days
+        <= AUTOMATION_OPPORTUNITY_MAX_WINDOW_DAYS
+    )
+    if window_out_of_range:
+        candidates: list[dict[str, Any]] = []
+        executions = []
+        evidence_status = "window_out_of_range"
+        evidence_reason = (
+            "Automation opportunity reports require an inclusive window of 30 to 90 days."
+        )
+    else:
+        candidates = _automation_opportunity_candidates(store, estimates, client_id, start, end)
+        executions = [
+            run
+            for run in store.list_execution_runs(client_id=client_id)
+            if _in_period(run.started_at, start, end)
+        ]
+        evidence_status = "completed" if candidates else "no_evidence"
     sections = [
         ReportSection(
             title="Automation Candidates",
             summary=(
-                f"{len(candidates)} repeated successful action candidates were ranked from "
-                "local execution history. Ranking is a review aid, not an automatic workflow change."
+                f"{len(candidates)} automation candidates met the thresholds of at least "
+                f"{AUTOMATION_OPPORTUNITY_MIN_ATTEMPTS} attempts, "
+                f"{AUTOMATION_OPPORTUNITY_MIN_SUCCESSES} successes, "
+                f"{AUTOMATION_OPPORTUNITY_MIN_SUCCESS_RATE:.0%} success rate, and positive "
+                "declared savings. Ranking is a review aid, not an automatic workflow change."
             ),
             findings=candidates,
             evidence=[
@@ -196,8 +223,10 @@ def build_automation_opportunity_report(
                     "period_end": period_end,
                     "record_count": len(executions),
                     "derivation": (
-                        "Candidates are grouped by action_id from successful smart-action records; "
-                        "no workflow is enabled or executed by report generation."
+                        "Candidates group all in-window smart-action records by action_id; "
+                        "non-success statuses contribute to attempts and failures, and only "
+                        "threshold-qualified actions are included. No workflow is enabled or "
+                        "executed by report generation."
                     ),
                 }
             ],
@@ -207,13 +236,14 @@ def build_automation_opportunity_report(
                     "then test it in dry-run mode."
                 ]
                 if candidates
+                else [evidence_reason]
+                if window_out_of_range
                 else ["Collect successful local smart-action history before ranking candidates."]
             ),
         )
     ]
     estimated_minutes = sum(int(item["estimated_minutes_saved"]) for item in candidates)
-    status = "completed" if candidates else "no_evidence"
-    return sections, {
+    metadata: dict[str, Any] = {
         "client_id": client_id,
         "period_start": period_start,
         "period_end": period_end,
@@ -226,9 +256,67 @@ def build_automation_opportunity_report(
                 "not measured savings."
             ),
         },
-        "evidence_status": status,
+        "evidence_status": evidence_status,
         "scope": "single client",
     }
+    if window_out_of_range:
+        metadata["window_days"] = window_days
+        metadata["evidence_reason"] = evidence_reason
+    return sections, metadata
+
+
+def _automation_opportunity_candidates(
+    store: Store,
+    estimates: dict[str, int],
+    client_id: str,
+    start: date,
+    end: date,
+) -> list[dict[str, Any]]:
+    action_metrics: dict[str, dict[str, int]] = {}
+    for run in store.list_smart_action_runs(client_id=client_id):
+        if not _in_period(run.created_at, start, end):
+            continue
+        metrics = action_metrics.setdefault(
+            run.action_id,
+            {"attempts": 0, "successes": 0, "approval_burden": 0},
+        )
+        metrics["attempts"] += 1
+        if run.status in {"success", "completed"}:
+            metrics["successes"] += 1
+        if run.approval_id is not None:
+            metrics["approval_burden"] += 1
+
+    candidates: list[dict[str, Any]] = []
+    for action_id, metrics in action_metrics.items():
+        attempts = metrics["attempts"]
+        successes = metrics["successes"]
+        estimate = int(estimates.get(action_id, 0))
+        success_rate = successes / attempts
+        if not (
+            attempts >= AUTOMATION_OPPORTUNITY_MIN_ATTEMPTS
+            and successes >= AUTOMATION_OPPORTUNITY_MIN_SUCCESSES
+            and success_rate >= AUTOMATION_OPPORTUNITY_MIN_SUCCESS_RATE
+            and estimate > 0
+        ):
+            continue
+        candidates.append(
+            {
+                "action_id": action_id,
+                "attempts": attempts,
+                "successes": successes,
+                "failures": attempts - successes,
+                "success_rate": success_rate,
+                "approval_burden": metrics["approval_burden"],
+                "estimated_minutes_saved": successes * estimate,
+                "estimate": True,
+                "candidate_reason": (
+                    f"Action met the automation-candidate thresholds ({successes}/{attempts} "
+                    "successful over the period); review before creating a workflow."
+                ),
+            }
+        )
+    candidates.sort(key=lambda item: (-int(item["successes"]), str(item["action_id"])))
+    return candidates[:AUTOMATION_OPPORTUNITY_MAX_CANDIDATES]
 
 
 def build_recurring_service_review_report(
@@ -443,7 +531,7 @@ def _successful_action_candidates(
             "successful_runs": count,
             "estimated_minutes_saved": count * int(estimates.get(action_id, 0)),
             "estimate": True,
-            "candidate_reason": "Repeated successful local action; review before creating a workflow.",
+            "candidate_reason": "Successful local action; review before creating a workflow.",
         }
         for action_id, count in counts.items()
     ]
