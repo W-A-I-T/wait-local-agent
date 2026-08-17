@@ -414,6 +414,26 @@ class HaloCategory:
 
 
 @dataclass(frozen=True)
+class HaloReadResponse:
+    result: HaloReadResult
+    items: list[HaloTicket | HaloClient | HaloNote | HaloAsset | HaloCategory]
+    raw_count: int = 0
+    dropped_count: int = 0
+    http_status: int | None = None
+    retry_after: float | None = None
+
+
+@dataclass(frozen=True)
+class ConnectWiseReadResponse:
+    result: ConnectorReadResult
+    items: list[dict[str, object]]
+    raw_count: int = 0
+    dropped_count: int = 0
+    http_status: int | None = None
+    retry_after: float | None = None
+
+
+@dataclass(frozen=True)
 class HuduCompany:
     id: str
     name: str

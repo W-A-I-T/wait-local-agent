@@ -118,6 +118,19 @@ wait-local-agent connectors halopsa-assets <client-id>
 wait-local-agent connectors halopsa-categories
 ```
 
+### Read response envelope
+
+HaloPSA read methods retain the existing `result` and `items` values and add
+poll-safe metadata: `raw_count` counts candidate entries before normalization,
+`dropped_count` counts candidates that did not become normalized items,
+`http_status` records the response status when one was received, and
+`retry_after` records a valid seconds or HTTP-date delay for HTTP 429/503.
+Only a valid 2xx empty list is an end-of-page signal. A page containing rows
+that are all dropped, a malformed response shape, a 3xx response, a blocked or
+not-configured read, and a token or HTTP failure are not EOF; they retain an
+explicit non-ready status. Normalized subject/client fields are capped at 512
+characters, body fields at 8192, and status/priority fields at 128.
+
 ### Write readiness
 
 Check write prerequisites without executing a write:

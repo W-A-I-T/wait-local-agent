@@ -349,6 +349,69 @@ def test_connectwise_read_failures_are_sanitized(settings) -> None:
     assert health_failure.status == "failed"
 
 
+def test_connectwise_read_response_metadata_shape_and_caps(settings) -> None:
+    def read(payload: object, status_code: int = 200, headers: dict[str, str] | None = None):
+        return ConnectWiseClient(
+            _settings(settings),
+            transport=httpx.MockTransport(
+                lambda request: httpx.Response(status_code, json=payload, headers=headers)
+            ),
+        ).list_tickets()
+
+    full = read(
+        [
+            {"id": 1, "summary": "one"},
+            {"id": 2, "summary": "two"},
+        ]
+    )
+    dropped = read([{"summary": "missing id"}, "not a mapping"])
+    empty = read([])
+    scalar = read("not a list or envelope")
+    wrong_object = read({"unexpected": []})
+    redirect = read([], status_code=302)
+    throttled = read([], status_code=429, headers={"Retry-After": "9"})
+    failed = read([], status_code=503)
+    expired_date = read(
+        [], status_code=503, headers={"Retry-After": "Thu, 01 Jan 1970 00:00:00 GMT"}
+    )
+
+    assert (full.raw_count, full.dropped_count, full.http_status) == (2, 0, 200)
+    assert dropped.result.status == "ready"
+    assert (dropped.raw_count, dropped.dropped_count, dropped.items) == (2, 2, [])
+    assert empty.result.status == "ready"
+    assert (empty.raw_count, empty.dropped_count) == (0, 0)
+    assert scalar.result.status == "failed"
+    assert wrong_object.result.status == "failed"
+    assert redirect.result.status == "failed"
+    assert redirect.http_status == 302
+    assert throttled.result.status == "failed"
+    assert throttled.http_status == 429
+    assert throttled.retry_after == 9.0
+    assert failed.result.status == "failed"
+    assert failed.http_status == 503
+    assert expired_date.retry_after == 0.0
+
+    long = "x" * 10_000
+    capped = read(
+        [
+            {
+                "id": "T-long",
+                "summary": long,
+                "initialDescription": long,
+                "status": {"name": long},
+                "priority": {"name": long},
+                "company": {"id": "C-1", "name": long},
+            }
+        ]
+    )
+    item = capped.items[0]
+    assert len(item["summary"]) == 512
+    assert len(item["description"]) == 8192
+    assert len(item["status"]) == 128
+    assert len(item["priority"]) == 128
+    assert len(item["company_name"]) == 512
+
+
 def test_connectwise_validation_and_empty_shapes(settings) -> None:
     active = _settings(settings)
     invalid_page = ConnectWiseClient(active).list_tickets(page=0)

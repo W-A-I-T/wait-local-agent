@@ -9,8 +9,11 @@ stay in the settings boundary rather than request payloads.
 from __future__ import annotations
 
 import base64
+import math
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
+from datetime import UTC, datetime
+from email.utils import parsedate_to_datetime
 from typing import Protocol
 
 import httpx
@@ -18,6 +21,7 @@ import httpx
 from wait_local_agent.config import Settings
 from wait_local_agent.models import (
     ConnectorReadResult,
+    ConnectWiseReadResponse,
     ConnectWiseWriteRequest,
     ConnectWiseWriteResult,
 )
@@ -29,9 +33,17 @@ MAX_PAGE_SIZE = 100
 
 
 @dataclass(frozen=True)
-class ConnectWiseReadResponse:
-    result: ConnectorReadResult
-    items: list[dict[str, object]]
+class _ConnectWiseTransportResult:
+    payload: object
+    http_status: int
+    retry_after: float | None = None
+
+
+@dataclass(frozen=True)
+class _ConnectWisePayloadRows:
+    rows: list[Mapping[str, object]]
+    raw_count: int
+    valid: bool
 
 
 class ConnectWiseReadProvider(Protocol):
@@ -69,9 +81,17 @@ class ConnectWiseWriteProvider(Protocol):
 
 
 class ConnectWiseReadError(Exception):
-    def __init__(self, message: str) -> None:
+    def __init__(
+        self,
+        message: str,
+        *,
+        http_status: int | None = None,
+        retry_after: float | None = None,
+    ) -> None:
         super().__init__(message)
         self.message = message
+        self.http_status = http_status
+        self.retry_after = retry_after
 
 
 class ConnectWiseClient:
@@ -193,7 +213,7 @@ class ConnectWiseClient:
             params = _list_params(page, page_size, conditions)
         except ConnectWiseReadError as exc:
             return ConnectWiseReadResponse(ConnectorReadResult("failed", exc.message), [])
-        return self._request_items(endpoint, normalizer, params=params)
+        return self._request_items(endpoint, normalizer, params=params, collection=True)
 
     def _request_items(
         self,
@@ -201,15 +221,38 @@ class ConnectWiseClient:
         normalizer: Normalizer,
         *,
         params: dict[str, QueryValue] | None = None,
+        collection: bool = False,
     ) -> ConnectWiseReadResponse:
         try:
-            payload = self._get(endpoint, params=params)
+            transport = self._get(endpoint, params=params)
         except ConnectWiseReadError as exc:
-            return ConnectWiseReadResponse(ConnectorReadResult("failed", exc.message), [])
-        items = [item for row in _payload_rows(payload) if (item := normalizer(row)) is not None]
+            return ConnectWiseReadResponse(
+                ConnectorReadResult("failed", exc.message),
+                [],
+                http_status=exc.http_status,
+                retry_after=exc.retry_after,
+            )
+        parsed = _payload_rows_for_response(transport.payload, collection=collection)
+        if not parsed.valid:
+            return ConnectWiseReadResponse(
+                ConnectorReadResult(
+                    "failed",
+                    f"ConnectWise PSA read from {endpoint} returned an invalid response shape.",
+                ),
+                [],
+                raw_count=parsed.raw_count,
+                dropped_count=parsed.raw_count,
+                http_status=transport.http_status,
+                retry_after=transport.retry_after,
+            )
+        items = [item for row in parsed.rows if (item := normalizer(row)) is not None]
         return ConnectWiseReadResponse(
             ConnectorReadResult("ready", f"ConnectWise PSA read succeeded from {endpoint}.", len(items)),
             items,
+            raw_count=parsed.raw_count,
+            dropped_count=parsed.raw_count - len(items),
+            http_status=transport.http_status,
+            retry_after=transport.retry_after,
         )
 
     def _get(
@@ -217,7 +260,7 @@ class ConnectWiseClient:
         endpoint: str,
         *,
         params: dict[str, QueryValue] | None = None,
-    ) -> object:
+    ) -> _ConnectWiseTransportResult:
         if not self.settings.allow_http_probing:
             raise ConnectWiseReadError(
                 "ConnectWise PSA live reads are blocked until WAIT_ALLOW_HTTP_PROBING=true."
@@ -238,16 +281,24 @@ class ConnectWiseClient:
             ) from exc
         except httpx.HTTPError as exc:
             raise ConnectWiseReadError("ConnectWise PSA request failed.") from exc
-        if response.status_code >= 400:
+        if not 200 <= response.status_code < 300:
             raise ConnectWiseReadError(
-                f"ConnectWise PSA GET {endpoint} failed with HTTP {response.status_code}."
+                f"ConnectWise PSA GET {endpoint} failed with HTTP {response.status_code}.",
+                http_status=response.status_code,
+                retry_after=_retry_after(response),
             )
         try:
-            return response.json()
+            payload = response.json()
         except ValueError as exc:
             raise ConnectWiseReadError(
-                f"ConnectWise PSA GET {endpoint} returned malformed JSON."
+                f"ConnectWise PSA GET {endpoint} returned malformed JSON.",
+                http_status=response.status_code,
             ) from exc
+        return _ConnectWiseTransportResult(
+            payload,
+            response.status_code,
+            _retry_after(response),
+        )
 
     def _patch(self, endpoint: str, payload: list[dict[str, object]]) -> tuple[object, int]:
         if not self.settings.allow_http_probing:
@@ -481,7 +532,48 @@ def _payload_rows(payload: object) -> list[Mapping[str, object]]:
         rows = value if isinstance(value, list) else [payload]
     else:
         return []
-    return [row for row in rows if isinstance(row, dict)]
+    return [row for row in rows if isinstance(row, Mapping)]
+
+
+def _payload_rows_for_response(payload: object, *, collection: bool) -> _ConnectWisePayloadRows:
+    if isinstance(payload, list):
+        candidates = payload
+    elif isinstance(payload, Mapping):
+        if "items" in payload:
+            value = payload["items"]
+            if not isinstance(value, list):
+                return _ConnectWisePayloadRows([], 0, False)
+            candidates = value
+        elif collection:
+            return _ConnectWisePayloadRows([], 0, False)
+        else:
+            candidates = [payload]
+    else:
+        return _ConnectWisePayloadRows([], 0, False)
+    rows = [row for row in candidates if isinstance(row, Mapping)]
+    return _ConnectWisePayloadRows(rows, len(candidates), True)
+
+
+def _retry_after(response: httpx.Response) -> float | None:
+    if response.status_code not in {429, 503}:
+        return None
+    value = response.headers.get("Retry-After")
+    if value is None:
+        return None
+    stripped = value.strip()
+    try:
+        seconds = float(stripped)
+    except ValueError:
+        try:
+            retry_at = parsedate_to_datetime(stripped)
+        except (TypeError, ValueError, OverflowError):
+            return None
+        if retry_at.tzinfo is None:
+            retry_at = retry_at.replace(tzinfo=UTC)
+        return max((retry_at - datetime.now(UTC)).total_seconds(), 0.0)
+    if not math.isfinite(seconds) or seconds < 0:
+        return None
+    return seconds
 
 
 def _normalize_ticket(row: Mapping[str, object]) -> dict[str, object] | None:
@@ -490,13 +582,15 @@ def _normalize_ticket(row: Mapping[str, object]) -> dict[str, object] | None:
         return None
     return {
         "id": str(ticket_id),
-        "summary": _string_value(row, "summary", "subject"),
-        "description": _string_value(row, "initialDescription", "description"),
-        "status": _nested_name(row.get("status")),
-        "priority": _nested_name(row.get("priority")),
+        "summary": _bounded_text(_string_value(row, "summary", "subject"), 512),
+        "description": _bounded_text(
+            _string_value(row, "initialDescription", "description"), 8192
+        ),
+        "status": _bounded_text(_nested_name(row.get("status")), 128),
+        "priority": _bounded_text(_nested_name(row.get("priority")), 128),
         "company_id": _nested_value(row.get("company"), "id"),
-        "company_name": _nested_value(row.get("company"), "name"),
-        "board": _nested_name(row.get("board")),
+        "company_name": _bounded_text(_nested_value(row.get("company"), "name"), 512),
+        "board": _bounded_text(_nested_name(row.get("board")), 128),
     }
 
 
@@ -506,8 +600,10 @@ def _normalize_company(row: Mapping[str, object]) -> dict[str, object] | None:
         return None
     return {
         "id": str(company_id),
-        "name": _string_value(row, "name", "companyName"),
-        "status": _nested_name(row.get("status")) or _string_value(row, "status"),
+        "name": _bounded_text(_string_value(row, "name", "companyName"), 512),
+        "status": _bounded_text(
+            _nested_name(row.get("status")) or _string_value(row, "status"), 128
+        ),
     }
 
 
@@ -534,6 +630,10 @@ def _first_value(row: Mapping[str, object], *keys: str) -> object:
 def _string_value(row: Mapping[str, object], *keys: str) -> str:
     value = _first_value(row, *keys)
     return "" if value is None else str(value)
+
+
+def _bounded_text(value: str, limit: int) -> str:
+    return value[:limit]
 
 
 __all__ = [
