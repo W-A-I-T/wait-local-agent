@@ -304,8 +304,10 @@ Every HaloPSA write follows this path:
 4. Technician approves or rejects with a comment.
 5. Execution checks connector, action type, ticket id, approval status, flags, and prior execution state.
 6. PSA API call is made only after the checks pass.
-7. Audit and event history rows are written.
-8. A succeeded approval cannot be executed again.
+7. HaloPSA and ConnectWise approval writes read back independently verifiable
+   fields or note IDs and record `verified`, `unverified`, or `submitted`.
+8. Audit and event history rows are written with sanitized verification detail.
+9. Any physically executed outcome cannot be executed again.
 ```
 
 Pending approval requests receive a bounded 24-hour deadline. Reading the queue

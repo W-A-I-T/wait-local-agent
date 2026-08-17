@@ -14,7 +14,7 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from email.utils import parsedate_to_datetime
-from typing import Protocol
+from typing import Literal, Protocol
 
 import httpx
 
@@ -77,6 +77,15 @@ class ConnectWiseWriteProvider(Protocol):
         ...
 
     def execute_write(self, request: ConnectWiseWriteRequest) -> ConnectWiseWriteResult:
+        ...
+
+    def verify_write(
+        self,
+        request: ConnectWiseWriteRequest,
+        write_result: ConnectWiseWriteResult,
+        *,
+        detail: dict[str, object] | None = None,
+    ) -> Literal["verified", "unverified", "submitted"]:
         ...
 
 
@@ -178,6 +187,89 @@ class ConnectWiseClient:
             status_code=status_code,
             remote_id=_remote_id(response_payload),
         )
+
+    def verify_write(
+        self,
+        request: ConnectWiseWriteRequest,
+        write_result: ConnectWiseWriteResult,
+        *,
+        detail: dict[str, object] | None = None,
+    ) -> Literal["verified", "unverified", "submitted"]:
+        status, verification = self._verify_write_detail(request, write_result)
+        if detail is not None:
+            detail.update(verification)
+        return status
+
+    def _verify_write_detail(
+        self,
+        request: ConnectWiseWriteRequest,
+        write_result: ConnectWiseWriteResult,
+    ) -> tuple[Literal["verified", "unverified", "submitted"], dict[str, object]]:
+        if request.action_type == "update_status":
+            return "submitted", {
+                "source": "ConnectWise normalized ticket read model",
+                "outcome": "status id is not independently verifiable",
+                "fields": {"status_id": {"comparison": "unavailable"}},
+            }
+        if request.action_type == "assign_technician":
+            return "submitted", {
+                "source": "ConnectWise normalized ticket read model",
+                "outcome": "assignment ids are not independently verifiable",
+                "fields": {
+                    field: {"comparison": "unavailable"}
+                    for field in request.fields
+                },
+            }
+
+        comparable_fields = {
+            field: value
+            for field, value in request.fields.items()
+            if field in {"summary", "description"} and isinstance(value, str)
+        }
+        unavailable_fields = set(request.fields) - set(comparable_fields)
+        if unavailable_fields:
+            return "submitted", {
+                "source": "ConnectWise normalized ticket read model",
+                "outcome": "some written fields are not independently verifiable",
+                "fields": {
+                    field: {"comparison": "unavailable"}
+                    for field in sorted(unavailable_fields)
+                },
+            }
+        if not comparable_fields:
+            return "submitted", {
+                "source": "ConnectWise normalized ticket read model",
+                "outcome": "written fields are not independently verifiable",
+                "fields": {},
+            }
+
+        response = self.get_ticket(request.ticket_id)
+        if response.result.status != "ready" or not response.items:
+            return "unverified", {
+                "source": f"GET service/tickets/{request.ticket_id}",
+                "outcome": "read_failed_or_ticket_not_found",
+                "fields": {
+                    field: {"comparison": "unverified"}
+                    for field in comparable_fields
+                },
+            }
+        ticket = response.items[0]
+        comparisons = {
+            field: {
+                "comparison": (
+                    "matched"
+                    if _same_text(ticket.get(field), value)
+                    else "mismatch"
+                )
+            }
+            for field, value in comparable_fields.items()
+        }
+        matched = all(item["comparison"] == "matched" for item in comparisons.values())
+        return ("verified" if matched else "unverified"), {
+            "source": f"GET service/tickets/{request.ticket_id}",
+            "outcome": "matched" if matched else "mismatch",
+            "fields": comparisons,
+        }
 
     def list_companies(
         self,
@@ -634,6 +726,10 @@ def _string_value(row: Mapping[str, object], *keys: str) -> str:
 
 def _bounded_text(value: str, limit: int) -> str:
     return value[:limit]
+
+
+def _same_text(actual: object, expected: object) -> bool:
+    return str(actual).strip().casefold() == str(expected).strip().casefold()
 
 
 __all__ = [

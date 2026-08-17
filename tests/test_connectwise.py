@@ -194,6 +194,74 @@ def test_connectwise_write_failures_and_empty_success_are_bounded(settings) -> N
     assert generic_failure.message == "ConnectWise PSA request failed."
 
 
+def test_connectwise_write_verification_compares_only_exposed_fields(settings) -> None:
+    get_calls: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.method == "PATCH":
+            return httpx.Response(200, json={"id": 42})
+        if request.method == "GET":
+            get_calls.append(request.url.path)
+            return httpx.Response(
+                200,
+                json={
+                    "id": 42,
+                    "summary": " Updated summary ",
+                    "initialDescription": "DETAILS",
+                    "status": {"name": "Open"},
+                    "priority": {"name": "High"},
+                },
+            )
+        return httpx.Response(404)
+
+    active = replace(_settings(settings), allow_write_actions=True)
+    client = ConnectWiseClient(active, transport=httpx.MockTransport(handler))
+    request = ConnectWiseWriteRequest(
+        "42",
+        "update_ticket_fields",
+        {"summary": "updated summary", "description": "details"},
+    )
+    result = client.execute_write(request)
+
+    assert result.status == "succeeded"
+    detail: dict[str, object] = {}
+    assert client.verify_write(request, result, detail=detail) == "verified"
+    assert detail["fields"] == {
+        "summary": {"comparison": "matched"},
+        "description": {"comparison": "matched"},
+    }
+
+    mismatch = ConnectWiseWriteRequest("42", "update_ticket_fields", {"summary": "other"})
+    mismatch_result = client.execute_write(mismatch)
+    assert client.verify_write(mismatch, mismatch_result) == "unverified"
+
+    id_request = ConnectWiseWriteRequest("42", "update_status", {"status_id": 7})
+    id_result = client.execute_write(id_request)
+    assert client.verify_write(id_request, id_result) == "submitted"
+
+    mixed_request = ConnectWiseWriteRequest(
+        "42", "update_ticket_fields", {"summary": "updated summary", "owner_id": 9}
+    )
+    mixed_result = client.execute_write(mixed_request)
+    assert client.verify_write(mixed_request, mixed_result) == "submitted"
+    assert any(path.endswith("/service/tickets/42") for path in get_calls)
+
+
+def test_connectwise_write_verification_get_failure_is_unverified(settings) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.method == "PATCH":
+            return httpx.Response(200, json={"id": 42})
+        return httpx.Response(503)
+
+    active = replace(_settings(settings), allow_write_actions=True)
+    client = ConnectWiseClient(active, transport=httpx.MockTransport(handler))
+    request = ConnectWiseWriteRequest("42", "update_ticket_fields", {"summary": "updated"})
+    result = client.execute_write(request)
+
+    assert result.status == "succeeded"
+    assert client.verify_write(request, result) == "unverified"
+
+
 def test_connectwise_write_validation_and_missing_configuration(settings) -> None:
     active = replace(_settings(settings), allow_write_actions=True)
     missing = ConnectWiseClient(

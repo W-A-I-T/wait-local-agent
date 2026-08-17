@@ -1208,7 +1208,7 @@ def execute_halopsa_approval_request(
         raise ValueError("approval request is not a HaloPSA action")
     if approval.status != "approved":
         raise PermissionError("HaloPSA writes require approved approval requests")
-    if approval.execution_status == "succeeded":
+    if approval.execution_status in {"succeeded", "verified", "unverified", "submitted"}:
         raise RuntimeError("HaloPSA approval request has already executed successfully")
 
     payload = json.loads(approval.payload_json)
@@ -1228,14 +1228,28 @@ def execute_halopsa_approval_request(
     fields = payload.get("fields")
     if not isinstance(fields, dict):
         fields = {}
-    result = client.execute_write(
-        HaloWriteRequest(
-            ticket_id=ticket_id,
-            action_type=action_type,
-            fields=fields,
-            approval_request_id=approval.id,
-        )
+    write_request = HaloWriteRequest(
+        ticket_id=ticket_id,
+        action_type=action_type,
+        fields=fields,
+        approval_request_id=approval.id,
     )
+    result = client.execute_write(write_request)
+    if result.status == "succeeded":
+        verification_detail: dict[str, object] = {}
+        verification_status = client.verify_write(
+            write_request,
+            result,
+            detail=verification_detail,
+        )
+        sanitized_result = sanitize_halopsa_write_result(result)
+        sanitized_result["verification"] = verification_detail
+        return store.record_approval_execution(
+            request_id,
+            status=verification_status,
+            message=f"{result.message} Read-back verification: {verification_status}.",
+            result=sanitized_result,
+        )
     return store.record_approval_execution(
         request_id,
         status=result.status,
@@ -1256,7 +1270,7 @@ def execute_connectwise_approval_request(
         raise ValueError("approval request is not a ConnectWise PSA action")
     if approval.status != "approved":
         raise PermissionError("ConnectWise PSA writes require approved approval requests")
-    if approval.execution_status == "succeeded":
+    if approval.execution_status in {"succeeded", "verified", "unverified", "submitted"}:
         raise RuntimeError("ConnectWise PSA approval request has already executed successfully")
     payload = json.loads(approval.payload_json)
     if not isinstance(payload, dict):
@@ -1276,14 +1290,29 @@ def execute_connectwise_approval_request(
     if not isinstance(fields, dict):
         fields = {}
     validate_connectwise_action_fields(action_type, fields)
-    result = client.execute_write(
-        ConnectWiseWriteRequest(
-            ticket_id=ticket_id,
-            action_type=action_type,
-            fields=fields,
-            approval_request_id=approval.id,
-        )
+    write_request = ConnectWiseWriteRequest(
+        ticket_id=ticket_id,
+        action_type=action_type,
+        fields=fields,
+        approval_request_id=approval.id,
     )
+    result = client.execute_write(write_request)
+    if result.status == "succeeded":
+        verification_detail: dict[str, object] = {}
+        verification_status = client.verify_write(
+            write_request,
+            result,
+            detail=verification_detail,
+        )
+        sanitized_result = sanitize_connectwise_write_result(result)
+        sanitized_result["verification"] = verification_detail
+        return store.record_approval_execution(
+            request_id,
+            status=verification_status,
+            message=f"{result.message} Read-back verification: {verification_status}.",
+            result=sanitized_result,
+            audit_event_type="connectwise.write",
+        )
     return store.record_approval_execution(
         request_id,
         status=result.status,

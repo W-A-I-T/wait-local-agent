@@ -13,7 +13,13 @@ from wait_local_agent.halopsa import (
     _remote_id,
     _safe_endpoint,
 )
-from wait_local_agent.models import HaloAsset, HaloCategory, HaloClient, HaloNote, HaloWriteRequest
+from wait_local_agent.models import (
+    HaloAsset,
+    HaloCategory,
+    HaloClient,
+    HaloNote,
+    HaloWriteRequest,
+)
 
 
 def _settings(
@@ -462,6 +468,73 @@ def test_halopsa_add_note_and_response_payload_mapping(tmp_path: Path) -> None:
     assert note.remote_id == "A-1"
     assert response.status == "succeeded"
     assert len(requests) == 4
+
+
+def test_halopsa_write_verification_is_action_specific_and_read_back_bound(tmp_path: Path) -> None:
+    get_calls: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/auth/token"):
+            return httpx.Response(200, json={"access_token": "token-123"})
+        if request.method == "POST" and request.url.path == "/api/Actions":
+            return httpx.Response(200, json={"id": "note-1"})
+        if request.method == "GET":
+            get_calls.append(request.url.path)
+            if request.url.path == "/api/Ticket/42/Actions":
+                return httpx.Response(200, json={"actions": [{"id": "note-1"}]})
+            if request.url.path == "/api/Ticket/42":
+                return httpx.Response(
+                    200,
+                    json={"id": "42", "status": " closed ", "priority": " HIGH "},
+                )
+        return httpx.Response(200, json={})
+
+    client = HaloPSAReadClient(
+        _settings(tmp_path, allow_write_actions=True),
+        transport=httpx.MockTransport(handler),
+    )
+    note_request = HaloWriteRequest("42", "add_note", {"note": "hello"})
+    note_result = client.execute_write(note_request)
+    note_detail: dict[str, object] = {}
+    assert note_result.status == "succeeded"
+    assert client.verify_write(note_request, note_result, detail=note_detail) == "verified"
+    assert note_detail["fields"] == {"note_id": {"comparison": "matched"}}
+
+    status_request = HaloWriteRequest("42", "update_status", {"status": "Closed"})
+    status_result = client.execute_write(status_request)
+    assert client.verify_write(status_request, status_result) == "verified"
+
+    mismatch_request = HaloWriteRequest("42", "update_status", {"status": "Open"})
+    mismatch_result = client.execute_write(mismatch_request)
+    assert client.verify_write(mismatch_request, mismatch_result) == "unverified"
+
+    id_only_request = HaloWriteRequest("42", "update_status", {"status_id": 9})
+    id_only_result = client.execute_write(id_only_request)
+    assert client.verify_write(id_only_request, id_only_result) == "submitted"
+
+    assign_request = HaloWriteRequest("42", "assign_technician", {"agent_id": 7})
+    assign_result = client.execute_write(assign_request)
+    assert client.verify_write(assign_request, assign_result) == "submitted"
+    assert "/api/Ticket/42" in get_calls
+
+
+def test_halopsa_write_verification_get_failure_is_unverified(tmp_path: Path) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/auth/token"):
+            return httpx.Response(200, json={"access_token": "token-123"})
+        if request.method == "GET":
+            return httpx.Response(503)
+        return httpx.Response(200, json={})
+
+    client = HaloPSAReadClient(
+        _settings(tmp_path, allow_write_actions=True),
+        transport=httpx.MockTransport(handler),
+    )
+    request = HaloWriteRequest("42", "update_ticket_fields", {"priority": "High"})
+    result = client.execute_write(request)
+
+    assert result.status == "succeeded"
+    assert client.verify_write(request, result) == "unverified"
 
 
 def test_halopsa_write_bool_variants_and_empty_response(tmp_path: Path) -> None:

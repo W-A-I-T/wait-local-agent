@@ -5,7 +5,12 @@ The draft payload is reviewable and editable while pending. A technician or
 admin approves it; execution then checks the approval state, role, tenant
 scope, connector readiness, outbound probing flag, and write flag before the
 provider call. The result is sanitized into the local execution and audit
-history.
+history. HaloPSA and ConnectWise ticket approvals perform a minimal provider
+read-back after a successful write: `verified` means the exposed written
+field or returned note ID matched, `unverified` means the read-back failed or
+mismatched, and `submitted` means the provider accepted a write whose fields
+are not exposed by the normalized read model. A submitted or queued write is
+never presented as verified.
 
 `src/wait_local_agent/rbac.py` defines the role ordering: viewer, technician,
 and admin (with a separate end-user role). `src/wait_local_agent/config.py`
@@ -38,4 +43,3 @@ sequenceDiagram
 Provider response bodies, credentials, and raw bearer tokens are not intended
 for approval or audit payloads. An approved action can still fail at the
 provider; the runtime records that failure rather than reporting success.
-

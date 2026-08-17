@@ -77,6 +77,17 @@ class FakeHaloClient:
     def execute_write(self, request):
         return HaloWriteResult("succeeded", "posted", request.action_type, request.ticket_id)
 
+    def verify_write(self, request, write_result, *, detail=None):
+        if detail is not None:
+            detail.update(
+                {
+                    "source": "test client",
+                    "outcome": "submitted",
+                    "fields": {},
+                }
+            )
+        return "submitted"
+
 
 class FakeConnectWiseClient:
     def execute_write(self, request):
@@ -89,6 +100,17 @@ class FakeConnectWiseClient:
             status_code=200,
             remote_id="42",
         )
+
+    def verify_write(self, request, write_result, *, detail=None):
+        if detail is not None:
+            detail.update(
+                {
+                    "source": "test client",
+                    "outcome": "submitted",
+                    "fields": {},
+                }
+            )
+        return "submitted"
 
 
 class FakeHealthClient:
@@ -1333,11 +1355,47 @@ def test_connectwise_drafts_edits_and_approval_execution(settings) -> None:
     completed = execute_connectwise_approval_request(
         store, cast(Any, FakeConnectWiseClient()), draft.approval_request_id
     )
-    assert completed.execution_status == "succeeded"
+    assert completed.execution_status == "submitted"
     with pytest.raises(RuntimeError, match="already executed"):
         execute_connectwise_approval_request(
             store, cast(Any, FakeConnectWiseClient()), draft.approval_request_id
         )
+
+
+@pytest.mark.parametrize("execution_status", ["verified", "unverified", "submitted"])
+def test_psa_approval_execution_blocks_all_physically_executed_statuses(
+    settings, execution_status: str
+) -> None:
+    for action_type, client in (
+        ("halopsa.add_note", FakeHaloClient()),
+        ("connectwise.update_status", FakeConnectWiseClient()),
+    ):
+        store = Store(settings.data_path.parent / f"{action_type.replace('.', '-')}-{execution_status}.db")
+        connector = action_type.split(".", 1)[0]
+        fields = {"note": "hello"} if connector == "halopsa" else {"status_id": 7}
+        approval = store.create_approval_request(
+            "TCK-1",
+            action_type,
+            {
+                "connector": connector,
+                "ticket_id": "TCK-1",
+                "action_type": action_type.split(".", 1)[1],
+                "fields": fields,
+            },
+        )
+        store.update_approval_request(approval.id or 0, "approved")
+        store.record_approval_execution(
+            approval.id or 0,
+            status=execution_status,
+            message="write happened",
+            result={},
+        )
+
+        with pytest.raises(RuntimeError, match="already executed"):
+            if connector == "halopsa":
+                execute_halopsa_approval_request(store, cast(Any, client), approval.id or 0)
+            else:
+                execute_connectwise_approval_request(store, cast(Any, client), approval.id or 0)
 
 
 def test_connectwise_approval_payload_and_field_validation_edges(settings) -> None:

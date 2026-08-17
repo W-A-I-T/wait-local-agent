@@ -5,6 +5,7 @@ import json
 import zipfile
 from dataclasses import replace
 from pathlib import Path
+from typing import Literal
 
 import pytest
 from typer.testing import CliRunner
@@ -27,10 +28,12 @@ from wait_local_agent.itglue import (
 )
 from wait_local_agent.models import (
     ConnectorReadResult,
+    ConnectWiseWriteRequest,
     ConnectWiseWriteResult,
     HaloClient,
     HaloReadResult,
     HaloTicket,
+    HaloWriteRequest,
     HaloWriteResult,
     HuduArticle,
     HuduCompany,
@@ -2119,6 +2122,15 @@ def test_halopsa_cli_approval_auto_executes_and_manual_execute(monkeypatch, tmp_
                 remote_id="A-1",
             )
 
+        def verify_write(
+            self,
+            request: HaloWriteRequest,
+            write_result: HaloWriteResult,
+            *,
+            detail: dict[str, object] | None = None,
+        ) -> Literal["verified", "unverified", "submitted"]:
+            return "verified"
+
     monkeypatch.setenv("WAIT_DATA_PATH", str(tmp_path / "state.db"))
     monkeypatch.setattr(cli_module, "HaloPSAClient", FakeHaloClient)
     runner = CliRunner()
@@ -2139,7 +2151,7 @@ def test_halopsa_cli_approval_auto_executes_and_manual_execute(monkeypatch, tmp_
 
     assert draft.exit_code == 0
     assert approved.exit_code == 0
-    assert "execution_status=succeeded" in approved.output
+    assert "execution_status=verified" in approved.output
 
 
 def test_connectwise_cli_approval_auto_executes_and_reports_write_health(monkeypatch, tmp_path) -> None:
@@ -2155,6 +2167,15 @@ def test_connectwise_cli_approval_auto_executes_and_reports_write_health(monkeyp
                 "succeeded", "updated", request.action_type, request.ticket_id,
                 endpoint="service/tickets/42", status_code=200, remote_id="42"
             )
+
+        def verify_write(
+            self,
+            request: ConnectWiseWriteRequest,
+            write_result: ConnectWiseWriteResult,
+            *,
+            detail: dict[str, object] | None = None,
+        ) -> Literal["verified", "unverified", "submitted"]:
+            return "submitted"
 
     monkeypatch.setenv("WAIT_DATA_PATH", str(tmp_path / "state.db"))
     monkeypatch.setenv("WAIT_ALLOW_HTTP_PROBING", "true")
@@ -2190,10 +2211,10 @@ def test_connectwise_cli_approval_auto_executes_and_reports_write_health(monkeyp
     assert draft.exit_code == 0
     assert edited.exit_code == 0
     assert approved.exit_code == 0
-    assert "execution_status=succeeded" in approved.output
+    assert "execution_status=submitted" in approved.output
     assert manual_draft.exit_code == 0
     assert manual_execute.exit_code == 0
-    assert "execution_status=succeeded" in manual_execute.output
+    assert "execution_status=submitted" in manual_execute.output
 
 
 def test_halopsa_cli_execute_reports_blocked_and_rejects_pending(monkeypatch, tmp_path) -> None:

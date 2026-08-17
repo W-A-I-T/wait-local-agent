@@ -40,6 +40,11 @@ All notable changes to WAIT Local Agent will be documented in this file.
 
 ### Added
 
+- HaloPSA and ConnectWise approval-gated ticket writes now perform a minimal
+  read-back verification after the provider accepts the write. Approval
+  records distinguish `verified`, `unverified`, and `submitted`; only a
+  confirmed field or note read-back is `verified`, and queued/submitted does
+  not imply verification.
 - Administrators can now trigger a manual connector "Sync now" from the
   Connector Instances screen and review its poll summary inline.
 - Founder Launch Passport scans now return a deterministic scan-to-scan delta

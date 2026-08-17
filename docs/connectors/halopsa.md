@@ -899,6 +899,14 @@ Live updates require both `WAIT_ALLOW_HTTP_PROBING=true` and
 (`summary`, `description`, `status_id`, `priority_id`, `board_id`, `owner_id`,
 or `team_id`).
 
+After an approved HaloPSA or ConnectWise write receives a successful provider
+response, WAIT reads the ticket or note list back when the normalized model
+can independently confirm the written value. The approval records `verified`
+only for a true match, `unverified` for a failed or mismatched read-back, and
+`submitted` for accepted writes whose provider fields are not independently
+exposed. All three outcomes block re-execution because the provider write
+already occurred.
+
 ## Syncro
 
 ### Required settings

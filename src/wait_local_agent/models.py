@@ -5,9 +5,25 @@ from datetime import UTC, datetime
 from typing import Any, Literal
 
 ApprovalStatus = Literal["pending", "approved", "rejected", "expired"]
-HaloWriteStatus = Literal["not_started", "blocked", "not_configured", "succeeded", "failed"]
+HaloWriteStatus = Literal[
+    "not_started",
+    "blocked",
+    "not_configured",
+    "succeeded",
+    "failed",
+    "verified",
+    "unverified",
+    "submitted",
+]
 ConnectWiseWriteStatus = Literal[
-    "not_started", "blocked", "not_configured", "succeeded", "failed"
+    "not_started",
+    "blocked",
+    "not_configured",
+    "succeeded",
+    "failed",
+    "verified",
+    "unverified",
+    "submitted",
 ]
 ServiceNowWriteStatus = Literal[
     "not_started", "blocked", "not_configured", "succeeded", "failed"
