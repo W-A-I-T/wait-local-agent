@@ -433,8 +433,9 @@ def test_event_dispatch_skips_disabled_nonmatching_and_wrong_scope_agents(settin
         payload={"priority": "P1"},
         idempotency_key="branch-coverage-unscoped-event",
     )
-    assert unscoped.matched_agent_ids == [global_agent.id]
-    assert len(unscoped.run_ids) == 1
+    # Quarantine tickets are immobilized per S0-PR3c.
+    assert unscoped.matched_agent_ids == []
+    assert unscoped.run_ids == []
 
 
 def test_event_dispatch_runs_dependency_chain_in_bounded_order_and_blocks_unmet(settings) -> None:

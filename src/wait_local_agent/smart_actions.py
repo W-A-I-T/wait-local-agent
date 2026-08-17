@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import re
 from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime
@@ -58,7 +59,12 @@ from wait_local_agent.screenconnect import ScreenConnectRmmAdapter
 from wait_local_agent.servicenow import ServiceNowReadProvider, ServiceNowWriteProvider
 from wait_local_agent.services import classify_ticket
 from wait_local_agent.sharepoint import SharePointClientProtocol
-from wait_local_agent.store import SMART_ACTION_APPROVAL_CAPABILITY, Store
+from wait_local_agent.store import (
+    _QUARANTINE_CLIENT_ID,
+    SMART_ACTION_APPROVAL_CAPABILITY,
+    QuarantinedTicketError,
+    Store,
+)
 from wait_local_agent.syncro import SyncroReadProvider, SyncroWriteProvider
 from wait_local_agent.teams_graph import TeamsGraphClient
 from wait_local_agent.timezest import TimeZestClient, TimeZestReadProvider, TimeZestWriteProvider
@@ -278,6 +284,8 @@ ActionStatus = Literal[
     "pending_approval",
     "rejected",
 ]
+
+LOGGER = logging.getLogger(__name__)
 
 _POSITIVE_SENTIMENT_TERMS = frozenset(
     {"thanks", "thank", "great", "resolved", "working", "success", "appreciate", "helpful", "excellent", "fixed"}
@@ -9196,6 +9204,13 @@ class SmartActionService:
         )
         normalized_payload = dict(payload)
         digest = _payload_digest(normalized_payload)
+        ticket_id = normalized_payload.get("ticket_id")
+        if isinstance(ticket_id, str) and ticket_id.strip():
+            ticket = self.store.get_ticket(ticket_id.strip(), include_quarantine=True)
+            if ticket is not None and ticket.client_id == _QUARANTINE_CLIENT_ID:
+                raise QuarantinedTicketError(
+                    f"ticket {ticket.id} is quarantined pending client mapping"
+                )
         effective_client_id = _effective_client_id(self.store, normalized_payload, client_id)
         context = self._context(actor, effective_client_id)
         if not actor or not actor.strip():
@@ -9307,6 +9322,12 @@ class SmartActionService:
         )
         if run is None or run.id is None:
             raise KeyError(f"smart action run for approval {approval_id} not found")
+        approval_ticket_id = _approval_ticket_id(approval.payload_json)
+        if approval_ticket_id is not None:
+            ticket = self.store.get_ticket(approval_ticket_id, include_quarantine=True)
+            if ticket is not None and ticket.client_id == _QUARANTINE_CLIENT_ID:
+                LOGGER.warning("Skipping smart-action approval for quarantined ticket %s", approval_ticket_id)
+                return None
         if not approver or not approver.strip():
             raise PermissionError("approver is required")
         if approver_role is None or approver_role < Role.TECHNICIAN:
@@ -9456,6 +9477,13 @@ class SmartActionService:
         approval = self.store.get_approval_request(approval_id)
         if approval is None:
             raise KeyError(approval_id)
+        approval_ticket_id = _approval_ticket_id(approval.payload_json)
+        if approval_ticket_id is not None:
+            ticket = self.store.get_ticket(approval_ticket_id, include_quarantine=True)
+            if ticket is not None and ticket.client_id == _QUARANTINE_CLIENT_ID:
+                raise QuarantinedTicketError(
+                    f"ticket {approval_ticket_id} is quarantined pending client mapping"
+                )
         if approval.action_type.startswith("smart_action:"):
             if not approver or not approver.strip():
                 raise PermissionError("approver is required")
@@ -9921,6 +9949,19 @@ def _json_object(payload_json: str) -> dict[str, object]:
     except json.JSONDecodeError:
         return {}
     return payload if isinstance(payload, dict) else {}
+
+
+def _approval_ticket_id(payload_json: str) -> str | None:
+    payload = _json_object(payload_json)
+    ticket_id = payload.get("ticket_id")
+    if isinstance(ticket_id, str) and ticket_id.strip():
+        return ticket_id.strip()
+    nested = payload.get("payload")
+    if isinstance(nested, dict):
+        nested_ticket_id = nested.get("ticket_id")
+        if isinstance(nested_ticket_id, str) and nested_ticket_id.strip():
+            return nested_ticket_id.strip()
+    return None
 
 
 def _json_list(payload_json: str) -> list[dict[str, object]]:

@@ -48,7 +48,7 @@ from wait_local_agent.reports.renderers import redact_text, redact_value
 from wait_local_agent.scalepad import ScalePadClient
 from wait_local_agent.servicenow import ServiceNowClient
 from wait_local_agent.sharepoint import SharePointClient
-from wait_local_agent.store import Store
+from wait_local_agent.store import _QUARANTINE_CLIENT_ID, QuarantinedTicketError, Store
 from wait_local_agent.syncro import SyncroClient
 from wait_local_agent.timezest import TimeZestClient
 from wait_local_agent.vault import SecretVault, SecretVaultError
@@ -1214,6 +1214,7 @@ def execute_halopsa_approval_request(
     payload = json.loads(approval.payload_json)
     if not isinstance(payload, dict):
         raise ValueError("approval payload is malformed")
+    _require_approval_ticket_not_quarantined(store, approval.subject_id, payload)
     if payload.get("connector") != "halopsa":
         raise ValueError("approval payload connector does not match HaloPSA")
     action_type = str(payload.get("action_type") or approval.action_type.removeprefix("halopsa."))
@@ -1260,6 +1261,7 @@ def execute_connectwise_approval_request(
     payload = json.loads(approval.payload_json)
     if not isinstance(payload, dict):
         raise ValueError("approval payload is malformed")
+    _require_approval_ticket_not_quarantined(store, approval.subject_id, payload)
     if payload.get("connector") != "connectwise":
         raise ValueError("approval payload connector does not match ConnectWise PSA")
     action_type = str(payload.get("action_type") or approval.action_type.removeprefix("connectwise."))
@@ -1681,6 +1683,7 @@ def execute_m365_approval_request(
     payload = json.loads(approval.payload_json)
     if not isinstance(payload, dict):
         raise ValueError("approval payload is malformed")
+    _require_approval_ticket_not_quarantined(store, approval.subject_id, payload)
     action_type = str(payload.get("action_type"))
     if payload.get("connector") != "m365" or action_type not in {
         M365_USER_CREATE_ACTION,
@@ -1912,6 +1915,22 @@ def execute_m365_approval_request(
             **result_payload,
         },
     )
+
+
+def _require_approval_ticket_not_quarantined(
+    store: Store,
+    subject_id: str,
+    payload: dict[str, object],
+) -> None:
+    ticket_id = payload.get("ticket_id")
+    resolved_ticket_id = str(ticket_id or subject_id).strip()
+    if not resolved_ticket_id:
+        return
+    ticket = store.get_ticket(resolved_ticket_id, include_quarantine=True)
+    if ticket is not None and ticket.client_id == _QUARANTINE_CLIENT_ID:
+        raise QuarantinedTicketError(
+            f"ticket {resolved_ticket_id} is quarantined pending client mapping"
+        )
 
 
 def validate_m365_user_creation_payload(payload: dict[str, object]) -> None:

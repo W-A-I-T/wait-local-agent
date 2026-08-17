@@ -8,10 +8,12 @@ from wait_local_agent.power_platform_package import (
     validate_deployable_blueprint_package,
     validate_power_platform_package,
 )
+from wait_local_agent.store import QuarantinedTicketError
 
 __all__ = [
     "__version__",
     "PowerPlatformPackageError",
+    "QuarantinedTicketError",
     "build_deployable_blueprint_package",
     "build_power_platform_package",
     "materialize_deployable_blueprint_package",

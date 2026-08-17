@@ -250,6 +250,7 @@ from wait_local_agent.sharepoint import SharePointClient, SharePointReadResponse
 from wait_local_agent.smart_actions import SmartActionService
 from wait_local_agent.store import (
     ClientConnectorMappingConflictError,
+    QuarantinedTicketError,
     Store,
     _normalize_client_id,
 )
@@ -1038,6 +1039,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.state.update_status_cache = update_status_cache
     app.add_exception_handler(RateLimitExceeded, _rate_limit_handler)
     app.add_exception_handler(RequestValidationError, _request_validation_error_handler)
+    app.add_exception_handler(QuarantinedTicketError, _quarantined_ticket_handler)
     app.add_exception_handler(FounderPackUnavailableError, founder_pack_unavailable_handler)
     app.add_exception_handler(FounderNotConfiguredError, founder_not_configured_handler)
     app.add_exception_handler(FounderPackContractError, _founder_contract_error_handler)
@@ -2228,6 +2230,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 principal_id=context.approver_id or "api",
                 ticket_id=payload.ticket_id,
             )
+        except QuarantinedTicketError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
         except (LookupError, ValueError) as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         return _technician_chat_session_view(store, session)
@@ -2639,6 +2643,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             raise HTTPException(status_code=404, detail="approval request not found") from exc
         except PermissionError as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from exc
+        except QuarantinedTicketError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
         except (ValueError, json.JSONDecodeError) as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         return _approval_view(approval)
@@ -2708,6 +2714,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             raise HTTPException(status_code=404, detail="approval request not found") from exc
         except PermissionError as exc:
             raise HTTPException(status_code=403, detail=str(exc)) from exc
+        except QuarantinedTicketError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
         except ValueError as exc:  # pragma: no cover
             raise HTTPException(status_code=422, detail=str(exc)) from exc
 
@@ -3250,6 +3258,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             raise HTTPException(status_code=404, detail="approval request not found") from exc
         except PermissionError as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from exc
+        except QuarantinedTicketError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
         except (RuntimeError, ValueError) as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 
@@ -3387,6 +3397,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         except KeyError as exc:
             raise HTTPException(status_code=404, detail="approval request not found") from exc
         except PermissionError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        except QuarantinedTicketError as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from exc
         except (RuntimeError, ValueError) as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -4518,6 +4530,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         except KeyError as exc:
             raise HTTPException(status_code=404, detail="approval request not found") from exc
         except PermissionError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        except QuarantinedTicketError as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from exc
         except (RuntimeError, ValueError) as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -5986,6 +6000,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             )
         except ValueError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
+        if run.id is None:
+            raise HTTPException(status_code=409, detail="ticket is quarantined pending client mapping")
         _dispatch_workflow_completion_event(event_dispatcher, run, context.approver_id or "api")
         return asdict(run)
 
@@ -6256,6 +6272,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 tool_executor=smart_action_service,
                 input_payload=request.payload,
             )
+            if run.id is None:
+                raise HTTPException(status_code=409, detail="ticket is quarantined pending client mapping")
             _dispatch_workflow_completion_event(event_dispatcher, run, context.approver_id or "api")
             return asdict(run)
         except KeyError as exc:
@@ -7755,6 +7773,13 @@ def _founder_contract_error_handler(_: Request, exc: Exception) -> JSONResponse:
     return JSONResponse(
         status_code=502,
         content={"detail": str(cast(FounderPackContractError, exc))},
+    )
+
+
+def _quarantined_ticket_handler(_: Request, exc: Exception) -> JSONResponse:
+    return JSONResponse(
+        status_code=409,
+        content={"detail": str(cast(QuarantinedTicketError, exc))},
     )
 
 

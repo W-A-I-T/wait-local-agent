@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import json
+import logging
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 from typing import cast
@@ -17,10 +19,11 @@ from wait_local_agent.models import (
     EVENT_RETRY_BATCH_SIZE,
     MAX_EVENT_RETRY_DELAY_SECONDS,
     EventDelivery,
+    utc_now,
 )
 from wait_local_agent.msp_playbooks import msp_playbook_subscription_input, run_msp_playbook
 from wait_local_agent.reports.renderers import redact_text
-from wait_local_agent.store import Store, _normalize_client_id
+from wait_local_agent.store import _QUARANTINE_CLIENT_ID, Store, _normalize_client_id
 
 
 @dataclass(frozen=True)
@@ -36,6 +39,9 @@ class EventDispatchResult:
 
 class EventDispatchError(ValueError):
     """Raised when an event cannot be safely accepted for dispatch."""
+
+
+LOGGER = logging.getLogger(__name__)
 
 
 class EventDispatcher:
@@ -69,9 +75,20 @@ class EventDispatcher:
         ticket = self.store.get_ticket(
             entity_id,
             client_id=requested_client_id if requested_client_id is not None else AllClients(),
+            include_quarantine=True,
         )
         if ticket is None:
             raise LookupError(entity_id)
+        if ticket.client_id == _QUARANTINE_CLIENT_ID:
+            LOGGER.warning("Skipping event dispatch for quarantined ticket %s", entity_id)
+            return _quarantine_result(
+                idempotency_key=idempotency_key,
+                event_type=event_type,
+                entity_type=entity_type,
+                entity_id=entity_id,
+                payload=payload,
+                client_id=ticket.client_id,
+            )
         effective_client_id = requested_client_id or _normalize_client_id(ticket.client_id)
         delivery, created = self.store.create_event_delivery(
             idempotency_key=idempotency_key,
@@ -109,6 +126,26 @@ class EventDispatcher:
         actor: str = "operator",
     ) -> EventDispatchResult:
         scope = client_id if client_id is not None else AllClients()
+        existing = self.store.get_event_delivery(delivery_id, client_id=scope)
+        if existing is None:
+            raise KeyError(delivery_id)
+        if existing.entity_type.strip().lower() == "ticket":
+            ticket = self.store.get_ticket(
+                existing.entity_id,
+                client_id=AllClients(),
+                include_quarantine=True,
+            )
+            if ticket is not None and ticket.client_id == _QUARANTINE_CLIENT_ID:
+                LOGGER.warning("Skipping event retry for quarantined ticket %s", existing.entity_id)
+                return _quarantine_result(
+                    idempotency_key=existing.idempotency_key,
+                    event_type=existing.event_type,
+                    entity_type=existing.entity_type,
+                    entity_id=existing.entity_id,
+                    payload=self.store.get_event_delivery_payload(delivery_id, client_id=scope),
+                    client_id=existing.client_id,
+                    delivery=existing,
+                )
         delivery = self.store.claim_event_delivery_retry(delivery_id, client_id=scope)
         effective_client_id = delivery.client_id
         payload = self.store.get_event_delivery_payload(
@@ -390,6 +427,44 @@ class EventDispatcher:
             playbook_run_ids=_string_list(delivery.playbook_run_ids_json),
             errors=[delivery.error_detail] if delivery.error_detail else [],
         )
+
+
+def _quarantine_result(
+    *,
+    idempotency_key: str,
+    event_type: str,
+    entity_type: str,
+    entity_id: str,
+    payload: dict[str, object],
+    client_id: str | None,
+    delivery: EventDelivery | None = None,
+) -> EventDispatchResult:
+    if delivery is None:
+        delivery = EventDelivery(
+            id=None,
+            idempotency_key=idempotency_key,
+            event_type=event_type,
+            entity_type=entity_type,
+            entity_id=entity_id,
+            payload_json=json.dumps(payload, sort_keys=True),
+            status="skipped_quarantine",
+            matched_agent_count=0,
+            agent_ids_json="[]",
+            run_ids_json="[]",
+            error_detail="ticket is quarantined pending client mapping",
+            received_at=utc_now(),
+            processed_at="",
+            client_id=client_id,
+        )
+    return EventDispatchResult(
+        delivery=delivery,
+        duplicate=False,
+        matched_agent_ids=[],
+        run_ids=[],
+        matched_playbook_ids=[],
+        playbook_run_ids=[],
+        errors=[],
+    )
 
 
 def _matches_filters(filters: dict[str, object], event_context: dict[str, object]) -> bool:

@@ -10,6 +10,7 @@ execution-observability tables.
 from __future__ import annotations
 
 import json
+import logging
 import time
 import uuid
 from dataclasses import dataclass, field
@@ -31,7 +32,9 @@ from wait_local_agent.rbac import Role
 from wait_local_agent.reports.renderers import redact_text, redact_value
 from wait_local_agent.retrieval import retrieve_sources
 from wait_local_agent.smart_actions import ActionResult, SmartActionService
-from wait_local_agent.store import Store, _normalize_client_id
+from wait_local_agent.store import _QUARANTINE_CLIENT_ID, QuarantinedTicketError, Store, _normalize_client_id
+
+LOGGER = logging.getLogger(__name__)
 
 MAX_AGENT_STEPS = 8
 MAX_AGENT_TIMEOUT_SECONDS = 120.0
@@ -483,11 +486,17 @@ class AgentService:
         if definition.entity_type != SUPPORTED_ENTITY_TYPE:
             raise AgentDefinitionError("agent entity_type is not supported")
         client_id = _normalize_client_id(definition.client_id)
-        if self.store.get_ticket(
+        ticket = self.store.get_ticket(
             entity_id,
             client_id=client_id if client_id is not None else AllClients(),
-        ) is None:
+            include_quarantine=True,
+        )
+        if ticket is None:
             raise AgentDefinitionError("ticket was not found in the agent scope")
+        if ticket.client_id == _QUARANTINE_CLIENT_ID:
+            raise QuarantinedTicketError(
+                f"ticket {entity_id} is quarantined pending client mapping"
+            )
         execution_context = self._build_context(definition, entity_id)
         if supervisor_context:
             execution_context = {
@@ -589,6 +598,10 @@ class AgentService:
         approver_role: Role,
     ) -> AgentExecutionResult:
         if run.status != "pending_approval":
+            return self._result(run)
+        ticket = self.store.get_ticket(run.entity_id, include_quarantine=True)
+        if ticket is not None and ticket.client_id == _QUARANTINE_CLIENT_ID:
+            LOGGER.warning("Skipping agent resume for quarantined ticket %s", run.entity_id)
             return self._result(run)
         definition = self._definition_for_run(definition, run)
         if approver == run.actor:

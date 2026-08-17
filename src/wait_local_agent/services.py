@@ -1,10 +1,14 @@
 from __future__ import annotations
 
+import logging
+
 from wait_local_agent.config import Settings
 from wait_local_agent.models import TicketSummary
 from wait_local_agent.providers import ModelProvider
 from wait_local_agent.retrieval import retrieve_sources
-from wait_local_agent.store import Store
+from wait_local_agent.store import _QUARANTINE_CLIENT_ID, Store
+
+LOGGER = logging.getLogger(__name__)
 
 
 def classify_ticket(subject: str, body: str) -> str:
@@ -25,9 +29,18 @@ class TicketIntelligenceService:
         self.provider = provider
 
     def summarize(self, ticket_id: str) -> TicketSummary:
-        ticket = self.store.get_ticket(ticket_id)
+        ticket = self.store.get_ticket(ticket_id, include_quarantine=True)
         if ticket is None:
             raise KeyError(ticket_id)
+        if ticket.client_id == _QUARANTINE_CLIENT_ID:
+            LOGGER.warning("Skipping ticket intelligence for quarantined ticket %s", ticket_id)
+            return TicketSummary(
+                ticket_id=ticket.id,
+                classification="",
+                summary="",
+                suggested_response="",
+                sources=[],
+            )
         sources = retrieve_sources(
             ticket,
             self.settings.allowed_doc_root,
