@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { AlertTriangle, CheckCircle2, FileJson, PlayCircle, Save, Workflow, XCircle } from "lucide-react";
-import { useDashboard } from "../app/DashboardContext";
+import { executeEndpointFor, useDashboard } from "../app/DashboardContext";
 import type { ApprovalRequest } from "../api/types";
 import { fieldsToText, formatPayload, parseFields } from "../lib/fields";
 
@@ -13,8 +13,7 @@ export function Approvals() {
     updateApproval,
     executeApproval,
     savePayloadFields,
-    workflowFor,
-    liveWritesReady
+    workflowFor
   } = useDashboard();
   const [draftPayloadFields, setDraftPayloadFields] = useState<Record<number, string>>({});
 
@@ -37,7 +36,6 @@ export function Approvals() {
             executeApproval={executeApproval}
             workflowFor={workflowFor}
             setDraftPayloadFields={setDraftPayloadFields}
-            liveWritesReady={liveWritesReady}
           />
         ))}
         {approvalRequests.length === 0 ? <p>No approval requests yet.</p> : null}
@@ -50,11 +48,10 @@ type ApprovalCardProps = {
   request: ApprovalRequest;
   busyId: number | "draft" | null;
   canWrite: boolean;
-  liveWritesReady: boolean;
   draftPayloadFields: Record<number, string>;
   setDraftPayloadFields: (update: (current: Record<number, string>) => Record<number, string>) => void;
   updateApproval: (requestId: number, status: "approved" | "rejected") => Promise<void>;
-  executeApproval: (requestId: number) => Promise<void>;
+  executeApproval: (requestId: number, actionType: string) => Promise<void>;
   savePayloadFields: (request: ApprovalRequest, fields: Record<string, string>) => Promise<void>;
   workflowFor: (request: ApprovalRequest) => { status: string } | undefined;
 };
@@ -63,7 +60,6 @@ function ApprovalCard({
   request,
   busyId,
   canWrite,
-  liveWritesReady,
   draftPayloadFields,
   setDraftPayloadFields,
   updateApproval,
@@ -71,10 +67,10 @@ function ApprovalCard({
   savePayloadFields,
   workflowFor
 }: ApprovalCardProps) {
-  const isHaloApproval = request.action_type.startsWith("halopsa.");
   const payloadText = draftPayloadFields[request.id] ?? fieldsToText(request.payload?.fields);
   const workflow = workflowFor(request);
-  const canExecute = request.can_execute && liveWritesReady;
+  const canExecute = Boolean(request.can_execute);
+  const hasExecuteEndpoint = executeEndpointFor(request.action_type) !== null;
 
   return (
     <div className="approval-card">
@@ -145,9 +141,9 @@ function ApprovalCard({
             Reject
           </button>
           <button
-            disabled={busyId === request.id || request.status !== "approved" || !isHaloApproval || !canExecute}
+            disabled={busyId === request.id || request.status !== "approved" || !canExecute || !hasExecuteEndpoint}
             type="button"
-            onClick={() => void executeApproval(request.id)}
+            onClick={() => void executeApproval(request.id, request.action_type)}
           >
             <PlayCircle size={16} aria-hidden="true" />
             Execute
