@@ -40,6 +40,9 @@ All notable changes to WAIT Local Agent will be documented in this file.
 
 ### Added
 
+- Users can now execute Microsoft 365 and Teams approvals directly from the
+  Approvals screen; execution was previously limited to HaloPSA, and Teams had
+  no UI execute path.
 - HaloPSA and ConnectWise read responses now expose raw/dropped row counts,
   HTTP status, and bounded `Retry-After` metadata so a future poller can
   distinguish a valid empty page from dropped rows, malformed envelopes,

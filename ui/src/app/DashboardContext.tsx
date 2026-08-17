@@ -69,11 +69,27 @@ type DashboardContextValue = {
   selectTicket: (ticketId: string) => void;
   createDraft: (ticketId: string, actionType: string, fields: Record<string, string>) => Promise<void>;
   updateApproval: (requestId: number, status: "approved" | "rejected") => Promise<void>;
-  executeApproval: (requestId: number) => Promise<void>;
+  executeApproval: (requestId: number, actionType: string) => Promise<void>;
   retryEventDelivery: (deliveryId: number) => Promise<void>;
   savePayloadFields: (request: ApprovalRequest, fields: Record<string, string>) => Promise<void>;
   workflowFor: (request: ApprovalRequest) => WorkflowRun | undefined;
 };
+
+export function executeEndpointFor(actionType: string): string | null {
+  if (actionType.startsWith("halopsa.")) {
+    return "/connectors/halopsa/approval-requests/{id}/execute";
+  }
+  if (actionType.startsWith("connectwise.")) {
+    return "/connectors/connectwise/approval-requests/{id}/execute";
+  }
+  if (actionType.startsWith("teams.")) {
+    return "/connectors/m365/teams/approval-requests/{id}/execute";
+  }
+  if (actionType.startsWith("m365.")) {
+    return "/connectors/m365/approval-requests/{id}/execute";
+  }
+  return null;
+}
 
 const DashboardContext = createContext<DashboardContextValue | undefined>(undefined);
 
@@ -228,11 +244,16 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
     }
   }, [refresh]);
 
-  const executeApproval = useCallback(async (requestId: number) => {
+  const executeApproval = useCallback(async (requestId: number, actionType: string) => {
+    const endpoint = executeEndpointFor(actionType);
+    if (endpoint === null) {
+      setStatusMessage("This approval type has no live execute endpoint.");
+      return;
+    }
     setBusyId(requestId);
     try {
       const approval = await apiFetch<ApprovalRequest>(
-        `/connectors/halopsa/approval-requests/${requestId}/execute`,
+        endpoint.replace("{id}", String(requestId)),
         {
           method: "POST",
           headers: { "Content-Type": "application/json" },
