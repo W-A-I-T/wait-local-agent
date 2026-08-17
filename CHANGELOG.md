@@ -6,6 +6,9 @@ All notable changes to WAIT Local Agent will be documented in this file.
 
 ### Security
 
+- Smart-action invoke now rejects caller-supplied `_approval_completed` payload
+  fields to prevent approval-gate bypasses; the invoke route returns 400 for
+  reserved-field and validation errors.
 - Per-connector-instance read clients now resolve credentials only from the
   local vault, isolate provider settings, force read-only behavior, and send
   outbound calls through SSRF-pinned transport.
