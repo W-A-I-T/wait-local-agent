@@ -78,6 +78,7 @@ def test_ingestion_operator_endpoints_list_filter_scope_and_resolve(settings) ->
         }
         for cursor in (cursor_a, cursor_b)
     }
+    assert all("lease_token" not in item and "lease_expires_at" not in item for item in cursors.json())
     assert client.get("/ingestion/sync-cursors", headers=bound_headers).status_code == 403
 
     all_records = client.get("/ingestion/unmapped", headers=operator_headers)

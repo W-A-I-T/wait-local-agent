@@ -69,6 +69,11 @@ All notable changes to WAIT Local Agent will be documented in this file.
   `(connector_instance_id, external_id)` identity index. Provider upserts use a
   frozen deterministic identity and return the persisted legacy ID for history
   and audit writes.
+- Schema migration v6 adds nullable fencing metadata for connector poll
+  cursors. Store-level claims are serialized with `BEGIN IMMEDIATE`, distinguish
+  granted, locked, and missing-instance outcomes, preserve prior progress, and
+  prevent stale workers or legacy cursor writes from overwriting a successor's
+  lease. The poller and scheduler remain out of scope for this slice.
 - A local Clients directory now anchors client identity, connector instances
   can be recorded alongside the existing Settings connector path, and
   external company mappings remain unverified until an operator confirms

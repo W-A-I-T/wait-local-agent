@@ -33,6 +33,7 @@ def test_store_migrations_are_idempotent_and_connection_pragmas_are_safe(tmp_pat
             (3, "provenance_and_ingestion"),
             (4, "canonical_assets_tenant_unique"),
             (5, "ticket_identity_and_tenancy"),
+            (6, "poll_lease"),
         ]
         assert connection.execute("pragma foreign_keys").fetchone()[0] == 1
         assert connection.execute("pragma journal_mode").fetchone()[0].lower() == "wal"
@@ -40,7 +41,7 @@ def test_store_migrations_are_idempotent_and_connection_pragmas_are_safe(tmp_pat
 
     Store(path)
     with sqlite3.connect(path) as connection:
-        assert connection.execute("select count(*) from schema_migrations").fetchone()[0] == 6
+        assert connection.execute("select count(*) from schema_migrations").fetchone()[0] == 7
 
 
 def test_migration_failure_rolls_back_data_and_version_bump(tmp_path: Path) -> None:
