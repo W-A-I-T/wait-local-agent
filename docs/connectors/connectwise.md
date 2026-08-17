@@ -19,3 +19,15 @@ a pending draft, and technician approval. Credentials and provider IDs do not
 come from action payloads. Mocked/fixture tests cover the guarded path; live
 verification is not claimed.
 
+## Read response envelope
+
+ConnectWise read methods retain the existing `result` and `items` values and
+add poll-safe metadata: `raw_count` counts candidate entries before
+normalization, `dropped_count` counts candidates that did not become normalized
+items, `http_status` records the response status when one was received, and
+`retry_after` records a valid seconds or HTTP-date delay for HTTP 429/503.
+Only a valid 2xx empty list is an end-of-page signal. All-dropped pages,
+malformed list envelopes, 3xx responses, blocked or not-configured reads, and
+transport/HTTP failures are not EOF. Normalized subject/company fields are
+capped at 512 characters, descriptions at 8192, and status/priority fields at
+128.

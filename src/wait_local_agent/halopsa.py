@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import math
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
+from datetime import UTC, datetime
+from email.utils import parsedate_to_datetime
 from time import monotonic
 
 import httpx
@@ -13,6 +16,7 @@ from wait_local_agent.models import (
     HaloCategory,
     HaloClient,
     HaloNote,
+    HaloReadResponse,
     HaloReadResult,
     HaloTicket,
     HaloWriteRequest,
@@ -29,9 +33,17 @@ Normalizer = Callable[
 
 
 @dataclass(frozen=True)
-class HaloReadResponse:
-    result: HaloReadResult
-    items: list[HaloTicket | HaloClient | HaloNote | HaloAsset | HaloCategory]
+class _HaloTransportResult:
+    payload: object
+    http_status: int
+    retry_after: float | None = None
+
+
+@dataclass(frozen=True)
+class _HaloPayloadRows:
+    rows: list[Mapping[str, object]]
+    raw_count: int
+    valid: bool
 
 
 class HaloPSAClient:
@@ -87,6 +99,10 @@ class HaloPSAClient:
         return HaloReadResponse(
             HaloReadResult(response.result.status, response.result.message, len(items)),
             items,
+            raw_count=response.raw_count,
+            dropped_count=response.dropped_count,
+            http_status=response.http_status,
+            retry_after=response.retry_after,
         )
 
     def list_clients(self, page: int = 1, page_size: int = DEFAULT_PAGE_SIZE) -> HaloReadResponse:
@@ -119,7 +135,7 @@ class HaloPSAClient:
         }
         if params:
             query.update(params)
-        return self._request_items(endpoint, normalizer, params=query)
+        return self._request_items(endpoint, normalizer, params=query, collection=True)
 
     def _single(self, endpoint: str, normalizer: Normalizer) -> HaloReadResponse:
         blocked_response = self._read_blocked_response()
@@ -136,19 +152,43 @@ class HaloPSAClient:
         normalizer: Normalizer,
         *,
         params: dict[str, QueryValue] | None = None,
+        collection: bool = False,
     ) -> HaloReadResponse:
         try:
-            payload = self._get(endpoint, params=params)
+            transport = self._get(endpoint, params=params)
         except HaloReadError as exc:
-            return HaloReadResponse(HaloReadResult("failed", exc.message), [])
+            return HaloReadResponse(
+                HaloReadResult("failed", exc.message),
+                [],
+                http_status=exc.http_status,
+                retry_after=exc.retry_after,
+            )
 
-        rows = _payload_rows(payload)
-        items = [item for row in rows if (item := normalizer(row)) is not None]
+        parsed = _payload_rows_for_response(transport.payload, collection=collection)
+        if not parsed.valid:
+            return HaloReadResponse(
+                HaloReadResult("failed", f"HaloPSA read from {endpoint} returned an invalid response shape."),
+                [],
+                raw_count=parsed.raw_count,
+                dropped_count=parsed.raw_count,
+                http_status=transport.http_status,
+                retry_after=transport.retry_after,
+            )
+        items = [item for row in parsed.rows if (item := normalizer(row)) is not None]
         status: ConnectorStatusValue = "ready"
         message = f"HaloPSA read succeeded from {endpoint}."
-        return HaloReadResponse(HaloReadResult(status, message, len(items)), items)
+        return HaloReadResponse(
+            HaloReadResult(status, message, len(items)),
+            items,
+            raw_count=parsed.raw_count,
+            dropped_count=parsed.raw_count - len(items),
+            http_status=transport.http_status,
+            retry_after=transport.retry_after,
+        )
 
-    def _get(self, endpoint: str, *, params: dict[str, QueryValue] | None = None) -> object:
+    def _get(
+        self, endpoint: str, *, params: dict[str, QueryValue] | None = None
+    ) -> _HaloTransportResult:
         token = self._access_token()
         with self._client() as client:
             try:
@@ -163,12 +203,24 @@ class HaloPSAClient:
                 ) from exc
             except httpx.HTTPError as exc:
                 raise HaloReadError("HaloPSA request failed.") from exc
-        if response.status_code >= 400:
-            raise HaloReadError(f"HaloPSA GET {endpoint} failed with HTTP {response.status_code}.")
+        if not 200 <= response.status_code < 300:
+            raise HaloReadError(
+                f"HaloPSA GET {endpoint} failed with HTTP {response.status_code}.",
+                http_status=response.status_code,
+                retry_after=_retry_after(response),
+            )
         try:
-            return response.json()
+            payload = response.json()
         except ValueError as exc:
-            raise HaloReadError(f"HaloPSA GET {endpoint} returned malformed JSON.") from exc
+            raise HaloReadError(
+                f"HaloPSA GET {endpoint} returned malformed JSON.",
+                http_status=response.status_code,
+            ) from exc
+        return _HaloTransportResult(
+            payload,
+            response.status_code,
+            _retry_after(response),
+        )
 
     def execute_write(self, request: HaloWriteRequest) -> HaloWriteResult:
         blocked = self._write_blocked_write_result(request)
@@ -272,15 +324,25 @@ class HaloPSAClient:
                 ) from exc
             except httpx.HTTPError as exc:
                 raise HaloReadError("HaloPSA token request failed.") from exc
-        if response.status_code >= 400:
-            raise HaloReadError(f"HaloPSA token request failed with HTTP {response.status_code}.")
+        if not 200 <= response.status_code < 300:
+            raise HaloReadError(
+                f"HaloPSA token request failed with HTTP {response.status_code}.",
+                http_status=response.status_code,
+                retry_after=_retry_after(response),
+            )
         try:
             payload = response.json()
         except ValueError as exc:
-            raise HaloReadError("HaloPSA token request returned malformed JSON.") from exc
+            raise HaloReadError(
+                "HaloPSA token request returned malformed JSON.",
+                http_status=response.status_code,
+            ) from exc
         token = _string_value(payload, "access_token")
         if not token:
-            raise HaloReadError("HaloPSA token response did not include access_token.")
+            raise HaloReadError(
+                "HaloPSA token response did not include access_token.",
+                http_status=response.status_code,
+            )
         self._cached_token = token
         self._cached_token_expires_at = monotonic() + max(_int_value(payload, "expires_in") - 30, 0)
         return token
@@ -360,9 +422,17 @@ HaloPSAReadClient = HaloPSAClient
 
 
 class HaloReadError(Exception):
-    def __init__(self, message: str) -> None:
+    def __init__(
+        self,
+        message: str,
+        *,
+        http_status: int | None = None,
+        retry_after: float | None = None,
+    ) -> None:
         super().__init__(message)
         self.message = message
+        self.http_status = http_status
+        self.retry_after = retry_after
 
 
 def _api_base_url(base_url: str) -> str:
@@ -409,7 +479,59 @@ def _payload_rows(payload: object) -> list[Mapping[str, object]]:
             candidates = [payload]
     else:
         return []
-    return [row for row in candidates if isinstance(row, dict)]
+    return [row for row in candidates if isinstance(row, Mapping)]
+
+
+def _payload_rows_for_response(payload: object, *, collection: bool) -> _HaloPayloadRows:
+    keys = (
+        "tickets",
+        "clients",
+        "notes",
+        "actions",
+        "assets",
+        "categories",
+        "data",
+        "results",
+    )
+    if isinstance(payload, list):
+        candidates = payload
+    elif isinstance(payload, Mapping):
+        present_key = next((key for key in keys if key in payload), None)
+        if present_key is not None:
+            value = payload[present_key]
+            if not isinstance(value, list):
+                return _HaloPayloadRows([], 0, False)
+            candidates = value
+        elif collection:
+            return _HaloPayloadRows([], 0, False)
+        else:
+            candidates = [payload]
+    else:
+        return _HaloPayloadRows([], 0, False)
+    rows = [row for row in candidates if isinstance(row, Mapping)]
+    return _HaloPayloadRows(rows, len(candidates), True)
+
+
+def _retry_after(response: httpx.Response) -> float | None:
+    if response.status_code not in {429, 503}:
+        return None
+    value = response.headers.get("Retry-After")
+    if value is None:
+        return None
+    stripped = value.strip()
+    try:
+        seconds = float(stripped)
+    except ValueError:
+        try:
+            retry_at = parsedate_to_datetime(stripped)
+        except (TypeError, ValueError, OverflowError):
+            return None
+        if retry_at.tzinfo is None:
+            retry_at = retry_at.replace(tzinfo=UTC)
+        return max((retry_at - datetime.now(UTC)).total_seconds(), 0.0)
+    if not math.isfinite(seconds) or seconds < 0:
+        return None
+    return seconds
 
 
 def _normalize_ticket(row: Mapping[str, object]) -> HaloTicket | None:
@@ -418,11 +540,13 @@ def _normalize_ticket(row: Mapping[str, object]) -> HaloTicket | None:
         return None
     return HaloTicket(
         id=ticket_id,
-        summary=_first_string(row, "summary", "title", "subject"),
-        status=_first_string(row, "status", "status_name"),
-        priority=_first_string(row, "priority", "priority_name"),
+        summary=_bounded_text(_first_string(row, "summary", "title", "subject"), 512),
+        status=_bounded_text(_first_string(row, "status", "status_name"), 128),
+        priority=_bounded_text(_first_string(row, "priority", "priority_name"), 128),
         client_id=_first_string(row, "client_id", "customer_id"),
-        client_name=_first_string(row, "client_name", "customer", "customer_name"),
+        client_name=_bounded_text(
+            _first_string(row, "client_name", "customer", "customer_name"), 512
+        ),
     )
 
 
@@ -432,8 +556,8 @@ def _normalize_client(row: Mapping[str, object]) -> HaloClient | None:
         return None
     return HaloClient(
         id=client_id,
-        name=_first_string(row, "name", "client_name", "customer_name"),
-        status=_first_string(row, "status", "status_name"),
+        name=_bounded_text(_first_string(row, "name", "client_name", "customer_name"), 512),
+        status=_bounded_text(_first_string(row, "status", "status_name"), 128),
     )
 
 
@@ -444,7 +568,7 @@ def _normalize_note(row: Mapping[str, object]) -> HaloNote | None:
     return HaloNote(
         id=note_id,
         ticket_id=_first_string(row, "ticket_id", "faultid"),
-        body=_first_string(row, "body", "note", "details", "outcome"),
+        body=_bounded_text(_first_string(row, "body", "note", "details", "outcome"), 8192),
         created_at=_first_string(row, "created_at", "datecreated", "datetime"),
         is_private=_bool_value(row, "is_private", "private", "hiddenfromuser"),
     )
@@ -467,9 +591,9 @@ def _normalize_asset(row: Mapping[str, object]) -> HaloAsset | None:
     return HaloAsset(
         id=asset_id,
         client_id=_first_string(row, "client_id", "customer_id"),
-        name=_first_string(row, "name", "asset_name", "inventory_number"),
+        name=_bounded_text(_first_string(row, "name", "asset_name", "inventory_number"), 512),
         asset_type=_first_string(row, "asset_type", "type", "asset_type_name"),
-        status=_first_string(row, "status", "status_name"),
+        status=_bounded_text(_first_string(row, "status", "status_name"), 128),
     )
 
 
@@ -479,7 +603,7 @@ def _normalize_category(row: Mapping[str, object]) -> HaloCategory | None:
         return None
     return HaloCategory(
         id=category_id,
-        name=_first_string(row, "name", "category", "value", "label"),
+        name=_bounded_text(_first_string(row, "name", "category", "value", "label"), 512),
         parent_id=_first_string(row, "parent_id", "parentid"),
     )
 
@@ -494,6 +618,10 @@ def _first_string(row: Mapping[str, object], *keys: str) -> str:
         if value is not None:
             return str(value)
     return ""
+
+
+def _bounded_text(value: str, limit: int) -> str:
+    return value[:limit]
 
 
 def _string_value(row: object, key: str) -> str:

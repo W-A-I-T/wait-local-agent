@@ -34,6 +34,10 @@ All notable changes to WAIT Local Agent will be documented in this file.
 
 ### Added
 
+- HaloPSA and ConnectWise read responses now expose raw/dropped row counts,
+  HTTP status, and bounded `Retry-After` metadata so a future poller can
+  distinguish a valid empty page from dropped rows, malformed envelopes,
+  blocked reads, redirects, throttling, and provider failures.
 - A Clients directory and app-shell client selector now expose the available
   client context while existing screens retain their current behavior until a
   later client-scoping phase.

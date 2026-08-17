@@ -247,6 +247,96 @@ def test_halopsa_skips_malformed_rows(tmp_path: Path) -> None:
     assert response.items[0].id == "TCK-1"
 
 
+def test_halopsa_read_response_metadata_shape_and_caps(tmp_path: Path) -> None:
+    def read(payload: object, status_code: int = 200, headers: dict[str, str] | None = None):
+        def handler(request: httpx.Request) -> httpx.Response:
+            if request.url.path.endswith("/auth/token"):
+                return httpx.Response(200, json={"access_token": "token-123"})
+            return httpx.Response(status_code, json=payload, headers=headers)
+
+        return HaloPSAReadClient(
+            _settings(tmp_path), transport=httpx.MockTransport(handler)
+        ).list_tickets()
+
+    full = read(
+        {
+            "tickets": [
+                {"id": "T-1", "summary": "one"},
+                {"id": "T-2", "summary": "two"},
+            ]
+        }
+    )
+    dropped = read([{"summary": "missing id"}, "not a mapping"])
+    empty = read([])
+    scalar = read("not a list or envelope")
+    wrong_object = read({"unexpected": []})
+    redirect = read([], status_code=302)
+    throttled = read([], status_code=429, headers={"Retry-After": "12"})
+    failed = read([], status_code=503)
+    expired_date = read(
+        [], status_code=503, headers={"Retry-After": "Thu, 01 Jan 1970 00:00:00 GMT"}
+    )
+
+    assert (full.raw_count, full.dropped_count, full.http_status) == (2, 0, 200)
+    assert dropped.result.status == "ready"
+    assert (dropped.raw_count, dropped.dropped_count, dropped.items) == (2, 2, [])
+    assert empty.result.status == "ready"
+    assert (empty.raw_count, empty.dropped_count) == (0, 0)
+    assert scalar.result.status == "failed"
+    assert wrong_object.result.status == "failed"
+    assert redirect.result.status == "failed"
+    assert redirect.http_status == 302
+    assert throttled.result.status == "failed"
+    assert throttled.http_status == 429
+    assert throttled.retry_after == 12.0
+    assert failed.result.status == "failed"
+    assert failed.http_status == 503
+    assert expired_date.retry_after == 0.0
+
+    long = "x" * 10_000
+    capped = read(
+        {
+            "tickets": [
+                {
+                    "id": "T-long",
+                    "summary": long,
+                    "status": long,
+                    "priority": long,
+                    "client_name": long,
+                }
+            ]
+        }
+    )
+    assert len(capped.items[0].summary) == 512
+    assert len(capped.items[0].status) == 128
+    assert len(capped.items[0].priority) == 128
+    assert len(capped.items[0].client_name) == 512
+
+    def note_handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/auth/token"):
+            return httpx.Response(200, json={"access_token": "token-123"})
+        return httpx.Response(200, json={"actions": [{"id": "N-1", "body": long}]})
+
+    notes = HaloPSAReadClient(
+        _settings(tmp_path), transport=httpx.MockTransport(note_handler)
+    ).list_ticket_notes("T-long")
+    assert isinstance(notes.items[0], HaloNote)
+    assert len(notes.items[0].body) == 8192
+
+
+def test_halopsa_token_request_failure_surfaces_http_metadata(tmp_path: Path) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(429, headers={"Retry-After": "7"}, json={"error": "busy"})
+
+    response = HaloPSAReadClient(
+        _settings(tmp_path), transport=httpx.MockTransport(handler)
+    ).list_tickets()
+
+    assert response.result.status == "failed"
+    assert response.http_status == 429
+    assert response.retry_after == 7.0
+
+
 def test_halopsa_single_payloads_and_boolean_variants(tmp_path: Path) -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         if request.url.path.endswith("/auth/token"):
