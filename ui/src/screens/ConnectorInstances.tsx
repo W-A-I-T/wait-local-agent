@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { apiFetch } from "../api/client";
-import type { ClientConnectorMapping, ConnectorInstance } from "../api/types";
+import type { ClientConnectorMapping, ConnectorInstance, PollSummary } from "../api/types";
 import { useDashboard } from "../app/DashboardContext";
 import { RoleGate } from "../components/RoleGate";
 import { StatusChip } from "../components/StatusChip";
@@ -15,6 +15,9 @@ export function ConnectorInstances() {
   const [error, setError] = useState("");
   const [mappingsLoading, setMappingsLoading] = useState(false);
   const [mappingsError, setMappingsError] = useState("");
+  const [syncingId, setSyncingId] = useState<string | null>(null);
+  const [syncResults, setSyncResults] = useState<Record<string, PollSummary>>({});
+  const [syncErrors, setSyncErrors] = useState<Record<string, string>>({});
   const mappingRequestId = useRef(0);
 
   const loadInstances = useCallback(async () => {
@@ -72,6 +75,29 @@ export function ConnectorInstances() {
   }, []);
 
   const selectedInstance = instances.find((instance) => instance.connector_instance_id === selectedInstanceId);
+
+  const syncInstance = useCallback(async (instance: ConnectorInstance) => {
+    const instanceId = instance.connector_instance_id;
+    setSyncingId(instanceId);
+    setSyncErrors((current) => {
+      const next = { ...current };
+      delete next[instanceId];
+      return next;
+    });
+    try {
+      const summary = await apiFetch<PollSummary>(`/connectors/instances/${encodeURIComponent(instanceId)}/sync`, {
+        method: "POST"
+      });
+      setSyncResults((current) => ({ ...current, [instanceId]: summary }));
+    } catch (requestError) {
+      setSyncErrors((current) => ({ ...current, [instanceId]: syncErrorMessage(requestError) }));
+    } finally {
+      setSyncingId(null);
+    }
+  }, []);
+
+  const selectedSyncResult = selectedInstance ? syncResults[selectedInstance.connector_instance_id] : undefined;
+  const selectedSyncError = selectedInstance ? syncErrors[selectedInstance.connector_instance_id] : undefined;
   const fallback = (
     <section className="panel">
       <div className="panel-heading">
@@ -93,7 +119,7 @@ export function ConnectorInstances() {
           <div>
             <p className="eyebrow">Integrations</p>
             <h2>Connector Instances</h2>
-            <p className="screen-note">Review configured connector instances and their external-company mappings. This screen is read-only.</p>
+            <p className="screen-note">Review configured connector instances, mappings, and on-demand sync results.</p>
           </div>
           <button className="icon-button" type="button" onClick={() => void loadInstances()} disabled={loading}>
             {loading ? "Loading…" : "Refresh"}
@@ -171,47 +197,75 @@ export function ConnectorInstances() {
               <h2 id="connector-mappings-heading">External company mappings</h2>
               <span>{selectedInstance ? selectedInstance.display_name : "Select an instance to inspect its mappings"}</span>
             </div>
-            <span>{selectedInstance ? "Read-only" : "No instance selected"}</span>
+            {selectedInstance ? (
+              <button
+                className="secondary-button"
+                type="button"
+                onClick={() => void syncInstance(selectedInstance)}
+                disabled={syncingId !== null}
+              >
+                {syncingId === selectedInstance.connector_instance_id ? "Syncing…" : "Sync now"}
+              </button>
+            ) : <span>No instance selected</span>}
           </div>
 
           {!selectedInstance ? (
             <p className="screen-note">Select a connector instance above to load its external-company to WAIT-client mappings.</p>
-          ) : mappingsLoading ? (
-            <p className="screen-note" aria-busy="true">Loading mappings…</p>
-          ) : mappingsError ? (
-            <div className="notice danger" role="alert">
-              <span>{mappingsError}</span>
-              <button className="secondary-button" type="button" onClick={() => void selectInstance(selectedInstance)} disabled={mappingsLoading}>Try again</button>
-            </div>
-          ) : mappings.length === 0 ? (
-            <div className="empty-state">
-              <h3>No mappings are configured.</h3>
-              <p>No external companies are mapped to this connector instance.</p>
-            </div>
           ) : (
-            <div className="connector-instances-table-wrap">
-              <table className="connector-instances-table">
-                <thead>
-                  <tr>
-                    <th scope="col">External company</th>
-                    <th scope="col">WAIT client</th>
-                    <th scope="col">Verification</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {mappings.map((mapping) => (
-                    <tr key={mapping.mapping_id}>
-                      <td>
-                        <strong>{mapping.external_company_name || mapping.external_company_id}</strong>
-                        {mapping.external_company_name ? <code>{mapping.external_company_id}</code> : null}
-                      </td>
-                      <td>{mapping.client_id}</td>
-                      <td><VerificationBadge verified={mapping.verified === 1} /></td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
+            <>
+              {selectedSyncError ? (
+                <div className="notice danger" role="alert">
+                  <span>{selectedSyncError}</span>
+                </div>
+              ) : null}
+              {selectedSyncResult ? (
+                <div className="connector-summary" aria-label="Connector sync summary">
+                  <strong>Sync result</strong>
+                  <span>Status: {selectedSyncResult.status}</span>
+                  <span>Written: {selectedSyncResult.written}</span>
+                  <span>Quarantined: {selectedSyncResult.quarantined}</span>
+                  <span>Pages fetched: {selectedSyncResult.pages_fetched}</span>
+                  <span>Reason: {selectedSyncResult.reason || "None reported"}</span>
+                </div>
+              ) : null}
+              {mappingsLoading ? (
+                <p className="screen-note" aria-busy="true">Loading mappings…</p>
+              ) : mappingsError ? (
+                <div className="notice danger" role="alert">
+                  <span>{mappingsError}</span>
+                  <button className="secondary-button" type="button" onClick={() => void selectInstance(selectedInstance)} disabled={mappingsLoading}>Try again</button>
+                </div>
+              ) : mappings.length === 0 ? (
+                <div className="empty-state">
+                  <h3>No mappings are configured.</h3>
+                  <p>No external companies are mapped to this connector instance.</p>
+                </div>
+              ) : (
+                <div className="connector-instances-table-wrap">
+                  <table className="connector-instances-table">
+                    <thead>
+                      <tr>
+                        <th scope="col">External company</th>
+                        <th scope="col">WAIT client</th>
+                        <th scope="col">Verification</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {mappings.map((mapping) => (
+                        <tr key={mapping.mapping_id}>
+                          <td>
+                            <strong>{mapping.external_company_name || mapping.external_company_id}</strong>
+                            {mapping.external_company_name ? <code>{mapping.external_company_id}</code> : null}
+                          </td>
+                          <td>{mapping.client_id}</td>
+                          <td><VerificationBadge verified={mapping.verified === 1} /></td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </>
           )}
         </section>
       </div>
@@ -225,4 +279,20 @@ function PresenceBadge({ configured }: { configured: boolean }) {
 
 function VerificationBadge({ verified }: { verified: boolean }) {
   return <span className={`status-chip ${verified ? "ok" : "warn"}`}>{verified ? "Verified" : "Unverified"}</span>;
+}
+
+function syncErrorMessage(error: unknown): string {
+  if (!(error instanceof Error)) {
+    return "Unable to sync this connector instance.";
+  }
+
+  const status = "status" in error && typeof error.status === "number" ? error.status : undefined;
+  if (status === 409 && "technicalDetail" in error && typeof error.technicalDetail === "string") {
+    const separator = error.technicalDetail.lastIndexOf(": ");
+    const detail = separator >= 0 ? error.technicalDetail.slice(separator + 2) : error.technicalDetail;
+    if (detail) {
+      return detail;
+    }
+  }
+  return error.message;
 }
