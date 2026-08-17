@@ -62,6 +62,7 @@ from wait_local_agent.collectors import (
 from wait_local_agent.communication import ConfiguredCommunicationProvider
 from wait_local_agent.config import Settings, load_settings
 from wait_local_agent.confluence import ConfluenceClient, ConfluenceReadResponse
+from wait_local_agent.connector_factory import ConnectorFactoryError
 from wait_local_agent.connectors import (
     draft_connectwise_ticket_action,
     draft_halopsa_ticket_action,
@@ -121,6 +122,7 @@ from wait_local_agent.founder_bundle import PrivacyViolation
 from wait_local_agent.governance import GovernanceValidationError, evaluate_solution_governance
 from wait_local_agent.halopsa import HaloPSAClient, HaloReadResponse
 from wait_local_agent.hudu import HuduClient, HuduReadResponse
+from wait_local_agent.ingestion_poller import IngestionPoller
 from wait_local_agent.itglue import ItGlueClient, ItGlueReadResponse
 from wait_local_agent.knowledge import ingestion_service_from_settings
 from wait_local_agent.lp_client import (
@@ -1404,6 +1406,35 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         if instance is None:
             raise HTTPException(status_code=404, detail="connector instance not found")
         return asdict(instance)
+
+    @app.post("/connectors/instances/{connector_instance_id}/sync")
+    def connector_instance_sync_now(
+        connector_instance_id: str,
+        context: AdminAccess,
+    ) -> dict[str, object]:
+        _require_msp_operator(context)
+        instance = store.get_connector_instance(connector_instance_id)
+        if instance is None:
+            raise HTTPException(status_code=404, detail="connector instance not found")
+        if not active_settings.allow_http_probing:
+            raise HTTPException(status_code=409, detail="connector read probing is disabled")
+        if str(instance.status).strip().lower() != "active":
+            raise HTTPException(status_code=409, detail="connector instance is not active")
+        poller = IngestionPoller(store, base_settings=active_settings)
+        try:
+            summary = poller.poll_instance(
+                connector_instance_id,
+                max_pages=25,
+                page_size=50,
+                deadline_seconds=60.0,
+                lease_ttl_seconds=300.0,
+            )
+        except (ConnectorFactoryError, KeyError, ValueError) as exc:
+            raise HTTPException(status_code=409, detail="connector sync could not run") from exc
+        store.add_audit_event(
+            "connector.sync_triggered", connector_instance_id, f"manual sync -> {summary.status}"
+        )
+        return asdict(summary)
 
     @app.get("/client-connector-mappings")
     def client_connector_mappings(
