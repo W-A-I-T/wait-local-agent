@@ -2272,6 +2272,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             )
         except KeyError as exc:
             raise HTTPException(status_code=404, detail="smart action not found") from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
         return asdict(result)
 
     @app.post("/technician/chat")

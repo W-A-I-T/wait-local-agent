@@ -8,8 +8,10 @@ from typing import cast
 
 import httpx
 import pytest
+from fastapi.testclient import TestClient
 
 from tests.support import ensure_test_client, ensure_test_clients, ingest_local
+from wait_local_agent.api.app import create_app
 from wait_local_agent.collectors import CollectorPreview
 from wait_local_agent.confluence import ConfluencePage
 from wait_local_agent.itglue import ItGlueDocument
@@ -3928,6 +3930,84 @@ def test_dispatch_requires_approval_and_completes_after_approval(settings) -> No
     assert isinstance(completed.output["recommendation"], dict)
     assert completed.output["recommendation"]["technician_id"] == "tech-a"
     assert store.get_smart_action_run(pending.run_id).status == "success"  # type: ignore[union-attr]
+
+
+def test_invoke_rejects_approval_completed_and_preserves_approval_flow(settings) -> None:
+    class FakeHaloWrites:
+        def __init__(self) -> None:
+            self.calls: list[object] = []
+
+        def write_health(self):
+            return SimpleNamespace(status="ready", message="write ready")
+
+        def execute_write(self, request):
+            self.calls.append(request)
+            return SimpleNamespace(
+                status="succeeded",
+                message="write completed",
+                status_code=200,
+                remote_id="remote-1",
+            )
+
+    store = Store(settings.data_path)
+    _seed_tickets(store)
+    provider = FakeHaloWrites()
+    service = SmartActionService(store, settings, halopsa_client=provider)
+    payload = {
+        "ticket_id": "TCK-1001",
+        "fields": {"note": "approved note"},
+        "_approval_completed": True,
+    }
+
+    with pytest.raises(ValueError, match="_approval_completed"):
+        service.invoke("halopsa-ticket-add-note", payload, "requester")
+    assert provider.calls == []
+
+    pending = service.invoke(
+        "halopsa-ticket-add-note",
+        {"ticket_id": "TCK-1001", "fields": {"note": "approved note"}},
+        "requester",
+    )
+    assert pending.status == "pending_approval"
+    assert pending.approval_id is not None
+    service.update_approval(
+        pending.approval_id,
+        "approved",
+        approver="approver",
+        approver_role=Role.TECHNICIAN,
+    )
+    completed = service.complete_approval(
+        pending.approval_id,
+        approver="approver",
+        approver_role=Role.TECHNICIAN,
+    )
+
+    assert completed is not None
+    assert completed.status == "success"
+    assert len(provider.calls) == 1
+
+
+def test_api_invoke_maps_reserved_payload_error_to_bad_request(settings) -> None:
+    response = TestClient(create_app(settings)).post(
+        "/smart-actions/ticket-triage/invoke",
+        json={"payload": {"_approval_completed": True}},
+    )
+
+    assert response.status_code == 400
+    assert response.json()["detail"] == "reserved payload field '_approval_completed' is not permitted"
+
+
+def test_invoke_accepts_benign_payload(settings) -> None:
+    store = Store(settings.data_path)
+    _seed_tickets(store)
+
+    result = SmartActionService(store, settings).invoke(
+        "ticket-triage",
+        {"ticket_id": "TCK-1001"},
+        "technician",
+    )
+
+    assert result.status == "success"
 
 
 def test_read_only_smart_action_can_be_made_approval_gated(settings) -> None:

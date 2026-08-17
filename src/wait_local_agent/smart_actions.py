@@ -9185,6 +9185,8 @@ class SmartActionService:
         approval_expiry_seconds: int | None = None,
         require_approval: bool = False,
     ) -> ActionResult:
+        if "_approval_completed" in payload:
+            raise ValueError("reserved payload field '_approval_completed' is not permitted")
         action = self.registry.get(action_id)
         normalized_id = action.manifest.action_id
         if approval_expiry_seconds is not None and (
