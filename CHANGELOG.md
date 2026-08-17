@@ -40,6 +40,10 @@ All notable changes to WAIT Local Agent will be documented in this file.
 
 ### Added
 
+- Founder Launch Passport scans now return a deterministic scan-to-scan delta
+  for dependencies, manifests, and files, including added, removed, changed,
+  and unknown classifications plus a predecessor link.
+
 - Users can now execute Microsoft 365 and Teams approvals directly from the
   Approvals screen; execution was previously limited to HaloPSA, and Teams had
   no UI execute path.

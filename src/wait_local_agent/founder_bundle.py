@@ -1,3 +1,5 @@
+"""Build and compare privacy-preserving founder evidence bundles."""
+
 from __future__ import annotations
 
 import hashlib
@@ -149,6 +151,77 @@ def bundle_hash(bundle: dict[str, Any]) -> str:
     sanitized = sanitize_bundle(bundle)
     serialized = json.dumps(sanitized, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
     return hashlib.sha256(serialized.encode("utf-8")).hexdigest()
+
+
+def compute_bundle_delta(previous: dict[str, Any] | None, current: dict[str, Any]) -> dict[str, Any]:
+    """Return a deterministic delta for the supported founder bundle modules.
+
+    A first scan intentionally reports no additions because there is no prior
+    observation to compare.  An empty or missing current module with prior
+    observations is reported as unknown rather than as removal: collection may
+    have failed for that module.
+    """
+    module_names = ("dependencies", "manifests", "files")
+    empty_module = {"added": [], "removed": [], "changed": [], "unknown": [], "unchanged_count": 0}
+    if previous is None:
+        return {
+            "schemaVersion": "founder_delta_v1",
+            "first_scan": True,
+            "modules": {name: dict(empty_module) for name in module_names},
+            "counts": {"added": 0, "removed": 0, "changed": 0, "unknown": 0},
+        }
+
+    previous_maps = {name: _delta_module_map(previous, name) for name in module_names}
+    current_maps = {name: _delta_module_map(current, name) for name in module_names}
+    modules: dict[str, dict[str, Any]] = {}
+    totals = {"added": 0, "removed": 0, "changed": 0, "unknown": 0}
+
+    for name in module_names:
+        before = previous_maps[name]
+        after = current_maps[name]
+        subjects = sorted(set(before) | set(after))
+        current_uncollected = bool(before) and not after
+        added = sorted(subject for subject in subjects if subject not in before and not current_uncollected)
+        removed = sorted(
+            subject for subject in subjects if subject not in after and subject in before and not current_uncollected
+        )
+        unknown = sorted(
+            subject for subject in subjects if subject in before and subject not in after and current_uncollected
+        )
+        changed = [
+            {"subject": subject, "from": before[subject], "to": after[subject]}
+            for subject in subjects
+            if subject in before and subject in after and before[subject] != after[subject]
+        ]
+        unchanged_count = sum(
+            1 for subject in subjects if subject in before and subject in after and before[subject] == after[subject]
+        )
+        modules[name] = {
+            "added": added,
+            "removed": removed,
+            "changed": changed,
+            "unknown": unknown,
+            "unchanged_count": unchanged_count,
+        }
+        for key in totals:
+            totals[key] += len(modules[name][key]) if key != "unchanged_count" else 0
+
+    return {"schemaVersion": "founder_delta_v1", "first_scan": False, "modules": modules, "counts": totals}
+
+
+def _delta_module_map(bundle: dict[str, Any], module: str) -> dict[str, Any]:
+    if module == "dependencies":
+        dependencies = bundle.get("dependencies")
+        names = dependencies.get("productionDependencies") if isinstance(dependencies, dict) else None
+        return {name: True for name in names if isinstance(name, str)} if isinstance(names, list) else {}
+    entries = bundle.get("manifests" if module == "manifests" else "hashes")
+    if not isinstance(entries, list):
+        return {}
+    entries_by_path: list[tuple[str, str]] = []
+    for item in entries:
+        if isinstance(item, dict) and isinstance(item.get("path"), str) and isinstance(item.get("sha256"), str):
+            entries_by_path.append((str(item["path"]), str(item["sha256"])))
+    return {path: digest for path, digest in sorted(entries_by_path)}
 
 
 def sanitize_bundle(bundle: dict[str, Any]) -> dict[str, Any]:

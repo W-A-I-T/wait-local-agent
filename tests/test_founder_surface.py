@@ -30,7 +30,12 @@ from wait_local_agent.api.founder import (
     resolve_open_config,
 )
 from wait_local_agent.api.packs.loader import LoadedPack
-from wait_local_agent.founder_bundle import PrivacyViolation, build_founder_bundle, sanitize_bundle
+from wait_local_agent.founder_bundle import (
+    PrivacyViolation,
+    build_founder_bundle,
+    compute_bundle_delta,
+    sanitize_bundle,
+)
 from wait_local_agent.lp_client import (
     LaunchPassportClient,
     LaunchPassportForbidden,
@@ -293,6 +298,76 @@ def test_bundle_builder_uses_hashes_and_never_file_contents(tmp_path: Path) -> N
     assert isinstance(bundle["dependencies"], dict)
     assert isinstance(bundle["findings"], dict)
     assert bundle["environment"]["keys"] == {}
+
+
+def test_compute_bundle_delta_is_deterministic_and_tracks_module_changes() -> None:
+    previous = {
+        "dependencies": {"productionDependencies": ["zeta", "same", "removed"]},
+        "manifests": [{"path": "z.json", "sha256": "old-z"}, {"path": "same.json", "sha256": "same"}],
+        "hashes": [{"path": "z.py", "sha256": "old-z"}, {"path": "same.py", "sha256": "same"}],
+    }
+    current = {
+        "dependencies": {"productionDependencies": ["same", "added"]},
+        "manifests": [{"path": "same.json", "sha256": "same"}, {"path": "z.json", "sha256": "new-z"}],
+        "hashes": [{"path": "same.py", "sha256": "same"}, {"path": "added.py", "sha256": "new-a"}],
+    }
+    shuffled = {
+        "dependencies": {"productionDependencies": ["added", "same"]},
+        "manifests": [{"sha256": "same", "path": "same.json"}, {"sha256": "new-z", "path": "z.json"}],
+        "hashes": [{"sha256": "new-a", "path": "added.py"}, {"sha256": "same", "path": "same.py"}],
+    }
+    delta = compute_bundle_delta(previous, current)
+    assert delta == compute_bundle_delta(previous, shuffled)
+    assert delta["modules"]["dependencies"] == {
+        "added": ["added"], "removed": ["removed", "zeta"], "changed": [], "unknown": [], "unchanged_count": 1
+    }
+    assert delta["modules"]["manifests"]["changed"] == [{"subject": "z.json", "from": "old-z", "to": "new-z"}]
+    assert delta["modules"]["files"]["added"] == ["added.py"]
+    assert delta["modules"]["files"]["removed"] == ["z.py"]
+    assert delta["modules"]["files"]["unchanged_count"] == 1
+    assert delta["counts"] == {"added": 2, "removed": 3, "changed": 1, "unknown": 0}
+
+
+def test_compute_bundle_delta_first_scan_and_unknown_modules() -> None:
+    first = compute_bundle_delta(None, {"dependencies": {"productionDependencies": ["new"]}})
+    assert first["first_scan"] is True
+    assert all(module["added"] == [] and module["unchanged_count"] == 0 for module in first["modules"].values())
+
+    unknown = compute_bundle_delta(
+        {
+            "dependencies": {"productionDependencies": ["dep"]},
+            "manifests": [{"path": "a", "sha256": "1"}],
+            "hashes": [{"path": "a", "sha256": "1"}],
+        },
+        {"dependencies": {"productionDependencies": []}, "manifests": [], "hashes": []},
+    )
+    unknown_modules = cast(dict[str, dict[str, Any]], unknown["modules"])
+    assert unknown_modules["dependencies"]["unknown"] == ["dep"]
+    assert unknown_modules["manifests"]["unknown"] == ["a"]
+    assert unknown_modules["files"]["unknown"] == ["a"]
+    assert unknown["counts"] == {"added": 0, "removed": 0, "changed": 0, "unknown": 3}
+
+
+def test_open_founder_scan_returns_delta_and_predecessor(settings, tmp_path: Path) -> None:
+    project = tmp_path / "project"
+    project.mkdir()
+    target = project / "app.py"
+    target.write_text("one", encoding="utf-8")
+    store = Store(settings.data_path)
+    config = {"lp_project_id": "project-1"}
+
+    first = founder_module.open_founder_scan(store, settings, config, project)
+    assert first["predecessor"] is None
+    first_delta = cast(dict[str, Any], first["delta"])
+    assert first_delta["first_scan"] is True
+    target.write_text("two", encoding="utf-8")
+    second = founder_module.open_founder_scan(store, settings, config, project)
+    predecessor = cast(dict[str, str], second["predecessor"])
+    assert predecessor["artifact_id"] == first["artifact_id"]
+    assert predecessor["bundle_hash"] == first["bundle_hash"]
+    second_delta = cast(dict[str, Any], second["delta"])
+    assert second_delta["first_scan"] is False
+    assert cast(dict[str, Any], second_delta["modules"])["files"]["changed"]
 
 
 def test_sanitize_bundle_scrubs_finding_text_and_dependency_url_credentials() -> None:

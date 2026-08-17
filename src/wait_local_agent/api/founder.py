@@ -13,7 +13,13 @@ from pydantic import BaseModel
 
 from wait_local_agent.api.packs.loader import LoadedPack, get_pack
 from wait_local_agent.config import Settings
-from wait_local_agent.founder_bundle import PrivacyViolation, build_founder_bundle, bundle_hash, sanitize_bundle
+from wait_local_agent.founder_bundle import (
+    PrivacyViolation,
+    build_founder_bundle,
+    bundle_hash,
+    compute_bundle_delta,
+    sanitize_bundle,
+)
 from wait_local_agent.lp_client import (
     LAUNCH_PASSPORT_CONNECTION_STATES,
     LAUNCH_PASSPORT_SCAN_STATES,
@@ -325,6 +331,13 @@ def open_founder_scan(
         bundle_hash=digest,
         bundle=bundle,
     )
+    prior = [
+        artifact
+        for artifact in store.list_founder_artifacts(config["lp_project_id"])
+        if artifact["artifact_id"] != artifact_id
+    ]
+    predecessor = prior[0] if prior else None
+    delta = compute_bundle_delta(cast(dict[str, Any], predecessor["bundle"]) if predecessor else None, bundle)
     return {
         "artifact_id": artifact_id,
         "project_id": config["lp_project_id"],
@@ -335,6 +348,12 @@ def open_founder_scan(
         "env_key_count": len(cast(list[object], bundle.get("environment", {}).get("keys", [])))
         if isinstance(bundle.get("environment"), dict)
         else 0,
+        "delta": delta,
+        "predecessor": (
+            {"artifact_id": predecessor["artifact_id"], "bundle_hash": predecessor["bundle_hash"]}
+            if predecessor
+            else None
+        ),
     }
 
 
