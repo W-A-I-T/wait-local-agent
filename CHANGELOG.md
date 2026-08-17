@@ -27,6 +27,9 @@ All notable changes to WAIT Local Agent will be documented in this file.
 
 ### Added
 
+- Administrators can now confirm connector mappings with the re-tenant count,
+  review quarantined tickets by connector, and reclassify tickets from the
+  Operations → Sync / Reconciliation Center.
 - Connector-ingested tickets now resolve their client from verified connector
   mappings and persist unresolved records in the reviewable quarantine tenant;
   mapping verification re-tenants matching tickets. Ticket identity is stable

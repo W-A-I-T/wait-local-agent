@@ -52,6 +52,27 @@ export type ClientConnectorMapping = {
   updated_at: string;
 };
 
+export type MappingVerifyResult = ClientConnectorMapping & {
+  retenanted_count: number;
+};
+
+export type QuarantinedTicket = {
+  id: string;
+  client: string;
+  subject: string;
+  body: string;
+  priority: string;
+  status: string;
+  client_id: string | null;
+  requester_id: string | null;
+  created_at: string;
+  updated_at: string;
+  source_system: string | null;
+  connector_instance_id: string | null;
+  external_id: string | null;
+  external_client_id: string | null;
+};
+
 export type HaloReadResult = {
   status: string;
   message: string;

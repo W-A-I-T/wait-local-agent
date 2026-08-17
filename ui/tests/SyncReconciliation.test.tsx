@@ -2,7 +2,7 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { Sidebar } from "../src/app/Sidebar";
-import type { UnmappedRecord } from "../src/api/types";
+import type { ClientConnectorMapping, QuarantinedTicket, UnmappedRecord } from "../src/api/types";
 import { SyncReconciliation } from "../src/screens/SyncReconciliation";
 
 const dashboard = vi.hoisted(() => ({
@@ -44,6 +44,40 @@ const record: UnmappedRecord = {
   created_at: "2026-08-16T09:30:00Z",
   resolved_at: null
 };
+
+const mapping: ClientConnectorMapping = {
+  mapping_id: "mapping-1",
+  connector_instance_id: "ci-halo-1",
+  external_company_id: "external-company-42",
+  external_company_name: "Acme External",
+  client_id: "acme",
+  verified: 0,
+  created_at: "2026-08-16T08:00:00Z",
+  updated_at: "2026-08-16T08:00:00Z"
+};
+
+const quarantinedTicket: QuarantinedTicket = {
+  id: "ticket-quarantine-1",
+  client: "Unmapped / Quarantine",
+  subject: "Ticket awaiting mapping",
+  body: "Ticket body",
+  priority: "high",
+  status: "quarantined",
+  client_id: "__quarantine__",
+  requester_id: "requester-1",
+  created_at: "2026-08-16T09:45:00Z",
+  updated_at: "2026-08-16T09:45:00Z",
+  source_system: "halopsa",
+  connector_instance_id: "ci-halo-1",
+  external_id: "ticket-external-1",
+  external_client_id: "external-company-42"
+};
+
+const clients = [
+  { client_id: "acme", name: "Acme MSP", status: "active", created_at: "2026-08-01T00:00:00Z", updated_at: "2026-08-01T00:00:00Z" },
+  { client_id: "inactive-client", name: "Inactive Client", status: "inactive", created_at: "2026-08-01T00:00:00Z", updated_at: "2026-08-01T00:00:00Z" },
+  { client_id: "__quarantine__", name: "Unmapped / Quarantine", status: "quarantine", created_at: "2026-08-01T00:00:00Z", updated_at: "2026-08-01T00:00:00Z" }
+];
 
 afterEach(() => {
   dashboard.role = "admin";
@@ -90,6 +124,8 @@ describe("Sync / Reconciliation screen", () => {
       if (path === "/ingestion/sync-cursors") return jsonResponse(cursors);
       if (path === "/ingestion/unmapped") return jsonResponse(currentRecords);
       if (path === "/connector-instances") return jsonResponse(instances);
+      if (path === "/client-connector-mappings") return jsonResponse([]);
+      if (path === "/clients") return jsonResponse(clients);
       if (path === "/ingestion/unmapped/unmapped-1/resolve") {
         expect(init?.method).toBe("POST");
         currentRecords = [{ ...record, resolved_at: "2026-08-16T10:00:00Z" }];
@@ -123,6 +159,8 @@ describe("Sync / Reconciliation screen", () => {
       if (path === "/ingestion/sync-cursors") return jsonResponse(cursors);
       if (path === "/ingestion/unmapped") return jsonResponse([record]);
       if (path === "/connector-instances") return jsonResponse(instances);
+      if (path === "/client-connector-mappings") return jsonResponse([]);
+      if (path === "/clients") return jsonResponse(clients);
       if (path === "/ingestion/unmapped/unmapped-1/resolve") {
         expect(init?.method).toBe("POST");
         return new Response(JSON.stringify({ detail: "resolve unavailable" }), { status: 503 });
@@ -145,6 +183,7 @@ describe("Sync / Reconciliation screen", () => {
     render(<MemoryRouter><SyncReconciliation /></MemoryRouter>);
     expect(await screen.findByText("All connectors mapped — nothing quarantined.")).toBeInTheDocument();
     expect(screen.getByText("No sync cursors are recorded.")).toBeInTheDocument();
+    expect(screen.getByText("No mappings awaiting verification.")).toBeInTheDocument();
     expect(emptyFetch).toHaveBeenCalledWith("/ingestion/unmapped", expect.anything());
 
     vi.unstubAllGlobals();
@@ -158,6 +197,127 @@ describe("Sync / Reconciliation screen", () => {
     fireEvent.click(screen.getByRole("button", { name: "Refresh" }));
     expect(await screen.findByRole("alert")).toHaveTextContent("The appliance couldn't complete the request. Try again shortly.");
     expect(screen.getByRole("button", { name: "Try again" })).toBeInTheDocument();
+  });
+
+  it("confirms a pending mapping, refetches, and surfaces the re-tenant count", async () => {
+    let currentMappings = [mapping];
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const path = String(input);
+      if (path === "/ingestion/sync-cursors") return jsonResponse(cursors);
+      if (path === "/ingestion/unmapped") return jsonResponse([]);
+      if (path === "/connector-instances") return jsonResponse(instances);
+      if (path === "/client-connector-mappings") return jsonResponse(currentMappings);
+      if (path === "/clients") return jsonResponse(clients);
+      if (path === "/client-connector-mappings/mapping-1/verify") {
+        expect(init?.method).toBe("POST");
+        currentMappings = [{ ...mapping, verified: 1 }];
+        return jsonResponse({ ...currentMappings[0], retenanted_count: 3 });
+      }
+      throw new Error(`Unexpected request: ${path}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(<MemoryRouter><SyncReconciliation /></MemoryRouter>);
+    await screen.findByText("Acme External");
+    fireEvent.click(screen.getByRole("button", { name: "Confirm mapping mapping-1" }));
+    expect(screen.getByRole("alertdialog")).toHaveTextContent("Confirm this connector mapping?");
+    fireEvent.click(screen.getByRole("button", { name: "Confirm" }));
+
+    expect(await screen.findByRole("status")).toHaveTextContent(
+      "Mapping verified — 3 quarantined tickets re-tenanted."
+    );
+    expect(fetchMock.mock.calls.filter(([input]) => String(input) === "/client-connector-mappings")).toHaveLength(2);
+    expect(screen.getByText("No mappings awaiting verification.")).toBeInTheDocument();
+  });
+
+  it("keeps a pending mapping and shows the friendly danger notice on a 409 verify", async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const path = String(input);
+      if (path === "/ingestion/sync-cursors") return jsonResponse(cursors);
+      if (path === "/ingestion/unmapped") return jsonResponse([]);
+      if (path === "/connector-instances") return jsonResponse(instances);
+      if (path === "/client-connector-mappings") return jsonResponse([mapping]);
+      if (path === "/clients") return jsonResponse(clients);
+      if (path === "/client-connector-mappings/mapping-1/verify") {
+        expect(init?.method).toBe("POST");
+        return jsonResponse({ detail: "mapping state changed" }, 409);
+      }
+      throw new Error(`Unexpected request: ${path}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(<MemoryRouter><SyncReconciliation /></MemoryRouter>);
+    await screen.findByText("Acme External");
+    fireEvent.click(screen.getByRole("button", { name: "Confirm mapping mapping-1" }));
+    fireEvent.click(screen.getByRole("button", { name: "Confirm" }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "That action conflicts with the appliance's current state. Refresh and try again."
+    );
+    expect(screen.getByText("Acme External")).toBeInTheDocument();
+  });
+
+  it("reclassifies a quarantined ticket with the selected client and refetches", async () => {
+    let currentTickets = [quarantinedTicket];
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const path = String(input);
+      if (path === "/ingestion/sync-cursors") return jsonResponse(cursors);
+      if (path === "/ingestion/unmapped") return jsonResponse([]);
+      if (path === "/connector-instances") return jsonResponse(instances);
+      if (path === "/client-connector-mappings") return jsonResponse([]);
+      if (path === "/clients") return jsonResponse([...clients, { ...clients[0], client_id: "beta", name: "Beta Client" }]);
+      if (path === "/ingestion/quarantined?connector_instance_id=ci-halo-1") return jsonResponse(currentTickets);
+      if (path === "/ingestion/quarantined/ticket-quarantine-1/reclassify") {
+        expect(init?.method).toBe("POST");
+        expect(JSON.parse(String(init?.body))).toEqual({ client_id: "beta" });
+        currentTickets = [];
+        return jsonResponse({ ticket_id: quarantinedTicket.id, client_id: "beta" });
+      }
+      throw new Error(`Unexpected request: ${path}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(<MemoryRouter><SyncReconciliation /></MemoryRouter>);
+    await screen.findByText("No mappings awaiting verification.");
+    fireEvent.change(screen.getByRole("combobox", { name: "Quarantined ticket connector" }), { target: { value: "ci-halo-1" } });
+    await screen.findByText("Ticket awaiting mapping");
+    fireEvent.click(screen.getByRole("button", { name: "Reclassify ticket ticket-quarantine-1" }));
+    fireEvent.change(screen.getByRole("combobox", { name: "Target client" }), { target: { value: "beta" } });
+    fireEvent.click(screen.getByRole("button", { name: "Confirm" }));
+
+    await waitFor(() => expect(screen.queryByText("Ticket awaiting mapping")).not.toBeInTheDocument());
+    expect(screen.getByRole("status")).toHaveTextContent("Quarantined ticket reclassified.");
+    expect(fetchMock.mock.calls.filter(([input]) => String(input) === "/ingestion/quarantined?connector_instance_id=ci-halo-1")).toHaveLength(2);
+  });
+
+  it("keeps a quarantined ticket and shows the friendly danger notice on a 400 reclassify", async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const path = String(input);
+      if (path === "/ingestion/sync-cursors") return jsonResponse(cursors);
+      if (path === "/ingestion/unmapped") return jsonResponse([]);
+      if (path === "/connector-instances") return jsonResponse(instances);
+      if (path === "/client-connector-mappings") return jsonResponse([]);
+      if (path === "/clients") return jsonResponse(clients);
+      if (path === "/ingestion/quarantined?connector_instance_id=ci-halo-1") return jsonResponse([quarantinedTicket]);
+      if (path === "/ingestion/quarantined/ticket-quarantine-1/reclassify") {
+        expect(init?.method).toBe("POST");
+        return jsonResponse({ detail: "inactive client" }, 400);
+      }
+      throw new Error(`Unexpected request: ${path}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(<MemoryRouter><SyncReconciliation /></MemoryRouter>);
+    await screen.findByText("No mappings awaiting verification.");
+    fireEvent.change(screen.getByRole("combobox", { name: "Quarantined ticket connector" }), { target: { value: "ci-halo-1" } });
+    await screen.findByText("Ticket awaiting mapping");
+    fireEvent.click(screen.getByRole("button", { name: "Reclassify ticket ticket-quarantine-1" }));
+    fireEvent.click(screen.getByRole("button", { name: "Confirm" }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "The request could not be completed. Check the details and try again."
+    );
+    expect(screen.getByText("Ticket awaiting mapping")).toBeInTheDocument();
   });
 
   it("does not load or expose the surface to viewers", async () => {
@@ -200,14 +360,17 @@ function stubData({ records, cursorRows = cursors }: { records: Array<typeof rec
     if (path === "/ingestion/sync-cursors") return jsonResponse(cursorRows);
     if (path === "/ingestion/unmapped") return jsonResponse(records);
     if (path === "/connector-instances") return jsonResponse(instances);
+    if (path === "/client-connector-mappings") return jsonResponse([]);
+    if (path === "/clients") return jsonResponse(clients);
     throw new Error(`Unexpected request: ${path}`);
   });
   vi.stubGlobal("fetch", fetchMock);
   return fetchMock;
 }
 
-function jsonResponse(payload: unknown): Response {
+function jsonResponse(payload: unknown, status = 200): Response {
   return new Response(JSON.stringify(payload), {
+    status,
     headers: { "Content-Type": "application/json" }
   });
 }
