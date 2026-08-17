@@ -28,11 +28,13 @@ import { Events } from "./screens/Events";
 import { Schedules } from "./screens/Schedules";
 import { ConnectorInstances } from "./screens/ConnectorInstances";
 import { SyncReconciliation } from "./screens/SyncReconciliation";
+import { Clients } from "./screens/Clients";
 
 export function AppRoutes() {
   return (
     <Routes>
       <Route index element={<Overview />} />
+      <Route path="clients" element={<Clients />} />
       <Route path="connectors" element={<Connectors />} />
       <Route path="knowledge" element={<Knowledge />} />
       <Route path="workflows" element={<Workflows />} />

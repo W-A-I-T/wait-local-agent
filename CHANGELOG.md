@@ -34,6 +34,9 @@ All notable changes to WAIT Local Agent will be documented in this file.
 
 ### Added
 
+- A Clients directory and app-shell client selector now expose the available
+  client context while existing screens retain their current behavior until a
+  later client-scoping phase.
 - Administrators can now confirm connector mappings with the re-tenant count,
   review quarantined tickets by connector, and reclassify tickets from the
   Operations → Sync / Reconciliation Center.

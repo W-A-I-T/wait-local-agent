@@ -7,6 +7,7 @@ import {
 import type {
   ApprovalRequest,
   AuthRoleResponse,
+  ClientDirectoryEntry,
   ConnectorStatus,
   EventDelivery,
   EventHistory,
@@ -36,6 +37,8 @@ type DashboardContextValue = {
   actionTypes: string[];
   apiToken: string;
   clientId: string;
+  selectedClientId: string;
+  clients: ClientDirectoryEntry[];
   role: AuthRoleResponse["role"];
   connectors: ConnectorStatus[];
   haloConnector?: ConnectorStatus;
@@ -59,6 +62,7 @@ type DashboardContextValue = {
   isConfigured: boolean;
   configurationLoading: boolean;
   setApiToken: (token: string) => void;
+  setSelectedClientId: (clientId: string) => void;
   refresh: () => Promise<void>;
   saveApiToken: () => Promise<void>;
   clearApiToken: () => Promise<void>;
@@ -77,6 +81,8 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
   const [apiToken, setApiToken] = useState(() => loadStoredApiToken());
   const [role, setRole] = useState<AuthRoleResponse["role"]>("viewer");
   const [clientId, setClientId] = useState("");
+  const [selectedClientId, setSelectedClientId] = useState("");
+  const [clients, setClients] = useState<ClientDirectoryEntry[]>([]);
   const [roleResolved, setRoleResolved] = useState(false);
   const [connectors, setConnectors] = useState<ConnectorStatus[]>([]);
   const [writeHealth, setWriteHealth] = useState<HaloReadResult>(defaultWriteHealth);
@@ -115,7 +121,8 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
         apiFetch<ApprovalRequest[]>("/approval-requests"),
         apiFetch<EventDelivery[]>("/automation/event-deliveries"),
         apiFetch<EventHistory[]>("/event-history"),
-        apiFetch<WorkflowRun[]>("/workflow-runs")
+        apiFetch<WorkflowRun[]>("/workflow-runs"),
+        apiFetch<ClientDirectoryEntry[]>("/clients")
       ]);
       const errors = results
         .filter((result): result is PromiseRejectedResult => result.status === "rejected")
@@ -126,6 +133,7 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
         result: { status: "blocked", message: "Tickets unavailable.", count: 0 },
         items: []
       });
+      const clientRows = settledValue(results[7] as PromiseSettledResult<ClientDirectoryEntry[]>, []);
 
       if (roleRequestId !== roleRequestIdRef.current) {
         return;
@@ -140,6 +148,7 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
       setEventDeliveries(asArray(settledValue(results[4] as PromiseSettledResult<EventDelivery[]>, [])));
       setEventHistory(asArray(settledValue(results[5] as PromiseSettledResult<EventHistory[]>, [])));
       setWorkflowRuns(asArray(settledValue(results[6] as PromiseSettledResult<WorkflowRun[]>, [])));
+      setClients(asArray<ClientDirectoryEntry>(clientRows).filter((client) => client.client_id !== "__quarantine__"));
       setRefreshErrors(errors);
       if (!selectedTicketIdRef.current && ticketResponse.items[0]) {
         setSelectedTicketId(ticketResponse.items[0].id);
@@ -279,6 +288,8 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
       actionTypes,
       apiToken,
       clientId,
+      selectedClientId,
+      clients,
       role,
       connectors,
       haloConnector,
@@ -302,6 +313,7 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
       isConfigured: configuration.isConfigured,
       configurationLoading: configuration.loading,
       setApiToken,
+      setSelectedClientId,
       refresh,
       saveApiToken,
       clearApiToken,
@@ -321,6 +333,7 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
   }, [
     apiToken,
     clientId,
+    clients,
     approvalRequests,
     busyId,
     clearApiToken,
@@ -341,7 +354,9 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
     saveApiToken,
     savePayloadFields,
     selectTicket,
+    selectedClientId,
     selectedTicketId,
+    setSelectedClientId,
     statusMessage,
     updateApproval,
     workflowRuns,

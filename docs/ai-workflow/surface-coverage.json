@@ -27,7 +27,7 @@
       "GET /automation/event-deliveries/{delivery_id}": "embedded",
       "GET /backup/restore-exercises": "exposed",
       "GET /client-connector-mappings": "admin",
-      "GET /clients": "admin",
+      "GET /clients": "exposed",
       "GET /clients/{client_id}": "admin",
       "GET /collectors/modules": "exposed",
       "GET /collectors/runs": "exposed",
