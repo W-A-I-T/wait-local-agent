@@ -6,7 +6,7 @@ import zipfile
 from dataclasses import replace
 from datetime import date
 from pathlib import Path
-from typing import cast
+from typing import Literal, cast
 
 import pytest
 from fastapi import HTTPException, Request, Response
@@ -61,9 +61,11 @@ from wait_local_agent.m365_graph import (
 )
 from wait_local_agent.models import (
     ConnectorReadResult,
+    ConnectWiseWriteRequest,
     ConnectWiseWriteResult,
     HaloReadResult,
     HaloTicket,
+    HaloWriteRequest,
     HaloWriteResult,
     HuduArticle,
     HuduCompany,
@@ -1291,6 +1293,10 @@ def test_approval_execution_state_covers_governed_connector_branches(settings, m
     assert detail("m365.users.disable", execution_status="succeeded")["block_reason"] == (
         "Approval request has already executed successfully."
     )
+    for execution_status in ("verified", "unverified", "submitted"):
+        assert detail("halopsa.update_status", execution_status=execution_status)["block_reason"] == (
+            "Approval request has already executed successfully."
+        )
     assert detail("teams.message.send")["can_execute"] is True
     assert detail("m365.users.disable")["can_execute"] is True
     blocked = detail("power_platform.solution_stage")
@@ -2882,6 +2888,15 @@ def test_halopsa_draft_can_target_remote_ticket_and_auto_executes(
                 remote_id="A-1",
             )
 
+        def verify_write(
+            self,
+            request: HaloWriteRequest,
+            write_result: HaloWriteResult,
+            *,
+            detail: dict[str, object] | None = None,
+        ) -> Literal["verified", "unverified", "submitted"]:
+            return "verified"
+
     monkeypatch.setattr(app_module, "HaloPSAClient", FakeHaloClient)
     client = TestClient(app_module.create_app(settings))
 
@@ -2897,7 +2912,7 @@ def test_halopsa_draft_can_target_remote_ticket_and_auto_executes(
 
     assert draft.status_code == 200
     assert approved.status_code == 200
-    assert approved.json()["execution_status"] == "succeeded"
+    assert approved.json()["execution_status"] == "verified"
     assert approved.json()["execution_result_json"]
     assert executed[0].ticket_id == "HALO-42"
     assert any(event["event_type"] == "halopsa.write" for event in events.json())
@@ -3485,6 +3500,15 @@ def test_halopsa_manual_execute_records_blocked_and_rejects_repeat_success(
         def execute_write(self, request):
             return HaloWriteResult("succeeded", "posted", request.action_type, request.ticket_id)
 
+        def verify_write(
+            self,
+            request: HaloWriteRequest,
+            write_result: HaloWriteResult,
+            *,
+            detail: dict[str, object] | None = None,
+        ) -> Literal["verified", "unverified", "submitted"]:
+            return "submitted"
+
     store = Store(settings.data_path)
     blocked = store.create_approval_request(
         "HALO-1",
@@ -3511,7 +3535,7 @@ def test_halopsa_manual_execute_records_blocked_and_rejects_repeat_success(
     first = success_client.post(f"/connectors/halopsa/approval-requests/{approval.id}/execute")
     second = success_client.post(f"/connectors/halopsa/approval-requests/{approval.id}/execute")
 
-    assert first.json()["execution_status"] == "succeeded"
+    assert first.json()["execution_status"] == "submitted"
     assert second.status_code == 400
 
 
@@ -3648,6 +3672,15 @@ def test_connectwise_approval_gated_ticket_update_routes(settings, monkeypatch) 
                 endpoint="service/tickets/42", status_code=200, remote_id="42"
             )
 
+        def verify_write(
+            self,
+            request: ConnectWiseWriteRequest,
+            write_result: ConnectWiseWriteResult,
+            *,
+            detail: dict[str, object] | None = None,
+        ) -> Literal["verified", "unverified", "submitted"]:
+            return "submitted"
+
         def list_tickets(self, **kwargs):
             return ConnectWiseReadResponse(ConnectorReadResult("ready", "ok", 0), [])
 
@@ -3684,7 +3717,7 @@ def test_connectwise_approval_gated_ticket_update_routes(settings, monkeypatch) 
     assert edited.status_code == 200
     assert edited.json()["payload"]["fields"] == {"status_id": 8}
     assert approved.status_code == 200
-    assert approved.json()["execution_status"] == "succeeded"
+    assert approved.json()["execution_status"] == "submitted"
     assert any(event["event_type"] == "connectwise.write" for event in audit.json())
 
 

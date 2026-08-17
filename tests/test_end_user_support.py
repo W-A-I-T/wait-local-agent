@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import replace
+from typing import Literal
 
 import pytest
 from fastapi import HTTPException
@@ -15,7 +16,7 @@ from wait_local_agent.api.app import (
     create_app,
 )
 from wait_local_agent.halopsa import HaloReadResponse
-from wait_local_agent.models import HaloReadResult, HaloTicket, HaloWriteResult
+from wait_local_agent.models import HaloReadResult, HaloTicket, HaloWriteRequest, HaloWriteResult
 from wait_local_agent.rbac import AuthContext, Role
 from wait_local_agent.store import Store
 
@@ -180,6 +181,15 @@ def test_end_user_message_can_create_approved_halopsa_sync(settings, monkeypatch
             executed.append(request)
             return HaloWriteResult("succeeded", "posted", request.action_type, request.ticket_id)
 
+        def verify_write(
+            self,
+            request: HaloWriteRequest,
+            write_result: HaloWriteResult,
+            *,
+            detail: dict[str, object] | None = None,
+        ) -> Literal["verified", "unverified", "submitted"]:
+            return "submitted"
+
     enabled = replace(
         settings,
         allow_write_actions=True,
@@ -237,7 +247,7 @@ def test_end_user_message_can_create_approved_halopsa_sync(settings, monkeypatch
         "note": "Please investigate this login issue.",
     }
     assert approved.status_code == 200
-    assert approved.json()["execution_status"] == "succeeded"
+    assert approved.json()["execution_status"] == "submitted"
     assert len(executed) == 1
     assert executed[0].ticket_id == "HALO-42"
     assert executed[0].fields["hiddenfromuser"] is False

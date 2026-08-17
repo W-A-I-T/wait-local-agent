@@ -6893,7 +6893,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             return False, "Only HaloPSA approvals have live execution in this release."
         if request.status != "approved":
             return False, "Approval must be approved before execution."
-        if request.execution_status == "succeeded":
+        if request.execution_status in {"succeeded", "verified", "unverified", "submitted"}:
             return False, "Approval request has already executed successfully."
         if not hasattr(halopsa_client, "write_health"):
             return False, "HaloPSA write health is unavailable."

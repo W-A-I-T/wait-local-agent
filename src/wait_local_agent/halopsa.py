@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from email.utils import parsedate_to_datetime
 from time import monotonic
+from typing import Literal
 
 import httpx
 
@@ -250,6 +251,123 @@ class HaloPSAClient:
             status_code=status_code,
             remote_id=remote_id,
         )
+
+    def verify_write(
+        self,
+        request: HaloWriteRequest,
+        write_result: HaloWriteResult,
+        *,
+        detail: dict[str, object] | None = None,
+    ) -> Literal["verified", "unverified", "submitted"]:
+        status, verification = self._verify_write_detail(request, write_result)
+        if detail is not None:
+            detail.update(verification)
+        return status
+
+    def _verify_write_detail(
+        self,
+        request: HaloWriteRequest,
+        write_result: HaloWriteResult,
+    ) -> tuple[Literal["verified", "unverified", "submitted"], dict[str, object]]:
+        if request.action_type in {"add_note", "draft_response"}:
+            if not write_result.remote_id.strip():
+                return "submitted", {
+                    "source": "HaloPSA write response",
+                    "outcome": "remote note id unavailable",
+                    "fields": {"note_id": {"comparison": "unavailable"}},
+                }
+            response = self.list_ticket_notes(request.ticket_id)
+            if response.result.status != "ready":
+                return "unverified", {
+                    "source": f"GET Ticket/{request.ticket_id}/Actions",
+                    "outcome": "read_failed",
+                    "fields": {"note_id": {"comparison": "unverified"}},
+                }
+            note_ids = {
+                item.id.strip()
+                for item in response.items
+                if isinstance(item, HaloNote) and item.id.strip()
+            }
+            matched = write_result.remote_id.strip() in note_ids
+            return ("verified" if matched else "unverified"), {
+                "source": f"GET Ticket/{request.ticket_id}/Actions",
+                "outcome": "matched" if matched else "mismatch",
+                "fields": {
+                    "note_id": {
+                        "comparison": "matched" if matched else "mismatch",
+                    }
+                },
+            }
+
+        ticket_fields = _ticket_update_fields(request)
+        if request.action_type == "assign_technician":
+            return "submitted", {
+                "source": "HaloPSA normalized ticket read model",
+                "outcome": "written fields are not independently verifiable",
+                "fields": {
+                    field: {"comparison": "unavailable"}
+                    for field in ticket_fields
+                },
+            }
+
+        comparable_fields = {
+            field: value
+            for field, value in ticket_fields.items()
+            if field in {"status", "priority"} and isinstance(value, str)
+        }
+        unavailable_fields = set(ticket_fields) - set(comparable_fields)
+        if unavailable_fields:
+            return "submitted", {
+                "source": "HaloPSA normalized ticket read model",
+                "outcome": "some written fields are not independently verifiable",
+                "fields": {
+                    field: {"comparison": "unavailable"}
+                    for field in sorted(unavailable_fields)
+                },
+            }
+        if not comparable_fields:
+            return "submitted", {
+                "source": "HaloPSA normalized ticket read model",
+                "outcome": "written fields are not independently verifiable",
+                "fields": {},
+            }
+
+        response = self.get_ticket(request.ticket_id)
+        if response.result.status != "ready" or not response.items:
+            return "unverified", {
+                "source": f"GET Ticket/{request.ticket_id}",
+                "outcome": "read_failed_or_ticket_not_found",
+                "fields": {
+                    field: {"comparison": "unverified"}
+                    for field in comparable_fields
+                },
+            }
+        ticket = response.items[0]
+        if not isinstance(ticket, HaloTicket):
+            return "unverified", {
+                "source": f"GET Ticket/{request.ticket_id}",
+                "outcome": "ticket_shape_unavailable",
+                "fields": {
+                    field: {"comparison": "unverified"}
+                    for field in comparable_fields
+                },
+            }
+        comparisons = {
+            field: {
+                "comparison": (
+                    "matched"
+                    if _same_text(getattr(ticket, field), value)
+                    else "mismatch"
+                )
+            }
+            for field, value in comparable_fields.items()
+        }
+        matched = all(item["comparison"] == "matched" for item in comparisons.values())
+        return ("verified" if matched else "unverified"), {
+            "source": f"GET Ticket/{request.ticket_id}",
+            "outcome": "matched" if matched else "mismatch",
+            "fields": comparisons,
+        }
 
     def _post(self, endpoint: str, payload: object) -> tuple[object, int]:
         token = self._access_token()
@@ -622,6 +740,10 @@ def _first_string(row: Mapping[str, object], *keys: str) -> str:
 
 def _bounded_text(value: str, limit: int) -> str:
     return value[:limit]
+
+
+def _same_text(actual: object, expected: object) -> bool:
+    return str(actual).strip().casefold() == str(expected).strip().casefold()
 
 
 def _string_value(row: object, key: str) -> str:
