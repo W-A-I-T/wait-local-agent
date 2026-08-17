@@ -32,6 +32,19 @@ The existing boot-time Settings connector configuration remains in place. A
 provider ingest must name one active connector instance, and the instance's
 connector type supplies the stored source-system value.
 
+The connector factory is the guarded bridge between an active instance and a
+provider read client. It reads only the referenced vault record, requires the
+provider's exact credential schema, copies only that instance's provider
+settings into a sanitized read-only `Settings` container, and fails closed for
+inactive instances, malformed configuration, or missing credentials. Each
+configured API origin is checked against `WAIT_CONNECTOR_INSTANCE_ALLOWED_HOSTS`;
+outbound requests then use DNS-pinned transport with globally routable-address
+checks. HaloPSA derives and validates its token endpoint from the API origin,
+so an instance cannot redirect its OAuth secret to another allowlisted host.
+
+This factory prepares a client for a later ingestion/poller boundary. It does
+not start polling, schedule work, or write provider records.
+
 ## Verified mappings
 
 A mapping links an external company identifier from one connector instance to
