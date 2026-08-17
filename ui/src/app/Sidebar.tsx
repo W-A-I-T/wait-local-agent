@@ -19,6 +19,7 @@ import {
   PackageOpen,
   ShieldCheck,
   Sparkles,
+  Users,
   Workflow
 } from "lucide-react";
 import { NavLink } from "react-router-dom";
@@ -27,6 +28,7 @@ import { RoleGate } from "../components/RoleGate";
 
 const navigation = [
   { to: "/", label: "Overview", icon: LayoutDashboard },
+  { to: "/clients", label: "Clients", icon: Users },
   { to: "/connectors", label: "Connectors", icon: GitBranch },
   { to: "/tickets", label: "Tickets", icon: ClipboardList },
   { to: "/approvals", label: "Approvals", icon: ClipboardCheck },

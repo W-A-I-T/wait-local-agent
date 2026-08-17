@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { apiFetch } from "../api/client";
 import type {
   ClientConnectorMapping,
+  ClientDirectoryEntry,
   ConnectorInstance,
   MappingVerifyResult,
   QuarantinedTicket,
@@ -574,12 +575,6 @@ export function SyncReconciliation() {
     </RoleGate>
   );
 }
-
-type ClientDirectoryEntry = {
-  client_id: string;
-  name: string;
-  status: string;
-};
 
 type QuarantineLoadResult =
   | { value: QuarantinedTicket[] | null }

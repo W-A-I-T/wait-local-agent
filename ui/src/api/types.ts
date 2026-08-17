@@ -20,6 +20,12 @@ export type ConnectorInstance = {
   updated_at: string;
 };
 
+export type ClientDirectoryEntry = {
+  client_id: string;
+  name: string;
+  status: string;
+};
+
 export type SyncCursor = {
   connector_instance_id: string;
   cursor_type: string;

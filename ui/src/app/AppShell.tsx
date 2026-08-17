@@ -16,6 +16,9 @@ export function AppShell() {
     refresh,
     role,
     roleResolved,
+    selectedClientId,
+    setSelectedClientId,
+    clients,
     writeHealth,
     liveWritesReady,
     statusMessage,
@@ -32,6 +35,19 @@ export function AppShell() {
             <p>Local-first solution design, governed execution, and MSP operations.</p>
           </div>
           <div className="topbar-actions">
+            <label className="client-selector" htmlFor="app-client-selector">
+              <span>Client</span>
+              <select
+                id="app-client-selector"
+                value={selectedClientId}
+                onChange={(event) => setSelectedClientId(event.target.value)}
+              >
+                <option value="">All clients</option>
+                {clients.filter((client) => client.status === "active").map((client) => (
+                  <option key={client.client_id} value={client.client_id}>{client.name}</option>
+                ))}
+              </select>
+            </label>
             <button className="icon-button" type="button" onClick={() => void refresh()}>
               <RefreshCw size={17} aria-hidden="true" />
               Refresh

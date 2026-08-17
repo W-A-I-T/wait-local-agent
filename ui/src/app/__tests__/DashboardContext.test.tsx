@@ -23,11 +23,15 @@ function deferred<T>(): Deferred<T> {
 }
 
 function DashboardHarness() {
-  const { isAdmin, refresh, roleResolved } = useDashboard();
+  const { clientId, clients, isAdmin, refresh, roleResolved, selectedClientId, setSelectedClientId } = useDashboard();
   return (
     <>
       <button type="button" onClick={() => void refresh()}>Refresh credentials</button>
+      <button type="button" onClick={() => setSelectedClientId("client-a")}>Select client A</button>
       <output>{roleResolved ? "access resolved" : "access unresolved"}</output>
+      <output data-testid="legacy-client-id">{clientId}</output>
+      <output data-testid="selected-client-id">{selectedClientId}</output>
+      <output data-testid="client-directory">{clients.map((client) => client.client_id).join(",")}</output>
       {isAdmin ? <button type="button">Admin controls</button> : null}
     </>
   );
@@ -76,6 +80,38 @@ describe("DashboardContext role refresh", () => {
 
     await waitFor(() => expect(screen.getByText("access resolved")).toBeInTheDocument());
     expect(screen.queryByRole("button", { name: "Admin controls" })).not.toBeInTheDocument();
+  });
+
+  it("keeps the selector separate from clientId and populates client options", async () => {
+    mockedApiFetch.mockImplementation((path: string) => {
+      if (path === "/auth/role") {
+        return Promise.resolve({
+          role: "admin",
+          client_id: "legacy-client",
+          api_auth_required: false,
+          demo_mode: true
+        }) as ReturnType<typeof apiFetch>;
+      }
+      if (path === "/clients") {
+        return Promise.resolve([
+          { client_id: "client-a", name: "Client A", status: "active" },
+          { client_id: "client-b", name: "Client B", status: "archived" },
+          { client_id: "__quarantine__", name: "Quarantine", status: "quarantine" }
+        ]) as ReturnType<typeof apiFetch>;
+      }
+      return Promise.resolve(defaultResponse(path)) as ReturnType<typeof apiFetch>;
+    });
+
+    render(<DashboardProvider><DashboardHarness /></DashboardProvider>);
+
+    await waitFor(() => expect(screen.getByTestId("client-directory")).toHaveTextContent("client-a,client-b"));
+    expect(screen.getByTestId("legacy-client-id")).toHaveTextContent("legacy-client");
+    expect(screen.getByTestId("selected-client-id")).toHaveTextContent("");
+
+    fireEvent.click(screen.getByRole("button", { name: "Select client A" }));
+
+    expect(screen.getByTestId("selected-client-id")).toHaveTextContent("client-a");
+    expect(screen.getByTestId("legacy-client-id")).toHaveTextContent("legacy-client");
   });
 });
 
