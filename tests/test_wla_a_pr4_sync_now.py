@@ -78,7 +78,10 @@ def test_sync_now_rejects_non_operator(settings) -> None:
 def test_sync_now_rejects_missing_disabled_and_inactive_instances(settings, monkeypatch) -> None:
     class FakePoller:
         def __init__(self, *_args, **_kwargs) -> None:
-            raise AssertionError("poller must not be constructed")
+            pass
+
+        def poll_instance(self, *_args, **_kwargs) -> PollSummary:
+            raise AssertionError("poll_instance must not be called")
 
     monkeypatch.setattr(app_module, "IngestionPoller", FakePoller)
     app = create_app(settings)

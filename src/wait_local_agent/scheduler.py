@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 from dataclasses import replace
@@ -30,6 +31,7 @@ from wait_local_agent.workflows import run_workflow_template
 
 if TYPE_CHECKING:
     from wait_local_agent.event_dispatch import EventDispatcher
+    from wait_local_agent.ingestion_poller import IngestionPoller
 
 
 _ALL_CLIENTS = AllClients()
@@ -45,12 +47,14 @@ class SchedulerManager:
         agent_service: AgentService | None = None,
         smart_action_service: SmartActionService | None = None,
         event_dispatcher: EventDispatcher | None = None,
+        ingestion_poller: IngestionPoller | None = None,
     ) -> None:
         self._store = store
         self._enabled = enabled
         self._agent_service = agent_service
         self._smart_action_service = smart_action_service
         self._event_dispatcher = event_dispatcher
+        self._ingestion_poller = ingestion_poller
         self._scheduler: AsyncIOScheduler | None = None
         self._started = False
 
@@ -173,6 +177,9 @@ class SchedulerManager:
         return self._with_runtime_state(scheduled_job)
 
     async def _run_job(self, scheduled_job: ScheduledJob) -> None:
+        if scheduled_job.job_kind == "connector_poll":
+            await self._run_connector_poll_job(scheduled_job)
+            return
         params = _safe_json_object(scheduled_job.params_json)
         client_id = _string_or_none(params.get("client_id")) or scheduled_job.client_id
         ticket_id = (
@@ -231,6 +238,36 @@ class SchedulerManager:
             status=run.status,
             client_id=run.client_id,
             actor="scheduler",
+        )
+
+    async def _run_connector_poll_job(self, scheduled_job: ScheduledJob) -> None:
+        if self._ingestion_poller is None:
+            LOGGER.warning("Scheduled connector poll skipped: ingestion poller is not configured")
+            return
+        if scheduled_job.entity_id is None:
+            LOGGER.warning("Scheduled connector poll skipped: entity_id is missing")
+            return
+        try:
+            summary = await asyncio.to_thread(
+                self._ingestion_poller.poll_instance,
+                scheduled_job.entity_id,
+                max_pages=25,
+                page_size=50,
+                deadline_seconds=60.0,
+                lease_ttl_seconds=300.0,
+            )
+        except Exception:  # noqa: BLE001 - scheduled poll failures must not be resubmitted
+            LOGGER.warning("Scheduled connector poll failed")
+            self._store.add_audit_event(
+                "scheduled_job.connector_poll",
+                scheduled_job.entity_id,
+                "scheduled sync -> failed",
+            )
+            return
+        self._store.add_audit_event(
+            "scheduled_job.connector_poll",
+            scheduled_job.entity_id,
+            f"scheduled sync -> {summary.status}",
         )
 
     async def _run_playbook_job(
@@ -626,6 +663,10 @@ def _validate_schedule_target(
     if job_kind == "report":
         if template_id not in _SCHEDULED_REPORT_TYPES or agent_id is not None or entity_id is not None:
             raise ValueError("report schedules require a supported report type only")
+        return
+    if job_kind == "connector_poll":
+        if template_id or agent_id is not None or not _string_or_none(entity_id):
+            raise ValueError("connector_poll schedules require entity_id only")
         return
     if job_kind == "playbook":
         if not template_id or agent_id is not None or entity_id is not None:

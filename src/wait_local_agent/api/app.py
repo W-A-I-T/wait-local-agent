@@ -1021,6 +1021,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         agent_service=agent_service,
         smart_action_service=smart_action_service,
         event_dispatcher=event_dispatcher,
+        ingestion_poller=IngestionPoller(store, base_settings=active_settings),
     )
 
     @asynccontextmanager

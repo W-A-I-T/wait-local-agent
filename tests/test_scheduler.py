@@ -13,11 +13,13 @@ from tests.support import ingest_local
 from wait_local_agent.agents import AgentService
 from wait_local_agent.config import Settings
 from wait_local_agent.event_dispatch import EventDispatcher
+from wait_local_agent.ingestion_poller import IngestionPoller, PollStatus, PollSummary
 from wait_local_agent.models import ScheduledJob
 from wait_local_agent.rbac import Role
 from wait_local_agent.scheduler import (
     SchedulerManager,
     _schedule_trigger,
+    _validate_schedule_target,
     validate_cron_expression,
     validate_schedule,
     validate_scheduled_report_params,
@@ -428,6 +430,84 @@ def test_scheduler_validation_rejects_cross_type_and_malformed_schedule_values()
             run_at="2099-01-01T00:00:00+00:00",
         )
     ) is not None
+
+
+def test_scheduler_validation_supports_connector_poll_targets() -> None:
+    _validate_schedule_target("connector_poll", "", None, "connector-1")
+
+    with pytest.raises(ValueError, match="connector_poll schedules require entity_id only"):
+        _validate_schedule_target("connector_poll", "template", None, "connector-1")
+    with pytest.raises(ValueError, match="connector_poll schedules require entity_id only"):
+        _validate_schedule_target("connector_poll", "", "agent-1", "connector-1")
+
+
+@pytest.mark.parametrize("status", ["failed", "degraded", "skipped_locked"])
+def test_scheduler_connector_poll_runs_in_thread_and_audits_status(
+    tmp_path: Path, status: PollStatus, monkeypatch
+) -> None:
+    class RecordingPoller:
+        def __init__(self) -> None:
+            self.calls: list[tuple[str, dict[str, float | int]]] = []
+
+        def poll_instance(self, connector_instance_id: str, **kwargs: float | int) -> PollSummary:
+            self.calls.append((connector_instance_id, kwargs))
+            return PollSummary(connector_instance_id, 0, 0, 0, status, status)
+
+    store = Store(tmp_path / f"connector-poll-{status}.db")
+    poller = RecordingPoller()
+    manager = SchedulerManager(store, enabled=False, ingestion_poller=cast(IngestionPoller, poller))
+    scheduled_job = manager.register(
+        "",
+        "0 9 * * *",
+        {},
+        job_kind="connector_poll",
+        entity_id="connector-1",
+    )
+
+    async def run_in_thread(function, *args, **kwargs):
+        return function(*args, **kwargs)
+
+    monkeypatch.setattr("wait_local_agent.scheduler.asyncio.to_thread", run_in_thread)
+    monkeypatch.setattr(
+        manager,
+        "_is_quarantined_ticket",
+        lambda *_args: pytest.fail("connector polls must not run the ticket quarantine guard"),
+    )
+
+    asyncio.run(manager._run_job(scheduled_job))  # noqa: SLF001
+
+    assert poller.calls == [
+        (
+            "connector-1",
+            {
+                "max_pages": 25,
+                "page_size": 50,
+                "deadline_seconds": 60.0,
+                "lease_ttl_seconds": 300.0,
+            },
+        )
+    ]
+    assert any(
+        event.event_type == "scheduled_job.connector_poll"
+        and event.detail == f"scheduled sync -> {status}"
+        for event in store.list_audit_events()
+    )
+
+
+def test_scheduler_connector_poll_without_poller_is_safe_noop(tmp_path: Path, caplog) -> None:
+    store = Store(tmp_path / "connector-poll-no-poller.db")
+    manager = SchedulerManager(store, enabled=False)
+    scheduled_job = manager.register(
+        "",
+        "0 9 * * *",
+        {},
+        job_kind="connector_poll",
+        entity_id="connector-1",
+    )
+
+    asyncio.run(manager._run_job(scheduled_job))  # noqa: SLF001
+
+    assert "ingestion poller is not configured" in caplog.text
 
 
 def test_scheduler_does_not_replay_expired_one_time_jobs(tmp_path: Path) -> None:
