@@ -6,6 +6,9 @@ All notable changes to WAIT Local Agent will be documented in this file.
 
 ### Security
 
+- Per-connector-instance read clients now resolve credentials only from the
+  local vault, isolate provider settings, force read-only behavior, and send
+  outbound calls through SSRF-pinned transport.
 - The `__quarantine__` client is now reserved and non-assignable: client
   status changes, principal roles, connector-instance bindings, and client
   connector mappings cannot target it. Existing upgraded bindings are logged
@@ -30,6 +33,8 @@ All notable changes to WAIT Local Agent will be documented in this file.
 - Administrators can now confirm connector mappings with the re-tenant count,
   review quarantined tickets by connector, and reclassify tickets from the
   Operations → Sync / Reconciliation Center.
+- A per-connector-instance read-client factory for HaloPSA and ConnectWise
+  with vault-resolved credentials and strict per-instance isolation.
 - Connector-ingested tickets now resolve their client from verified connector
   mappings and persist unresolved records in the reviewable quarantine tenant;
   mapping verification re-tenants matching tickets. Ticket identity is stable

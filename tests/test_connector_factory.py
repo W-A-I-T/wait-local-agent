@@ -1,0 +1,475 @@
+from __future__ import annotations
+
+import json
+import socket
+from collections.abc import Mapping
+from dataclasses import replace
+from pathlib import Path
+from typing import Any
+
+import httpx
+import pytest
+
+from wait_local_agent import connector_factory, net_security
+from wait_local_agent.connector_factory import (
+    _BUILDERS,
+    _SECRET_SETTING_FIELDS,
+    ConnectorFactoryError,
+    _validate_urls,
+    build_read_client,
+    build_read_client_for,
+)
+from wait_local_agent.connectwise import ConnectWiseClient
+from wait_local_agent.models import ConnectorInstance
+
+
+def _instance(
+    *,
+    connector_type: str = "halopsa",
+    status: str = "active",
+    credential_ref: str | None = "credential-ref",
+    config: Mapping[str, object] | None = None,
+) -> ConnectorInstance:
+    return ConnectorInstance(
+        connector_instance_id="instance-1",
+        connector_type=connector_type,
+        display_name="Test connector",
+        client_id=None,
+        credential_ref=credential_ref,
+        config_json=json.dumps(config or {"base_url": "https://provider.example.test"}),
+        status=status,
+        created_at="2026-01-01T00:00:00+00:00",
+        updated_at="2026-01-01T00:00:00+00:00",
+    )
+
+
+class _Vault:
+    def __init__(self, secret: object = None) -> None:
+        self.secret = secret
+        self.keys: list[str] = []
+
+    def get(self, key: str) -> object:
+        self.keys.append(key)
+        return self.secret
+
+
+def _resolver(*addresses: str):
+    def resolve(*args: Any, **kwargs: Any) -> list[tuple[Any, ...]]:
+        del kwargs
+        port = args[1] if len(args) > 1 else 443
+        return [
+            (
+                socket.AF_INET6 if ":" in address else socket.AF_INET,
+                socket.SOCK_STREAM,
+                socket.IPPROTO_TCP,
+                "",
+                (address, port, 0, 0) if ":" in address else (address, port),
+            )
+            for address in addresses
+        ]
+
+    return resolve
+
+
+def _base_settings(settings, tmp_path: Path, *, allow_write_actions: bool = False):
+    return replace(
+        settings,
+        allow_http_probing=True,
+        allow_write_actions=allow_write_actions,
+        connector_timeout_seconds=7.0,
+        connector_instance_allowed_hosts=("provider.example.test",),
+        vault_path=tmp_path / "vault",
+    )
+
+
+def _halo_secret(**overrides: str) -> str:
+    payload = {"client_id": "instance-client", "client_secret": "instance-secret", "tenant": "instance-tenant"}
+    payload.update(overrides)
+    return json.dumps(payload)
+
+
+def _connectwise_secret(**overrides: str) -> str:
+    payload = {
+        "company": "instance-company",
+        "public_key": "instance-public",
+        "private_key": "instance-private",
+        "client_id": "instance-client",
+    }
+    payload.update(overrides)
+    return json.dumps(payload)
+
+
+def test_active_gate_precedes_vault_for_all_inactive_states(settings, tmp_path: Path) -> None:
+    for status in ("inactive", "disabled", "error"):
+        vault = _Vault()
+        with pytest.raises(ConnectorFactoryError, match="not active"):
+            build_read_client(
+                _instance(status=status),
+                base_settings=_base_settings(settings, tmp_path),
+                vault=vault,
+            )
+        assert vault.keys == []
+
+
+def test_unknown_type_does_not_fall_back_to_global_settings(settings, tmp_path: Path) -> None:
+    vault = _Vault(_halo_secret())
+    with pytest.raises(ConnectorFactoryError, match="unsupported connector_type"):
+        build_read_client(
+            _instance(connector_type="unknown"),
+            base_settings=_base_settings(settings, tmp_path),
+            vault=vault,
+        )
+    assert vault.keys == []
+
+
+@pytest.mark.parametrize("credential_ref", [None, "", "   "])
+def test_missing_credential_ref_is_rejected(settings, tmp_path: Path, credential_ref: str | None) -> None:
+    with pytest.raises(ConnectorFactoryError, match="credential reference"):
+        build_read_client(
+            _instance(credential_ref=credential_ref),
+            base_settings=_base_settings(settings, tmp_path),
+            vault=_Vault(_halo_secret()),
+        )
+
+
+@pytest.mark.parametrize("secret", [None, "", "not-json", "[]", '{"client_id":"a","client_id":"b"}'])
+def test_vault_payloads_fail_closed_without_echoing_secret_data(settings, tmp_path: Path, secret: object) -> None:
+    with pytest.raises(ConnectorFactoryError) as error:
+        build_read_client(
+            _instance(),
+            base_settings=_base_settings(settings, tmp_path),
+            vault=_Vault(secret),
+        )
+    assert "instance-secret" not in str(error.value)
+    assert str(error.value) in {
+        "connector credentials were not found",
+        "connector credentials must be valid JSON",
+        "connector credentials must be a JSON object",
+    }
+
+
+def test_vault_exception_is_fixed_and_chained(settings, tmp_path: Path) -> None:
+    class FailingVault:
+        def get(self, key: str) -> str:
+            raise RuntimeError("/private/vault/path and secret-value")
+
+    with pytest.raises(ConnectorFactoryError) as error:
+        build_read_client(
+            _instance(),
+            base_settings=_base_settings(settings, tmp_path),
+            vault=FailingVault(),
+        )
+    assert str(error.value) == "connector credentials could not be read"
+    assert error.value.__cause__ is not None
+    assert "/private/vault/path" not in str(error.value)
+
+
+@pytest.mark.parametrize(
+    "secret",
+    [
+        json.dumps({"client_id": "a", "client_secret": "b"}),
+        json.dumps({"client_id": "a", "client_secret": "b", "tenant": "c", "extra": "d"}),
+        json.dumps({"client_id": "a", "client_secret": "b", "tenant": "   "}),
+        json.dumps({"client_id": "a", "client_secret": False, "tenant": "c"}),
+    ],
+)
+def test_halo_schema_is_exact_and_values_are_strings(settings, tmp_path: Path, secret: str) -> None:
+    with pytest.raises(ConnectorFactoryError, match="expected keys: client_id, client_secret, tenant"):
+        build_read_client(
+            _instance(),
+            base_settings=_base_settings(settings, tmp_path),
+            vault=_Vault(secret),
+        )
+
+
+def test_secret_bytes_are_not_trimmed(settings, tmp_path: Path) -> None:
+    secret = _halo_secret(client_id="  meaningful-client  ")
+    client = build_read_client(
+        _instance(),
+        base_settings=_base_settings(settings, tmp_path),
+        vault=_Vault(secret),
+        resolver=_resolver("8.8.8.8"),
+        inner_transport=httpx.MockTransport(lambda request: httpx.Response(200, json=[])),
+    )
+    assert client.settings.halopsa_client_id == "  meaningful-client  "
+
+
+@pytest.mark.parametrize(
+    "missing",
+    ["company", "public_key", "private_key", "client_id"],
+)
+def test_connectwise_requires_all_credential_fields(settings, tmp_path: Path, missing: str) -> None:
+    payload = json.loads(_connectwise_secret())
+    del payload[missing]
+    with pytest.raises(ConnectorFactoryError, match="expected keys: company, public_key, private_key, client_id"):
+        build_read_client(
+            _instance(connector_type="connectwise"),
+            base_settings=_base_settings(settings, tmp_path),
+            vault=_Vault(json.dumps(payload)),
+        )
+
+
+def test_config_rejects_secret_fields_and_token_url(settings, tmp_path: Path) -> None:
+    for config in (
+        {"base_url": "https://provider.example.test", "token_url": "https://other.example.test"},
+        {"base_url": "https://provider.example.test", "nested": {"private_key": "secret"}},
+    ):
+        with pytest.raises(ConnectorFactoryError, match="must not contain credentials"):
+            build_read_client(
+                _instance(config=config),
+                base_settings=_base_settings(settings, tmp_path),
+                vault=_Vault(_halo_secret()),
+            )
+
+
+@pytest.mark.parametrize("config_json", ["not-json", "[]"])
+def test_config_json_must_be_an_object(settings, tmp_path: Path, config_json: str) -> None:
+    with pytest.raises(ConnectorFactoryError):
+        build_read_client(
+            replace(_instance(), config_json=config_json),
+            base_settings=_base_settings(settings, tmp_path),
+            vault=_Vault(_halo_secret()),
+        )
+
+
+@pytest.mark.parametrize(
+    "config",
+    [{"base_url": "https://provider.example.test", "unexpected": "value"}, {"unexpected": "value"}],
+)
+def test_config_json_requires_only_supported_fields(settings, tmp_path: Path, config: Mapping[str, object]) -> None:
+    with pytest.raises(ConnectorFactoryError):
+        build_read_client(
+            _instance(config=config),
+            base_settings=_base_settings(settings, tmp_path),
+            vault=_Vault(_halo_secret()),
+        )
+
+
+def test_config_json_requires_nonempty_base_url(settings, tmp_path: Path) -> None:
+    with pytest.raises(ConnectorFactoryError, match="requires a base_url"):
+        build_read_client(
+            _instance(config={"base_url": "   "}),
+            base_settings=_base_settings(settings, tmp_path),
+            vault=_Vault(_halo_secret()),
+        )
+
+
+def test_base_origin_allowlist_and_same_origin_token_are_enforced(settings, tmp_path: Path, monkeypatch) -> None:
+    with pytest.raises(ConnectorFactoryError, match="network policy"):
+        build_read_client(
+            _instance(config={"base_url": "https://not-allowed.example.test"}),
+            base_settings=_base_settings(settings, tmp_path),
+            vault=_Vault(_halo_secret()),
+        )
+
+    original = net_security.validate_provider_origin
+    calls = 0
+
+    def different_token_origin(url: str, *, allowed_hosts: tuple[str, ...], allow_loopback: bool = False):
+        nonlocal calls
+        calls += 1
+        if calls == 2:
+            return httpx.URL("https://other.example.test/auth/token")
+        return original(url, allowed_hosts=allowed_hosts, allow_loopback=allow_loopback)
+
+    monkeypatch.setattr(connector_factory, "validate_provider_origin", different_token_origin)
+    with pytest.raises(ConnectorFactoryError, match="token origin"):
+        build_read_client(
+            _instance(),
+            base_settings=_base_settings(settings, tmp_path),
+            vault=_Vault(_halo_secret()),
+        )
+
+
+def test_isolation_inherits_operational_fields_and_downgrades_writes(settings, tmp_path: Path) -> None:
+    base = _base_settings(settings, tmp_path, allow_write_actions=True)
+    base = replace(base, **{name: "global-sentinel" for name in _SECRET_SETTING_FIELDS})
+    client = build_read_client(
+        _instance(),
+        base_settings=base,
+        vault=_Vault(_halo_secret()),
+    )
+
+    assert client.settings.allow_write_actions is False
+    assert client.settings.halopsa_ticket_write_endpoint == ""
+    assert client.settings.halopsa_action_write_endpoint == ""
+    assert client.settings.allow_http_probing == base.allow_http_probing
+    assert client.settings.connector_timeout_seconds == base.connector_timeout_seconds
+    assert client.settings.connector_instance_allowed_hosts == base.connector_instance_allowed_hosts
+    assert client.settings.vault_path == base.vault_path
+    assert all(getattr(client.settings, name) != "global-sentinel" for name in _SECRET_SETTING_FIELDS)
+    assert client.settings.halopsa_client_id == "instance-client"
+    assert client.settings.halopsa_client_secret == "instance-secret"
+    assert client.settings.halopsa_tenant == "instance-tenant"
+    assert client.settings.halopsa_token_url == ""
+
+
+@pytest.mark.parametrize("config_version", ["not-a-version", "2022", "2022.1.2", 2022.1])
+def test_connectwise_effective_api_version_is_validated(settings, tmp_path: Path, config_version: object) -> None:
+    config = {"base_url": "https://provider.example.test", "api_version": config_version}
+    with pytest.raises(ConnectorFactoryError, match="API version"):
+        build_read_client(
+            _instance(connector_type="connectwise", config=config),
+            base_settings=_base_settings(settings, tmp_path),
+            vault=_Vault(_connectwise_secret()),
+        )
+
+
+def test_connectwise_inherited_api_version_is_validated(settings, tmp_path: Path) -> None:
+    base = replace(_base_settings(settings, tmp_path), connectwise_api_version="invalid")
+    with pytest.raises(ConnectorFactoryError, match="API version"):
+        build_read_client(
+            _instance(connector_type="connectwise"),
+            base_settings=base,
+            vault=_Vault(_connectwise_secret()),
+        )
+
+    base = replace(_base_settings(settings, tmp_path), connectwise_api_version=None)
+    with pytest.raises(ConnectorFactoryError, match="API version"):
+        build_read_client(
+            _instance(connector_type="connectwise"),
+            base_settings=base,
+            vault=_Vault(_connectwise_secret()),
+        )
+
+
+def test_provider_base_url_suffixes_are_preserved(settings, tmp_path: Path) -> None:
+    halo = build_read_client(
+        _instance(config={"base_url": "https://provider.example.test/api"}),
+        base_settings=_base_settings(settings, tmp_path),
+        vault=_Vault(_halo_secret()),
+    )
+    cw = build_read_client(
+        _instance(
+            connector_type="connectwise",
+            config={"base_url": "https://provider.example.test/v4_6_release/apis/3.0"},
+        ),
+        base_settings=_base_settings(settings, tmp_path),
+        vault=_Vault(_connectwise_secret()),
+    )
+    assert halo.settings.halopsa_base_url.endswith("/api")
+    assert cw.settings.connectwise_base_url.endswith("/v4_6_release/apis/3.0")
+
+
+def test_invalid_base_url_type_is_fixed() -> None:
+    with pytest.raises(ConnectorFactoryError, match="base_url is invalid"):
+        _validate_urls(
+            {"base_url": 123},
+            connector_type="halopsa",
+            allowed_hosts=("provider.example.test",),
+        )
+
+
+def test_private_resolution_rejects_before_inner_transport(settings, tmp_path: Path) -> None:
+    class FailingTransport(httpx.BaseTransport):
+        def handle_request(self, request: httpx.Request) -> httpx.Response:
+            raise AssertionError("inner transport must not be called")
+
+        def close(self) -> None:
+            return None
+
+    client = build_read_client(
+        _instance(connector_type="connectwise"),
+        base_settings=_base_settings(settings, tmp_path),
+        vault=_Vault(_connectwise_secret()),
+        resolver=_resolver("10.0.0.1"),
+        inner_transport=FailingTransport(),
+    )
+    with pytest.raises(net_security.NetSecurityError):
+        assert isinstance(client, ConnectWiseClient)
+        client.list_companies()
+
+
+def test_public_resolution_reaches_only_pinned_inner_transport(settings, tmp_path: Path) -> None:
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(200, json=[])
+
+    client = build_read_client(
+        _instance(connector_type="connectwise"),
+        base_settings=_base_settings(settings, tmp_path),
+        vault=_Vault(_connectwise_secret()),
+        resolver=_resolver("8.8.8.8"),
+        inner_transport=httpx.MockTransport(handler),
+    )
+    assert isinstance(client, ConnectWiseClient)
+    result = client.list_companies()
+    assert result.result.status == "ready"
+    assert requests
+    assert all(request.url.host == "8.8.8.8" for request in requests)
+
+
+def test_client_construction_errors_are_fixed(settings, tmp_path: Path, monkeypatch) -> None:
+    def factory_error(settings, transport):
+        raise ConnectorFactoryError("fixed")
+
+    def unexpected_error(settings, transport):
+        raise RuntimeError("credential-value")
+
+    monkeypatch.setitem(_BUILDERS, "halopsa", factory_error)
+    with pytest.raises(ConnectorFactoryError, match="fixed"):
+        build_read_client(
+            _instance(),
+            base_settings=_base_settings(settings, tmp_path),
+            vault=_Vault(_halo_secret()),
+        )
+    monkeypatch.setitem(_BUILDERS, "halopsa", unexpected_error)
+    with pytest.raises(ConnectorFactoryError, match="could not be constructed") as error:
+        build_read_client(
+            _instance(),
+            base_settings=_base_settings(settings, tmp_path),
+            vault=_Vault(_halo_secret()),
+        )
+    assert "credential-value" not in str(error.value)
+
+
+@pytest.mark.parametrize("connector_type,secret", [("halopsa", _halo_secret()), ("connectwise", _connectwise_secret())])
+def test_both_supported_providers_build(settings, tmp_path: Path, connector_type: str, secret: str) -> None:
+    client = build_read_client(
+        _instance(connector_type=connector_type),
+        base_settings=_base_settings(settings, tmp_path),
+        vault=_Vault(secret),
+        resolver=_resolver("8.8.8.8"),
+        inner_transport=httpx.MockTransport(lambda request: httpx.Response(200, json=[])),
+    )
+    assert client.settings.allow_write_actions is False
+    assert isinstance(client.transport, net_security.PinnedIpTransport)
+
+
+def test_build_read_client_for_repeats_active_gate(settings, tmp_path: Path) -> None:
+    class Store:
+        def get_connector_instance(self, connector_instance_id: str) -> ConnectorInstance:
+            assert connector_instance_id == "instance-1"
+            return _instance(status="inactive")
+
+    vault = _Vault()
+    with pytest.raises(ConnectorFactoryError, match="not active"):
+        build_read_client_for(
+            Store(),
+            "instance-1",
+            base_settings=_base_settings(settings, tmp_path),
+            vault=vault,
+        )
+    assert vault.keys == []
+
+
+@pytest.mark.parametrize("stored", [None])
+def test_build_read_client_for_handles_missing_instance(settings, tmp_path: Path, stored) -> None:
+    class Store:
+        def get_connector_instance(self, connector_instance_id: str) -> ConnectorInstance | None:
+            return stored
+
+    with pytest.raises(ConnectorFactoryError, match="not found"):
+        build_read_client_for(Store(), "missing", base_settings=_base_settings(settings, tmp_path))
+
+
+def test_build_read_client_for_redacts_store_errors(settings, tmp_path: Path) -> None:
+    class Store:
+        def get_connector_instance(self, connector_instance_id: str) -> ConnectorInstance | None:
+            raise RuntimeError("database path and secret")
+
+    with pytest.raises(ConnectorFactoryError, match="could not be loaded") as error:
+        build_read_client_for(Store(), "instance-1", base_settings=_base_settings(settings, tmp_path))
+    assert "database path" not in str(error.value)
