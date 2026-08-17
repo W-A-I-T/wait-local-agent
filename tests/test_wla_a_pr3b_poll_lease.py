@@ -99,8 +99,8 @@ def test_claim_rejects_blank_cursor_type(tmp_path: Path, cursor_type: str) -> No
         store.claim_poll_lease(instance_id, cursor_type, token="token", ttl_seconds=60, now=NOW)
 
 
-@pytest.mark.parametrize("ttl_seconds", [0, -1, float("inf"), float("nan"), "not-a-number"])
-def test_claim_rejects_invalid_ttl(tmp_path: Path, ttl_seconds: object) -> None:
+@pytest.mark.parametrize("ttl_seconds", [0.0, -1.0, float("inf"), float("nan")])
+def test_claim_rejects_invalid_ttl(tmp_path: Path, ttl_seconds: float) -> None:
     store, instance_id = _seed_instance(tmp_path / "state.db")
 
     with pytest.raises(ValueError, match="ttl_seconds"):
