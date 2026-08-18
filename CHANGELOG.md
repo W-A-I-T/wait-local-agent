@@ -42,6 +42,9 @@ All notable changes to WAIT Local Agent will be documented in this file.
 
 ### Added
 
+- Client details now include a read-only Operational graph tab showing linked
+  entities and relationships.
+
 - Added a client-scoped, read-only Smart Action Runs screen with run history
   and detail views for status, actor, output, evidence, and errors.
 

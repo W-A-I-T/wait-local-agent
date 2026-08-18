@@ -89,6 +89,56 @@ describe("Clients", () => {
     expect(mockedApiFetch).toHaveBeenCalledWith("/clients/acme");
   });
 
+  it("switches to the read-only operational graph and resolves relationships", async () => {
+    const graph = {
+      refs: [
+        { id: 1, client_id: "acme", entity_type: "ticket", source_system: "halo", external_id: "T-42", display_name: "Printer outage", provenance: "ticket-seed" },
+        { id: 2, client_id: "acme", entity_type: "user", source_system: "halo", external_id: "U-7", display_name: "Alex User", provenance: "ticket-seed" }
+      ],
+      links: [{ id: 3, client_id: "acme", from_ref_id: 2, to_ref_id: 1, link_type: "requested_by", provenance: "ticket-seed" }]
+    };
+    mockedApiFetch.mockImplementation((path) => {
+      if (path === "/clients") return Promise.resolve([{ client_id: "acme", name: "Acme", status: "active" }]) as ReturnType<typeof apiFetch>;
+      if (path === "/clients/acme") return Promise.resolve({ client_id: "acme", name: "Acme", status: "active", created_at: "2026-01-01", updated_at: "2026-01-02" }) as ReturnType<typeof apiFetch>;
+      if (path === "/clients/acme/graph") return Promise.resolve(graph) as ReturnType<typeof apiFetch>;
+      return Promise.resolve([]) as ReturnType<typeof apiFetch>;
+    });
+
+    render(<Clients />);
+    await screen.findByText("Acme");
+    await act(async () => { screen.getByRole("button", { name: "Acme" }).click(); });
+    expect(screen.getByRole("tab", { name: "Details" })).toHaveAttribute("aria-selected", "true");
+    await act(async () => { screen.getByRole("tab", { name: "Operational graph" }).click(); });
+
+    expect((await screen.findAllByText("Printer outage")).length).toBeGreaterThan(0);
+    expect((await screen.findAllByText("Alex User")).length).toBeGreaterThan(0);
+    expect(screen.getByText("requested_by")).toBeInTheDocument();
+    expect(screen.getByRole("tabpanel").textContent).toContain("Alex User");
+    expect(screen.getByRole("tabpanel").querySelector("button")).toBeNull();
+    expect(mockedApiFetch).toHaveBeenCalledWith("/clients/acme/graph");
+  });
+
+  it("shows graph empty and not-found states without crashing", async () => {
+    let graphResponse: unknown = { refs: [], links: [] };
+    mockedApiFetch.mockImplementation((path) => {
+      if (path === "/clients") return Promise.resolve([{ client_id: "acme", name: "Acme", status: "active" }]) as ReturnType<typeof apiFetch>;
+      if (path === "/clients/acme") return Promise.resolve({ client_id: "acme", name: "Acme", status: "active", created_at: "now", updated_at: "now" }) as ReturnType<typeof apiFetch>;
+      if (path === "/clients/acme/graph") return (graphResponse instanceof Error ? Promise.reject(graphResponse) : Promise.resolve(graphResponse)) as ReturnType<typeof apiFetch>;
+      return Promise.resolve([]) as ReturnType<typeof apiFetch>;
+    });
+
+    render(<Clients />);
+    await screen.findByText("Acme");
+    await act(async () => { screen.getByRole("button", { name: "Acme" }).click(); });
+    await act(async () => { screen.getByRole("tab", { name: "Operational graph" }).click(); });
+    expect(await screen.findByText("No operational-graph entities are linked to this client yet.")).toBeInTheDocument();
+
+    graphResponse = Object.assign(new Error("missing"), { status: 404 });
+    await act(async () => { screen.getByRole("tab", { name: "Details" }).click(); });
+    await act(async () => { screen.getByRole("tab", { name: "Operational graph" }).click(); });
+    expect(await screen.findByRole("alert")).toHaveTextContent("operational graph is no longer available");
+  });
+
   it("creates a client and refreshes the directory", async () => {
     let listCalls = 0;
     mockedApiFetch.mockImplementation((path, init) => {

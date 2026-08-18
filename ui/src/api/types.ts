@@ -39,6 +39,30 @@ export type Client = {
 
 export type ClientDirectoryEntry = Pick<Client, "client_id" | "name" | "status">;
 
+export type EntityRef = {
+  id: number;
+  client_id: string;
+  entity_type: string;
+  source_system: string;
+  external_id: string;
+  display_name: string;
+  provenance: string;
+};
+
+export type EntityLink = {
+  id: number;
+  client_id: string;
+  from_ref_id: number;
+  to_ref_id: number;
+  link_type: string;
+  provenance: string;
+};
+
+export type ClientGraph = {
+  refs: EntityRef[];
+  links: EntityLink[];
+};
+
 export type SyncCursor = {
   connector_instance_id: string;
   cursor_type: string;

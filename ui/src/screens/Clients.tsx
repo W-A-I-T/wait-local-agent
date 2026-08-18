@@ -1,11 +1,22 @@
-import { useCallback, useEffect, useState, type FormEvent } from "react";
+import { useCallback, useEffect, useState, type FormEvent, type KeyboardEvent } from "react";
 import { apiFetch } from "../api/client";
-import type { Client, ClientConnectorMapping, ClientDirectoryEntry, MappingVerifyResult } from "../api/types";
+import type { Client, ClientConnectorMapping, ClientDirectoryEntry, ClientGraph, MappingVerifyResult } from "../api/types";
 import { useDashboard } from "../app/DashboardContext";
 import { RoleGate } from "../components/RoleGate";
 import { StatusChip } from "../components/StatusChip";
 
 type ClientForm = { client_id: string; name: string; status: string };
+type ClientDetailTab = "details" | "graph";
+
+const detailTabs: Array<{ id: ClientDetailTab; label: string }> = [
+  { id: "details", label: "Details" },
+  { id: "graph", label: "Operational graph" }
+];
+
+function isNotFoundError(error: unknown): boolean {
+  if (!error || typeof error !== "object" || !("status" in error)) return false;
+  return error.status === 404;
+}
 
 const emptyForm: ClientForm = { client_id: "", name: "", status: "active" };
 
@@ -15,6 +26,10 @@ export function Clients() {
   const [clients, setClients] = useState<ClientDirectoryEntry[]>([]);
   const [selectedClientId, setSelectedClientId] = useState<string | null>(null);
   const [selectedClient, setSelectedClient] = useState<Client | null>(null);
+  const [activeDetailTab, setActiveDetailTab] = useState<ClientDetailTab>("details");
+  const [clientGraph, setClientGraph] = useState<ClientGraph | null>(null);
+  const [graphLoading, setGraphLoading] = useState(false);
+  const [graphError, setGraphError] = useState("");
   const [mappings, setMappings] = useState<ClientConnectorMapping[]>([]);
   const [loading, setLoading] = useState(true);
   const [detailLoading, setDetailLoading] = useState(false);
@@ -47,6 +62,9 @@ export function Clients() {
   const selectClient = useCallback(async (clientId: string) => {
     setSelectedClientId(clientId);
     setSelectedClient(null);
+    setActiveDetailTab("details");
+    setClientGraph(null);
+    setGraphError("");
     setMappings([]);
     setDetailLoading(true);
     setDetailError("");
@@ -64,6 +82,56 @@ export function Clients() {
       setDetailLoading(false);
     }
   }, []);
+
+  const selectDetailTab = (tab: ClientDetailTab) => {
+    setActiveDetailTab(tab);
+  };
+
+  const handleDetailTabKeyDown = (event: KeyboardEvent<HTMLButtonElement>) => {
+    const currentIndex = detailTabs.findIndex((tab) => tab.id === activeDetailTab);
+    let nextIndex: number | null = null;
+    if (event.key === "ArrowRight" || event.key === "ArrowDown") nextIndex = (currentIndex + 1) % detailTabs.length;
+    if (event.key === "ArrowLeft" || event.key === "ArrowUp") nextIndex = (currentIndex - 1 + detailTabs.length) % detailTabs.length;
+    if (event.key === "Home") nextIndex = 0;
+    if (event.key === "End") nextIndex = detailTabs.length - 1;
+    if (nextIndex !== null) {
+      event.preventDefault();
+      const nextTab = detailTabs[nextIndex];
+      setActiveDetailTab(nextTab.id);
+      document.getElementById(`client-detail-tab-${nextTab.id}`)?.focus();
+    }
+  };
+
+  useEffect(() => {
+    if (activeDetailTab !== "graph" || !selectedClientId) return;
+    let cancelled = false;
+    setGraphLoading(true);
+    setGraphError("");
+    setClientGraph(null);
+    void apiFetch<ClientGraph>(`/clients/${encodeURIComponent(selectedClientId)}/graph`)
+      .then((result) => {
+        if (!cancelled) {
+          if (!Array.isArray(result.refs) || !Array.isArray(result.links)) throw new Error("The appliance returned invalid operational-graph data.");
+          setClientGraph(result);
+        }
+      })
+      .catch((requestError: unknown) => {
+        if (cancelled) return;
+        setGraphError(isNotFoundError(requestError)
+          ? "This client's operational graph is no longer available. Refresh the client list and try again."
+          : requestError instanceof Error ? requestError.message : "Unable to load the operational graph.");
+      })
+      .finally(() => {
+        if (!cancelled) setGraphLoading(false);
+      });
+    return () => { cancelled = true; };
+  }, [activeDetailTab, selectedClientId]);
+
+  const refsById = new Map((clientGraph?.refs ?? []).map((ref) => [ref.id, ref]));
+  const entityName = (refId: number) => {
+    const ref = refsById.get(refId);
+    return ref ? ref.display_name || ref.external_id : String(refId);
+  };
 
   const submitForm = useCallback(async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -170,7 +238,7 @@ export function Clients() {
 
       {loading ? <section className="panel" aria-busy="true"><p className="screen-note">Loading Clients…</p></section> : clients.length === 0 ? <section className="panel empty-state"><h3>No clients are visible.</h3><p>The appliance has not returned any clients for this scope.</p></section> : <section className="panel" aria-labelledby="clients-list-heading"><div className="panel-heading"><div><h2 id="clients-list-heading">Client directory</h2><span>{clients.length} client{clients.length === 1 ? "" : "s"}</span></div><span>Select a client for details</span></div><div className="clients-table-wrap"><table className="clients-table"><thead><tr><th scope="col">Name</th><th scope="col">Client ID</th><th scope="col">Status</th></tr></thead><tbody>{clients.map((client) => <tr key={client.client_id}><td><button className="table-link" type="button" onClick={() => void selectClient(client.client_id)}>{client.name}</button></td><td><code>{client.client_id}</code></td><td><StatusChip status={client.status} /></td></tr>)}</tbody></table></div></section>}
 
-      {selectedClientId ? <section className="panel" aria-labelledby="client-detail-heading"><div className="panel-heading"><div><h2 id="client-detail-heading">Client detail</h2><span>{selectedClientId}</span></div>{selectedClient ? <RoleGate role={role} resolved={roleResolved} allowed={["admin"]}><button className="secondary-button" type="button" onClick={beginEdit}>Edit client</button></RoleGate> : null}</div>{detailLoading ? <p className="screen-note" aria-busy="true">Loading client details…</p> : detailError ? <div className="notice danger" role="alert">{detailError}</div> : selectedClient ? <><dl className="mcp-detail-grid"><div><dt>Client ID</dt><dd><code>{selectedClient.client_id}</code></dd></div><div><dt>Name</dt><dd>{selectedClient.name}</dd></div><div><dt>Status</dt><dd><StatusChip status={selectedClient.status} /></dd></div><div><dt>Created</dt><dd>{selectedClient.created_at}</dd></div><div><dt>Updated</dt><dd>{selectedClient.updated_at}</dd></div></dl><h3>Connector mappings</h3>{mappingError ? <div className="notice danger" role="alert">{mappingError}</div> : null}{mappings.length === 0 ? <p className="screen-note">No connector mappings are configured for this client.</p> : <div className="clients-table-wrap"><table className="clients-table"><thead><tr><th scope="col">External company</th><th scope="col">Connector</th><th scope="col">Verification</th></tr></thead><tbody>{mappings.map((mapping) => <tr key={mapping.mapping_id}><td>{mapping.external_company_name || mapping.external_company_id}</td><td><code>{mapping.connector_instance_id}</code></td><td>{mapping.verified === 1 ? <StatusChip status="verified" /> : <RoleGate role={role} resolved={roleResolved} allowed={["admin"]}><button className="secondary-button" type="button" onClick={() => void verifyMapping(mapping.mapping_id)} disabled={verifyingMappingId !== null}>{verifyingMappingId === mapping.mapping_id ? "Verifying…" : "Verify"}</button></RoleGate>}</td></tr>)}</tbody></table></div>}</> : null}</section> : null}
+      {selectedClientId ? <section className="panel" aria-labelledby="client-detail-heading"><div className="panel-heading"><div><h2 id="client-detail-heading">Client detail</h2><span>{selectedClientId}</span></div>{selectedClient ? <RoleGate role={role} resolved={roleResolved} allowed={["admin"]}><button className="secondary-button" type="button" onClick={beginEdit}>Edit client</button></RoleGate> : null}</div>{selectedClient ? <><div className="tab-list" role="tablist" aria-label="Client detail"><div className="row-actions">{detailTabs.map((tab) => <button key={tab.id} id={`client-detail-tab-${tab.id}`} type="button" role="tab" aria-selected={activeDetailTab === tab.id} aria-controls={`client-detail-panel-${tab.id}`} tabIndex={activeDetailTab === tab.id ? 0 : -1} className={activeDetailTab === tab.id ? "selected" : "secondary-button"} onClick={() => selectDetailTab(tab.id)} onKeyDown={handleDetailTabKeyDown}>{tab.label}</button>)}</div></div>{activeDetailTab === "details" ? <div id="client-detail-panel-details" role="tabpanel" aria-labelledby="client-detail-tab-details"><dl className="mcp-detail-grid"><div><dt>Client ID</dt><dd><code>{selectedClient.client_id}</code></dd></div><div><dt>Name</dt><dd>{selectedClient.name}</dd></div><div><dt>Status</dt><dd><StatusChip status={selectedClient.status} /></dd></div><div><dt>Created</dt><dd>{selectedClient.created_at}</dd></div><div><dt>Updated</dt><dd>{selectedClient.updated_at}</dd></div></dl><h3>Connector mappings</h3>{mappingError ? <div className="notice danger" role="alert">{mappingError}</div> : null}{mappings.length === 0 ? <p className="screen-note">No connector mappings are configured for this client.</p> : <div className="clients-table-wrap"><table className="clients-table"><thead><tr><th scope="col">External company</th><th scope="col">Connector</th><th scope="col">Verification</th></tr></thead><tbody>{mappings.map((mapping) => <tr key={mapping.mapping_id}><td>{mapping.external_company_name || mapping.external_company_id}</td><td><code>{mapping.connector_instance_id}</code></td><td>{mapping.verified === 1 ? <StatusChip status="verified" /> : <RoleGate role={role} resolved={roleResolved} allowed={["admin"]}><button className="secondary-button" type="button" onClick={() => void verifyMapping(mapping.mapping_id)} disabled={verifyingMappingId !== null}>{verifyingMappingId === mapping.mapping_id ? "Verifying…" : "Verify"}</button></RoleGate>}</td></tr>)}</tbody></table></div>}</div> : <div id="client-detail-panel-graph" role="tabpanel" aria-labelledby="client-detail-tab-graph" aria-busy={graphLoading}><h3>Entities</h3>{graphLoading ? <p className="screen-note">Loading operational graph…</p> : graphError ? <div className="notice danger" role="alert">{graphError}</div> : !clientGraph || clientGraph.refs.length === 0 ? <p className="screen-note">No operational-graph entities are linked to this client yet.</p> : <><div className="clients-table-wrap"><table className="clients-table"><thead><tr><th scope="col">Type</th><th scope="col">Name</th><th scope="col">Source</th><th scope="col">External ID</th><th scope="col">Provenance</th></tr></thead><tbody>{clientGraph.refs.map((ref) => <tr key={ref.id}><td><StatusChip status={ref.entity_type} /></td><td>{ref.display_name || ref.external_id}</td><td>{ref.source_system}</td><td><code>{ref.external_id}</code></td><td>{ref.provenance}</td></tr>)}</tbody></table></div><h3>Relationships</h3>{clientGraph.links.length === 0 ? <p className="screen-note">No relationships are linked to these entities.</p> : <div className="clients-table-wrap"><table className="clients-table"><thead><tr><th scope="col">From</th><th scope="col">Relationship</th><th scope="col">To</th><th scope="col">Provenance</th></tr></thead><tbody>{clientGraph.links.map((link) => <tr key={link.id}><td>{entityName(link.from_ref_id)}</td><td>{link.link_type}</td><td>{entityName(link.to_ref_id)}</td><td>{link.provenance}</td></tr>)}</tbody></table></div>}</>}</div>}</> : detailLoading ? <p className="screen-note" aria-busy="true">Loading client details…</p> : detailError ? <div className="notice danger" role="alert">{detailError}</div> : null}</section> : null}
     </div>
   );
 }
