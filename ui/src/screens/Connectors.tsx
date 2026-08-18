@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState, type FormEvent } from "react";
 import { useDashboard } from "../app/DashboardContext";
 import { apiFetch } from "../api/client";
 import { type ConnectorStatus } from "../api/types";
+import { ConnectorBrowsePanel } from "../components/ConnectorBrowsePanel";
 
 type HealthState = {
   status: string;
@@ -294,6 +295,15 @@ export function Connectors() {
           {rows.map((row) => renderConnector(row))}
         </div>
       </section>
+
+      <ConnectorBrowsePanel
+        title="Autotask"
+        healthPath="/connectors/autotask/health"
+        lists={[
+          { label: "Tickets", path: "/connectors/autotask/tickets" },
+          { label: "Companies", path: "/connectors/autotask/companies" }
+        ]}
+      />
 
       <section className="panel settings-panel">
         <div className="panel-heading">
