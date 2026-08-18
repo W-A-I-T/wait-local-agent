@@ -42,6 +42,9 @@ All notable changes to WAIT Local Agent will be documented in this file.
 
 ### Added
 
+- Added a reusable read-only connector browse panel, with Autotask ticket and
+  company browsing as its first provider (health and paginated lists).
+
 - A Microsoft 365 Actions console can now draft offboarding, password-reset,
   and device-reboot actions. Drafts are approval-gated and route through the
   existing Approvals queue.
