@@ -1,5 +1,6 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { MemoryRouter } from "react-router-dom";
 import { ApiRequestError, apiFetch } from "../api/client";
 import { useDashboard } from "../app/DashboardContext";
 import { SmartActionRuns } from "./SmartActionRuns";
@@ -38,7 +39,7 @@ describe("SmartActionRuns", () => {
       throw new Error(`Unexpected request: ${path}`);
     });
 
-    render(<SmartActionRuns />);
+    render(<MemoryRouter><SmartActionRuns /></MemoryRouter>);
     expect(await screen.findByText("m365.device_reboot")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "m365.device_reboot" }));
 
@@ -51,7 +52,7 @@ describe("SmartActionRuns", () => {
 
   it("shows the empty state", async () => {
     mockedApiFetch.mockResolvedValue([]);
-    render(<SmartActionRuns />);
+    render(<MemoryRouter><SmartActionRuns /></MemoryRouter>);
     expect(await screen.findByText("No smart action runs yet.")).toBeInTheDocument();
   });
 
@@ -61,8 +62,21 @@ describe("SmartActionRuns", () => {
       return Promise.reject(new ApiRequestError("Not found", "Not found", 404)) as ReturnType<typeof apiFetch>;
     });
 
-    render(<SmartActionRuns />);
+    render(<MemoryRouter><SmartActionRuns /></MemoryRouter>);
     fireEvent.click(await screen.findByRole("button", { name: "m365.device_reboot" }));
     await waitFor(() => expect(screen.getByRole("alert")).toHaveTextContent("not found in the current client scope"));
+  });
+
+  it("clears stale rows from a prior client when a reload fails", async () => {
+    mockedApiFetch.mockResolvedValueOnce([run] as never);
+    const view = render(<MemoryRouter><SmartActionRuns /></MemoryRouter>);
+    expect(await screen.findByText("m365.device_reboot")).toBeInTheDocument();
+
+    mockedUseDashboard.mockReturnValue({ selectedClientId: "beta" } as never);
+    mockedApiFetch.mockRejectedValueOnce(new Error("client scope changed") as never);
+    view.rerender(<MemoryRouter><SmartActionRuns /></MemoryRouter>);
+
+    await waitFor(() => expect(screen.getByRole("alert")).toHaveTextContent("client scope changed"));
+    expect(screen.queryByText("m365.device_reboot")).not.toBeInTheDocument();
   });
 });
