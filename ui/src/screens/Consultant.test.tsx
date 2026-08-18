@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { Consultant } from "./Consultant";
@@ -8,7 +8,14 @@ vi.mock("../app/DashboardContext", () => ({
 }));
 
 describe("Consultant architecture decisions", () => {
+  let rejectDiscoverySessions = false;
+  let rejectBlueprints = false;
+  let rejectArchitecture = false;
+
   beforeEach(() => {
+    rejectDiscoverySessions = false;
+    rejectBlueprints = false;
+    rejectArchitecture = false;
     vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL) => {
       const path = String(input);
       const responses: Record<string, unknown> = {
@@ -60,6 +67,15 @@ describe("Consultant architecture decisions", () => {
         },
       };
       if (!(path in responses)) throw new Error(`Unexpected request: ${path}`);
+      if (rejectBlueprints && path === "/consultant/blueprints") {
+        return Promise.reject(new Error("Blueprints unavailable"));
+      }
+      if (rejectDiscoverySessions && path === "/consultant/discovery/sessions") {
+        return Promise.reject(new Error("Forbidden"));
+      }
+      if (rejectArchitecture && path === "/consultant/blueprints/bp-acme/architecture") {
+        return Promise.reject(new Error("Architecture unavailable"));
+      }
       return Promise.resolve(new Response(JSON.stringify(responses[path]), { status: 200 }));
     }));
   });
@@ -80,5 +96,44 @@ describe("Consultant architecture decisions", () => {
     expect(screen.getByText("Local cache")).toBeInTheDocument();
     expect(screen.getByText("Manager review")).toBeInTheDocument();
     expect(screen.getByText(/No inference started · No execution started · No deployment started/)).toBeInTheDocument();
+  });
+
+  it("keeps the blueprint list when discovery sessions fail", async () => {
+    rejectDiscoverySessions = true;
+    render(<MemoryRouter><Consultant /></MemoryRouter>);
+
+    expect(await screen.findByRole("heading", { name: "Solutions Architect blueprints" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Employee onboarding/ })).toBeInTheDocument();
+    expect(screen.getByRole("alert")).toHaveTextContent("discovery sessions");
+    expect(screen.queryByText("You do not have permission to do that")).not.toBeInTheDocument();
+  });
+
+  it("preserves the selected blueprint and architecture when blueprints refresh fails", async () => {
+    render(<MemoryRouter><Consultant /></MemoryRouter>);
+
+    fireEvent.click(await screen.findByRole("button", { name: /Employee onboarding/ }));
+    expect(await screen.findByRole("heading", { name: "Architecture decisions" })).toBeInTheDocument();
+
+    rejectBlueprints = true;
+    fireEvent.click(screen.getByRole("button", { name: "Refresh" }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("blueprints");
+    expect(screen.getByRole("button", { name: /Employee onboarding/ })).toHaveClass("selected");
+    expect(screen.getByRole("heading", { name: "Architecture decisions" })).toBeInTheDocument();
+  });
+
+  it("does not clear an existing action message after a successful refresh", async () => {
+    render(<MemoryRouter><Consultant /></MemoryRouter>);
+
+    rejectArchitecture = true;
+    fireEvent.click(await screen.findByRole("button", { name: /Employee onboarding/ }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("We couldn't connect to the appliance");
+
+    rejectArchitecture = false;
+    fireEvent.click(screen.getByRole("button", { name: "Refresh" }));
+    await waitFor(() => {
+      expect(vi.mocked(fetch).mock.calls.filter(([input]) => String(input) === "/consultant/blueprints")).toHaveLength(2);
+    });
+    expect(screen.getByRole("alert")).toHaveTextContent("We couldn't connect to the appliance");
   });
 });

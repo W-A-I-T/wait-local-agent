@@ -42,6 +42,9 @@ All notable changes to WAIT Local Agent will be documented in this file.
 
 ### Fixed
 
+- The Solutions Architect screen now loads each section independently, so a
+  failed `/consultant/*` sub-request does not blank the blueprint list or
+  architecture view; affected sections show a scoped load notice.
 - The Tickets workspace now caches each selected ticket's Summary, Notes,
   Status History, and Context tab data, so switching between tabs no longer
   refetches already-loaded data; a tab-scoped Refresh button and the app-wide
