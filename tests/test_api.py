@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import sqlite3
 import zipfile
 from dataclasses import replace
 from datetime import date
@@ -6777,3 +6778,60 @@ def test_generate_blueprint_playbook_is_admin_scoped_disabled_and_versioned(sett
         ).status_code
         == 404
     )
+
+
+def test_generate_blueprint_playbook_updates_after_concurrent_create(settings, monkeypatch) -> None:
+    secure_settings = replace(
+        settings,
+        demo_mode=False,
+        client_id="acme",
+        admin_token="admin-token",
+        tech_token="tech-token",
+    )
+    app = create_app(secure_settings)
+    client = TestClient(app)
+    blueprint_payload = {
+        "solution": {"name": "Concurrent generated assistant"},
+        "business_goal": {"statement": "Reduce manual ticket handling."},
+        "users": ["Technicians"],
+        "knowledge": [],
+        "systems": [],
+        "agents": [{"id": "triage-agent", "name": "Triage agent", "purpose": "Triage tickets"}],
+        "workflows": [],
+        "approvals": {},
+        "deployment": [],
+        "risk": "medium",
+    }
+    created = client.post(
+        "/consultant/blueprints",
+        headers=_auth("tech-token"),
+        json={**blueprint_payload, "client_id": "acme"},
+    )
+    assert created.status_code == 201
+    blueprint_id = created.json()["id"]
+    store = app.state.store
+    original_create = store.create_msp_playbook_entry
+    create_calls = 0
+
+    def create_then_raise(*args, **kwargs):
+        nonlocal create_calls
+        create_calls += 1
+        created_entry = original_create(*args, **kwargs)
+        if create_calls == 1:
+            raise sqlite3.IntegrityError("simulated concurrent create")
+        return created_entry
+
+    monkeypatch.setattr(store, "create_msp_playbook_entry", create_then_raise)
+
+    generated = client.post(
+        f"/consultant/blueprints/{blueprint_id}/generate-playbook",
+        headers=_auth("admin-token"),
+        params={"client_id": "acme"},
+    )
+
+    assert generated.status_code == 200
+    assert create_calls == 1
+    assert generated.json()["id"] == f"architect-{blueprint_id}"
+    persisted = store.get_msp_playbook_entry(f"architect-{blueprint_id}", "acme")
+    assert persisted is not None
+    assert persisted.enabled is False
