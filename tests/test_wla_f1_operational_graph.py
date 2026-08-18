@@ -4,6 +4,7 @@ import sqlite3
 from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
+from typing import cast
 
 import pytest
 from fastapi import HTTPException
@@ -13,8 +14,22 @@ from wait_local_agent.api.app import create_app
 from wait_local_agent.client_scope import AllClients, BoundClients
 from wait_local_agent.models import CanonicalAsset, Ticket
 from wait_local_agent.operational_graph import OperationalGraphService
-from wait_local_agent.rbac import resolve_auth_context
+from wait_local_agent.rbac import AuthContext, Role, resolve_auth_context
+from wait_local_agent.rmm import RmmAlert, RmmDevice, RmmInventoryProvider
 from wait_local_agent.store import Store
+
+
+class _FakeRmmProvider:
+    adapter_id = "fake-rmm"
+
+    def list_devices(self, client_id: str | None = None) -> list[RmmDevice]:
+        return [RmmDevice("device-1", "Device 1", "workstation", {"os": "test"})]
+
+    def list_alerts(self, client_id: str | None = None) -> list[RmmAlert]:
+        return [
+            RmmAlert("alert-1", "device-1", "high", "Disk full"),
+            RmmAlert("alert-missing", "missing-device", "low", "Unknown device"),
+        ]
 
 
 def _seed_clients(store: Store) -> None:
@@ -433,6 +448,40 @@ def test_traversal_is_bounded_and_stable(tmp_path: Path) -> None:
     assert graph.ticket_context("client-b", "node-0") is None
 
 
+def test_rmm_inventory_seeder_is_scoped_idempotent_and_skips_missing_devices(tmp_path: Path) -> None:
+    store = Store(tmp_path / "state.db")
+    _seed_clients(store)
+    graph = OperationalGraphService(store, rmm_provider=cast(RmmInventoryProvider, _FakeRmmProvider()))
+
+    first = graph.seed_rmm_inventory("client-a")
+    second = graph.seed_rmm_inventory("client-a")
+
+    assert first == {"devices": 1, "alerts": 2, "links": 1, "errors": []}
+    assert second == first
+    assert len(store.list_entity_refs("client-a")) == 3
+    assert len(store.list_entity_refs("client-b")) == 0
+    device = store.find_entity_ref("client-a", "device", "fake-rmm", "device-1")
+    alert = store.find_entity_ref("client-a", "alert", "fake-rmm", "alert-1")
+    assert device is not None and alert is not None
+    links = store.list_entity_links("client-a", alert.id)
+    assert len(links) == 1
+    assert links[0].link_type == "alerted_on"
+    assert links[0].to_ref_id == device.id
+
+
+def test_rmm_inventory_provider_failure_is_non_raising(tmp_path: Path) -> None:
+    class FailingProvider(_FakeRmmProvider):
+        def list_devices(self, client_id: str | None = None) -> list[RmmDevice]:
+            raise RuntimeError("provider credentials must not escape")
+
+    store = Store(tmp_path / "state.db")
+    store.create_client("client-a", "Acme")
+    summary = OperationalGraphService(
+        store, rmm_provider=cast(RmmInventoryProvider, FailingProvider())
+    ).seed_rmm_inventory("client-a")
+    assert summary == {"devices": 0, "alerts": 2, "links": 0, "errors": ["device inventory unavailable"]}
+
+
 def test_context_endpoint_returns_404_for_ticket_outside_principal_scope(settings) -> None:
     store = Store(settings.data_path)
     _seed_clients(store)
@@ -467,3 +516,50 @@ def test_context_endpoint_returns_404_for_ticket_outside_principal_scope(setting
 
     assert error.value.status_code == 404
     assert error.value.detail == "ticket not found"
+
+
+def test_client_graph_endpoints_are_fail_closed_and_operator_gated(settings, monkeypatch) -> None:
+    import wait_local_agent.api.app as app_module
+
+    store = Store(settings.data_path)
+    _seed_clients(store)
+    monkeypatch.setattr(app_module, "rmm_provider_from_settings", lambda *_args: _FakeRmmProvider())
+    secure_settings = replace(
+        settings, demo_mode=False, api_token="bootstrap-admin", viewer_token="", allow_http_probing=True
+    )
+    app = create_app(secure_settings)
+    viewer = AuthContext(
+        role=Role.VIEWER, presented_token="viewer", client_ids=frozenset({"client-a"}), demo_mode=False
+    )
+    non_operator = AuthContext(
+        role=Role.ADMIN, presented_token="admin", client_ids=frozenset({"client-a"}), demo_mode=False
+    )
+    operator = AuthContext(
+        role=Role.ADMIN,
+        presented_token="operator",
+        client_ids=frozenset(),
+        is_msp_admin=True,
+        demo_mode=False,
+    )
+    graph_route = next(
+        route
+        for route in app.routes
+        if isinstance(route, APIRoute) and route.path == "/clients/{client_id}/graph"
+    )
+    sync_route = next(
+        route
+        for route in app.routes
+        if isinstance(route, APIRoute) and route.path == "/clients/{client_id}/graph/sync-rmm"
+    )
+
+    with pytest.raises(HTTPException) as foreign:
+        graph_route.endpoint("client-b", viewer)
+    assert foreign.value.status_code == 404
+    with pytest.raises(HTTPException) as denied:
+        sync_route.endpoint("client-a", non_operator)
+    assert denied.value.status_code == 403
+    result = sync_route.endpoint("client-a", operator)
+    assert result["devices"] == 1
+    assert "credentials" not in str(result).lower()
+    graph = graph_route.endpoint("client-a", viewer)
+    assert len(graph["refs"]) == 3

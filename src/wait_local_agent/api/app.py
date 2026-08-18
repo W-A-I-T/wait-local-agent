@@ -237,6 +237,7 @@ from wait_local_agent.reports.msp import (
 )
 from wait_local_agent.reports.renderers import redact_text, redact_value, report_as_dict
 from wait_local_agent.reports.service import ReportService
+from wait_local_agent.rmm import rmm_provider_from_settings
 from wait_local_agent.scalepad import (
     ScalePadAssessmentResponse,
     ScalePadClient,
@@ -974,7 +975,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         settings=active_settings,
         provider=provider_from_settings(active_settings),
     )
-    operational_graph_service = OperationalGraphService(store)
+    rmm_provider = rmm_provider_from_settings(active_settings, store)
+    operational_graph_service = OperationalGraphService(store, rmm_provider=rmm_provider)
     halopsa_client = HaloPSAClient(active_settings)
     hudu_client = HuduClient(active_settings)
     connectwise_client = ConnectWiseClient(active_settings)
@@ -997,6 +999,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         store,
         active_settings,
         collector_service=collector_service,
+        rmm_provider=rmm_provider,
         halopsa_client=halopsa_client,
         hudu_client=hudu_client,
         connectwise_client=connectwise_client,
@@ -1265,6 +1268,23 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         if client is None:
             raise HTTPException(status_code=404, detail="client not found")
         return asdict(client)
+
+    @app.get("/clients/{client_id}/graph")
+    def client_graph(client_id: str, context: ViewerAccess) -> dict[str, object]:
+        scope = _resolve_client_target_scope(context, client_id)
+        if store.get_client(scope, client_id) is None:
+            raise HTTPException(status_code=404, detail="client not found")
+        return asdict(operational_graph_service.client_graph(scope))
+
+    @app.post("/clients/{client_id}/graph/sync-rmm")
+    def sync_client_rmm_graph(client_id: str, context: AdminAccess) -> dict[str, object]:
+        _require_msp_operator(context)
+        scope = _resolve_client_target_scope(context, client_id)
+        if store.get_client(scope, client_id) is None:
+            raise HTTPException(status_code=404, detail="client not found")
+        if rmm_provider.adapter_id != "local-collector" and not active_settings.allow_http_probing:
+            raise HTTPException(status_code=409, detail="RMM read probing is disabled")
+        return dict(operational_graph_service.seed_rmm_inventory(scope))
 
     @app.patch("/clients/{client_id}")
     def update_client_status(
