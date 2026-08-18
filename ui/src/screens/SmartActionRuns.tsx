@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
+import { Link } from "react-router-dom";
 import { ApiRequestError, apiFetch } from "../api/client";
 import { useDashboard } from "../app/DashboardContext";
 import { StatusChip } from "../components/StatusChip";
@@ -92,7 +93,12 @@ export function SmartActionRuns() {
         setDetailError("");
       })
       .catch((error: unknown) => {
-        if (!cancelled) setListError(error instanceof Error ? error.message : "Unable to load smart action runs.");
+        if (cancelled) return;
+        setRuns([]);
+        setSelectedRunId(null);
+        setDetail(null);
+        setDetailError("");
+        setListError(error instanceof Error ? error.message : "Unable to load smart action runs.");
       })
       .finally(() => {
         if (!cancelled) setListLoading(false);
@@ -149,7 +155,10 @@ export function SmartActionRuns() {
         <div className="panel-heading"><div><p className="eyebrow">Run detail</p><h2 id="smart-action-run-detail-heading">Smart Action Run {selectedRunId}</h2></div>{detail ? <StatusChip status={detail.status} /> : null}</div>
         {detailLoading ? <p className="screen-note" aria-busy="true">Loading run details…</p> : null}
         {detailError ? <div className="notice danger" role="alert">{detailError}</div> : null}
-        {detail ? <div className="smart-action-detail-grid"><div><dt>Action</dt><dd>{detail.action_id || "Not recorded"}</dd></div><div><dt>Actor</dt><dd>{detail.actor || "Not recorded"}</dd></div><div><dt>Client</dt><dd>{detail.client_id || "All clients"}</dd></div><div><dt>Created</dt><dd>{formatDate(detail.created_at)}</dd></div><div><dt>Updated</dt><dd>{formatDate(detail.updated_at)}</dd></div><div><dt>Approval</dt><dd>{detail.approval_id === null ? "Not recorded" : <a href="/approvals">Approval {detail.approval_id}</a>}</dd></div><div><dt>Payload digest</dt><dd><code>{detail.payload_digest || "Not recorded"}</code></dd></div><div><dt>Output</dt><dd><pre className="smart-action-code">{formatJson(detail.output)}</pre></dd></div><div><dt>Evidence</dt><dd><pre className="smart-action-code">{formatJson(detail.evidence)}</pre></dd></div>{detail.error_detail ? <div><div className="notice danger" role="alert">{detail.error_detail}</div></div> : null}</div> : null}
+        {detail ? <>
+          <dl className="smart-action-detail-grid"><div><dt>Action</dt><dd>{detail.action_id || "Not recorded"}</dd></div><div><dt>Actor</dt><dd>{detail.actor || "Not recorded"}</dd></div><div><dt>Client</dt><dd>{detail.client_id || "All clients"}</dd></div><div><dt>Created</dt><dd>{formatDate(detail.created_at)}</dd></div><div><dt>Updated</dt><dd>{formatDate(detail.updated_at)}</dd></div><div><dt>Approval</dt><dd>{detail.approval_id === null ? "Not recorded" : <Link to="/approvals">Approval {detail.approval_id}</Link>}</dd></div><div><dt>Payload digest</dt><dd><code>{detail.payload_digest || "Not recorded"}</code></dd></div><div><dt>Output</dt><dd><pre className="smart-action-code">{formatJson(detail.output)}</pre></dd></div><div><dt>Evidence</dt><dd><pre className="smart-action-code">{formatJson(detail.evidence)}</pre></dd></div></dl>
+          {detail.error_detail ? <div className="notice danger" role="alert">{detail.error_detail}</div> : null}
+        </> : null}
       </section> : null}
     </div>
   );
