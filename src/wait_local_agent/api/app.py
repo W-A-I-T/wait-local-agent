@@ -185,6 +185,7 @@ from wait_local_agent.observability import (
     TICKET_METRICS_DERIVATION,
     build_analytics_summary,
 )
+from wait_local_agent.operational_graph import OperationalGraphService
 from wait_local_agent.power_apps import (
     PowerAppsPlanError,
     build_power_apps_artifact,
@@ -973,6 +974,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         settings=active_settings,
         provider=provider_from_settings(active_settings),
     )
+    operational_graph_service = OperationalGraphService(store)
     halopsa_client = HaloPSAClient(active_settings)
     hudu_client = HuduClient(active_settings)
     connectwise_client = ConnectWiseClient(active_settings)
@@ -2663,6 +2665,16 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             return asdict(service.summarize(ticket_id))
         except KeyError as exc:
             raise HTTPException(status_code=404, detail="ticket not found") from exc
+
+    @app.get("/tickets/{ticket_id}/context")
+    def ticket_context(ticket_id: str, context: ViewerAccess) -> dict[str, object]:
+        scope = resolve_client_scope(context, None)
+        if store.get_ticket(ticket_id, client_id=scope, include_quarantine=False) is None:
+            raise HTTPException(status_code=404, detail="ticket not found")
+        graph = operational_graph_service.ticket_context(scope, ticket_id)
+        if graph is None:
+            raise HTTPException(status_code=404, detail="ticket not found")
+        return asdict(graph)
 
     @app.get("/tickets/{ticket_id}/notes")
     def ticket_notes(ticket_id: str, context: ViewerAccess) -> list[dict[str, object]]:

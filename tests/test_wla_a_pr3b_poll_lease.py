@@ -38,6 +38,7 @@ def test_v6_registers_additive_lease_columns_and_preserves_foreign_keys(tmp_path
             (4, "canonical_assets_tenant_unique"),
             (5, "ticket_identity_and_tenancy"),
             (6, "poll_lease"),
+            (7, "operational_graph"),
         ]
         assert {str(row[1]) for row in connection.execute("pragma table_info(sync_cursors)")} >= {
             "lease_token",
