@@ -1581,6 +1581,39 @@ button:disabled {
   font-weight: 700;
 }
 
+.setup-status-list {
+  display: grid;
+  gap: 10px;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.setup-status-item {
+  align-items: flex-start;
+  display: flex;
+  gap: 10px;
+}
+
+.setup-status-marker {
+  font-size: 1.1rem;
+  font-weight: 800;
+  line-height: 1.2;
+  width: 20px;
+}
+
+.setup-status-item.todo .setup-status-marker { color: #9b3825; }
+.setup-status-item.done .setup-status-marker { color: #23734e; }
+.setup-status-item.info .setup-status-marker { color: #687b75; }
+.setup-status-item small { color: #687b75; display: block; margin-top: 2px; }
+
+.setup-status-summary {
+  border-top: 1px solid #e4ebe8;
+  font-weight: 700;
+  margin: 16px 0 0;
+  padding-top: 12px;
+}
+
 .ticket-list {
   display: grid;
   gap: 12px;

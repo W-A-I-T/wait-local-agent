@@ -14,6 +14,7 @@ import type {
   HaloReadResult,
   HaloTicket,
   HaloTicketsResponse,
+  ReadinessStep,
   WorkflowRun
 } from "../api/types";
 import { useConfiguredState } from "../hooks/useConfiguredState";
@@ -62,6 +63,7 @@ type DashboardContextValue = {
   isAdmin: boolean;
   isConfigured: boolean;
   configurationLoading: boolean;
+  configurationSteps: ReadinessStep[];
   setApiToken: (token: string) => void;
   setSelectedClientId: (clientId: string) => void;
   refresh: () => Promise<void>;
@@ -116,7 +118,7 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
   const [busyId, setBusyId] = useState<number | "draft" | null>(null);
   const selectedTicketIdRef = useRef(selectedTicketId);
   const roleRequestIdRef = useRef(0);
-  const configuration = useConfiguredState();
+  const configuration = useConfiguredState({ role });
 
   useEffect(() => {
     selectedTicketIdRef.current = selectedTicketId;
@@ -337,6 +339,7 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
       isAdmin: roleResolved && role === "admin",
       isConfigured: configuration.isConfigured,
       configurationLoading: configuration.loading,
+      configurationSteps: configuration.steps,
       setApiToken,
       setSelectedClientId,
       refresh,
@@ -364,6 +367,7 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
     clearApiToken,
     configuration.isConfigured,
     configuration.loading,
+    configuration.steps,
     connectors,
     createDraft,
     eventHistory,
