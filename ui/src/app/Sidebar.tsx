@@ -1,3 +1,4 @@
+import type { LucideIcon } from "lucide-react";
 import {
   Activity,
   ListChecks,
@@ -26,39 +27,107 @@ import { NavLink } from "react-router-dom";
 import { useDashboard } from "./DashboardContext";
 import { RoleGate } from "../components/RoleGate";
 
-const navigation = [
-  { to: "/", label: "Overview", icon: LayoutDashboard },
-  { to: "/clients", label: "Clients", icon: Users },
-  { to: "/connectors", label: "Connectors", icon: GitBranch },
-  { to: "/m365-actions", label: "M365 Actions", icon: ShieldCheck },
-  { to: "/tickets", label: "Tickets", icon: ClipboardList },
-  { to: "/approvals", label: "Approvals", icon: ClipboardCheck },
-  { to: "/analytics", label: "Analytics", icon: BarChart3 },
-  { to: "/agents", label: "Agents", icon: Bot },
-  { to: "/technician-chat", label: "Technician Chat", icon: MessageSquare },
-  { to: "/backfills", label: "Backfills", icon: ListChecks },
-  { to: "/executions", label: "Executions", icon: Activity },
-  { to: "/knowledge", label: "Knowledge", icon: BookOpenText },
-  { to: "/workflows", label: "Workflows", icon: Workflow },
-  { to: "/automation/events", label: "Events", icon: Activity },
-  { to: "/automation/schedules", label: "Schedules", icon: CalendarClock },
-  { to: "/workflow-designer", label: "Workflow Designer", icon: Workflow },
-  { to: "/templates", label: "Templates", icon: Files },
-  { to: "/playbooks", label: "Playbooks", icon: LibraryBig },
-  { to: "/consultant", label: "Consultant", icon: Compass },
-  { to: "/collectors", label: "Collectors", icon: Database },
-  { to: "/reports", label: "Reports", icon: BarChart3 },
-  { to: "/audit", label: "Audit", icon: FileSearch },
-  { to: "/scheduled-jobs", label: "Scheduled Jobs", icon: CalendarClock },
-  { to: "/founder", label: "Founder", icon: Sparkles }
+type NavItem = {
+  to: string;
+  label: string;
+  icon: LucideIcon;
+  adminOnly?: boolean;
+};
+
+type NavigationGroup = {
+  label?: string;
+  items: NavItem[];
+};
+
+const primaryNavigation: NavigationGroup[] = [
+  {
+    items: [
+      { to: "/", label: "Overview", icon: LayoutDashboard },
+      { to: "/clients", label: "Clients", icon: Users }
+    ]
+  },
+  {
+    label: "Operations",
+    items: [
+      { to: "/tickets", label: "Tickets", icon: ClipboardList },
+      { to: "/approvals", label: "Approvals", icon: ClipboardCheck },
+      { to: "/technician-chat", label: "Technician Chat", icon: MessageSquare },
+      { to: "/m365-actions", label: "M365 Actions", icon: ShieldCheck }
+    ]
+  },
+  {
+    label: "Automations",
+    items: [
+      { to: "/playbooks", label: "Playbooks", icon: LibraryBig },
+      { to: "/workflows", label: "Workflows", icon: Workflow },
+      { to: "/agents", label: "Agents", icon: Bot },
+      { to: "/integrations/smart-actions", label: "Smart Actions", icon: Sparkles },
+      { to: "/automation/events", label: "Events", icon: Activity },
+      { to: "/automation/schedules", label: "Schedules", icon: CalendarClock }
+    ]
+  },
+  {
+    items: [{ to: "/consultant", label: "Solutions Architect", icon: Compass }]
+  },
+  {
+    label: "Evidence & Reports",
+    items: [
+      { to: "/reports", label: "Reports", icon: BarChart3 },
+      { to: "/analytics", label: "Analytics", icon: BarChart3 },
+      { to: "/audit", label: "Audit", icon: FileSearch },
+      { to: "/collectors", label: "Collectors", icon: Database }
+    ]
+  },
+  {
+    items: [{ to: "/founder", label: "Launch Passport", icon: Sparkles }]
+  },
+  {
+    label: "Setup",
+    items: [
+      { to: "/connectors", label: "Connectors", icon: GitBranch },
+      { to: "/integrations/connector-instances", label: "Connector Instances", icon: Database, adminOnly: true },
+      { to: "/knowledge", label: "Knowledge", icon: BookOpenText },
+      { to: "/settings", label: "Settings", icon: Activity }
+    ]
+  }
 ];
 
-const systemNavigation = [
-  { to: "/settings", label: "Settings", icon: Activity }
+const advancedNavigation: NavItem[] = [
+  { to: "/operations/reconciliation", label: "Sync / Reconciliation", icon: Database, adminOnly: true },
+  { to: "/system/appliance-health", label: "Appliance Health", icon: ShieldCheck, adminOnly: true },
+  { to: "/system/extensions", label: "Extensions / Packs", icon: PackageOpen, adminOnly: true },
+  { to: "/integrations/mcp", label: "MCP", icon: Network, adminOnly: true },
+  { to: "/workflow-designer", label: "Workflow Designer", icon: Workflow },
+  { to: "/templates", label: "Templates", icon: Files },
+  { to: "/scheduled-jobs", label: "Scheduled Jobs", icon: CalendarClock },
+  { to: "/smart-actions/runs", label: "Smart Action Runs", icon: Activity },
+  { to: "/executions", label: "Executions", icon: Activity },
+  { to: "/backfills", label: "Backfills", icon: ListChecks }
 ];
+
+function SidebarLink({ item }: { item: NavItem }) {
+  const { to, label, icon: Icon } = item;
+  return (
+    <NavLink
+      end={to === "/"}
+      to={to}
+      className={({ isActive }) => isActive ? "active" : undefined}
+    >
+      <Icon size={18} aria-hidden="true" />
+      {label}
+    </NavLink>
+  );
+}
 
 export function Sidebar() {
   const { role, roleResolved } = useDashboard();
+
+  const renderItem = (item: NavItem) => {
+    const link = <SidebarLink key={item.to} item={item} />;
+    return item.adminOnly
+      ? <RoleGate key={item.to} role={role} resolved={roleResolved} allowed={["admin"]}>{link}</RoleGate>
+      : link;
+  };
 
   return (
     <aside className="sidebar" aria-label="Workspace navigation">
@@ -66,71 +135,25 @@ export function Sidebar() {
         <ShieldCheck size={28} aria-hidden="true" />
         <div>
           <strong>WAIT Local Agent</strong>
-          <span>Consultant and MSP runtime</span>
+          <span>MSP operations & automation</span>
         </div>
       </div>
-      <nav>
-        {navigation.map(({ to, label, icon: Icon }) => (
-          <NavLink
-            end={to === "/"}
-            key={to}
-            to={to}
-            className={({ isActive }) => isActive ? "active" : undefined}
-          >
-            <Icon size={18} aria-hidden="true" />
-            {label}
-          </NavLink>
+      <nav aria-label="Primary navigation">
+        {primaryNavigation.map((group, index) => (
+          <section key={group.label ?? `primary-${index}`} aria-label={group.label ?? "Overview and clients"}>
+            {group.label ? <span className="sidebar-section-label">{group.label}</span> : null}
+            <nav aria-label={group.label ?? "Overview and clients"}>
+              {group.items.map(renderItem)}
+            </nav>
+          </section>
         ))}
-        <RoleGate role={role} resolved={roleResolved} allowed={["admin"]}>
-          <NavLink to="/integrations/mcp" className={({ isActive }) => isActive ? "active" : undefined}>
-            <Network size={18} aria-hidden="true" />
-            MCP
-          </NavLink>
-        </RoleGate>
-        <RoleGate role={role} resolved={roleResolved} allowed={["admin"]}>
-          <NavLink to="/integrations/connector-instances" className={({ isActive }) => isActive ? "active" : undefined}>
-            <Database size={18} aria-hidden="true" />
-            Connector Instances
-          </NavLink>
-        </RoleGate>
-        <NavLink to="/integrations/smart-actions" className={({ isActive }) => isActive ? "active" : undefined}>
-          <Sparkles size={18} aria-hidden="true" />
-          Smart Actions
-        </NavLink>
-        <NavLink to="/smart-actions/runs" className={({ isActive }) => isActive ? "active" : undefined}>
-          <Activity size={18} aria-hidden="true" />
-          Smart Action Runs
-        </NavLink>
       </nav>
-      <section className="sidebar-system" aria-label="System">
-        <span className="sidebar-section-label">System</span>
-        <nav aria-label="System navigation">
-          {systemNavigation.map(({ to, label, icon: Icon }) => (
-            <NavLink key={to} to={to} className={({ isActive }) => isActive ? "active" : undefined}>
-              <Icon size={18} aria-hidden="true" />
-              {label}
-            </NavLink>
-          ))}
-          <RoleGate role={role} resolved={roleResolved} allowed={["admin"]}>
-            <NavLink to="/system/appliance-health" className={({ isActive }) => isActive ? "active" : undefined}>
-              <ShieldCheck size={18} aria-hidden="true" />
-              Appliance Health
-            </NavLink>
-          </RoleGate>
-          <RoleGate role={role} resolved={roleResolved} allowed={["admin"]}>
-            <NavLink to="/system/extensions" className={({ isActive }) => isActive ? "active" : undefined}>
-              <PackageOpen size={18} aria-hidden="true" />
-              Extensions / Packs
-            </NavLink>
-          </RoleGate>
-          <RoleGate role={role} resolved={roleResolved} allowed={["admin"]}>
-            <NavLink to="/operations/reconciliation" className={({ isActive }) => isActive ? "active" : undefined}>
-              <Database size={18} aria-hidden="true" />
-              Sync / Reconciliation
-            </NavLink>
-          </RoleGate>
+      <details className="sidebar-advanced">
+        <summary className="sidebar-section-label">System / Advanced</summary>
+        <nav aria-label="System and advanced navigation">
+          {advancedNavigation.map(renderItem)}
         </nav>
-      </section>
+      </details>
     </aside>
   );
 }
