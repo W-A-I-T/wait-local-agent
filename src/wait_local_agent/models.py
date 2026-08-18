@@ -772,6 +772,42 @@ class CanonicalAsset:
 
 
 @dataclass(frozen=True)
+class EntityRef:
+    id: int
+    client_id: str
+    entity_type: str
+    source_system: str
+    external_id: str
+    display_name: str
+    connector_instance_id: str | None
+    canonical_asset_id: int | None
+    provenance: str
+    attributes_json: str
+    first_seen: str
+    last_seen: str
+
+
+@dataclass(frozen=True)
+class EntityLink:
+    id: int
+    client_id: str
+    from_ref_id: int
+    to_ref_id: int
+    link_type: str
+    provenance: str
+    confidence: float
+    attributes_json: str
+    first_seen: str
+    last_seen: str
+
+
+@dataclass(frozen=True)
+class SubGraph:
+    refs: tuple[EntityRef, ...]
+    links: tuple[EntityLink, ...]
+
+
+@dataclass(frozen=True)
 class AssetObservation:
     id: int | None
     asset_id: int

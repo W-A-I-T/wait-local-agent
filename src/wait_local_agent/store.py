@@ -41,6 +41,8 @@ from wait_local_agent.models import (
     ConnectorInstance,
     ConsultantDiscoverySession,
     EndUserMessage,
+    EntityLink,
+    EntityRef,
     EventDelivery,
     EventHistoryEntry,
     ExecutionArtifact,
@@ -90,6 +92,21 @@ _ALL_CLIENTS = AllClients()
 _QUARANTINE_CLIENT_ID = "__quarantine__"
 _CLIENT_STATUSES = {"active", "archived", "quarantine"}
 _CONNECTOR_INSTANCE_STATUSES = {"inactive", "active", "error", "disabled"}
+_ENTITY_TYPES = frozenset(
+    {"user", "device", "site", "m365_account", "ticket", "document", "alert", "license", "change"}
+)
+_LINK_TYPES = frozenset(
+    {
+        "requested_by",
+        "owns_device",
+        "alerted_on",
+        "documented_by",
+        "assigned_to",
+        "located_at",
+        "licensed_for",
+        "changed_by",
+    }
+)
 LOGGER = logging.getLogger(__name__)
 
 # Derived once as uuid.uuid5(uuid.NAMESPACE_URL, "wait-local-agent:ticket-identity:v1").
@@ -215,6 +232,7 @@ class Store:
                         foreign_keys_off=True,
                     ),
                     Migration(6, "poll_lease", self._apply_poll_lease_migration),
+                    Migration(7, "operational_graph", self._apply_operational_graph_migration),
                 )
             )
             self._apply_startup_repairs(connection)
@@ -594,6 +612,81 @@ class Store:
 
         Store._ensure_column(connection, "sync_cursors", "lease_token", "text")
         Store._ensure_column(connection, "sync_cursors", "lease_expires_at", "text")
+
+    @staticmethod
+    def _apply_operational_graph_migration(connection: sqlite3.Connection) -> None:
+        """Add the client-scoped operational graph tables without changing existing data."""
+
+        connection.execute(
+            """
+            create table if not exists external_entity_refs (
+                id integer primary key autoincrement,
+                client_id text not null references clients(client_id),
+                entity_type text not null,
+                source_system text not null,
+                external_id text not null,
+                display_name text not null default '',
+                connector_instance_id text references connector_instances(connector_instance_id),
+                canonical_asset_id integer references canonical_assets(id),
+                provenance text not null,
+                attributes_json text not null default '{}',
+                first_seen text not null,
+                last_seen text not null
+            )
+            """
+        )
+        connection.execute(
+            """
+            create unique index if not exists ux_eer_identity
+            on external_entity_refs (client_id, source_system, entity_type, external_id)
+            """
+        )
+        connection.execute(
+            """
+            create index if not exists idx_eer_client_type
+            on external_entity_refs (client_id, entity_type)
+            """
+        )
+        connection.execute(
+            """
+            create index if not exists idx_eer_canonical_asset
+            on external_entity_refs (canonical_asset_id)
+            """
+        )
+        connection.execute(
+            """
+            create table if not exists entity_links (
+                id integer primary key autoincrement,
+                client_id text not null references clients(client_id),
+                from_ref_id integer not null references external_entity_refs(id) on delete cascade,
+                to_ref_id integer not null references external_entity_refs(id) on delete cascade,
+                link_type text not null,
+                provenance text not null,
+                confidence real not null default 1.0,
+                attributes_json text not null default '{}',
+                first_seen text not null,
+                last_seen text not null
+            )
+            """
+        )
+        connection.execute(
+            """
+            create unique index if not exists ux_el_identity
+            on entity_links (client_id, from_ref_id, to_ref_id, link_type)
+            """
+        )
+        connection.execute(
+            """
+            create index if not exists idx_el_from
+            on entity_links (client_id, from_ref_id)
+            """
+        )
+        connection.execute(
+            """
+            create index if not exists idx_el_to
+            on entity_links (client_id, to_ref_id)
+            """
+        )
 
     def create_principal(
         self,
@@ -7465,6 +7558,266 @@ class Store:
                 ).fetchall()
         return [CanonicalAsset(**dict(row)) for row in rows]
 
+    def upsert_entity_ref(
+        self,
+        scope: ClientScope | str | None,
+        *,
+        entity_type: str,
+        source_system: str,
+        external_id: str,
+        display_name: str = "",
+        connector_instance_id: str | None = None,
+        canonical_asset_id: int | None = None,
+        provenance: str,
+        attributes: dict[str, object] | None = None,
+    ) -> EntityRef:
+        client_id = _single_entity_scope_client_id(scope)
+        normalized_entity_type = _validated_entity_type(entity_type)
+        normalized_source_system = _required_graph_text(source_system, "source_system")
+        normalized_external_id = _required_graph_text(external_id, "external_id")
+        normalized_provenance = _required_graph_text(provenance, "provenance")
+        normalized_connector_instance_id = _normalize_client_id(connector_instance_id)
+        if attributes is not None and not isinstance(attributes, dict):
+            raise ValueError("attributes must be an object")
+        attributes_json = _json_dumps(attributes or {})
+        safe_display_name = _redact_text(display_name.strip())
+        now = utc_now()
+
+        scope_predicate, scope_params = _client_scope_predicate(scope)
+        with self._connect() as connection:
+            if normalized_connector_instance_id is not None:
+                connector_predicate, connector_params = _client_scope_predicate(scope, "ci.client_id")
+                connector = connection.execute(
+                    f"""
+                    select ci.client_id
+                    from connector_instances ci
+                    where ci.connector_instance_id = ?
+                      and (ci.client_id is null or {connector_predicate})
+                    """,  # nosec B608: fixed predicate; parameterized tenant values
+                    (normalized_connector_instance_id, *connector_params),
+                ).fetchone()
+                if connector is None:
+                    raise ValueError("connector instance is outside the entity reference scope")
+            if canonical_asset_id is not None:
+                canonical_asset = connection.execute(
+                    f"select id from canonical_assets where id = ? and {scope_predicate}",  # nosec B608: fixed predicate; parameterized tenant values
+                    (canonical_asset_id, *scope_params),
+                ).fetchone()
+                if canonical_asset is None:
+                    raise ValueError("canonical asset is outside the entity reference scope")
+            returned = connection.execute(
+                """
+                insert into external_entity_refs
+                  (client_id, entity_type, source_system, external_id, display_name,
+                   connector_instance_id, canonical_asset_id, provenance, attributes_json,
+                   first_seen, last_seen)
+                values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                on conflict(client_id, source_system, entity_type, external_id)
+                do update set
+                  display_name = excluded.display_name,
+                  connector_instance_id = excluded.connector_instance_id,
+                  canonical_asset_id = excluded.canonical_asset_id,
+                  attributes_json = excluded.attributes_json,
+                  last_seen = excluded.last_seen
+                returning id
+                """,
+                (
+                    client_id,
+                    normalized_entity_type,
+                    normalized_source_system,
+                    normalized_external_id,
+                    safe_display_name,
+                    normalized_connector_instance_id,
+                    canonical_asset_id,
+                    normalized_provenance,
+                    attributes_json,
+                    now,
+                    now,
+                ),
+            ).fetchone()
+            if returned is None:  # pragma: no cover - SQLite RETURNING follows a successful upsert
+                raise RuntimeError("entity reference upsert did not return an id")
+            ref_id = int(returned[0])
+        ref = self.get_entity_ref(scope, ref_id)
+        if ref is None:  # pragma: no cover - the upsert and scoped read share the same tenant
+            raise RuntimeError("entity reference was not persisted")
+        return ref
+
+    def get_entity_ref(
+        self, scope: ClientScope | str | None, ref_id: int
+    ) -> EntityRef | None:
+        client_predicate, client_params = _client_scope_predicate(scope)
+        with self._connect() as connection:
+            row = connection.execute(
+                f"select * from external_entity_refs where id = ? and {client_predicate}",  # nosec B608: fixed predicate; parameterized tenant values
+                (ref_id, *client_params),
+            ).fetchone()
+        return EntityRef(**dict(row)) if row else None
+
+    def find_entity_ref(
+        self,
+        scope: ClientScope | str | None,
+        entity_type: str,
+        source_system: str,
+        external_id: str,
+    ) -> EntityRef | None:
+        normalized_entity_type = _validated_entity_type(entity_type)
+        normalized_source_system = _required_graph_text(source_system, "source_system")
+        normalized_external_id = _required_graph_text(external_id, "external_id")
+        client_predicate, client_params = _client_scope_predicate(scope)
+        with self._connect() as connection:
+            row = connection.execute(
+                f"""
+                select * from external_entity_refs
+                where entity_type = ? and source_system = ? and external_id = ?
+                  and {client_predicate}
+                order by id
+                limit 1
+                """,  # nosec B608: fixed predicate; parameterized tenant values
+                (normalized_entity_type, normalized_source_system, normalized_external_id, *client_params),
+            ).fetchone()
+        return EntityRef(**dict(row)) if row else None
+
+    def list_entity_refs(
+        self,
+        scope: ClientScope | str | None,
+        *,
+        entity_type: str | None = None,
+    ) -> list[EntityRef]:
+        normalized_entity_type = _validated_entity_type(entity_type) if entity_type is not None else None
+        client_predicate, client_params = _client_scope_predicate(scope)
+        clauses = [client_predicate]
+        params: list[object] = list(client_params)
+        if normalized_entity_type is not None:
+            clauses.append("entity_type = ?")
+            params.append(normalized_entity_type)
+        with self._connect() as connection:
+            rows = connection.execute(
+                f"select * from external_entity_refs where {' and '.join(clauses)} order by id",  # nosec B608: predicates are fixed internal strings; tenant values are parameterized
+                params,
+            ).fetchall()
+        return [EntityRef(**dict(row)) for row in rows]
+
+    def upsert_entity_link(
+        self,
+        scope: ClientScope | str | None,
+        *,
+        from_ref_id: int,
+        to_ref_id: int,
+        link_type: str,
+        provenance: str,
+        confidence: float = 1.0,
+        attributes: dict[str, object] | None = None,
+    ) -> EntityLink:
+        client_id = _single_entity_scope_client_id(scope)
+        normalized_link_type = _validated_link_type(link_type)
+        normalized_provenance = _required_graph_text(provenance, "provenance")
+        if not math.isfinite(confidence) or not 0.0 <= confidence <= 1.0:
+            raise ValueError("confidence must be between 0.0 and 1.0")
+        if attributes is not None and not isinstance(attributes, dict):
+            raise ValueError("attributes must be an object")
+        attributes_json = _json_dumps(attributes or {})
+        now = utc_now()
+        ref_predicate, ref_params = _client_scope_predicate(scope)
+        link_predicate, link_params = _client_scope_predicate(scope)
+        with self._connect() as connection:
+            refs = []
+            for ref_id in (from_ref_id, to_ref_id):
+                row = connection.execute(
+                    f"select id, client_id from external_entity_refs where id = ? and {ref_predicate}",  # nosec B608: fixed predicate; parameterized tenant values
+                    (ref_id, *ref_params),
+                ).fetchone()
+                if row is None or str(row["client_id"]) != client_id:
+                    raise ValueError("entity references must belong to the requested client scope")
+                refs.append(row)
+            if any(str(row["client_id"]) != client_id for row in refs):  # pragma: no cover - defensive invariant
+                raise ValueError("entity references must share the requested client scope")
+            returned = connection.execute(
+                """
+                insert into entity_links
+                  (client_id, from_ref_id, to_ref_id, link_type, provenance,
+                   confidence, attributes_json, first_seen, last_seen)
+                values (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                on conflict(client_id, from_ref_id, to_ref_id, link_type)
+                do update set
+                  provenance = excluded.provenance,
+                  confidence = excluded.confidence,
+                  attributes_json = excluded.attributes_json,
+                  last_seen = excluded.last_seen
+                returning id
+                """,
+                (
+                    client_id,
+                    from_ref_id,
+                    to_ref_id,
+                    normalized_link_type,
+                    normalized_provenance,
+                    confidence,
+                    attributes_json,
+                    now,
+                    now,
+                ),
+            ).fetchone()
+            if returned is None:  # pragma: no cover - SQLite RETURNING follows a successful upsert
+                raise RuntimeError("entity link upsert did not return an id")
+            link_id = int(returned[0])
+            row = connection.execute(
+                f"select * from entity_links where id = ? and {link_predicate}",  # nosec B608: fixed predicate; parameterized tenant values
+                (link_id, *link_params),
+            ).fetchone()
+        if row is None:  # pragma: no cover - the upsert and scoped read share the same tenant
+            raise RuntimeError("entity link was not persisted")
+        return EntityLink(**dict(row))
+
+    def list_entity_links(
+        self,
+        scope: ClientScope | str | None,
+        ref_id: int,
+        *,
+        direction: str = "both",
+    ) -> list[EntityLink]:
+        normalized_direction = direction.strip().lower()
+        if normalized_direction not in {"both", "from", "to", "outgoing", "incoming"}:
+            raise ValueError("direction must be both, from, or to")
+        link_predicate, link_params = _client_scope_predicate(scope, "l.client_id")
+        from_predicate, from_params = _client_scope_predicate(scope, "f.client_id")
+        to_predicate, to_params = _client_scope_predicate(scope, "t.client_id")
+        clauses = [link_predicate, from_predicate, to_predicate]
+        params: list[object] = [*link_params, *from_params, *to_params]
+        if normalized_direction in {"from", "outgoing"}:
+            clauses.append("l.from_ref_id = ?")
+            params.append(ref_id)
+        elif normalized_direction in {"to", "incoming"}:
+            clauses.append("l.to_ref_id = ?")
+            params.append(ref_id)
+        else:
+            clauses.append("(l.from_ref_id = ? or l.to_ref_id = ?)")
+            params.extend((ref_id, ref_id))
+        with self._connect() as connection:
+            rows = connection.execute(
+                f"""
+                select l.*
+                from entity_links l
+                join external_entity_refs f on f.id = l.from_ref_id
+                join external_entity_refs t on t.id = l.to_ref_id
+                where {' and '.join(clauses)}
+                order by l.id
+                """,  # nosec B608: predicates are fixed internal strings; tenant values are parameterized
+                params,
+            ).fetchall()
+        return [EntityLink(**dict(row)) for row in rows]
+
+    def neighbors(
+        self, scope: ClientScope | str | None, ref_id: int
+    ) -> list[tuple[EntityLink, EntityRef]]:
+        neighbors: list[tuple[EntityLink, EntityRef]] = []
+        for link in self.list_entity_links(scope, ref_id):
+            neighbor_id = link.to_ref_id if link.from_ref_id == ref_id else link.from_ref_id
+            neighbor = self.get_entity_ref(scope, neighbor_id)
+            if neighbor is not None:
+                neighbors.append((link, neighbor))
+        return neighbors
+
     def add_asset_observation(
         self,
         *,
@@ -9168,6 +9521,47 @@ def _normalize_client_id(client_id: str | None) -> str | None:
         return None
     normalized = client_id.strip()
     return normalized or None
+
+
+def _single_entity_scope_client_id(scope: ClientScope | str | None) -> str:
+    """Return the sole tenant for graph writes; explicit all-client reads cannot write."""
+
+    _client_scope_predicate(scope)
+    if isinstance(scope, BoundClients):
+        if len(scope.client_ids) != 1:
+            raise ValueError("entity graph writes require a single client scope")
+        client_id = next(iter(scope.client_ids))
+    elif isinstance(scope, str):
+        client_id = scope
+    else:
+        raise ValueError("entity graph writes require a single client scope")
+    normalized = _normalize_client_id(client_id)
+    if normalized is None:
+        raise ValueError("client scope is required")
+    return normalized
+
+
+def _required_graph_text(value: str, field: str) -> str:
+    if not isinstance(value, str):
+        raise ValueError(f"{field} must be a string")
+    normalized = value.strip()
+    if not normalized:
+        raise ValueError(f"{field} must be non-empty")
+    return normalized
+
+
+def _validated_entity_type(entity_type: str) -> str:
+    normalized = _required_graph_text(entity_type, "entity_type").lower()
+    if normalized not in _ENTITY_TYPES:
+        raise ValueError(f"unsupported entity_type: {normalized}")
+    return normalized
+
+
+def _validated_link_type(link_type: str) -> str:
+    normalized = _required_graph_text(link_type, "link_type").lower()
+    if normalized not in _LINK_TYPES:
+        raise ValueError(f"unsupported link_type: {normalized}")
+    return normalized
 
 
 def _table_exists(connection: sqlite3.Connection, table_name: str) -> bool:

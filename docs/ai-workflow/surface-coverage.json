@@ -157,6 +157,7 @@
       "GET /technician/chat/sessions": "exposed",
       "GET /technician/chat/sessions/{session_id}": "exposed",
       "GET /tickets": "exposed",
+      "GET /tickets/{ticket_id}/context": "exposed",
       "GET /tickets/{ticket_id}/end-user-messages": "exposed",
       "GET /tickets/{ticket_id}/notes": "exposed",
       "GET /tickets/{ticket_id}/status-history": "exposed",

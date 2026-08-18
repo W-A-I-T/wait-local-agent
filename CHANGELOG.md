@@ -40,6 +40,9 @@ All notable changes to WAIT Local Agent will be documented in this file.
 
 ### Added
 
+- Client Operational Graph PR1 adds migration v7 with deterministic,
+  client-scoped `external_entity_refs` and `entity_links`, bounded graph
+  traversal, and `GET /tickets/{id}/context`.
 - HaloPSA and ConnectWise approval-gated ticket writes now perform a minimal
   read-back verification after the provider accepts the write. Approval
   records distinguish `verified`, `unverified`, and `submitted`; only a
