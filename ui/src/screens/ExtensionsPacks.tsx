@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState, type FormEvent } from "react";
 import { apiFetch } from "../api/client";
 import type { PackInfo, PackStatus } from "../api/types";
 import { useDashboard } from "../app/DashboardContext";
@@ -40,6 +40,10 @@ function ExtensionsPacksContent({ canView }: { canView: boolean }) {
   const [statuses, setStatuses] = useState<PackStatus[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [packPath, setPackPath] = useState("");
+  const [packLicense, setPackLicense] = useState("");
+  const [installing, setInstalling] = useState(false);
+  const [installStatus, setInstallStatus] = useState<{ kind: "success" | "error"; message: string } | null>(null);
 
   const refresh = useCallback(async () => {
     setLoading(true);
@@ -71,6 +75,34 @@ function ExtensionsPacksContent({ canView }: { canView: boolean }) {
     return packs.map((summary) => ({ summary, status: statusByName.get(summary.name) }));
   }, [packs, statuses]);
 
+  const installPack = useCallback(async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (!packPath.trim()) {
+      setInstallStatus({ kind: "error", message: "Set a pack tarball path first." });
+      return;
+    }
+    setInstalling(true);
+    setInstallStatus(null);
+    try {
+      const body = await apiFetch<Record<string, string | number | boolean | null>>("/packs/install", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ tarball_path: packPath, license_key: packLicense || undefined })
+      });
+      setInstallStatus({
+        kind: "success",
+        message: `Pack installed: ${(body as { pack_name?: string }).pack_name || "done"}.`
+      });
+      await refresh();
+      setPackPath("");
+      setPackLicense("");
+    } catch (requestError) {
+      setInstallStatus({ kind: "error", message: requestError instanceof Error ? requestError.message : "Install failed." });
+    } finally {
+      setInstalling(false);
+    }
+  }, [packLicense, packPath, refresh]);
+
   return (
     <div className="screen-stack">
       <section className="panel" aria-busy={loading}>
@@ -78,7 +110,7 @@ function ExtensionsPacksContent({ canView }: { canView: boolean }) {
           <div>
             <p className="eyebrow">System</p>
             <h2>Extensions / Packs</h2>
-            <p className="screen-note">Read-only inventory of installed packs, trust state, licensing, and mounted interfaces.</p>
+            <p className="screen-note">Manage installed packs, trust state, licensing, and mounted interfaces.</p>
           </div>
           <button className="icon-button" type="button" onClick={() => void refresh()} disabled={loading}>
             {loading ? "Refreshing…" : "Refresh"}
@@ -86,8 +118,29 @@ function ExtensionsPacksContent({ canView }: { canView: boolean }) {
         </div>
 
         {error ? <div className="notice danger" role="alert">{error}</div> : null}
+        {installStatus ? <div className={`notice ${installStatus.kind === "error" ? "danger" : "success"}`} role={installStatus.kind === "error" ? "alert" : "status"}>{installStatus.message}</div> : null}
         {loading ? <p className="screen-note">Loading installed extension and pack details…</p> : null}
         {!loading && !error && rows.length === 0 ? <p className="screen-note">No packs are installed on this appliance.</p> : null}
+      </section>
+
+      <section className="panel" aria-labelledby="pack-install-heading">
+        <div className="panel-heading">
+          <div>
+            <h2 id="pack-install-heading">Install pack</h2>
+            <span>Administrator action</span>
+          </div>
+        </div>
+        <form className="draft-form" onSubmit={(event) => void installPack(event)}>
+          <label>
+            Tarball path
+            <input value={packPath} disabled={installing} onChange={(event) => setPackPath(event.target.value)} />
+          </label>
+          <label>
+            License key
+            <input value={packLicense} disabled={installing} onChange={(event) => setPackLicense(event.target.value)} />
+          </label>
+          <button type="submit" disabled={installing}>{installing ? "Installing…" : "Install pack"}</button>
+        </form>
       </section>
 
       {!loading && !error && rows.length > 0 ? (
