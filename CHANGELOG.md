@@ -4,6 +4,13 @@ All notable changes to WAIT Local Agent will be documented in this file.
 
 ## [Unreleased]
 
+### Changed
+
+- Reorganized the sidebar into product groups for Operations, Automations,
+  Solutions Architect, Evidence & Reports, and Setup, with low-frequency and
+  admin surfaces in a collapsed System / Advanced drawer. Renamed the
+  Consultant navigation label to Solutions Architect; routes are unchanged.
+
 ### Security
 
 - Smart-action invoke now rejects caller-supplied `_approval_completed` payload
