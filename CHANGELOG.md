@@ -63,6 +63,10 @@ All notable changes to WAIT Local Agent will be documented in this file.
 
 ### Added
 
+- The Solutions Architect screen can now generate a disabled draft playbook
+  from a selected blueprint in one click; review and enable the draft in
+  Playbooks.
+
 - The Solutions Architect can now generate a disabled draft playbook from a
   blueprint at `POST /consultant/blueprints/{id}/generate-playbook`. The
   deterministic compiler binds only to existing workflow or agent primitives,
