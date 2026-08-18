@@ -63,6 +63,11 @@ All notable changes to WAIT Local Agent will be documented in this file.
 
 ### Added
 
+- Connector Instances now include an admin-only "Connect a system" flow for
+  HaloPSA and ConnectWise that stores provider credentials in the local vault
+  and keeps only the credential reference plus non-secret configuration on the
+  connector instance.
+
 - Client details now include a read-only Operational graph tab showing linked
   entities and relationships.
 

@@ -1,26 +1,67 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
 import { apiFetch } from "../api/client";
-import type { ClientConnectorMapping, ConnectorInstance, PollSummary } from "../api/types";
+import type { ClientConnectorMapping, ClientDirectoryEntry, ConnectorInstance, PollSummary } from "../api/types";
 import { useDashboard } from "../app/DashboardContext";
 import { RoleGate } from "../components/RoleGate";
 import { StatusChip } from "../components/StatusChip";
+
+type ConnectorType = "halopsa" | "connectwise";
+
+type ConnectForm = {
+  connectorType: ConnectorType;
+  displayName: string;
+  waitClientId: string;
+  baseUrl: string;
+  apiVersion: string;
+  haloClientId: string;
+  clientSecret: string;
+  tenant: string;
+  company: string;
+  publicKey: string;
+  privateKey: string;
+  connectWiseClientId: string;
+};
+
+const initialConnectForm: ConnectForm = {
+  connectorType: "halopsa",
+  displayName: "",
+  waitClientId: "",
+  baseUrl: "",
+  apiVersion: "2024.1",
+  haloClientId: "",
+  clientSecret: "",
+  tenant: "",
+  company: "",
+  publicKey: "",
+  privateKey: "",
+  connectWiseClientId: ""
+};
+
+const demoSecretStorageNotice = "Secret storage is unavailable in demo mode — credentials can't be saved here. In a real deployment this stores the credential in the local vault.";
 
 export function ConnectorInstances() {
   const { role, roleResolved } = useDashboard();
   const canView = roleResolved && role === "admin";
   const [instances, setInstances] = useState<ConnectorInstance[]>([]);
+  const [waitClients, setWaitClients] = useState<ClientDirectoryEntry[]>([]);
   const [selectedInstanceId, setSelectedInstanceId] = useState<string | null>(null);
   const [mappings, setMappings] = useState<ClientConnectorMapping[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [clientsError, setClientsError] = useState("");
   const [mappingsLoading, setMappingsLoading] = useState(false);
   const [mappingsError, setMappingsError] = useState("");
   const [syncingId, setSyncingId] = useState<string | null>(null);
   const [syncResults, setSyncResults] = useState<Record<string, PollSummary>>({});
   const [syncErrors, setSyncErrors] = useState<Record<string, string>>({});
+  const [connectForm, setConnectForm] = useState<ConnectForm>(initialConnectForm);
+  const [connectBusy, setConnectBusy] = useState(false);
+  const [connectError, setConnectError] = useState("");
+  const [connectNotice, setConnectNotice] = useState("");
+  const connectBusyRef = useRef(false);
   const mappingRequestId = useRef(0);
 
-  const loadInstances = useCallback(async () => {
+  const loadInstances = useCallback(async (): Promise<ConnectorInstance[]> => {
     mappingRequestId.current += 1;
     setLoading(true);
     setError("");
@@ -33,18 +74,34 @@ export function ConnectorInstances() {
         throw new Error("The appliance returned invalid Connector Instances data.");
       }
       setInstances(result);
+      return result;
     } catch (requestError) {
       setError(requestError instanceof Error ? requestError.message : "Unable to load Connector Instances.");
+      return [];
     } finally {
       setLoading(false);
+    }
+  }, []);
+
+  const loadWaitClients = useCallback(async () => {
+    setClientsError("");
+    try {
+      const result = await apiFetch<ClientDirectoryEntry[]>("/clients");
+      if (!Array.isArray(result)) {
+        throw new Error("The appliance returned invalid WAIT client data.");
+      }
+      setWaitClients(result.filter((client) => client.client_id !== "__quarantine__"));
+    } catch (requestError) {
+      setClientsError(requestError instanceof Error ? requestError.message : "Unable to load WAIT clients.");
     }
   }, []);
 
   useEffect(() => {
     if (canView) {
       void loadInstances();
+      void loadWaitClients();
     }
-  }, [canView, loadInstances]);
+  }, [canView, loadInstances, loadWaitClients]);
 
   const selectInstance = useCallback(async (instance: ConnectorInstance) => {
     const requestId = ++mappingRequestId.current;
@@ -98,6 +155,110 @@ export function ConnectorInstances() {
 
   const selectedSyncResult = selectedInstance ? syncResults[selectedInstance.connector_instance_id] : undefined;
   const selectedSyncError = selectedInstance ? syncErrors[selectedInstance.connector_instance_id] : undefined;
+
+  const apiVersionValid = connectForm.connectorType !== "connectwise" || /^[0-9]{4}\.[0-9]+$/.test(connectForm.apiVersion.trim());
+  const connectFormReady = Boolean(
+    connectForm.displayName.trim()
+      && connectForm.baseUrl.trim()
+      && apiVersionValid
+      && (connectForm.connectorType === "halopsa"
+        ? connectForm.haloClientId.trim() && connectForm.clientSecret.trim() && connectForm.tenant.trim()
+        : connectForm.company.trim() && connectForm.publicKey.trim() && connectForm.privateKey.trim() && connectForm.connectWiseClientId.trim())
+  );
+
+  const updateConnectForm = (field: keyof ConnectForm, value: string) => {
+    setConnectForm((current) => ({ ...current, [field]: value }));
+    setConnectError("");
+    setConnectNotice("");
+  };
+
+  const connect = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (connectBusyRef.current) {
+      return;
+    }
+    if (!connectFormReady) {
+      if (!apiVersionValid) {
+        setConnectError("ConnectWise API version must use the format YYYY.N, such as 2024.1.");
+      }
+      return;
+    }
+
+    connectBusyRef.current = true;
+    setConnectBusy(true);
+    setConnectError("");
+    setConnectNotice("");
+    const connectorType = connectForm.connectorType;
+    const displayName = connectForm.displayName.trim();
+    const credentialRef = `connector:${connectorType}:${slug(displayName)}:${crypto.randomUUID()}`;
+    const credentials: Record<string, string> = connectorType === "halopsa"
+      ? {
+          client_id: connectForm.haloClientId.trim(),
+          client_secret: connectForm.clientSecret.trim(),
+          tenant: connectForm.tenant.trim()
+        }
+      : {
+          company: connectForm.company.trim(),
+          public_key: connectForm.publicKey.trim(),
+          private_key: connectForm.privateKey.trim(),
+          client_id: connectForm.connectWiseClientId.trim()
+        };
+    const config: Record<string, string> = connectorType === "halopsa"
+      ? { base_url: connectForm.baseUrl.trim() }
+      : { base_url: connectForm.baseUrl.trim(), api_version: connectForm.apiVersion.trim() };
+
+    try {
+      await apiFetch<void>("/secrets", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name: credentialRef, value: JSON.stringify(credentials) })
+      });
+    } catch (requestError) {
+      setConnectError(requestStatus(requestError) === 403
+        ? demoSecretStorageNotice
+        : requestError instanceof Error ? requestError.message : "Unable to store the connector credential.");
+      connectBusyRef.current = false;
+      setConnectBusy(false);
+      return;
+    }
+
+    let createdInstance: ConnectorInstance;
+    try {
+      createdInstance = await apiFetch<ConnectorInstance>("/connector-instances", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          connector_type: connectorType,
+          display_name: displayName,
+          client_id: connectForm.waitClientId || undefined,
+          credential_ref: credentialRef,
+          config_json: JSON.stringify(config)
+        })
+      });
+    } catch (requestError) {
+      const message = requestError instanceof Error ? requestError.message : "Unable to create the connector instance.";
+      setConnectError(`The credential was stored in the vault but the connector instance could not be created: ${message}. Retry to create it (a new credential will be stored).`);
+      connectBusyRef.current = false;
+      setConnectBusy(false);
+      return;
+    }
+
+    try {
+      const refreshedInstances = await loadInstances();
+      const instanceToSelect = refreshedInstances.find((instance) => instance.connector_instance_id === createdInstance.connector_instance_id);
+      if (instanceToSelect) {
+        await selectInstance(instanceToSelect);
+      }
+      setConnectForm((current) => ({ ...initialConnectForm, connectorType: current.connectorType }));
+      setConnectNotice(`Connected ${displayName}. Verify it with 'Sync now' / map its companies below.`);
+    } catch (requestError) {
+      setConnectError(requestError instanceof Error ? requestError.message : "Unable to create the connector instance.");
+    } finally {
+      connectBusyRef.current = false;
+      setConnectBusy(false);
+    }
+  };
+
   const fallback = (
     <section className="panel">
       <div className="panel-heading">
@@ -124,6 +285,95 @@ export function ConnectorInstances() {
           <button className="icon-button" type="button" onClick={() => void loadInstances()} disabled={loading}>
             {loading ? "Loading…" : "Refresh"}
           </button>
+        </section>
+
+        <section className="panel" aria-labelledby="connect-system-heading">
+          <div className="panel-heading">
+            <div>
+              <h2 id="connect-system-heading">Connect a system</h2>
+              <span>Administrator setup</span>
+            </div>
+            <span>Credential vaulting</span>
+          </div>
+          <p className="screen-note">Connect a supported PSA or ticketing system. More providers are browse-only for now.</p>
+          {connectNotice ? <div className="notice" role="status">{connectNotice}</div> : null}
+          {connectError ? <div className="notice danger" role="alert">{connectError}</div> : null}
+          <form className="draft-form" onSubmit={(event) => void connect(event)}>
+            <fieldset>
+              <legend>PSA / Ticketing</legend>
+              <label htmlFor="connector-provider">Provider</label>
+              <select
+                id="connector-provider"
+                value={connectForm.connectorType}
+                onChange={(event) => updateConnectForm("connectorType", event.target.value as ConnectorType)}
+              >
+                <option value="halopsa">HaloPSA</option>
+                <option value="connectwise">ConnectWise</option>
+              </select>
+            </fieldset>
+
+            <label htmlFor="connector-display-name">Display name
+              <input id="connector-display-name" value={connectForm.displayName} onChange={(event) => updateConnectForm("displayName", event.target.value)} required />
+            </label>
+
+            <label htmlFor="connector-wait-client">WAIT client (optional)
+              <select id="connector-wait-client" value={connectForm.waitClientId} onChange={(event) => updateConnectForm("waitClientId", event.target.value)}>
+                <option value="">No WAIT client association</option>
+                {waitClients.map((client) => <option key={client.client_id} value={client.client_id}>{client.name} ({client.client_id})</option>)}
+              </select>
+            </label>
+            {clientsError ? <p className="field-error">{clientsError} You can still connect without a WAIT client association.</p> : null}
+
+            <label htmlFor="connector-base-url">Base URL
+              <input id="connector-base-url" value={connectForm.baseUrl} onChange={(event) => updateConnectForm("baseUrl", event.target.value)} required />
+            </label>
+
+            {connectForm.connectorType === "connectwise" ? (
+              <label htmlFor="connector-api-version">API version
+                <input
+                  id="connector-api-version"
+                  value={connectForm.apiVersion}
+                  onChange={(event) => updateConnectForm("apiVersion", event.target.value)}
+                  aria-invalid={!apiVersionValid}
+                  aria-describedby="connector-api-version-hint"
+                  required
+                />
+                <span id="connector-api-version-hint" className="field-help">Use the format YYYY.N, such as 2024.1.</span>
+                {!apiVersionValid ? <span className="field-error">Use the format YYYY.N.</span> : null}
+              </label>
+            ) : null}
+
+            {connectForm.connectorType === "halopsa" ? (
+              <>
+                <label htmlFor="halopsa-client-id">Client ID
+                  <input id="halopsa-client-id" value={connectForm.haloClientId} onChange={(event) => updateConnectForm("haloClientId", event.target.value)} required />
+                </label>
+                <label htmlFor="halopsa-client-secret">Client secret
+                  <input id="halopsa-client-secret" type="password" value={connectForm.clientSecret} onChange={(event) => updateConnectForm("clientSecret", event.target.value)} required />
+                </label>
+                <label htmlFor="halopsa-tenant">Tenant
+                  <input id="halopsa-tenant" value={connectForm.tenant} onChange={(event) => updateConnectForm("tenant", event.target.value)} required />
+                </label>
+              </>
+            ) : (
+              <>
+                <label htmlFor="connectwise-company">Company
+                  <input id="connectwise-company" value={connectForm.company} onChange={(event) => updateConnectForm("company", event.target.value)} required />
+                </label>
+                <label htmlFor="connectwise-public-key">Public key
+                  <input id="connectwise-public-key" value={connectForm.publicKey} onChange={(event) => updateConnectForm("publicKey", event.target.value)} required />
+                </label>
+                <label htmlFor="connectwise-private-key">Private key
+                  <input id="connectwise-private-key" type="password" value={connectForm.privateKey} onChange={(event) => updateConnectForm("privateKey", event.target.value)} required />
+                </label>
+                <label htmlFor="connectwise-client-id">Client ID
+                  <input id="connectwise-client-id" value={connectForm.connectWiseClientId} onChange={(event) => updateConnectForm("connectWiseClientId", event.target.value)} required />
+                </label>
+              </>
+            )}
+
+            <button type="submit" disabled={connectBusy || !connectFormReady}>{connectBusy ? "Connecting…" : "Connect system"}</button>
+          </form>
         </section>
 
         {error ? (
@@ -271,6 +521,23 @@ export function ConnectorInstances() {
       </div>
     </RoleGate>
   );
+}
+
+function requestStatus(error: unknown): number | undefined {
+  if (!error || typeof error !== "object" || !("status" in error)) {
+    return undefined;
+  }
+  const status = error.status;
+  return typeof status === "number" ? status : undefined;
+}
+
+function slug(value: string): string {
+  return value
+    .normalize("NFKD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "") || "system";
 }
 
 function PresenceBadge({ configured }: { configured: boolean }) {
