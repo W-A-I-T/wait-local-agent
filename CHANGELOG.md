@@ -77,6 +77,9 @@ All notable changes to WAIT Local Agent will be documented in this file.
   HaloPSA and ConnectWise that stores provider credentials in the local vault
   and keeps only the credential reference plus non-secret configuration on the
   connector instance.
+- Connector Instances can now discover HaloPSA and ConnectWise companies,
+  map them to WAIT clients, and verify mappings, completing the connect →
+  discover → map → verify → sync journey.
 
 - Client details now include a read-only Operational graph tab showing linked
   entities and relationships.
