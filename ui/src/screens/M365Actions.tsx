@@ -153,7 +153,7 @@ export function M365Actions() {
             <label htmlFor="reset-user-identity">User (UPN or email)</label>
             <input id="reset-user-identity" name="user_identity" value={resetUserIdentity} required disabled={resetBusy} onChange={(event) => setResetUserIdentity(event.target.value)} />
             <label htmlFor="temporary-vault-name">Vault secret name holding the temporary password</label>
-            <input id="temporary-vault-name" name="temporary_vault_name" value={temporaryVaultName} minLength={14} required disabled={resetBusy} onChange={(event) => setTemporaryVaultName(event.target.value)} />
+            <input id="temporary-vault-name" name="temporary_vault_name" value={temporaryVaultName} minLength={14} required aria-describedby="temporary-vault-name-help" disabled={resetBusy} onChange={(event) => setTemporaryVaultName(event.target.value)} onBlur={() => setTemporaryVaultName((value) => value.trim())} />
             <p className="screen-note" id="temporary-vault-name-help">Name of the vault secret that holds the temporary password (min 14 chars). The password value itself is never entered here.</p>
             {temporaryVaultName.length > 0 && temporaryVaultName.trim().length < 14 ? <p className="notice danger" role="alert">Vault secret name must be at least 14 characters.</p> : null}
             <label><input type="checkbox" checked={forceChangeNextSignIn} disabled={resetBusy} onChange={(event) => setForceChangeNextSignIn(event.target.checked)} /> Force change password at next sign-in</label>
