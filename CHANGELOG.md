@@ -42,6 +42,10 @@ All notable changes to WAIT Local Agent will be documented in this file.
 
 ### Added
 
+- A Microsoft 365 Actions console can now draft offboarding, password-reset,
+  and device-reboot actions. Drafts are approval-gated and route through the
+  existing Approvals queue.
+
 - The Tickets screen is now a unified multi-provider workspace with a canonical
   client-scoped ticket list and Summary, Notes, Status History, and Context
   tabs for ticket evidence and operational-graph relationships.

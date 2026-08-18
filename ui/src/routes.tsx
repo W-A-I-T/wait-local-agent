@@ -29,6 +29,7 @@ import { Schedules } from "./screens/Schedules";
 import { ConnectorInstances } from "./screens/ConnectorInstances";
 import { SyncReconciliation } from "./screens/SyncReconciliation";
 import { Clients } from "./screens/Clients";
+import { M365Actions } from "./screens/M365Actions";
 
 export function AppRoutes() {
   return (
@@ -36,6 +37,7 @@ export function AppRoutes() {
       <Route index element={<Overview />} />
       <Route path="clients" element={<Clients />} />
       <Route path="connectors" element={<Connectors />} />
+      <Route path="m365-actions" element={<M365Actions />} />
       <Route path="knowledge" element={<Knowledge />} />
       <Route path="workflows" element={<Workflows />} />
       <Route path="automation/events" element={<Events />} />

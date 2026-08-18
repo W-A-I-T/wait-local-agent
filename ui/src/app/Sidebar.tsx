@@ -30,6 +30,7 @@ const navigation = [
   { to: "/", label: "Overview", icon: LayoutDashboard },
   { to: "/clients", label: "Clients", icon: Users },
   { to: "/connectors", label: "Connectors", icon: GitBranch },
+  { to: "/m365-actions", label: "M365 Actions", icon: ShieldCheck },
   { to: "/tickets", label: "Tickets", icon: ClipboardList },
   { to: "/approvals", label: "Approvals", icon: ClipboardCheck },
   { to: "/analytics", label: "Analytics", icon: BarChart3 },
