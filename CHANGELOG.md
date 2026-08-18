@@ -43,6 +43,8 @@ All notable changes to WAIT Local Agent will be documented in this file.
 - RMM device and alert inventory now persists into the client operational graph
   with deterministic `alerted_on` links. Viewers can read a bounded client
   graph, and MSP operators can trigger an RMM graph sync.
+- Failed event deliveries can now be retried from the Events screen when retry capacity remains.
+- Administrators can now install packs from the Extensions / Packs screen and see the result inline.
 
 - Client Operational Graph PR1 adds migration v7 with deterministic,
   client-scoped `external_entity_refs` and `entity_links`, bounded graph

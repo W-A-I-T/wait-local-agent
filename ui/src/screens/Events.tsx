@@ -1,10 +1,12 @@
 import { useCallback, useEffect, useState } from "react";
 import { X } from "lucide-react";
 import { apiFetch } from "../api/client";
+import { useDashboard } from "../app/DashboardContext";
 import type { EventDelivery, EventHistory } from "../api/types";
 import { StatusChip } from "../components/StatusChip";
 
 export function Events() {
+  const { retryEventDelivery } = useDashboard();
   const [deliveries, setDeliveries] = useState<EventDelivery[]>([]);
   const [history, setHistory] = useState<EventHistory[]>([]);
   const [loading, setLoading] = useState(true);
@@ -12,6 +14,8 @@ export function Events() {
   const [selectedDelivery, setSelectedDelivery] = useState<EventDelivery | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
   const [detailError, setDetailError] = useState("");
+  const [retryingDeliveryId, setRetryingDeliveryId] = useState<number | null>(null);
+  const [retryError, setRetryError] = useState("");
 
   const loadEvents = useCallback(async () => {
     setLoading(true);
@@ -34,6 +38,19 @@ export function Events() {
       setLoading(false);
     }
   }, []);
+
+  const retryDelivery = useCallback(async (deliveryId: number) => {
+    setRetryingDeliveryId(deliveryId);
+    setRetryError("");
+    try {
+      await retryEventDelivery(deliveryId);
+      await loadEvents();
+    } catch (requestError) {
+      setRetryError(requestError instanceof Error ? requestError.message : "Unable to retry event delivery.");
+    } finally {
+      setRetryingDeliveryId(null);
+    }
+  }, [loadEvents, retryEventDelivery]);
 
   useEffect(() => {
     void loadEvents();
@@ -59,7 +76,7 @@ export function Events() {
         <div>
           <p className="eyebrow">Automation</p>
           <h2>Events</h2>
-          <p className="screen-note">Review event deliveries and event history. This screen is read-only.</p>
+          <p className="screen-note">Review event deliveries and history, and retry eligible failed deliveries.</p>
         </div>
         <button className="icon-button" type="button" onClick={() => void loadEvents()} disabled={loading}>
           {loading ? "Loading…" : "Refresh"}
@@ -72,6 +89,7 @@ export function Events() {
           <button className="secondary-button" type="button" onClick={() => void loadEvents()} disabled={loading}>Try again</button>
         </div>
       ) : null}
+      {retryError ? <div className="notice danger" role="alert">{retryError}</div> : null}
 
       {loading ? (
         <section className="panel" aria-busy="true">
@@ -104,6 +122,7 @@ export function Events() {
                       <th scope="col">Attempts</th>
                       <th scope="col">Received</th>
                       <th scope="col">Processed</th>
+                      <th scope="col">Action</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -125,6 +144,18 @@ export function Events() {
                         <td>{delivery.retry_count} of {delivery.max_retries}</td>
                         <td>{formatTimestamp(delivery.received_at)}</td>
                         <td>{formatTimestamp(delivery.processed_at)}</td>
+                        <td>
+                          {delivery.status === "failed" && delivery.retry_count < delivery.max_retries ? (
+                            <button
+                              className="secondary-button"
+                              type="button"
+                              disabled={retryingDeliveryId !== null}
+                              onClick={() => void retryDelivery(delivery.id)}
+                            >
+                              {retryingDeliveryId === delivery.id ? "Retrying…" : "Retry delivery"}
+                            </button>
+                          ) : null}
+                        </td>
                       </tr>
                     ))}
                   </tbody>
