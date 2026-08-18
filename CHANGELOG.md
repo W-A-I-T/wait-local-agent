@@ -42,6 +42,10 @@ All notable changes to WAIT Local Agent will be documented in this file.
 
 ### Added
 
+- The Tickets screen is now a unified multi-provider workspace with a canonical
+  client-scoped ticket list and Summary, Notes, Status History, and Context
+  tabs for ticket evidence and operational-graph relationships.
+
 - RMM device and alert inventory now persists into the client operational graph
   with deterministic `alerted_on` links. Viewers can read a bounded client
   graph, and MSP operators can trigger an RMM graph sync.

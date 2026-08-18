@@ -113,6 +113,48 @@ export type HaloTicket = {
   client_id?: string;
 };
 
+export type Ticket = {
+  id: string;
+  client_id?: string | null;
+  summary?: string | null;
+  subject?: string | null;
+  status?: string | null;
+  priority?: string | null;
+  source_system?: string | null;
+  external_id?: string | null;
+  requester_id?: string | null;
+};
+
+export type TicketNote = {
+  id: number | string;
+  ticket_id: string;
+  author?: string | null;
+  body: string;
+  created_at?: string | null;
+};
+
+export type TicketStatusHistory = {
+  id?: number | string;
+  ticket_id?: string;
+  from_status?: string | null;
+  to_status?: string | null;
+  from?: string | null;
+  to?: string | null;
+  status?: string | null;
+  actor?: string | null;
+  changed_by?: string | null;
+  created_at?: string | null;
+  at?: string | null;
+};
+
+export type TicketContext = {
+  schemaVersion?: string | number;
+  first_scan?: unknown;
+  modules?: unknown[];
+  refs?: Array<Record<string, unknown>>;
+  links?: Array<Record<string, unknown>>;
+};
+
 export type EndUserTicket = {
   ticket_id: string;
   subject: string;
