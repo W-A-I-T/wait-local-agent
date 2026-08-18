@@ -7,6 +7,17 @@ import { StatusChip } from "../components/StatusChip";
 
 type ConnectorType = "halopsa" | "connectwise";
 
+type DiscoveredCompany = {
+  externalCompanyId: string;
+  name: string;
+};
+
+type MappingForm = {
+  externalCompanyId: string;
+  externalCompanyName: string;
+  clientId: string;
+};
+
 type ConnectForm = {
   connectorType: ConnectorType;
   displayName: string;
@@ -38,6 +49,13 @@ const initialConnectForm: ConnectForm = {
 };
 
 const demoSecretStorageNotice = "Secret storage is unavailable in demo mode — credentials can't be saved here. In a real deployment this stores the credential in the local vault.";
+const noCompaniesNotice = "No companies returned — the provider may not be configured yet; you can enter a company ID manually below.";
+
+const initialMappingForm: MappingForm = {
+  externalCompanyId: "",
+  externalCompanyName: "",
+  clientId: ""
+};
 
 export function ConnectorInstances() {
   const { role, roleResolved } = useDashboard();
@@ -58,6 +76,15 @@ export function ConnectorInstances() {
   const [connectBusy, setConnectBusy] = useState(false);
   const [connectError, setConnectError] = useState("");
   const [connectNotice, setConnectNotice] = useState("");
+  const [discoveredCompanies, setDiscoveredCompanies] = useState<DiscoveredCompany[]>([]);
+  const [discoverLoading, setDiscoverLoading] = useState(false);
+  const [discoverAttempted, setDiscoverAttempted] = useState(false);
+  const [discoverError, setDiscoverError] = useState("");
+  const [mappingForm, setMappingForm] = useState<MappingForm>(initialMappingForm);
+  const [mappingBusy, setMappingBusy] = useState(false);
+  const [mappingError, setMappingError] = useState("");
+  const [mappingNotice, setMappingNotice] = useState("");
+  const [verifyingMappingId, setVerifyingMappingId] = useState<string | null>(null);
   const connectBusyRef = useRef(false);
   const mappingRequestId = useRef(0);
 
@@ -68,6 +95,12 @@ export function ConnectorInstances() {
     setSelectedInstanceId(null);
     setMappings([]);
     setMappingsError("");
+    setDiscoveredCompanies([]);
+    setDiscoverAttempted(false);
+    setDiscoverError("");
+    setMappingForm(initialMappingForm);
+    setMappingError("");
+    setMappingNotice("");
     try {
       const result = await apiFetch<ConnectorInstance[]>("/connector-instances");
       if (!Array.isArray(result)) {
@@ -108,6 +141,12 @@ export function ConnectorInstances() {
     setSelectedInstanceId(instance.connector_instance_id);
     setMappings([]);
     setMappingsError("");
+    setMappingForm(initialMappingForm);
+    setMappingError("");
+    setMappingNotice("");
+    setDiscoveredCompanies([]);
+    setDiscoverAttempted(false);
+    setDiscoverError("");
     setMappingsLoading(true);
     try {
       const result = await apiFetch<ClientConnectorMapping[]>(
@@ -132,6 +171,98 @@ export function ConnectorInstances() {
   }, []);
 
   const selectedInstance = instances.find((instance) => instance.connector_instance_id === selectedInstanceId);
+
+  const discoverPath = selectedInstance ? discoveryPath(selectedInstance) : null;
+
+  const discoverCompanies = useCallback(async () => {
+    if (!discoverPath) {
+      return;
+    }
+    setDiscoverLoading(true);
+    setDiscoverAttempted(true);
+    setDiscoverError("");
+    setDiscoveredCompanies([]);
+    try {
+      const result = await apiFetch<unknown>(discoverPath);
+      setDiscoveredCompanies(parseDiscoveredCompanies(result));
+    } catch (requestError) {
+      setDiscoverError(requestError instanceof Error ? requestError.message : "Unable to discover provider companies.");
+    } finally {
+      setDiscoverLoading(false);
+    }
+  }, [discoverPath]);
+
+  const updateMappingForm = (field: keyof MappingForm, value: string) => {
+    setMappingForm((current) => ({ ...current, [field]: value }));
+    setMappingError("");
+    setMappingNotice("");
+  };
+
+  const selectDiscoveredCompany = (company: DiscoveredCompany) => {
+    setMappingForm((current) => ({
+      ...current,
+      externalCompanyId: company.externalCompanyId,
+      externalCompanyName: company.name
+    }));
+    setMappingError("");
+    setMappingNotice("");
+  };
+
+  const createMapping = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (!selectedInstance || mappingBusy) {
+      return;
+    }
+    const externalCompanyId = mappingForm.externalCompanyId.trim();
+    const clientId = mappingForm.clientId.trim();
+    if (!externalCompanyId || !clientId) {
+      setMappingError("Choose a WAIT client and enter an external company ID.");
+      return;
+    }
+
+    setMappingBusy(true);
+    setMappingError("");
+    setMappingNotice("");
+    try {
+      await apiFetch<ClientConnectorMapping>("/client-connector-mappings", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          connector_instance_id: selectedInstance.connector_instance_id,
+          external_company_id: externalCompanyId,
+          external_company_name: mappingForm.externalCompanyName.trim() || null,
+          client_id: clientId
+        })
+      });
+      await selectInstance(selectedInstance);
+      setMappingForm(initialMappingForm);
+      setMappingNotice("Mapping created.");
+    } catch (requestError) {
+      setMappingError(requestError instanceof Error ? requestError.message : "Unable to create the connector mapping.");
+    } finally {
+      setMappingBusy(false);
+    }
+  };
+
+  const verifyMapping = async (mappingId: string) => {
+    if (!selectedInstance || verifyingMappingId !== null) {
+      return;
+    }
+    setVerifyingMappingId(mappingId);
+    setMappingError("");
+    setMappingNotice("");
+    try {
+      await apiFetch<ClientConnectorMapping>(`/client-connector-mappings/${encodeURIComponent(mappingId)}/verify`, {
+        method: "POST"
+      });
+      await selectInstance(selectedInstance);
+      setMappingNotice("Mapping verified.");
+    } catch (requestError) {
+      setMappingError(requestError instanceof Error ? requestError.message : "Unable to verify the connector mapping.");
+    } finally {
+      setVerifyingMappingId(null);
+    }
+  };
 
   const syncInstance = useCallback(async (instance: ConnectorInstance) => {
     const instanceId = instance.connector_instance_id;
@@ -478,6 +609,79 @@ export function ConnectorInstances() {
                   <span>Reason: {selectedSyncResult.reason || "None reported"}</span>
                 </div>
               ) : null}
+              {mappingNotice ? <div className="notice" role="status">{mappingNotice}</div> : null}
+              {mappingError ? <div className="notice danger" role="alert">{mappingError}</div> : null}
+              {discoverPath ? (
+                <div className="draft-form">
+                  <h3>Discover and map a company</h3>
+                  <button type="button" onClick={() => void discoverCompanies()} disabled={discoverLoading}>
+                    {discoverLoading ? "Discovering…" : "Discover companies"}
+                  </button>
+                  {discoverError ? <div className="notice danger" role="alert">{discoverError}</div> : null}
+                  {discoverAttempted && discoveredCompanies.length === 0 ? <p className="screen-note">{noCompaniesNotice}</p> : null}
+                  {discoveredCompanies.length > 0 ? (
+                    <div className="connector-instances-table-wrap">
+                      <table className="connector-instances-table">
+                        <thead>
+                          <tr>
+                            <th scope="col">External company ID</th>
+                            <th scope="col">Name</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {discoveredCompanies.map((company) => (
+                            <tr key={company.externalCompanyId}>
+                              <td>
+                                <button
+                                  className="connector-instance-select"
+                                  type="button"
+                                  aria-label={`Use ${company.name || company.externalCompanyId}`}
+                                  onClick={() => selectDiscoveredCompany(company)}
+                                >
+                                  <code>{company.externalCompanyId}</code>
+                                </button>
+                              </td>
+                              <td>{company.name || "Unnamed company"}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  ) : null}
+                </div>
+              ) : null}
+              <form className="draft-form" onSubmit={(event) => void createMapping(event)}>
+                <h3>Map a company</h3>
+                <label htmlFor="external-company-id">External company ID
+                  <input
+                    id="external-company-id"
+                    value={mappingForm.externalCompanyId}
+                    onChange={(event) => updateMappingForm("externalCompanyId", event.target.value)}
+                    required
+                  />
+                </label>
+                <label htmlFor="external-company-name">External company name (optional)
+                  <input
+                    id="external-company-name"
+                    value={mappingForm.externalCompanyName}
+                    onChange={(event) => updateMappingForm("externalCompanyName", event.target.value)}
+                  />
+                </label>
+                <label htmlFor="mapping-wait-client">WAIT client
+                  <select
+                    id="mapping-wait-client"
+                    value={mappingForm.clientId}
+                    onChange={(event) => updateMappingForm("clientId", event.target.value)}
+                    required
+                  >
+                    <option value="">Choose a WAIT client</option>
+                    {waitClients.map((client) => <option key={client.client_id} value={client.client_id}>{client.name} ({client.client_id})</option>)}
+                  </select>
+                </label>
+                <button type="submit" disabled={mappingBusy || !mappingForm.externalCompanyId.trim() || !mappingForm.clientId}>
+                  {mappingBusy ? "Creating…" : "Create mapping"}
+                </button>
+              </form>
               {mappingsLoading ? (
                 <p className="screen-note" aria-busy="true">Loading mappings…</p>
               ) : mappingsError ? (
@@ -508,7 +712,23 @@ export function ConnectorInstances() {
                             {mapping.external_company_name ? <code>{mapping.external_company_id}</code> : null}
                           </td>
                           <td>{mapping.client_id}</td>
-                          <td><VerificationBadge verified={mapping.verified === 1} /></td>
+                          <td>
+                            {mapping.verified === 1 ? (
+                              <StatusChip status="verified" />
+                            ) : (
+                              <>
+                                <VerificationBadge verified={false} />
+                                <button
+                                  className="secondary-button"
+                                  type="button"
+                                  onClick={() => void verifyMapping(mapping.mapping_id)}
+                                  disabled={verifyingMappingId !== null}
+                                >
+                                  {verifyingMappingId === mapping.mapping_id ? "Verifying…" : "Verify"}
+                                </button>
+                              </>
+                            )}
+                          </td>
                         </tr>
                       ))}
                     </tbody>
@@ -546,6 +766,52 @@ function PresenceBadge({ configured }: { configured: boolean }) {
 
 function VerificationBadge({ verified }: { verified: boolean }) {
   return <span className={`status-chip ${verified ? "ok" : "warn"}`}>{verified ? "Verified" : "Unverified"}</span>;
+}
+
+function discoveryPath(instance: ConnectorInstance): string | null {
+  if (instance.connector_type === "halopsa") {
+    return "/connectors/halopsa/clients?page=1&page_size=50";
+  }
+  if (instance.connector_type === "connectwise") {
+    return "/connectors/connectwise/companies?page=1&page_size=50";
+  }
+  return null;
+}
+
+function parseDiscoveredCompanies(payload: unknown): DiscoveredCompany[] {
+  if (!isRecord(payload) || !Array.isArray(payload.items)) {
+    return [];
+  }
+  return payload.items.flatMap((item) => {
+    if (!isRecord(item)) {
+      return [];
+    }
+    const externalCompanyId = firstStringValue(item, "id", "client_id", "company_id", "identifier");
+    if (!externalCompanyId) {
+      return [];
+    }
+    return [{
+      externalCompanyId,
+      name: firstStringValue(item, "name", "client_name", "companyName") ?? ""
+    }];
+  });
+}
+
+function firstStringValue(record: Record<string, unknown>, ...keys: string[]): string | null {
+  for (const key of keys) {
+    const value = record[key];
+    if (typeof value === "string" && value.trim()) {
+      return value;
+    }
+    if (typeof value === "number" && Number.isFinite(value)) {
+      return String(value);
+    }
+  }
+  return null;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }
 
 function syncErrorMessage(error: unknown): string {
