@@ -78,33 +78,52 @@ export function Consultant() {
   const [guidedLoading, setGuidedLoading] = useState(false);
   const [promotionLoading, setPromotionLoading] = useState(false);
   const [message, setMessage] = useState("");
+  const [loadNotice, setLoadNotice] = useState("");
   const [loading, setLoading] = useState(false);
 
   const refresh = useCallback(async () => {
     setLoading(true);
     try {
-      const [rows, catalog, health, sessions] = await Promise.all([
+      const [blueprintsResult, useCasesResult, monitoringResult, sessionsResult] = await Promise.allSettled([
         apiFetch<ConsultantBlueprint[]>("/consultant/blueprints"),
         apiFetch<{ use_cases: ConsultantUseCase[] }>("/consultant/use-cases"),
         apiFetch<ConsultantMonitoring>("/consultant/monitoring/agents"),
         apiFetch<ConsultantDiscoverySession[]>("/consultant/discovery/sessions"),
       ]);
-      setBlueprints(rows);
-      setUseCases(catalog.use_cases);
-      setMonitoring(health);
-      setDiscoverySessions(sessions);
-      setSelectedId((currentSelectedId) => (
-        currentSelectedId && rows.some((row) => row.id === currentSelectedId)
-          ? currentSelectedId
-          : rows[0]?.id ?? null
-      ));
-      setArchitecture((currentArchitecture) => (
-        currentArchitecture && rows.some((row) => row.id === currentArchitecture.blueprint_id)
-          ? currentArchitecture
-          : null
-      ));
-    } catch (error) {
-      setMessage(error instanceof Error ? error.message : "Unable to load consultant blueprints.");
+      const failedSections: string[] = [];
+      if (blueprintsResult.status === "fulfilled") {
+        setBlueprints(blueprintsResult.value);
+        setSelectedId((currentSelectedId) => (
+          currentSelectedId && blueprintsResult.value.some((row) => row.id === currentSelectedId)
+            ? currentSelectedId
+            : blueprintsResult.value[0]?.id ?? null
+        ));
+        setArchitecture((currentArchitecture) => (
+          currentArchitecture && blueprintsResult.value.some((row) => row.id === currentArchitecture.blueprint_id)
+            ? currentArchitecture
+            : null
+        ));
+      } else {
+        failedSections.push("blueprints");
+      }
+      if (useCasesResult.status === "fulfilled") {
+        setUseCases(useCasesResult.value.use_cases);
+      } else {
+        failedSections.push("use cases");
+      }
+      if (monitoringResult.status === "fulfilled") {
+        setMonitoring(monitoringResult.value);
+      } else {
+        failedSections.push("monitoring");
+      }
+      if (sessionsResult.status === "fulfilled") {
+        setDiscoverySessions(sessionsResult.value);
+      } else {
+        failedSections.push("discovery sessions");
+      }
+      setLoadNotice(failedSections.length > 0
+        ? `Some sections couldn't load: ${failedSections.join(", ")}.`
+        : "");
     } finally {
       setLoading(false);
     }
@@ -435,6 +454,7 @@ export function Consultant() {
           </button>
         </div>
         {message ? <div className="notice danger" role="alert"><AlertTriangle size={16} aria-hidden="true" />{message}</div> : null}
+        {loadNotice ? <div className="notice danger" role="alert"><AlertTriangle size={16} aria-hidden="true" />{loadNotice}</div> : null}
         {blueprints.length === 0 ? <p>No solution blueprints are available for this tenant.</p> : (
           <div className="consultant-blueprint-list">
             {blueprints.map((blueprint) => (
