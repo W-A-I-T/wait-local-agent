@@ -6,6 +6,9 @@ All notable changes to WAIT Local Agent will be documented in this file.
 
 ### Changed
 
+- The Solutions Architect screen (renamed from Consultant) now surfaces the
+  architecture decision engine, including per-component chosen targets,
+  rationale, alternatives, requirements, and a decision-engine summary.
 - Setup readiness now uses required administrator, client, connector, and
   verified-mapping steps instead of a settings-endpoint heuristic; a Setup
   status checklist shows what remains.

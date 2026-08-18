@@ -3,7 +3,9 @@ import { AlertTriangle, Compass, RefreshCw } from "lucide-react";
 import { useDashboard } from "../app/DashboardContext";
 import { apiFetch } from "../api/client";
 import { StatusChip } from "../components/StatusChip";
+import { humanizeName } from "../lib/fields";
 import type {
+  ArchitectureDecision,
   ConsultantArchitecture,
   ConsultantArchitectureComponent,
   ConsultantBlueprint,
@@ -425,7 +427,7 @@ export function Consultant() {
       <section className="panel">
         <div className="panel-heading">
           <div>
-            <h2>Consultant blueprints</h2>
+            <h2>Solutions Architect blueprints</h2>
             <p className="screen-note"><Compass size={16} aria-hidden="true" /> Design and review local solution plans.</p>
           </div>
           <button className="icon-button" type="button" onClick={() => void refresh()} disabled={loading}>
@@ -486,7 +488,7 @@ export function Consultant() {
           </div>
         ) : null}
         {employeeOnboardingDemo?.stages.artifacts.delivery_bundle ? (
-          <div className="panel-subsection" aria-label="Consultant delivery handoff">
+          <div className="panel-subsection" aria-label="Solutions Architect delivery handoff">
             <div className="panel-heading">
               <div>
                 <h3>Delivery handoff</h3>
@@ -684,7 +686,7 @@ export function Consultant() {
       <section className="panel">
         <div className="panel-heading">
           <div>
-            <h2>Consultant use cases</h2>
+            <h2>Solutions Architect use cases</h2>
             <p className="screen-note">Review starting points for Microsoft work. These entries are planning guidance only.</p>
           </div>
           {monitoring ? <StatusChip status={monitoring.failed_runs ? "needs_review" : "completed"} /> : null}
@@ -700,7 +702,7 @@ export function Consultant() {
           <div className="consultant-component-list">
             {useCases.map((useCase) => <UseCaseCard useCase={useCase} key={useCase.id} />)}
           </div>
-        ) : <p>No consultant use cases are available.</p>}
+        ) : <p>No Solutions Architect use cases are available.</p>}
       </section>
 
       <section className="panel">
@@ -809,6 +811,7 @@ export function Consultant() {
               </div>
             </div>
           ) : null}
+          {architecture.decisions?.length ? <ArchitectureDecisions architecture={architecture} /> : null}
           <div className="panel-subsection">
             <h3>Implementation mapping</h3>
             <div className="consultant-component-list">
@@ -829,6 +832,108 @@ export function Consultant() {
       ) : null}
     </div>
   );
+}
+
+function ArchitectureDecisions({ architecture }: { architecture: ConsultantArchitecture }) {
+  const decisions = Array.isArray(architecture.decisions)
+    ? architecture.decisions.filter((decision): decision is ArchitectureDecision => Boolean(decision) && typeof decision === "object")
+    : [];
+  const engine = architecture.decision_engine;
+  const decisionCount = typeof engine?.decision_count === "number" ? engine.decision_count : decisions.length;
+  const unresolvedCount = typeof engine?.unresolved_decision_count === "number"
+    ? engine.unresolved_decision_count
+    : decisions.filter((decision) => safeText(decision.status) === "needs_review").length;
+  const safeguards = [
+    engine?.inference_started === false ? "No inference started" : null,
+    engine?.execution_started === false ? "No execution started" : null,
+    engine?.deployment_started === false ? "No deployment started" : null,
+  ].filter((item): item is string => Boolean(item));
+
+  return (
+    <div className="panel-subsection" aria-label="Architecture decisions">
+      <div className="panel-heading">
+        <div>
+          <h3>Architecture decisions</h3>
+          <p className="screen-note">
+            {decisionCount} decisions · {unresolvedCount} need review · authority: {humanizeName(safeText(engine?.authority) || "not recorded")}
+          </p>
+        </div>
+      </div>
+      {safeguards.length ? <p className="screen-note">{safeguards.join(" · ")}.</p> : null}
+      <div className="consultant-component-list">
+        {decisions.map((decision, index) => <ArchitectureDecisionCard decision={decision} key={safeText(decision.id) || `decision-${index}`} />)}
+      </div>
+    </div>
+  );
+}
+
+function ArchitectureDecisionCard({ decision }: { decision: ArchitectureDecision }) {
+  const requirements: Array<{ label: string; value: unknown }> = [
+    { label: "Required permissions", value: decision.required_permissions },
+    { label: "Licenses", value: decision.licenses },
+    { label: "Approval", value: decision.approval_requirements },
+    { label: "Read/write behavior", value: decision.read_write_behavior },
+    { label: "Risk", value: decision.risk },
+    { label: "Reversibility", value: decision.reversibility },
+    { label: "Execution boundary", value: decision.execution_boundary },
+    { label: "Complexity", value: decision.estimated_complexity },
+  ];
+
+  return (
+    <article className="consultant-component" aria-label={`Architecture decision: ${safeText(decision.capability) || "Unnamed capability"}`}>
+      <div>
+        <div className="panel-heading">
+          <div>
+            <strong>{safeText(decision.capability) || "Unnamed capability"}</strong>
+            <div className="screen-note">
+              <span className="status-chip info">{humanizeDecisionTarget(decision.chosen_target)}</span>
+            </div>
+          </div>
+          <StatusChip status={safeText(decision.status) || undefined} />
+        </div>
+        <p><strong>Why this was chosen</strong><br />{safeText(decision.why) || "No rationale was recorded."}</p>
+        <DecisionValues label="Alternatives considered" values={decision.alternatives_considered} />
+        <div className="grid">
+          {requirements.map((requirement) => <DecisionRequirement key={requirement.label} {...requirement} />)}
+        </div>
+        <DecisionValues label="Dependencies" values={decision.dependencies} />
+        <DecisionValues label="Open questions" values={decision.open_questions} />
+      </div>
+    </article>
+  );
+}
+
+function DecisionRequirement({ label, value }: { label: string; value: unknown }) {
+  const values = stringValues(value);
+  if (!values.length) return null;
+  return <div><strong>{label}</strong><span>{values.map(humanizeName).join(", ")}</span></div>;
+}
+
+function DecisionValues({ label, values }: { label: string; values: unknown }) {
+  const rendered = stringValues(values);
+  if (!rendered.length) return null;
+  return <p><strong>{label}</strong><br />{rendered.map(humanizeName).join(", ")}</p>;
+}
+
+function stringValues(value: unknown): string[] {
+  if (typeof value === "string") return value.trim() ? [value] : [];
+  if (Array.isArray(value)) return value.filter((item): item is string => typeof item === "string" && Boolean(item.trim()));
+  return typeof value === "number" || typeof value === "boolean" ? [String(value)] : [];
+}
+
+function safeText(value: unknown): string {
+  return typeof value === "string" ? value : typeof value === "number" || typeof value === "boolean" ? String(value) : "";
+}
+
+function humanizeDecisionTarget(value: unknown): string {
+  const target = safeText(value).toLowerCase();
+  const labels: Record<string, string> = {
+    wait_agent: "WAIT Agent",
+    wait_workflow: "WAIT Workflow",
+    microsoft_graph: "Microsoft Graph",
+    unsupported: "Unsupported",
+  };
+  return labels[target] ?? humanizeName(safeText(value) || "Not recorded");
 }
 
 function splitList(value: string): string[] {
