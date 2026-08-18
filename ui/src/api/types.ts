@@ -470,6 +470,32 @@ export type ConsultantArchitectureComponent = {
   knowledge_references?: string[];
 };
 
+export type ArchitectureDecision = {
+  id: string;
+  capability: string;
+  component_id: string;
+  chosen_target: string;
+  why: string;
+  status: string;
+  alternatives_considered?: string[];
+  dependencies?: string[];
+  required_permissions?: string[];
+  licenses?: string[];
+  read_write_behavior?: string | string[];
+  approval_requirements?: string | string[];
+  risk?: string;
+  reversibility?: string;
+  execution_boundary?: string;
+  estimated_complexity?: string;
+  data_movement?: string;
+  systems_involved?: string[];
+  testing_requirements?: string[];
+  deployment_requirements?: string[];
+  open_questions?: string[];
+  evidence?: string[];
+  evidence_quality?: string;
+};
+
 export type ConsultantArchitecture = {
   blueprint_id: string;
   client_id: string;
@@ -481,6 +507,16 @@ export type ConsultantArchitecture = {
   readiness: "ready" | "needs_review";
   execution_started: boolean;
   deployment_started: boolean;
+  decisions?: ArchitectureDecision[];
+  decision_engine?: {
+    format?: string;
+    authority?: string;
+    decision_count?: number;
+    unresolved_decision_count?: number;
+    inference_started?: boolean;
+    execution_started?: boolean;
+    deployment_started?: boolean;
+  };
   supervisor?: {
     mode: string;
     children: Array<{ id: string; kind: string; purpose?: string; context_policy?: string }>;

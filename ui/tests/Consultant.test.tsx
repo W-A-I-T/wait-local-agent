@@ -264,7 +264,7 @@ describe("Consultant", () => {
   it("loads a blueprint and renders its read-only workflow design", async () => {
     render(<MemoryRouter><Consultant /></MemoryRouter>);
 
-    expect(await screen.findByRole("heading", { name: "Consultant blueprints" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "Solutions Architect blueprints" })).toBeInTheDocument();
     fireEvent.click(await screen.findByRole("button", { name: /Employee onboarding/ }));
 
     expect(await screen.findByRole("heading", { name: "Employee onboarding" })).toBeInTheDocument();
@@ -274,7 +274,7 @@ describe("Consultant", () => {
     fireEvent.change(screen.getByLabelText("Trigger"), { target: { value: "HR approval request" } });
     fireEvent.click(screen.getByRole("button", { name: "Add step" }));
     expect(screen.getByDisplayValue("New action")).toBeInTheDocument();
-    expect(screen.getByRole("heading", { name: "Consultant use cases" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Solutions Architect use cases" })).toBeInTheDocument();
     expect(screen.getByText("Teams service-desk triage")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Prepare Power Automate plan" }));
     expect(await screen.findByText(/Power Automate plan ready for review/i)).toBeInTheDocument();
