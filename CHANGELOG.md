@@ -40,6 +40,10 @@ All notable changes to WAIT Local Agent will be documented in this file.
 
 ### Added
 
+- RMM device and alert inventory now persists into the client operational graph
+  with deterministic `alerted_on` links. Viewers can read a bounded client
+  graph, and MSP operators can trigger an RMM graph sync.
+
 - Client Operational Graph PR1 adds migration v7 with deterministic,
   client-scoped `external_entity_refs` and `entity_links`, bounded graph
   traversal, and `GET /tickets/{id}/context`.

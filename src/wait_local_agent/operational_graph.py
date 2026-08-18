@@ -3,10 +3,22 @@
 from __future__ import annotations
 
 import json
+import logging
+from typing import TypedDict
 
 from wait_local_agent.client_scope import AllClients, BoundClients, ClientScope
 from wait_local_agent.models import EntityLink, EntityRef, SubGraph
+from wait_local_agent.rmm import RmmInventoryProvider
 from wait_local_agent.store import Store
+
+LOGGER = logging.getLogger(__name__)
+
+
+class RmmInventorySeedSummary(TypedDict):
+    devices: int
+    alerts: int
+    links: int
+    errors: list[str]
 
 
 class OperationalGraphService:
@@ -15,8 +27,25 @@ class OperationalGraphService:
     HARD_MAX_DEPTH = 5
     HARD_MAX_NODES = 200
 
-    def __init__(self, store: Store) -> None:
+    def __init__(self, store: Store, rmm_provider: RmmInventoryProvider | None = None) -> None:
         self.store = store
+        self.rmm_provider = rmm_provider
+
+    def client_graph(self, scope: ClientScope | str | None) -> SubGraph:
+        """Return the bounded graph for one client in stable persisted order."""
+
+        _require_single_scope(scope)
+        refs = self.store.list_entity_refs(scope)[: self.HARD_MAX_NODES]
+        ref_ids = {ref.id for ref in refs}
+        links_by_id: dict[int, EntityLink] = {}
+        for ref in refs:
+            for link in self.store.list_entity_links(scope, ref.id):
+                if link.from_ref_id in ref_ids and link.to_ref_id in ref_ids:
+                    links_by_id[link.id] = link
+        return SubGraph(
+            refs=tuple(refs),
+            links=tuple(links_by_id[link_id] for link_id in sorted(links_by_id)),
+        )
 
     def subgraph(
         self,
@@ -156,6 +185,70 @@ class OperationalGraphService:
                 provenance="canonical_asset",
             )
         return seeded
+
+    def seed_rmm_inventory(
+        self, scope: ClientScope | str | None
+    ) -> RmmInventorySeedSummary:
+        """Persist tenant-scoped RMM devices, alerts, and explicit alert links."""
+
+        _require_single_scope(scope)
+        provider = self.rmm_provider
+        if provider is None:
+            return {"devices": 0, "alerts": 0, "links": 0, "errors": ["rmm provider unavailable"]}
+        client_id = scope.client_id if isinstance(scope, BoundClients) else str(scope)
+        source_system = provider.adapter_id.strip() or "rmm"
+        summary: RmmInventorySeedSummary = {"devices": 0, "alerts": 0, "links": 0, "errors": []}
+
+        try:
+            devices = sorted(provider.list_devices(client_id), key=lambda device: device.device_id)
+        except Exception:  # provider failures must degrade the sync, not break the API
+            LOGGER.exception("RMM device inventory failed for client %s", client_id)
+            devices = []
+            summary["errors"].append("device inventory unavailable")
+
+        device_refs: dict[str, EntityRef] = {}
+        for device in devices:
+            device_ref = self.store.upsert_entity_ref(
+                scope,
+                entity_type="device",
+                source_system=source_system,
+                external_id=device.device_id,
+                display_name=device.name,
+                provenance="rmm_inventory",
+                attributes={"category": device.category, **device.attributes},
+            )
+            device_refs[device.device_id] = device_ref
+            summary["devices"] += 1
+
+        try:
+            alerts = sorted(provider.list_alerts(client_id), key=lambda alert: alert.alert_id)
+        except Exception:  # provider failures must degrade the sync, not break the API
+            LOGGER.exception("RMM alert inventory failed for client %s", client_id)
+            alerts = []
+            summary["errors"].append("alert inventory unavailable")
+
+        for alert in alerts:
+            alert_ref = self.store.upsert_entity_ref(
+                scope,
+                entity_type="alert",
+                source_system=source_system,
+                external_id=alert.alert_id,
+                display_name=alert.title,
+                provenance="rmm_inventory",
+                attributes={"severity": alert.severity, "status": alert.status, "device_id": alert.device_id},
+            )
+            summary["alerts"] += 1
+            alert_device_ref = device_refs.get(alert.device_id)
+            if alert_device_ref is not None:
+                self.store.upsert_entity_link(
+                    scope,
+                    from_ref_id=alert_ref.id,
+                    to_ref_id=alert_device_ref.id,
+                    link_type="alerted_on",
+                    provenance="rmm_inventory",
+                )
+                summary["links"] += 1
+        return summary
 
 
 def _object_attributes(attributes_json: str) -> dict[str, object]:
