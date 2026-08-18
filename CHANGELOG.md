@@ -63,6 +63,12 @@ All notable changes to WAIT Local Agent will be documented in this file.
 
 ### Added
 
+- The Solutions Architect can now generate a disabled draft playbook from a
+  blueprint at `POST /consultant/blueprints/{id}/generate-playbook`. The
+  deterministic compiler binds only to existing workflow or agent primitives,
+  persists tenant-scoped provenance and revisions, and leaves enabling to an
+  explicit administrator action.
+
 - Connector Instances now include an admin-only "Connect a system" flow for
   HaloPSA and ConnectWise that stores provider credentials in the local vault
   and keeps only the credential reference plus non-secret configuration on the

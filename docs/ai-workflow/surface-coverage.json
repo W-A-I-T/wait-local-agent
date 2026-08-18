@@ -236,6 +236,7 @@
       "POST /connectors/m365/users/password-reset-drafts": "exposed",
       "POST /connectors/m365/users/session-revocation-drafts": "exposed",
       "POST /consultant/blueprints": "exposed",
+      "POST /consultant/blueprints/{blueprint_id}/generate-playbook": "admin",
       "POST /consultant/connectors/openapi/generate": "exposed",
       "POST /consultant/connectors/openapi/validate": "exposed",
       "POST /consultant/copilot-studio/plan": "exposed",

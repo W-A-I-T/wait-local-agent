@@ -5,7 +5,7 @@ from pathlib import Path
 from typing import cast
 
 import pytest
-from fastapi import HTTPException
+from fastapi import HTTPException, Response
 from fastapi.routing import APIRoute
 from starlette.requests import Request
 
@@ -36,9 +36,12 @@ from wait_local_agent.api.app import (
     TeamsMessageDraftRequest,
     create_app,
 )
+from wait_local_agent.consultant import generate_playbook_from_blueprint
+from wait_local_agent.models import BlueprintAgent, BlueprintWorkflow, SolutionBlueprint
 from wait_local_agent.rbac import AuthContext, Role
 from wait_local_agent.smart_actions import SmartActionService
 from wait_local_agent.store import Store
+from wait_local_agent.workflows import list_workflow_templates
 
 
 def _endpoint(settings, path: str):
@@ -91,6 +94,305 @@ def _request() -> Request:
             "root_path": "",
         }
     )
+
+
+def test_generate_playbook_compiler_lowers_only_resolved_primitives() -> None:
+    blueprint = SolutionBlueprint(
+        id="bp-generate",
+        client_id="acme",
+        created_by="tester",
+        created_at="2026-08-18T00:00:00+00:00",
+        updated_at="2026-08-18T00:00:00+00:00",
+        solution_name="Blueprint Compiler Fixture",
+        business_goal={"statement": "Reduce manual ticket handling."},
+        users=("Technicians",),
+        knowledge=(),
+        systems=(),
+        agents=(BlueprintAgent("agent-one", "Triage agent", "Triage tickets"),),
+        workflows=(BlueprintWorkflow("ticket-triage", "Ticket triage", "manual", ("Classify",)),),
+        approvals={},
+        deployment=(),
+        risk="high",
+    )
+    architecture = {
+        "decisions": [
+            {
+                "id": "decision-workflow",
+                "capability": "Ticket triage",
+                "chosen_target": "wait_workflow",
+                "dependencies": ["ticket-triage"],
+                "why": "A real local workflow template matched.",
+            },
+            {
+                "id": "decision-agent",
+                "capability": "Triage agent",
+                "chosen_target": "wait_agent",
+                "dependencies": ["invented-tool-id"],
+                "why": "The local agent runtime is the selected boundary.",
+            },
+            {
+                "id": "decision-unsupported",
+                "capability": "External system",
+                "chosen_target": "unsupported",
+                "dependencies": ["invented-workflow-id"],
+                "why": "No local primitive was resolved.",
+            },
+            {
+                "id": "decision-unresolved-workflow",
+                "capability": "Design-only workflow",
+                "chosen_target": "wait_workflow",
+                "dependencies": ["invented-workflow-id"],
+                "status": "needs_review",
+                "why": "The workflow has no exact local template.",
+            },
+        ]
+    }
+
+    compiled = generate_playbook_from_blueprint(blueprint, architecture)
+    repeated = generate_playbook_from_blueprint(blueprint, architecture)
+    assert compiled == repeated
+    assert compiled["id"] == "architect-bp-generate"
+    assert compiled["name"] == blueprint.solution_name
+    assert compiled["risk_level"] == "high"
+    assert compiled["local_fixture"] is False
+    steps = cast(list[dict[str, object]], compiled["steps"])
+    assert [step["kind"] for step in steps] == ["agent", "review", "review", "workflow"]
+    workflow = next(step for step in steps if step["kind"] == "workflow")
+    assert workflow["workflow_template_id"] == "ticket-triage"
+    assert all(
+        step.get("workflow_template_id") in {"ticket-triage", None}
+        for step in steps
+    )
+    assert all(
+        "workflow_template_id" not in step
+        for step in steps
+        if step["kind"] in {"agent", "review"}
+    )
+
+
+def _compiler_blueprint(
+    *,
+    business_goal: dict[str, str | bool | int],
+    blueprint_id: str = "bp-branches",
+    solution_name: str = "Compiler branch fixture",
+) -> SolutionBlueprint:
+    return SolutionBlueprint(
+        id=blueprint_id,
+        client_id="acme",
+        created_by="tester",
+        created_at="2026-08-18T00:00:00+00:00",
+        updated_at="2026-08-18T00:00:00+00:00",
+        solution_name=solution_name,
+        business_goal=business_goal,
+        users=(),
+        knowledge=(),
+        systems=(),
+        agents=(),
+        workflows=(),
+        approvals={},
+        deployment=(),
+        risk="low",
+    )
+
+
+def test_generate_playbook_uses_components_and_derives_targets() -> None:
+    blueprint = _compiler_blueprint(business_goal={"statement": "Use components."})
+    compiled = generate_playbook_from_blueprint(
+        blueprint,
+        {
+            "components": [
+                {"id": "agent-component", "kind": "agent", "name": "Agent"},
+                {"id": "review-component", "kind": "unknown", "name": "Unknown"},
+                {"id": "workflow-component", "kind": "workflow", "name": "Workflow"},
+            ]
+        },
+    )
+
+    steps = cast(list[dict[str, object]], compiled["steps"])
+    assert [step["kind"] for step in steps] == ["agent", "review", "review"]
+    assert steps[0]["id"] == "step-agent-component"
+    assert steps[1]["description"] == "Manual review required: No deterministic primitive was resolved."
+
+
+def test_generate_playbook_resolves_workflows_from_each_supported_location() -> None:
+    blueprint = _compiler_blueprint(business_goal={"description": "Resolve templates."})
+    template_id = list_workflow_templates()[0].id
+    compiled = generate_playbook_from_blueprint(
+        blueprint,
+        {
+            "decisions": [
+                {"id": "template", "chosen_target": "wait_workflow", "template": {"id": template_id}},
+                {
+                    "id": "dependency",
+                    "chosen_target": "wait_workflow",
+                    "dependencies": [template_id],
+                },
+                {
+                    "id": "explicit",
+                    "chosen_target": "wait_workflow",
+                    "workflow_template_id": template_id,
+                },
+                {
+                    "id": "missing",
+                    "chosen_target": "wait_workflow",
+                    "workflow_template_id": "not-a-real-template",
+                    "why": "Catalog lookup failed.",
+                },
+                {"id": "agent", "chosen_target": "wait_agent"},
+                {"id": "fallback", "chosen_target": "unsupported", "why": "Needs review."},
+            ]
+        },
+    )
+
+    steps = cast(list[dict[str, object]], compiled["steps"])
+    by_id = {str(step["id"]): step for step in steps}
+    assert by_id["step-agent"]["kind"] == "agent"
+    assert by_id["step-fallback"]["kind"] == "review"
+    assert by_id["step-missing"]["kind"] == "review"
+    assert by_id["step-missing"]["description"] == "Manual review required: Catalog lookup failed."
+    assert by_id["step-fallback"]["description"] == "Manual review required: Needs review."
+    assert [by_id[f"step-{name}"]["workflow_template_id"] for name in ("dependency", "explicit", "template")] == [
+        template_id,
+        template_id,
+        template_id,
+    ]
+
+
+@pytest.mark.parametrize(
+    ("business_goal", "expected"),
+    [
+        ({"statement": "Statement goal."}, "Statement goal."),
+        ({"description": "Description goal."}, "Description goal."),
+        ({}, "Review the declared solution blueprint."),
+    ],
+)
+def test_generate_playbook_goal_fallbacks(
+    business_goal: dict[str, str | bool | int], expected: str
+) -> None:
+    compiled = generate_playbook_from_blueprint(
+        _compiler_blueprint(business_goal=business_goal), {"decisions": []}
+    )
+
+    assert compiled["description"] == f"Generated from the blueprint goal: {expected}"
+
+
+def test_generate_playbook_bounds_blueprint_derived_text() -> None:
+    long_text = "A\x00B\n" + "x" * 700
+    blueprint = _compiler_blueprint(
+        business_goal={"statement": long_text},
+        solution_name=long_text,
+    )
+    compiled = generate_playbook_from_blueprint(
+        blueprint,
+        {
+            "decisions": [
+                {
+                    "id": "long-decision",
+                    "capability": long_text,
+                    "chosen_target": "unsupported",
+                    "why": long_text,
+                }
+            ]
+        },
+    )
+
+    steps = cast(list[dict[str, object]], compiled["steps"])
+    name = cast(str, compiled["name"])
+    description = cast(str, compiled["description"])
+    step_name = cast(str, steps[0]["name"])
+    step_description = cast(str, steps[0]["description"])
+    assert len(name) <= 500
+    assert len(description) <= 500
+    assert "\x00" not in name
+    assert "\n" not in name
+    assert len(step_name) <= 500
+    assert len(step_description) <= 500
+    assert "\x00" not in step_description
+    assert "\n" not in step_description
+
+
+def test_generate_playbook_persists_bounded_blueprint_text(settings) -> None:
+    long_name = "Z" * 240
+    long_goal = "G" * 500
+    blueprint = _compiler_blueprint(
+        business_goal={"statement": long_goal},
+        blueprint_id="bp-persisted-text",
+        solution_name=long_name,
+    )
+    store = Store(settings.data_path)
+    store.create_solution_blueprint(blueprint)
+
+    endpoint = _endpoint(settings, "/consultant/blueprints/{blueprint_id}/generate-playbook")
+    entry = endpoint(blueprint.id, _admin(), Response(), client_id="acme")
+    persisted = store.get_msp_playbook_entry(entry["id"], "acme")
+
+    assert persisted is not None
+    definition = json.loads(persisted.definition_json)
+    assert len(definition["name"]) <= 500
+    assert len(definition["description"]) <= 500
+
+
+def test_generate_playbook_marks_unresolved_status_as_review() -> None:
+    compiled = generate_playbook_from_blueprint(
+        _compiler_blueprint(business_goal={"statement": "Review unresolved agent."}),
+        {
+            "decisions": [
+                {
+                    "id": "unresolved-agent",
+                    "capability": "Unresolved agent",
+                    "chosen_target": "wait_agent",
+                    "status": "needs_review",
+                    "why": "The requested tool is not available.",
+                }
+            ]
+        },
+    )
+
+    step = cast(list[dict[str, object]], compiled["steps"])[0]
+    assert step["kind"] == "review"
+    assert "workflow_template_id" not in step
+
+
+def test_generate_blueprint_playbook_endpoint_persists_one_disabled_revision(settings) -> None:
+    blueprint = _endpoint(settings, "/consultant/blueprints")(
+        SolutionBlueprintRequest(
+            client_id="acme",
+            solution={"name": "Generated ticket assistant"},
+            business_goal={"statement": "Reduce manual ticket handling."},
+            users=["Technicians"],
+            knowledge=[],
+            systems=[],
+            agents=[{"id": "triage-agent", "name": "Triage agent", "purpose": "Triage tickets"}],
+            workflows=[
+                {
+                    "id": "ticket-triage",
+                    "name": "Ticket triage",
+                    "trigger": "manual",
+                    "steps": ["Classify"],
+                }
+            ],
+            approvals={},
+            deployment=[],
+            risk="medium",
+        ),
+        _technician(),
+    )
+    endpoint = _endpoint(settings, "/consultant/blueprints/{blueprint_id}/generate-playbook")
+    first_response = Response()
+    first = endpoint(blueprint["id"], _admin(), first_response, client_id="acme")
+    second = endpoint(blueprint["id"], _admin(), Response(), client_id="acme")
+
+    assert first_response.status_code == 201
+    assert first["id"] == f"architect-{blueprint['id']}"
+    assert first["enabled"] is False
+    assert first["source_playbook_id"] == f"architect:{blueprint['id']}"
+    assert first["provenance"] == f"architect_blueprint:{blueprint['id']}"
+    assert second["id"] == first["id"]
+    assert second["version"] == 2
+    assert second["enabled"] is False
+    store = Store(settings.data_path)
+    assert len(store.list_msp_playbook_entries("acme")) == 1
+    assert len(store.list_msp_playbook_revisions(first["id"], "acme")) == 2
 
 
 def test_consultant_planning_routes_are_directly_callable_and_review_only(settings) -> None:

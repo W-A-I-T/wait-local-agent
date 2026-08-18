@@ -6680,3 +6680,100 @@ def _provision_bound_principal(store: Store, principal_id: str, token: str, clie
     store.create_principal(principal_id, kind="staff")
     store.add_principal_credential(principal_id, token)
     store.add_principal_client_role(principal_id, client_id, role)
+
+
+def test_generate_blueprint_playbook_is_admin_scoped_disabled_and_versioned(settings) -> None:
+    secure_settings = replace(
+        settings,
+        demo_mode=False,
+        client_id="acme",
+        admin_token="admin-token",
+        tech_token="tech-token",
+        viewer_token="viewer-token",
+    )
+    client = TestClient(create_app(secure_settings))
+    blueprint_payload = {
+        "solution": {"name": "Generated ticket assistant"},
+        "business_goal": {"statement": "Reduce manual ticket handling."},
+        "users": ["Technicians"],
+        "knowledge": [],
+        "systems": [],
+        "agents": [{"id": "triage-agent", "name": "Triage agent", "purpose": "Triage tickets"}],
+        "workflows": [
+            {
+                "id": "ticket-triage",
+                "name": "Ticket triage",
+                "trigger": "manual",
+                "steps": ["Classify"],
+            }
+        ],
+        "approvals": {},
+        "deployment": [],
+        "risk": "medium",
+    }
+    created = client.post(
+        "/consultant/blueprints",
+        headers=_auth("tech-token"),
+        json={**blueprint_payload, "client_id": "acme"},
+    )
+    assert created.status_code == 201
+    blueprint_id = created.json()["id"]
+
+    lower_role = client.post(
+        f"/consultant/blueprints/{blueprint_id}/generate-playbook",
+        headers=_auth("tech-token"),
+    )
+    assert lower_role.status_code == 403
+
+    generated = client.post(
+        f"/consultant/blueprints/{blueprint_id}/generate-playbook",
+        headers=_auth("admin-token"),
+        params={"client_id": "acme"},
+    )
+    assert generated.status_code == 201
+    first = generated.json()
+    assert first["id"] == f"architect-{blueprint_id}"
+    assert first["source_playbook_id"] == f"architect:{blueprint_id}"
+    assert first["provenance"] == f"architect_blueprint:{blueprint_id}"
+    assert first["enabled"] is False
+    assert first["client_id"] == "acme"
+    assert any(step["kind"] == "agent" for step in first["definition"]["steps"])
+    workflow_steps = [step for step in first["definition"]["steps"] if step["kind"] == "workflow"]
+    assert [step["workflow_template_id"] for step in workflow_steps] == ["ticket-triage"]
+
+    regenerated = client.post(
+        f"/consultant/blueprints/{blueprint_id}/generate-playbook",
+        headers=_auth("admin-token"),
+        params={"client_id": "acme"},
+    )
+    assert regenerated.status_code == 200
+    second = regenerated.json()
+    assert second["id"] == first["id"]
+    assert second["version"] == first["version"] + 1
+    assert second["enabled"] is False
+    entries = client.get("/msp/playbook-entries", headers=_auth("admin-token"), params={"client_id": "acme"})
+    assert entries.status_code == 200
+    assert len([entry for entry in entries.json() if entry["source_playbook_id"] == first["source_playbook_id"]]) == 1
+
+    foreign = client.post(
+        "/consultant/blueprints",
+        headers=_auth("admin-token"),
+        json={**blueprint_payload, "client_id": "beta"},
+    )
+    assert foreign.status_code == 201
+    assert (
+        client.post(
+            f"/consultant/blueprints/{foreign.json()['id']}/generate-playbook",
+            headers=_auth("admin-token"),
+            params={"client_id": "acme"},
+        ).status_code
+        == 404
+    )
+    assert (
+        client.post(
+            "/consultant/blueprints/missing/generate-playbook",
+            headers=_auth("admin-token"),
+            params={"client_id": "acme"},
+        ).status_code
+        == 404
+    )

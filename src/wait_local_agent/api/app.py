@@ -96,6 +96,7 @@ from wait_local_agent.consultant import (
     architect_solution_blueprint,
     blueprint_payload,
     blueprint_view,
+    generate_playbook_from_blueprint,
     parse_solution_blueprint,
     promote_discovery_candidate,
 )
@@ -5064,6 +5065,61 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             available_tool_ids=(tool.id for tool in agent_service.list_tools()),
             workflow_templates=list_workflow_templates(),
         )
+
+    @app.post("/consultant/blueprints/{blueprint_id}/generate-playbook")
+    def generate_consultant_blueprint_playbook(
+        blueprint_id: str,
+        context: AdminAccess,
+        response: Response,
+        client_id: str | None = None,
+    ) -> dict[str, object]:
+        scoped = resolve_client_scope(context, client_id).client_id
+        if scoped is None and context.role < Role.ADMIN:
+            raise HTTPException(status_code=403, detail="authenticated principal has no tenant")
+        blueprint = store.get_solution_blueprint(blueprint_id, client_id=scoped)
+        if blueprint is None:
+            raise HTTPException(status_code=404, detail="solution blueprint not found")
+
+        architecture = architect_solution_blueprint(
+            blueprint,
+            available_tool_ids=(tool.id for tool in agent_service.list_tools()),
+            workflow_templates=list_workflow_templates(),
+        )
+        definition = generate_playbook_from_blueprint(blueprint, architecture)
+        source_ref = f"architect:{blueprint.id}"
+        provenance = f"architect_blueprint:{blueprint.id}"
+        entry_id = f"architect-{blueprint.id}"
+        existing = store.get_msp_playbook_entry(entry_id, blueprint.client_id)
+        if existing is None:
+            try:
+                entry = store.create_msp_playbook_entry(
+                    source_ref,
+                    definition,
+                    provenance=provenance,
+                    client_id=blueprint.client_id,
+                    enabled=False,
+                    entry_id=entry_id,
+                )
+                response.status_code = 201
+            except sqlite3.IntegrityError:
+                entry = store.update_msp_playbook_entry(
+                    entry_id,
+                    definition=definition,
+                    provenance=provenance,
+                    enabled=False,
+                    client_id=blueprint.client_id,
+                    force_revision=True,
+                )
+        else:
+            entry = store.update_msp_playbook_entry(
+                entry_id,
+                definition=definition,
+                provenance=provenance,
+                enabled=False,
+                client_id=blueprint.client_id,
+                force_revision=True,
+            )
+        return msp_playbook_entry_view(entry)
 
     @app.post("/consultant/connectors/openapi/validate")
     def validate_consultant_openapi_connector(
