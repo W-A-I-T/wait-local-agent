@@ -1,4 +1,4 @@
-import { FormEvent, useEffect, useMemo, useState } from "react";
+import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Send } from "lucide-react";
 import { ApiRequestError, apiFetch } from "../api/client";
 import { defaultFieldText, useDashboard } from "../app/DashboardContext";
@@ -35,6 +35,14 @@ function tabPath(ticketId: string, tab: TicketTab) {
   return `/tickets/${encodeURIComponent(ticketId)}/${endpoint}`;
 }
 
+type TicketTabCache = {
+  ticketId: string;
+  summary?: TicketSummaryResponse;
+  notes?: TicketNote[];
+  statusHistory?: TicketStatusHistory[];
+  context?: { value: TicketContext | null; notFound: boolean };
+};
+
 export function Tickets() {
   const {
     selectedClientId,
@@ -44,7 +52,8 @@ export function Tickets() {
     actionTypes = [],
     canWrite,
     busyId,
-    createDraft
+    createDraft,
+    refreshNonce = 0
   } = useDashboard();
   const [tickets, setTickets] = useState<Ticket[]>([]);
   const [listLoading, setListLoading] = useState(true);
@@ -57,6 +66,10 @@ export function Tickets() {
   const [statusHistory, setStatusHistory] = useState<TicketStatusHistory[]>([]);
   const [context, setContext] = useState<TicketContext | null>(null);
   const [contextNotFound, setContextNotFound] = useState(false);
+  const tabCacheRef = useRef<TicketTabCache>({ ticketId: "" });
+  const tabRequestSeqRef = useRef(0);
+  const tabInFlightSeqRef = useRef<number | null>(null);
+  const lastRefreshNonceRef = useRef(refreshNonce);
 
   const [actionType, setActionType] = useState(actionTypes[0] ?? "add_note");
   const [fieldText, setFieldText] = useState(defaultFieldText);
@@ -81,6 +94,95 @@ export function Tickets() {
   const ticketId = selectedTicket?.id || selectedTicketId;
   const [manualTicketId, setManualTicketId] = useState("");
   const actionTicketId = ticketId || manualTicketId.trim();
+
+  const loadTab = useCallback(async (tab: TicketTab, options: { force?: boolean } = {}) => {
+    if (!ticketId) return;
+    const force = options.force ?? false;
+    const cache = tabCacheRef.current;
+    if (!force && cache.ticketId === ticketId) {
+      if (tab === "summary" && cache.summary !== undefined) {
+        tabRequestSeqRef.current += 1;
+        setTicketSummary(cache.summary);
+        setTabError("");
+        setTabLoading(false);
+        return;
+      }
+      if (tab === "notes" && cache.notes !== undefined) {
+        tabRequestSeqRef.current += 1;
+        setNotes(cache.notes);
+        setTabError("");
+        setTabLoading(false);
+        return;
+      }
+      if (tab === "status-history" && cache.statusHistory !== undefined) {
+        tabRequestSeqRef.current += 1;
+        setStatusHistory(cache.statusHistory);
+        setTabError("");
+        setTabLoading(false);
+        return;
+      }
+      if (tab === "context" && cache.context !== undefined) {
+        tabRequestSeqRef.current += 1;
+        setContext(cache.context.value);
+        setContextNotFound(cache.context.notFound);
+        setTabError("");
+        setTabLoading(false);
+        return;
+      }
+    }
+    const requestTicketId = ticketId;
+    if (force && tabCacheRef.current.ticketId === requestTicketId) {
+      // Evict only this tab's slot up front so a failed forced refresh leaves
+      // no stale entry and the next visit retries.
+      const cache = tabCacheRef.current;
+      if (tab === "summary") delete cache.summary;
+      if (tab === "notes") delete cache.notes;
+      if (tab === "status-history") delete cache.statusHistory;
+      if (tab === "context") delete cache.context;
+    }
+    const seq = ++tabRequestSeqRef.current;
+    tabInFlightSeqRef.current = seq;
+    setTabLoading(true);
+    setTabError("");
+    if (tab === "context") setContextNotFound(false);
+    const isCurrent = () => seq === tabRequestSeqRef.current && tabCacheRef.current.ticketId === requestTicketId;
+    try {
+      const result = await apiFetch<TicketSummaryResponse | TicketNote[] | TicketStatusHistory[] | TicketContext>(tabPath(requestTicketId, tab));
+      if (!isCurrent()) return;
+      if (tab === "summary") {
+        const value = result as TicketSummaryResponse;
+        setTicketSummary(value);
+        tabCacheRef.current.summary = value;
+      }
+      if (tab === "notes") {
+        const value = Array.isArray(result) ? result as TicketNote[] : [];
+        setNotes(value);
+        tabCacheRef.current.notes = value;
+      }
+      if (tab === "status-history") {
+        const value = Array.isArray(result) ? result as TicketStatusHistory[] : [];
+        setStatusHistory(value);
+        tabCacheRef.current.statusHistory = value;
+      }
+      if (tab === "context") {
+        const value = result as TicketContext;
+        setContext(value);
+        tabCacheRef.current.context = { value, notFound: false };
+      }
+    } catch (error) {
+      if (!isCurrent()) return;
+      if (tab === "context" && error instanceof ApiRequestError && error.status === 404) {
+        setContextNotFound(true);
+        setContext(null);
+        tabCacheRef.current.context = { value: null, notFound: true };
+      } else {
+        setTabError(error instanceof Error ? error.message : "Unable to load ticket details.");
+      }
+    } finally {
+      if (tabInFlightSeqRef.current === seq) tabInFlightSeqRef.current = null;
+      if (seq === tabRequestSeqRef.current) setTabLoading(false);
+    }
+  }, [ticketId]);
 
   useEffect(() => {
     let cancelled = false;
@@ -112,36 +214,26 @@ export function Tickets() {
     setContext(null);
     setContextNotFound(false);
     setTabError("");
+    tabCacheRef.current = { ticketId };
   }, [ticketId]);
 
   useEffect(() => {
     if (!ticketId) return;
-    let cancelled = false;
-    setTabLoading(true);
-    setTabError("");
-    if (activeTab === "context") setContextNotFound(false);
-    void apiFetch< TicketSummaryResponse | TicketNote[] | TicketStatusHistory[] | TicketContext >(tabPath(ticketId, activeTab))
-      .then((result) => {
-        if (cancelled) return;
-        if (activeTab === "summary") setTicketSummary(result as TicketSummaryResponse);
-        if (activeTab === "notes") setNotes(Array.isArray(result) ? result as TicketNote[] : []);
-        if (activeTab === "status-history") setStatusHistory(Array.isArray(result) ? result as TicketStatusHistory[] : []);
-        if (activeTab === "context") setContext(result as TicketContext);
-      })
-      .catch((error) => {
-        if (cancelled) return;
-        if (activeTab === "context" && error instanceof ApiRequestError && error.status === 404) {
-          setContextNotFound(true);
-          setContext(null);
-        } else {
-          setTabError(error instanceof Error ? error.message : "Unable to load ticket details.");
-        }
-      })
-      .finally(() => {
-        if (!cancelled) setTabLoading(false);
-      });
-    return () => { cancelled = true; };
-  }, [activeTab, ticketId]);
+    void loadTab(activeTab, { force: false });
+  }, [activeTab, ticketId, loadTab]);
+
+  useEffect(() => {
+    if (refreshNonce === lastRefreshNonceRef.current) return;
+    lastRefreshNonceRef.current = refreshNonce;
+    // The provider's one-time mount refresh fires while no ticket is selected,
+    // so the ticketId guard already absorbs it; every other refresh clears the
+    // entire current-ticket cache and force-reloads the active tab. The force
+    // load bumps tabRequestSeqRef, superseding any in-flight request so a
+    // response begun before the refresh is never rendered or cached.
+    if (!ticketId) return;
+    tabCacheRef.current = { ticketId };
+    void loadTab(activeTab, { force: true });
+  }, [refreshNonce, ticketId, activeTab, loadTab]);
 
   function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -206,6 +298,8 @@ export function Tickets() {
     } finally { setHaloSyncBusy(false); }
   }
 
+  const activeTabLabel = tabs.find((tab) => tab.id === activeTab)?.label ?? "tab";
+
   return (
     <div className="screen-stack">
       <section className="panel">
@@ -224,6 +318,7 @@ export function Tickets() {
         <section className="panel" aria-labelledby="ticket-detail-heading">
           <div className="panel-heading"><div><p className="eyebrow">Ticket workspace</p><h2 id="ticket-detail-heading">{displayValue(selectedTicket?.summary || selectedTicket?.subject, "Ticket detail")}</h2><span>{ticketId} · {displayValue(selectedTicket?.source_system, "Local")}</span></div><span>{displayValue(selectedTicket?.status, "Unknown")}</span></div>
           <div className="tab-list" role="tablist" aria-label="Ticket detail"><div className="row-actions">{tabs.map((tab) => <button key={tab.id} type="button" role="tab" aria-selected={activeTab === tab.id} className={activeTab === tab.id ? "selected" : "secondary-button"} onClick={() => setActiveTab(tab.id)}>{tab.label}</button>)}</div></div>
+          <div className="row-actions"><button type="button" className="secondary-button" disabled={tabLoading} aria-label={`Refresh ${activeTabLabel}`} onClick={() => void loadTab(activeTab, { force: true })}>Refresh</button></div>
           {tabLoading ? <p className="screen-note" aria-busy="true">Loading {tabs.find((tab) => tab.id === activeTab)?.label.toLowerCase()}…</p> : null}
           {tabError ? <div className="notice danger" role="alert">{tabError}</div> : null}
           {!tabLoading && activeTab === "summary" && ticketSummary ? <article className="approval-card"><strong>Classification: {displayValue(ticketSummary.classification)}</strong><p>{displayValue(ticketSummary.summary)}</p><p>Suggested response: {displayValue(ticketSummary.suggested_response)}</p>{ticketSummary.sources?.length ? <p className="screen-note">{ticketSummary.sources.length} supporting source{ticketSummary.sources.length === 1 ? "" : "s"}</p> : null}</article> : null}

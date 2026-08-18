@@ -11,7 +11,8 @@ vi.mock("../src/app/DashboardContext", () => ({
     actionTypes: ["add_note"],
     canWrite: true,
     busyId: null,
-    createDraft: vi.fn()
+    createDraft: vi.fn(),
+    refreshNonce: 0
   })
 }));
 
