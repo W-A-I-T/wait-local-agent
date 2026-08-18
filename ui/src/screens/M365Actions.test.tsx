@@ -16,6 +16,8 @@ describe("M365Actions", () => {
   beforeEach(() => {
     mockedApiFetch.mockReset();
     dashboard.selectedClientId = "client-acme";
+    dashboard.role = "admin";
+    dashboard.roleResolved = true;
     mockedApiFetch.mockResolvedValue({ id: 42, action_type: "m365.test", status: "pending_approval" });
   });
 
@@ -59,5 +61,60 @@ describe("M365Actions", () => {
     fireEvent.click(screen.getAllByRole("button", { name: "Create approval draft" })[2]);
     expect(await screen.findByRole("alert")).toHaveTextContent("client scope is required");
     expect(screen.getByRole("alert")).toHaveClass("notice", "danger");
+  });
+
+  it("posts password-reset toggles exactly as set by the checkbox controls", async () => {
+    renderScreen();
+    const userIdentityInput = screen.getAllByLabelText("User (UPN or email)")[1] as HTMLInputElement;
+    const vaultNameInput = screen.getByLabelText("Vault secret name holding the temporary password") as HTMLInputElement;
+    const forceChangeNextSignInCheckbox = screen.getByLabelText("Force change password at next sign-in") as HTMLInputElement;
+    const forceChangeNextSignInWithMfaCheckbox = screen.getByLabelText("Force change password at next sign-in with MFA") as HTMLInputElement;
+
+    fireEvent.change(userIdentityInput, { target: { value: "reset@example.com" } });
+    fireEvent.change(vaultNameInput, { target: { value: "vault-secret-name" } });
+    fireEvent.click(forceChangeNextSignInCheckbox);
+    fireEvent.click(forceChangeNextSignInWithMfaCheckbox);
+
+    fireEvent.submit(screen.getByRole("heading", { name: "Password reset" }).closest("section")!.querySelector("form")!);
+
+    await waitFor(() => expect(mockedApiFetch).toHaveBeenCalledWith(
+      "/connectors/m365/users/password-reset-drafts",
+      expect.objectContaining({ body: JSON.stringify({ user_identity: "reset@example.com", temporary_vault_name: "vault-secret-name", force_change_password_next_sign_in: false, force_change_password_next_sign_in_with_mfa: true, client_id: "client-acme" }) })
+    ));
+  });
+
+  it("shows non-admin fallback and hides all forms when role is not allowed", () => {
+    dashboard.role = "technician";
+    renderScreen();
+
+    expect(screen.getByText("Administrator access required")).toBeInTheDocument();
+    expect(screen.getByText("M365 action drafts are available to administrators only.")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Microsoft 365 Actions" })).toBeInTheDocument();
+    expect(screen.queryAllByRole("button", { name: "Create approval draft" })).toHaveLength(0);
+    expect(screen.queryByLabelText("Managed device ID")).toBeNull();
+  });
+
+  it("trims whitespace-only user and device identifiers before posting", async () => {
+    renderScreen();
+
+    fireEvent.change(screen.getAllByLabelText("User (UPN or email)")[0], { target: { value: "   " } });
+    fireEvent.submit(screen.getByRole("heading", { name: "Offboard — Disable user" }).closest("section")!.querySelector("form")!);
+    await waitFor(() => expect(mockedApiFetch).toHaveBeenCalledWith("/connectors/m365/users/disable-drafts", expect.objectContaining({ body: JSON.stringify({ user_identity: "", client_id: "client-acme" }) })));
+
+    fireEvent.change(screen.getByLabelText("Managed device ID"), { target: { value: "   " } });
+    fireEvent.submit(screen.getByRole("heading", { name: "Device reboot" }).closest("section")!.querySelector("form")!);
+    await waitFor(() => expect(mockedApiFetch).toHaveBeenCalledWith("/connectors/m365/managed-devices/reboot-drafts", expect.objectContaining({ body: JSON.stringify({ device_id: "", client_id: "client-acme" }) })));
+  });
+
+  it("binds vault secret helper text and trims vault secret name on blur", () => {
+    renderScreen();
+
+    const vaultNameInput = screen.getByLabelText("Vault secret name holding the temporary password") as HTMLInputElement;
+    expect(vaultNameInput).toHaveAttribute("aria-describedby", "temporary-vault-name-help");
+
+    fireEvent.change(vaultNameInput, { target: { value: "  padded-vault-name  " } });
+    fireEvent.blur(vaultNameInput);
+
+    expect(vaultNameInput).toHaveValue("padded-vault-name");
   });
 });
