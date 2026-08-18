@@ -29,11 +29,15 @@ export type PollSummary = {
   reason: string | null;
 };
 
-export type ClientDirectoryEntry = {
+export type Client = {
   client_id: string;
   name: string;
   status: string;
+  created_at: string;
+  updated_at: string;
 };
+
+export type ClientDirectoryEntry = Pick<Client, "client_id" | "name" | "status">;
 
 export type SyncCursor = {
   connector_instance_id: string;

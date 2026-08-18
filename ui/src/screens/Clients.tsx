@@ -1,21 +1,39 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useState, type FormEvent } from "react";
 import { apiFetch } from "../api/client";
-import type { ClientDirectoryEntry } from "../api/types";
+import type { Client, ClientConnectorMapping, ClientDirectoryEntry, MappingVerifyResult } from "../api/types";
+import { useDashboard } from "../app/DashboardContext";
+import { RoleGate } from "../components/RoleGate";
 import { StatusChip } from "../components/StatusChip";
 
+type ClientForm = { client_id: string; name: string; status: string };
+
+const emptyForm: ClientForm = { client_id: "", name: "", status: "active" };
+
 export function Clients() {
+  const { role, roleResolved } = useDashboard();
+  const canMutate = roleResolved && role === "admin";
   const [clients, setClients] = useState<ClientDirectoryEntry[]>([]);
+  const [selectedClientId, setSelectedClientId] = useState<string | null>(null);
+  const [selectedClient, setSelectedClient] = useState<Client | null>(null);
+  const [mappings, setMappings] = useState<ClientConnectorMapping[]>([]);
   const [loading, setLoading] = useState(true);
+  const [detailLoading, setDetailLoading] = useState(false);
   const [error, setError] = useState("");
+  const [detailError, setDetailError] = useState("");
+  const [mappingError, setMappingError] = useState("");
+  const [statusMessage, setStatusMessage] = useState("");
+  const [form, setForm] = useState<ClientForm>(emptyForm);
+  const [editing, setEditing] = useState(false);
+  const [mutationBusy, setMutationBusy] = useState(false);
+  const [verifyingMappingId, setVerifyingMappingId] = useState<string | null>(null);
+  const [formError, setFormError] = useState("");
 
   const loadClients = useCallback(async () => {
     setLoading(true);
     setError("");
     try {
       const result = await apiFetch<ClientDirectoryEntry[]>("/clients");
-      if (!Array.isArray(result)) {
-        throw new Error("The appliance returned invalid Clients data.");
-      }
+      if (!Array.isArray(result)) throw new Error("The appliance returned invalid Clients data.");
       setClients(result.filter((client) => client.client_id !== "__quarantine__"));
     } catch (requestError) {
       setError(requestError instanceof Error ? requestError.message : "Unable to load Clients.");
@@ -24,9 +42,97 @@ export function Clients() {
     }
   }, []);
 
-  useEffect(() => {
-    void loadClients();
-  }, [loadClients]);
+  useEffect(() => { void loadClients(); }, [loadClients]);
+
+  const selectClient = useCallback(async (clientId: string) => {
+    setSelectedClientId(clientId);
+    setSelectedClient(null);
+    setMappings([]);
+    setDetailLoading(true);
+    setDetailError("");
+    setMappingError("");
+    try {
+      const [detail, allMappings] = await Promise.all([
+        apiFetch<Client>(`/clients/${encodeURIComponent(clientId)}`),
+        apiFetch<ClientConnectorMapping[]>("/client-connector-mappings")
+      ]);
+      setSelectedClient(detail);
+      setMappings(Array.isArray(allMappings) ? allMappings.filter((mapping) => mapping.client_id === clientId) : []);
+    } catch (requestError) {
+      setDetailError(requestError instanceof Error ? requestError.message : "Unable to load client details.");
+    } finally {
+      setDetailLoading(false);
+    }
+  }, []);
+
+  const submitForm = useCallback(async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    const clientId = form.client_id.trim();
+    const name = form.name.trim();
+    if ((!editing && !clientId) || !name) {
+      setFormError(editing ? "Client name is required." : "Client ID and name are required.");
+      return;
+    }
+    setMutationBusy(true);
+    setFormError("");
+    setStatusMessage("");
+    try {
+      const client = editing && selectedClient
+        ? await apiFetch<Client>(`/clients/${encodeURIComponent(selectedClient.client_id)}`, {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ status: form.status })
+          })
+        : await apiFetch<Client>("/clients", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ client_id: clientId, name })
+          });
+      setStatusMessage(editing ? "Client updated." : "Client created.");
+      setForm(emptyForm);
+      setEditing(false);
+      await loadClients();
+      await selectClient(client.client_id);
+    } catch (requestError) {
+      setFormError(requestError instanceof Error ? requestError.message : "Unable to save the client.");
+    } finally {
+      setMutationBusy(false);
+    }
+  }, [editing, form, loadClients, selectedClient, selectClient]);
+
+  const verifyMapping = useCallback(async (mappingId: string) => {
+    setVerifyingMappingId(mappingId);
+    setMappingError("");
+    try {
+      const result = await apiFetch<MappingVerifyResult>(
+        `/client-connector-mappings/${encodeURIComponent(mappingId)}/verify`,
+        { method: "POST" }
+      );
+      if (selectedClientId) {
+        const refreshed = await apiFetch<ClientConnectorMapping[]>("/client-connector-mappings");
+        setMappings(refreshed.filter((mapping) => mapping.client_id === selectedClientId));
+      }
+      setStatusMessage(`Mapping verified — ${result.retenanted_count} quarantined tickets re-tenanted.`);
+    } catch (requestError) {
+      setMappingError(requestError instanceof Error ? requestError.message : "Unable to verify the mapping.");
+    } finally {
+      setVerifyingMappingId(null);
+    }
+  }, [selectedClientId]);
+
+  const beginCreate = () => {
+    setEditing(false);
+    setForm(emptyForm);
+    setFormError("");
+    setStatusMessage("");
+  };
+
+  const beginEdit = () => {
+    if (!selectedClient) return;
+    setEditing(true);
+    setForm({ client_id: selectedClient.client_id, name: selectedClient.name, status: selectedClient.status });
+    setFormError("");
+  };
 
   return (
     <div className="screen-stack">
@@ -34,60 +140,37 @@ export function Clients() {
         <div>
           <p className="eyebrow">Directory</p>
           <h2>Clients</h2>
-          <p className="screen-note">Review the clients available in this workspace. This screen is read-only.</p>
+          <p className="screen-note">Review client records, connector mappings, and lifecycle status.</p>
         </div>
-        <button className="icon-button" type="button" onClick={() => void loadClients()} disabled={loading}>
-          {loading ? "Loading…" : "Refresh"}
-        </button>
+        <div className="analytics-filter-actions">
+          <RoleGate role={role} resolved={roleResolved} allowed={["admin"]}>
+            <button className="secondary-button" type="button" onClick={beginCreate}>New client</button>
+          </RoleGate>
+          <button className="icon-button" type="button" onClick={() => void loadClients()} disabled={loading}>{loading ? "Loading…" : "Refresh"}</button>
+        </div>
       </section>
 
-      {error ? (
-        <div className="notice danger" role="alert">
-          <span>{error}</span>
-          <button className="secondary-button" type="button" onClick={() => void loadClients()} disabled={loading}>Try again</button>
-        </div>
-      ) : null}
+      {error ? <div className="notice danger" role="alert"><span>{error}</span><button className="secondary-button" type="button" onClick={() => void loadClients()} disabled={loading}>Try again</button></div> : null}
+      {statusMessage ? <div className="notice success" role="status">{statusMessage}</div> : null}
 
-      {loading ? (
-        <section className="panel" aria-busy="true">
-          <p className="screen-note">Loading Clients…</p>
-        </section>
-      ) : clients.length === 0 ? (
-        <section className="panel empty-state">
-          <h3>No clients are visible.</h3>
-          <p>The appliance has not returned any clients for this scope.</p>
-        </section>
-      ) : (
-        <section className="panel" aria-labelledby="clients-list-heading">
-          <div className="panel-heading">
-            <div>
-              <h2 id="clients-list-heading">Client directory</h2>
-              <span>{clients.length} client{clients.length === 1 ? "" : "s"}</span>
+      <RoleGate role={role} resolved={roleResolved} allowed={["admin"]}>
+        <section className="panel" aria-labelledby="client-form-heading">
+          <div className="panel-heading"><div><h2 id="client-form-heading">{editing ? "Edit client" : "Create client"}</h2><span>Administrator actions</span></div></div>
+          <form onSubmit={(event) => void submitForm(event)}>
+            <div className="analytics-filters">
+              <label>Client ID<input value={form.client_id} disabled={editing || mutationBusy} onChange={(event) => setForm({ ...form, client_id: event.target.value })} /></label>
+              <label>Name<input value={form.name} disabled={editing || mutationBusy} onChange={(event) => setForm({ ...form, name: event.target.value })} /></label>
+              {editing ? <label>Status<select value={form.status} disabled={mutationBusy} onChange={(event) => setForm({ ...form, status: event.target.value })}><option value="active">Active</option><option value="archived">Archived</option><option value="quarantine">Quarantine</option></select></label> : null}
             </div>
-            <span>Viewer access</span>
-          </div>
-          <div className="clients-table-wrap">
-            <table className="clients-table">
-              <thead>
-                <tr>
-                  <th scope="col">Name</th>
-                  <th scope="col">Client ID</th>
-                  <th scope="col">Status</th>
-                </tr>
-              </thead>
-              <tbody>
-                {clients.map((client) => (
-                  <tr key={client.client_id}>
-                    <td><strong>{client.name}</strong></td>
-                    <td><code>{client.client_id}</code></td>
-                    <td><StatusChip status={client.status} /></td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+            {formError ? <p className="notice danger" role="alert">{formError}</p> : null}
+            <div className="analytics-filter-actions"><button type="submit" disabled={mutationBusy}>{mutationBusy ? "Saving…" : editing ? "Save changes" : "Create client"}</button>{editing ? <button className="secondary-button" type="button" onClick={beginCreate} disabled={mutationBusy}>Cancel</button> : null}</div>
+          </form>
         </section>
-      )}
+      </RoleGate>
+
+      {loading ? <section className="panel" aria-busy="true"><p className="screen-note">Loading Clients…</p></section> : clients.length === 0 ? <section className="panel empty-state"><h3>No clients are visible.</h3><p>The appliance has not returned any clients for this scope.</p></section> : <section className="panel" aria-labelledby="clients-list-heading"><div className="panel-heading"><div><h2 id="clients-list-heading">Client directory</h2><span>{clients.length} client{clients.length === 1 ? "" : "s"}</span></div><span>Select a client for details</span></div><div className="clients-table-wrap"><table className="clients-table"><thead><tr><th scope="col">Name</th><th scope="col">Client ID</th><th scope="col">Status</th></tr></thead><tbody>{clients.map((client) => <tr key={client.client_id}><td><button className="table-link" type="button" onClick={() => void selectClient(client.client_id)}>{client.name}</button></td><td><code>{client.client_id}</code></td><td><StatusChip status={client.status} /></td></tr>)}</tbody></table></div></section>}
+
+      {selectedClientId ? <section className="panel" aria-labelledby="client-detail-heading"><div className="panel-heading"><div><h2 id="client-detail-heading">Client detail</h2><span>{selectedClientId}</span></div>{selectedClient ? <RoleGate role={role} resolved={roleResolved} allowed={["admin"]}><button className="secondary-button" type="button" onClick={beginEdit}>Edit client</button></RoleGate> : null}</div>{detailLoading ? <p className="screen-note" aria-busy="true">Loading client details…</p> : detailError ? <div className="notice danger" role="alert">{detailError}</div> : selectedClient ? <><dl className="mcp-detail-grid"><div><dt>Client ID</dt><dd><code>{selectedClient.client_id}</code></dd></div><div><dt>Name</dt><dd>{selectedClient.name}</dd></div><div><dt>Status</dt><dd><StatusChip status={selectedClient.status} /></dd></div><div><dt>Created</dt><dd>{selectedClient.created_at}</dd></div><div><dt>Updated</dt><dd>{selectedClient.updated_at}</dd></div></dl><h3>Connector mappings</h3>{mappingError ? <div className="notice danger" role="alert">{mappingError}</div> : null}{mappings.length === 0 ? <p className="screen-note">No connector mappings are configured for this client.</p> : <div className="clients-table-wrap"><table className="clients-table"><thead><tr><th scope="col">External company</th><th scope="col">Connector</th><th scope="col">Verification</th></tr></thead><tbody>{mappings.map((mapping) => <tr key={mapping.mapping_id}><td>{mapping.external_company_name || mapping.external_company_id}</td><td><code>{mapping.connector_instance_id}</code></td><td>{mapping.verified === 1 ? <StatusChip status="verified" /> : <RoleGate role={role} resolved={roleResolved} allowed={["admin"]}><button className="secondary-button" type="button" onClick={() => void verifyMapping(mapping.mapping_id)} disabled={verifyingMappingId !== null}>{verifyingMappingId === mapping.mapping_id ? "Verifying…" : "Verify"}</button></RoleGate>}</td></tr>)}</tbody></table></div>}</> : null}</section> : null}
     </div>
   );
 }
