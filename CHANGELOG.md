@@ -6,6 +6,9 @@ All notable changes to WAIT Local Agent will be documented in this file.
 
 ### Changed
 
+- Setup readiness now uses required administrator, client, connector, and
+  verified-mapping steps instead of a settings-endpoint heuristic; a Setup
+  status checklist shows what remains.
 - Reorganized the sidebar into product groups for Operations, Automations,
   Solutions Architect, Evidence & Reports, and Setup, with low-frequency and
   admin surfaces in a collapsed System / Advanced drawer. Renamed the

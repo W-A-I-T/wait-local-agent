@@ -8,6 +8,14 @@ export type ConnectorStatus = {
   http_probing_enabled?: boolean;
 };
 
+export type ReadinessStep = {
+  id: string;
+  label: string;
+  status: "done" | "todo" | "info";
+  required: boolean;
+  detail?: string;
+};
+
 export type ConnectorInstance = {
   connector_instance_id: string;
   connector_type: string;

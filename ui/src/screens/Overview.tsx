@@ -2,6 +2,7 @@ import { Activity, CheckCircle2, GitBranch, Workflow } from "lucide-react";
 import { useEffect, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import { useDashboard } from "../app/DashboardContext";
+import { SetupStatus } from "../components/SetupStatus";
 import { OnboardingWizard } from "../surfaces/onboarding/OnboardingWizard";
 
 const ONBOARDING_DISMISS_KEY = "wait-local-agent-onboarding-dismissed";
@@ -51,6 +52,8 @@ export function Overview() {
           </div>
         </section>
       ) : null}
+
+      {!showOnboarding ? <SetupStatus /> : null}
 
       <section className="panel">
         <div className="panel-heading">
