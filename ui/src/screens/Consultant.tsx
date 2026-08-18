@@ -1,5 +1,6 @@
 import { FormEvent, useCallback, useEffect, useState } from "react";
 import { AlertTriangle, Compass, RefreshCw } from "lucide-react";
+import { Link } from "react-router-dom";
 import { useDashboard } from "../app/DashboardContext";
 import { apiFetch } from "../api/client";
 import { StatusChip } from "../components/StatusChip";
@@ -15,6 +16,7 @@ import type {
   ConsultantEmployeeOnboardingDemo,
   ConsultantMonitoring,
   ConsultantUseCase,
+  MspPlaybookEntry,
   PowerAppsArtifact,
   PowerAutomateFlowPlan,
 } from "../api/types";
@@ -77,6 +79,8 @@ export function Consultant() {
   const [guidedBooleanAnswer, setGuidedBooleanAnswer] = useState(false);
   const [guidedLoading, setGuidedLoading] = useState(false);
   const [promotionLoading, setPromotionLoading] = useState(false);
+  const [playbookLoading, setPlaybookLoading] = useState(false);
+  const [playbookNotice, setPlaybookNotice] = useState("");
   const [message, setMessage] = useState("");
   const [loadNotice, setLoadNotice] = useState("");
   const [loading, setLoading] = useState(false);
@@ -138,6 +142,7 @@ export function Consultant() {
     setArchitecture(null);
     setFlowPlan(null);
     setMessage("");
+    setPlaybookNotice("");
     try {
       const result = await apiFetch<ConsultantArchitecture>(
         `/consultant/blueprints/${encodeURIComponent(blueprintId)}/architecture`
@@ -153,6 +158,25 @@ export function Consultant() {
       ));
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "Unable to build the architecture view.");
+    }
+  }
+
+  async function generatePlaybook() {
+    if (!selectedId) return;
+    setPlaybookLoading(true);
+    setPlaybookNotice("");
+    setMessage("");
+    try {
+      await apiFetch<MspPlaybookEntry>(
+        `/consultant/blueprints/${encodeURIComponent(selectedId)}/generate-playbook`,
+        { method: "POST" },
+      );
+      setPlaybookNotice("Draft playbook generated (disabled) — review and enable it in Playbooks.");
+    } catch (error) {
+      setPlaybookNotice("");
+      setMessage(error instanceof Error ? error.message : "Unable to generate the playbook.");
+    } finally {
+      setPlaybookLoading(false);
     }
   }
 
@@ -454,6 +478,7 @@ export function Consultant() {
           </button>
         </div>
         {message ? <div className="notice danger" role="alert"><AlertTriangle size={16} aria-hidden="true" />{message}</div> : null}
+        {playbookNotice ? <div className="notice success" role="status">{playbookNotice} <Link to="/playbooks">Playbooks</Link></div> : null}
         {loadNotice ? <div className="notice danger" role="alert"><AlertTriangle size={16} aria-hidden="true" />{loadNotice}</div> : null}
         {blueprints.length === 0 ? <p>No solution blueprints are available for this tenant.</p> : (
           <div className="consultant-blueprint-list">
@@ -775,6 +800,11 @@ export function Consultant() {
             </div>
             <StatusChip status={architecture.readiness === "ready" ? "completed" : "evidence_partial"} />
           </div>
+          <div className="row-actions">
+            <button type="button" onClick={() => void generatePlaybook()} disabled={!canWrite || playbookLoading}>
+              {playbookLoading ? "Generating…" : "Generate Playbook"}
+            </button>
+          </div>
           <div className="flag-grid">
             <span><strong>{architecture.components.filter((item) => item.kind === "agent").length}</strong><br />Agent components</span>
             <span><strong>{workflowComponents.length}</strong><br />Workflow components</span>
@@ -848,7 +878,15 @@ export function Consultant() {
           </div>
         </section>
       ) : selected ? (
-        <section className="panel"><p>Choose the blueprint to load its architecture view.</p><button type="button" onClick={() => void inspectBlueprint(selected.id)}>Load architecture</button></section>
+        <section className="panel">
+          <p>Choose the blueprint to load its architecture view.</p>
+          <div className="row-actions">
+            <button type="button" onClick={() => void inspectBlueprint(selected.id)}>Load architecture</button>
+            <button type="button" onClick={() => void generatePlaybook()} disabled={!canWrite || playbookLoading}>
+              {playbookLoading ? "Generating…" : "Generate Playbook"}
+            </button>
+          </div>
+        </section>
       ) : null}
     </div>
   );
