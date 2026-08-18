@@ -42,6 +42,9 @@ All notable changes to WAIT Local Agent will be documented in this file.
 
 ### Added
 
+- Added a client-scoped, read-only Smart Action Runs screen with run history
+  and detail views for status, actor, output, evidence, and errors.
+
 - Added a reusable read-only connector browse panel, with Autotask ticket and
   company browsing as its first provider (health and paginated lists).
 

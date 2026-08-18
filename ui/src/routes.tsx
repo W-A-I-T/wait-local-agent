@@ -24,6 +24,7 @@ import { TechnicianChat } from "./screens/TechnicianChat";
 import { McpIntegration } from "./screens/McpIntegration";
 import { ExtensionsPacks } from "./screens/ExtensionsPacks";
 import { SmartActionCatalog } from "./screens/SmartActionCatalog";
+import { SmartActionRuns } from "./screens/SmartActionRuns";
 import { Events } from "./screens/Events";
 import { Schedules } from "./screens/Schedules";
 import { ConnectorInstances } from "./screens/ConnectorInstances";
@@ -64,6 +65,7 @@ export function AppRoutes() {
       <Route path="integrations/mcp" element={<McpIntegration />} />
       <Route path="integrations/connector-instances" element={<ConnectorInstances />} />
       <Route path="integrations/smart-actions" element={<SmartActionCatalog />} />
+      <Route path="smart-actions/runs" element={<SmartActionRuns />} />
       <Route path="operations/reconciliation" element={<SyncReconciliation />} />
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>
