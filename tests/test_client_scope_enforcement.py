@@ -430,3 +430,122 @@ def test_store_tenant_filters_reject_none_and_empty_and_fail_open_sql_is_gone(se
         for call in invalid_calls:
             with pytest.raises(ValueError, match="client"):
                 call(invalid)
+
+
+def test_ticket_detail_endpoints_hide_foreign_client_ticket(settings) -> None:
+    secure_settings = replace(
+        settings,
+        demo_mode=False,
+        client_id="alpha",
+        admin_token="admin-token",
+        tech_token="tech-token",
+        viewer_token="viewer-token",
+    )
+    store = Store(secure_settings.data_path)
+    store.create_principal("alpha-technician", kind="staff")
+    store.add_principal_credential("alpha-technician", "alpha-technician-token")
+    store.add_principal_client_role("alpha-technician", "alpha", "technician")
+    _seed_cross_client_state(store)
+
+    beta_note = store.create_ticket_note(
+        "TCK-BETA",
+        client_id="beta",
+        author="Beta Agent",
+        body="beta-confidential-note",
+    )
+    assert beta_note is not None
+    alpha_note = store.create_ticket_note(
+        "TCK-ALPHA",
+        client_id="alpha",
+        author="Alpha Agent",
+        body="alpha-own-note",
+    )
+    assert alpha_note is not None
+    with store._connect() as connection:  # noqa: SLF001
+        connection.execute(
+            """
+            insert into ticket_status_history
+              (ticket_id, client_id, from_status, to_status, changed_at, source)
+            values (?, ?, ?, ?, ?, ?)
+            """,
+            (
+                "TCK-BETA",
+                "beta",
+                "Open",
+                "Resolved",
+                "2026-08-16T00:00:00+00:00",
+                "beta-source",
+            ),
+        )
+        connection.execute(
+            """
+            insert into ticket_status_history
+              (ticket_id, client_id, from_status, to_status, changed_at, source)
+            values (?, ?, ?, ?, ?, ?)
+            """,
+            (
+                "TCK-ALPHA",
+                "alpha",
+                "Open",
+                "Resolved",
+                "2026-08-16T00:00:00+00:00",
+                "alpha-source",
+            ),
+        )
+
+    assert store.list_ticket_notes("TCK-BETA", client_id="beta")
+    assert store.list_ticket_status_history("TCK-BETA", client_id="beta")
+
+    client = TestClient(create_app(secure_settings))
+    headers = _auth("alpha-technician-token")
+    principal_context = resolve_auth_context(
+        secure_settings,
+        "Bearer alpha-technician-token",
+        store,
+    )
+    assert principal_context.client_ids == frozenset({"alpha"})
+    assert principal_context.is_msp_admin is False
+
+    tickets_response = client.get("/tickets", headers=headers)
+    assert tickets_response.status_code == 200
+    tickets = tickets_response.json()
+    assert "TCK-BETA" not in tickets_response.text
+    assert all(ticket["id"] != "TCK-BETA" for ticket in tickets)
+    assert any(ticket["id"] == "TCK-ALPHA" for ticket in tickets)
+
+    explicit_cross_client_response = client.get(
+        "/tickets",
+        params={"client_id": "beta"},
+        headers=headers,
+    )
+    assert explicit_cross_client_response.status_code == 403
+
+    beta_summary_response = client.get("/tickets/TCK-BETA/summary", headers=headers)
+    assert beta_summary_response.status_code == 404
+    assert "TCK-BETA" not in beta_summary_response.text
+
+    beta_context_response = client.get("/tickets/TCK-BETA/context", headers=headers)
+    assert beta_context_response.status_code == 404
+    assert "TCK-BETA" not in beta_context_response.text
+
+    beta_notes_response = client.get("/tickets/TCK-BETA/notes", headers=headers)
+    assert beta_notes_response.status_code == 200
+    assert beta_notes_response.json() == []
+    assert "beta-confidential-note" not in beta_notes_response.text
+    assert "TCK-BETA" not in beta_notes_response.text
+
+    beta_history_response = client.get("/tickets/TCK-BETA/status-history", headers=headers)
+    assert beta_history_response.status_code == 200
+    assert beta_history_response.json() == []
+    assert "TCK-BETA" not in beta_history_response.text
+
+    alpha_notes_response = client.get("/tickets/TCK-ALPHA/notes", headers=headers)
+    assert alpha_notes_response.status_code == 200
+    alpha_notes = alpha_notes_response.json()
+    assert alpha_notes
+    assert "alpha-own-note" in alpha_notes_response.text
+    assert all(note["ticket_id"] == "TCK-ALPHA" for note in alpha_notes)
+
+    alpha_history_response = client.get("/tickets/TCK-ALPHA/status-history", headers=headers)
+    assert alpha_history_response.status_code == 200
+    assert alpha_history_response.json()
