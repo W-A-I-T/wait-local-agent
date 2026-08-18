@@ -97,6 +97,10 @@ export function Sidebar() {
           <Sparkles size={18} aria-hidden="true" />
           Smart Actions
         </NavLink>
+        <NavLink to="/smart-actions/runs" className={({ isActive }) => isActive ? "active" : undefined}>
+          <Activity size={18} aria-hidden="true" />
+          Smart Action Runs
+        </NavLink>
       </nav>
       <section className="sidebar-system" aria-label="System">
         <span className="sidebar-section-label">System</span>
