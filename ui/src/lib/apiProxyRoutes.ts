@@ -31,6 +31,7 @@ export const apiProxyRoutes = [
   "/ingestion",
   "/connector-instances",
   "/client-connector-mappings",
+  "/clients",
   "/scheduled-jobs",
   "/update-status",
   "/update-check",

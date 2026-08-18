@@ -29,6 +29,8 @@ All notable changes to WAIT Local Agent will be documented in this file.
 
 ### Fixed
 
+- The Clients screen now loads under the local development server because
+  `/clients` is included in the Vite dev-proxy allowlist.
 - Automation-opportunity reports now require at least 5 attempts, 3 successes,
   an 80% success rate, positive declared savings, and a 30–90 day window;
   candidate rows expose attempts, failures, success rate, and approval burden
