@@ -177,6 +177,8 @@ All notable changes to WAIT Local Agent will be documented in this file.
 
 ### Added
 
+- Clients now support detail drill-in, administrator create/edit actions, and
+  connector-mapping verification from the Clients screen.
 - Connector coverage now includes bounded ConnectWise, Syncro, ServiceNow,
   Autotask, RMM, cloud inventory, identity, and documentation read paths, with
   explicit opt-ins and approval-gated writes where supported.
