@@ -54,6 +54,7 @@ type DashboardContextValue = {
   refreshErrors: string[];
   statusMessage: string;
   loading: boolean;
+  refreshNonce: number;
   roleResolved: boolean;
   busyId: number | "draft" | null;
   selectedTicketId: string;
@@ -111,6 +112,7 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
   const [statusMessage, setStatusMessage] = useState("");
   const [refreshErrors, setRefreshErrors] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
+  const [refreshNonce, setRefreshNonce] = useState(0);
   const [busyId, setBusyId] = useState<number | "draft" | null>(null);
   const selectedTicketIdRef = useRef(selectedTicketId);
   const roleRequestIdRef = useRef(0);
@@ -121,6 +123,7 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
   }, [selectedTicketId]);
 
   const refresh = useCallback(async () => {
+    setRefreshNonce((nonce) => nonce + 1);
     const roleRequestId = ++roleRequestIdRef.current;
     setLoading(true);
     setRole("viewer");
@@ -326,6 +329,7 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
       refreshErrors,
       statusMessage,
       loading,
+      refreshNonce,
       roleResolved,
       busyId,
       selectedTicketId,
@@ -367,6 +371,7 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
     eventDeliveries,
     haloTickets,
     loading,
+    refreshNonce,
     roleResolved,
     refresh,
     refreshErrors,

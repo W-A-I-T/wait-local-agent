@@ -113,6 +113,53 @@ describe("DashboardContext role refresh", () => {
     expect(screen.getByTestId("selected-client-id")).toHaveTextContent("client-a");
     expect(screen.getByTestId("legacy-client-id")).toHaveTextContent("legacy-client");
   });
+
+  it("increments refreshNonce exactly once per refresh call, including on the error path", async () => {
+    function NonceHarness() {
+      const { refresh, refreshNonce } = useDashboard();
+      return (
+        <>
+          <button type="button" onClick={() => void refresh()}>Refresh nonce</button>
+          <output data-testid="refresh-nonce">{refreshNonce}</output>
+        </>
+      );
+    }
+    let failRole = false;
+    mockedApiFetch.mockImplementation((path: string) => {
+      if (path === "/auth/role") {
+        if (failRole) return Promise.reject(new Error("Auth service down")) as ReturnType<typeof apiFetch>;
+        return Promise.resolve({
+          role: "admin",
+          client_id: "legacy-client",
+          api_auth_required: false,
+          demo_mode: true
+        }) as ReturnType<typeof apiFetch>;
+      }
+      if (path === "/connectors") {
+        return Promise.reject(new Error("Connectors down")) as ReturnType<typeof apiFetch>;
+      }
+      return Promise.resolve(defaultResponse(path)) as ReturnType<typeof apiFetch>;
+    });
+
+    render(<DashboardProvider><NonceHarness /></DashboardProvider>);
+
+    // Mount refresh: nonce moves from 0 to exactly 1.
+    await waitFor(() => expect(screen.getByTestId("refresh-nonce")).toHaveTextContent("1"));
+
+    // Refresh where an awaited fetch rejects (recorded via Promise.allSettled):
+    // still exactly one increment.
+    fireEvent.click(screen.getByRole("button", { name: "Refresh nonce" }));
+    await waitFor(() => expect(screen.getByTestId("refresh-nonce")).toHaveTextContent("2"));
+
+    // Refresh where /auth/role rejects (the catch path): still exactly one
+    // increment, and no further bump once the call settles.
+    failRole = true;
+    fireEvent.click(screen.getByRole("button", { name: "Refresh nonce" }));
+    await waitFor(() => expect(screen.getByTestId("refresh-nonce")).toHaveTextContent("3"));
+    await waitFor(() => expect(mockedApiFetch.mock.calls.filter(([path]) => path === "/auth/role")).toHaveLength(3));
+    await act(async () => {});
+    expect(screen.getByTestId("refresh-nonce")).toHaveTextContent("3");
+  });
 });
 
 function defaultResponse(path: string): unknown {

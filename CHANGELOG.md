@@ -29,6 +29,11 @@ All notable changes to WAIT Local Agent will be documented in this file.
 
 ### Fixed
 
+- The Tickets workspace now caches each selected ticket's Summary, Notes,
+  Status History, and Context tab data, so switching between tabs no longer
+  refetches already-loaded data; a tab-scoped Refresh button and the app-wide
+  dashboard refresh both invalidate the cache and force a fresh load, and the
+  cache is cleared when the selected ticket changes.
 - The Clients screen now loads under the local development server because
   `/clients` is included in the Vite dev-proxy allowlist.
 - Automation-opportunity reports now require at least 5 attempts, 3 successes,
