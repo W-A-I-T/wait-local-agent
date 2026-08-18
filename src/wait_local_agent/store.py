@@ -5553,6 +5553,7 @@ class Store:
         provenance: str | None = None,
         enabled: bool | None = None,
         client_id: str | None = None,
+        force_revision: bool = False,
     ) -> MspPlaybookEntry:
         existing = self.get_msp_playbook_entry(entry_id, client_id)
         if existing is None:
@@ -5566,7 +5567,7 @@ class Store:
             else _gallery_text(provenance, field="provenance", limit=1000)
         )
         next_enabled = existing.enabled if enabled is None else bool(enabled)
-        if (
+        if not force_revision and (
             next_definition == existing.definition_json
             and next_provenance == existing.provenance
             and next_enabled == existing.enabled

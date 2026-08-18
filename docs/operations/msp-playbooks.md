@@ -91,6 +91,18 @@ GET  /msp/playbook-entries/{entry_id}/revisions/diff?from_version=1&to_version=2
 POST /msp/playbook-entries/{entry_id}/revisions/{version}/restore
 ```
 
+An administrator can also generate a disabled, tenant-scoped draft from a
+Solutions Architect blueprint:
+
+```text
+POST /consultant/blueprints/{blueprint_id}/generate-playbook
+```
+
+Generation binds only to resolved local workflow templates or the existing
+agent boundary. Unsupported or unresolved decisions become non-executable
+review steps. Re-generating the same blueprint creates a new revision of its
+single `architect:<blueprint_id>` entry and never enables it.
+
 The equivalent local commands are `workflows playbook-entries`,
 `playbook-entry-publish`, `playbook-entry-update`,
 `playbook-entry-revisions`, `playbook-entry-diff`, and

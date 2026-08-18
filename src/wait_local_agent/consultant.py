@@ -18,7 +18,9 @@ BlueprintRisk = Literal["low", "medium", "high"]
 MAX_BLUEPRINT_ITEMS = 32
 MAX_BLUEPRINT_TEXT = 240
 MAX_BLUEPRINT_GOAL_VALUE = 500
+MAX_GENERATED_PLAYBOOK_TEXT = 500
 _IDENTIFIER = re.compile(r"^[a-z0-9][a-z0-9_.:-]{0,63}$")
+_CONTROL_CHARACTERS = re.compile(r"[\x00-\x1f\x7f-\x9f]")
 _FORBIDDEN_KEY_TOKENS = frozenset(
     {
         "key",
@@ -287,6 +289,154 @@ def architect_solution_blueprint(
         "execution_started": False,
         "deployment_started": False,
     }
+
+
+def generate_playbook_from_blueprint(
+    blueprint: SolutionBlueprint,
+    architecture: Mapping[str, object],
+) -> dict[str, object]:
+    """Compile resolved architecture decisions into a disabled-playbook draft.
+
+    This compiler only lowers primitives that are already present in the local
+    catalogs or explicitly selected by the architecture result. It reads only
+    the local workflow-template catalog, never invents a workflow or tool
+    identifier, and has no other side effects.
+    """
+
+    raw_decisions_value = architecture.get("decisions")
+    if isinstance(raw_decisions_value, list) and raw_decisions_value:
+        raw_decisions = raw_decisions_value
+    else:
+        raw_components = architecture.get("components", [])
+        raw_decisions = raw_components if isinstance(raw_components, list) else []
+    decisions = [item for item in raw_decisions if isinstance(item, Mapping)]
+    decisions.sort(
+        key=lambda item: (
+            str(item.get("id", "")),
+            str(item.get("component_id", item.get("id", ""))),
+            str(item.get("capability", item.get("name", ""))),
+        )
+    )
+
+    from wait_local_agent.workflows import list_workflow_templates
+
+    workflow_template_ids = {template.id for template in list_workflow_templates()}
+    steps: list[dict[str, object]] = []
+    used_step_ids: dict[str, int] = {}
+    for decision in decisions:
+        component_id = str(decision.get("component_id", decision.get("id", "component")))
+        capability = _bounded_playbook_text(
+            decision.get("capability", decision.get("name", component_id)),
+            fallback="Generated architecture step",
+        )
+        why = _bounded_playbook_text(
+            decision.get("why", decision.get("detail", "No deterministic primitive was resolved.")),
+            fallback="No deterministic primitive was resolved.",
+        )
+        target = str(decision.get("chosen_target", ""))
+        if not target:
+            kind = str(decision.get("kind", ""))
+            target = {"agent": "wait_agent", "workflow": "wait_workflow"}.get(kind, "unsupported")
+        step_id = _stable_playbook_step_id(decision, component_id, used_step_ids)
+        common = {
+            "id": step_id,
+            "name": capability,
+            "description": why,
+            "required_inputs": (),
+        }
+
+        if str(decision.get("status", "ready")) != "ready":
+            steps.append(
+                {
+                    **common,
+                    "kind": "review",
+                    "description": _bounded_playbook_text(
+                        f"Manual review required: {why}",
+                        fallback="Manual review required.",
+                    ),
+                }
+            )
+            continue
+        elif target == "wait_workflow":
+            template_id = _resolved_workflow_template_id(decision, workflow_template_ids)
+            if template_id is not None:
+                steps.append(
+                    {
+                        **common,
+                        "kind": "workflow",
+                        "workflow_template_id": template_id,
+                    }
+                )
+                continue
+        elif target == "wait_agent":
+            steps.append({**common, "kind": "agent"})
+            continue
+
+        steps.append(
+            {
+                **common,
+                "kind": "review",
+                "description": _bounded_playbook_text(
+                    f"Manual review required: {why}",
+                    fallback="Manual review required.",
+                ),
+            }
+        )
+
+    goal = blueprint.business_goal.get("statement") or blueprint.business_goal.get("description")
+    goal_text = _bounded_playbook_text(
+        goal,
+        fallback="Review the declared solution blueprint.",
+    )
+    return {
+        "id": f"architect-{blueprint.id}",
+        "name": _bounded_playbook_text(blueprint.solution_name, fallback="Generated solution"),
+        "version": 1,
+        "trigger": "manual",
+        "description": _bounded_playbook_text(
+            f"Generated from the blueprint goal: {goal_text}",
+            fallback="Generated from the solution blueprint.",
+        ),
+        "risk_level": blueprint.risk,
+        "steps": steps,
+        "output_evidence": ("architecture_decisions", "workflow_run_ids", "agent_run_ids", "review_items"),
+        "local_fixture": False,
+    }
+
+
+def _bounded_playbook_text(value: object, *, fallback: str) -> str:
+    text = fallback if value is None else str(value)
+    normalized = _CONTROL_CHARACTERS.sub("", text).strip()
+    return normalized[:MAX_GENERATED_PLAYBOOK_TEXT] or fallback
+
+
+def _resolved_workflow_template_id(
+    decision: Mapping[str, object],
+    workflow_template_ids: set[str],
+) -> str | None:
+    explicit = decision.get("workflow_template_id")
+    candidates: list[object] = [explicit] if explicit is not None else []
+    dependencies = decision.get("dependencies")
+    if isinstance(dependencies, (list, tuple)):
+        candidates.extend(dependencies)
+    template = decision.get("template")
+    if isinstance(template, Mapping):
+        candidates.append(template.get("id"))
+    for candidate in candidates:
+        if isinstance(candidate, str) and candidate in workflow_template_ids:
+            return candidate
+    return None
+
+
+def _stable_playbook_step_id(
+    decision: Mapping[str, object],
+    component_id: str,
+    used_step_ids: dict[str, int],
+) -> str:
+    base = f"step-{_safe_decision_id(str(decision.get('id', component_id)))}"
+    count = used_step_ids.get(base, 0) + 1
+    used_step_ids[base] = count
+    return base if count == 1 else f"{base}-{count}"
 
 
 def _architecture_decisions(

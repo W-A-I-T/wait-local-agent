@@ -16,6 +16,7 @@ POST /consultant/blueprints
 GET  /consultant/blueprints
 GET  /consultant/blueprints/{blueprint_id}
 GET  /consultant/blueprints/{blueprint_id}/architecture
+POST /consultant/blueprints/{blueprint_id}/generate-playbook
 ```
 
 Technicians can create a blueprint and viewers can inspect it. Every record is
