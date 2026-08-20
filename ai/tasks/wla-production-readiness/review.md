@@ -79,6 +79,10 @@ It also identified and prompted the now-fixed duplicate parser option and SPA
 navigation concern, plus the vault external-key migration warning now present
 in the docs.
 
+The desktop API-base timing concern is now addressed: `apiUrl()` resolves the
+injected Tauri base at request time, with a regression test covering injection
+after module evaluation. The remaining Claude gate conditions are unchanged.
+
 ## Blocker
 
 - 2026-08-20T08:22:12Z: Kimi cross-family review exited with status 1.

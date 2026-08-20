@@ -31,12 +31,15 @@ changes use its existing connector status and approval interfaces.
 ## Commands Run
 
 - Focused backend tests (`config`, `compose`, `server_entry`, `backup`) — passed, 41 tests.
-- `npm --prefix ui test -- --run` — passed, 24 files / 108 tests.
+- `npm --prefix ui test -- --run` — passed, 49 files / 232 tests.
 - `npm --prefix ui run build` — passed.
 - Ruff, Python `compileall`, `cargo fmt --check`, and `git diff --check` — passed.
 - `cargo check` resolved dependencies but stopped in the existing Tauri build
   script because the generated sidecar binary is absent from the checkout.
 - Reciprocal Kimi review launch was attempted; reviewer storage was read-only.
+- Added a regression test for late Tauri API-base injection; the API URL helper
+  now reads the runtime base for each request instead of relying on module-load
+  timing.
 
 ## Files Touched
 
