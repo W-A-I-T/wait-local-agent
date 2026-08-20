@@ -78,3 +78,7 @@ TestClient security tests, and a real desktop dynamic-port launch/build check.
 It also identified and prompted the now-fixed duplicate parser option and SPA
 navigation concern, plus the vault external-key migration warning now present
 in the docs.
+
+## Blocker
+
+- 2026-08-20T08:22:12Z: Kimi cross-family review exited with status 1.
