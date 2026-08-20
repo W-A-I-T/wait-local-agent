@@ -25,8 +25,8 @@ changes use its existing connector status and approval interfaces.
 - Made readiness reflect this branch's actual `configured`/`ready` connector
   statuses, added `/msp` and `/mcp` proxy route coverage, and wired the desktop
   sidecar to an ephemeral loopback port with an injected API base.
-- Added gitleaks coverage and deterministic desktop dependency installation in
-  CI/release workflows, plus documentation for explicit demo and vault setup.
+- Added deterministic desktop dependency installation in CI/release workflows,
+  plus documentation for explicit demo and vault setup.
 
 ## Commands Run
 

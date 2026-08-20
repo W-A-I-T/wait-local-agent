@@ -8,8 +8,8 @@
   external-key support, and CLI error mapping.
 - UI/desktop: onboarding/readiness, parser contract, proxy routes, dynamic
   Tauri sidecar port, and API-base injection.
-- CI/docs/tests: deterministic installs, gitleaks, focused backend/UI tests,
-  and operator documentation.
+- CI/docs/tests: deterministic installs, focused backend/UI tests, and operator
+  documentation.
 
 ## Risk Areas
 
