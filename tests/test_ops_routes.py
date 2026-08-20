@@ -57,6 +57,13 @@ def test_sidecar_ops_routes_map_precondition_errors_to_4xx(settings, tmp_path: P
     )
     client = TestClient(create_app(active_settings))
 
+    outside_backup = client.post(
+        "/backups",
+        json={"destination": str(tmp_path.parent / "outside-state.db")},
+    )
+    assert outside_backup.status_code == 400
+    assert "appliance data directory" in outside_backup.json()["detail"]
+
     pack_install = client.post(
         "/packs/install",
         json={"tarball_path": str(tmp_path / "missing.tar.gz")},

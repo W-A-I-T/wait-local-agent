@@ -145,12 +145,21 @@ an external system is unavailable or rejects the request.
 ```bash
 git clone https://github.com/W-A-I-T/wait-local-agent.git
 cd wait-local-agent
-WAIT_DEMO_MODE=true docker compose up --build
+cp .env.example .env
+# Choose one explicit mode before starting:
+# printf '\nWAIT_DEMO_MODE=true\n' >> .env
+# or set WAIT_ADMIN_TOKEN to a strong local token and keep demo mode false.
+docker compose up --build
 ```
 
-Open the dashboard at `http://127.0.0.1:5173`. The local demo keeps probing,
-live writes, cloud fallback, and model inference disabled. [Full guide
-→](docs/getting-started/quickstart-docker.md)
+- Dashboard: `http://127.0.0.1:5173`
+- API: `http://127.0.0.1:8788`
+- The dashboard is a Vite dev server that proxies API traffic to the API container.
+- Persistent SQLite state lives in the `wait-local-agent-data` Docker volume.
+- `scripts/install.sh` generates `.env` from `.env.example` when it is missing.
+- The shipped `.env.example` keeps demo mode off. Set `WAIT_DEMO_MODE=true`
+  explicitly for the bounded local walkthrough, or configure an admin token.
+- Linux collectors are container-scoped by default. Host collection is an explicit, security-sensitive opt-in; see [host-collection.md](docs/host-collection.md).
 
 ### Desktop
 
@@ -187,6 +196,9 @@ HTTP 403.
 The identity model supports principals with roles assigned per client and a
 global `msp_admin` role for cross-client administration. Principal credentials
 are stored as SHA-256 hashes; raw credentials are not persisted.
+Cloud inventory connectors are governed read-only adapters for AWS, Azure,
+GCP, and Microsoft 365. They require a vault credential reference and never
+persist credential material. See the provider-specific permission guides.
 
 ## Connectors
 

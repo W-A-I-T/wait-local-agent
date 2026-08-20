@@ -37,6 +37,7 @@ wait-local-agent events list
 
 ```bash
 cp .env.example .env
+printf '\nWAIT_DEMO_MODE=true\n' >> .env
 docker compose up --build
 ```
 

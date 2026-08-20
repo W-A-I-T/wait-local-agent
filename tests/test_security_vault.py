@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
+from cryptography.fernet import Fernet
 from fastapi.testclient import TestClient
 
 import wait_local_agent.vault as vault_module
@@ -72,6 +73,25 @@ def test_secret_vault_round_trip_and_corruption_error(tmp_path) -> None:
     vault.secrets_path.write_text("not encrypted", encoding="utf-8")
     with pytest.raises(SecretVaultError):
         vault.list_keys()
+
+
+def test_secret_vault_can_use_an_external_fernet_key_without_writing_key_file(tmp_path, monkeypatch) -> None:
+    key = Fernet.generate_key().decode("utf-8")
+    monkeypatch.setenv("WAIT_VAULT_KEY", key)
+    vault_path = tmp_path / "external-vault"
+
+    vault = SecretVault.initialize(vault_path)
+    vault.set("WAIT_EXTERNAL_SECRET", "external-value")
+
+    assert not vault.key_path.exists()
+    assert vault.get("WAIT_EXTERNAL_SECRET") == "external-value"
+
+
+def test_secret_vault_rejects_invalid_external_fernet_key(tmp_path, monkeypatch) -> None:
+    monkeypatch.setenv("WAIT_VAULT_KEY", "not-a-fernet-key")
+
+    with pytest.raises(SecretVaultError, match="WAIT_VAULT_KEY"):
+        SecretVault.initialize(tmp_path / "invalid-external-vault")
 
 
 def test_redaction_covers_launch_key_variants() -> None:

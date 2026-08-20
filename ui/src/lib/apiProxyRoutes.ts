@@ -38,5 +38,7 @@ export const apiProxyRoutes = [
   "/founder",
   "/packs",
   "/settings",
-  "/secrets"
+  "/secrets",
+  "/msp",
+  "/mcp"
 ] as const;

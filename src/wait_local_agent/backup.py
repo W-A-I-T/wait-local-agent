@@ -22,6 +22,24 @@ class BackupEncryptionError(RuntimeError):
     """Raised when encrypted backup or restore cannot proceed."""
 
 
+class BackupPathError(ValueError):
+    """Raised when a backup path escapes the appliance data directory."""
+
+
+def _confine_backup_path(path: Path, settings: Settings | None) -> Path:
+    resolved = path.expanduser().resolve()
+    if settings is None:
+        return resolved
+    root = settings.data_path.expanduser().resolve().parent
+    try:
+        resolved.relative_to(root)
+    except ValueError as exc:
+        raise BackupPathError(
+            f"backup paths must remain under the appliance data directory: {root}"
+        ) from exc
+    return resolved
+
+
 def backup_state(
     store: Store,
     destination: Path,
@@ -29,6 +47,7 @@ def backup_state(
     encrypt: bool = False,
     settings: Settings | None = None,
 ) -> Path:
+    destination = _confine_backup_path(destination, settings)
     destination.parent.mkdir(parents=True, exist_ok=True)
     if encrypt:
         fernet = _backup_fernet(settings)
@@ -47,6 +66,7 @@ def restore_state(
     encrypted: bool = False,
     settings: Settings | None = None,
 ) -> Path:
+    source = _confine_backup_path(source, settings)
     if not source.exists():
         raise FileNotFoundError(source)
     store.path.parent.mkdir(parents=True, exist_ok=True)

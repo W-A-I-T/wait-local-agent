@@ -8,6 +8,14 @@ from pathlib import Path
 import pytest
 
 COMPOSE_FILE = Path(__file__).parents[1] / "docker-compose.yml"
+HEALTHCHECK_COMMAND = (
+    "import os, urllib.request; "
+    "token=os.getenv('WAIT_API_TOKEN') or os.getenv('WAIT_ADMIN_TOKEN') or "
+    "os.getenv('WAIT_TECH_TOKEN') or os.getenv('WAIT_VIEWER_TOKEN'); "
+    "request=urllib.request.Request('http://127.0.0.1:8788/health', "
+    "headers={'Authorization': f'Bearer {token}'} if token else {}); "
+    "urllib.request.urlopen(request, timeout=3)"
+)
 
 
 def _compose_config(*extra_args: str) -> dict[str, object]:
@@ -31,7 +39,6 @@ def _compose_config(*extra_args: str) -> dict[str, object]:
 def _expected_default_api_service() -> dict[str, object]:
     return {
         "build": {"context": str(COMPOSE_FILE.parent), "dockerfile": "Dockerfile"},
-        "command": None,
         "entrypoint": None,
         "environment": {
             "WAIT_ALLOWED_DOC_ROOT": "/app/examples/sample_docs",
@@ -45,7 +52,7 @@ def _expected_default_api_service() -> dict[str, object]:
                 "CMD",
                 "python",
                 "-c",
-                "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8788/health', timeout=3)",
+                HEALTHCHECK_COMMAND,
             ],
             "timeout": "5s",
             "interval": "10s",
@@ -61,6 +68,7 @@ def _expected_default_api_service() -> dict[str, object]:
                 "protocol": "tcp",
             }
         ],
+        "command": ["wait-local-agent", "serve", "--host", "0.0.0.0", "--port", "8788"],
         "volumes": [
             {
                 "type": "volume",

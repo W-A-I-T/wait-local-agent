@@ -1,5 +1,7 @@
 import { useState } from "react";
+import { Link } from "react-router-dom";
 import { apiFetch } from "../../api/client";
+import { useDashboard } from "../../app/DashboardContext";
 import type { TicketSummaryResponse } from "../../api/types";
 import { Wizard, type WizardStep } from "../../components/Wizard";
 import { FolderPicker } from "../../components/FolderPicker";
@@ -18,45 +20,20 @@ type OnboardingProps = {
 
 const steps: WizardStep[] = [
   { id: "connector", title: "Choose your primary PSA" },
-  { id: "credentials", title: "Configure connection" },
   { id: "knowledge", title: "Set knowledge folder" },
   { id: "ingest", title: "Import docs from knowledge" },
-  { id: "launch-passport", title: "Connect Launch Passport" },
   { id: "demo", title: "Run a demo ticket summary" }
 ];
 
 export function OnboardingWizard({ onDone, onDismiss }: OnboardingProps) {
+  const { refresh = async () => {} } = useDashboard();
   const [step, setStep] = useState(0);
   const [isBusy, setIsBusy] = useState(false);
   const [psa, setPsa] = useState("halopsa");
-  const [credentials, setCredentials] = useState("");
   const [knowledgePath, setKnowledgePath] = useState("");
-  const [ticketId, setTicketId] = useState("HALO-1");
+  const [ticketId, setTicketId] = useState("TCK-1001");
   const [resultMessage, setResultMessage] = useState("Welcome — complete each setup step to unlock full operations.");
   const [result, setResult] = useState<OnboardingResult>({});
-
-  async function validateConnector(): Promise<boolean> {
-    try {
-      setIsBusy(true);
-      const connectorHealthPaths: Record<string, string> = {
-        halopsa: "/connectors/halopsa/health",
-        hudu: "/connectors/hudu/health",
-        connectwise: "/connectors/connectwise/health",
-        "it-glue": "/connectors/itglue/health"
-      };
-      const endpoint = connectorHealthPaths[psa];
-      const health = await apiFetch<{ status: string; message: string }>(endpoint, {
-        headers: credentials.trim() ? { Authorization: `Bearer ${credentials.trim()}` } : undefined
-      });
-      setResultMessage(`${psa.toUpperCase()} status is ${health.status}. ${health.message || "Ready."}`);
-      return true;
-    } catch (error) {
-      setResultMessage(error instanceof Error ? error.message : "Could not validate the connection.");
-      return false;
-    } finally {
-      setIsBusy(false);
-    }
-  }
 
   async function runIngest(): Promise<boolean> {
     if (!knowledgePath) {
@@ -68,7 +45,7 @@ export function OnboardingWizard({ onDone, onDismiss }: OnboardingProps) {
       const docs = await apiFetch<OnboardingResult[]>("/knowledge/ingest", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ path: knowledgePath, parser: "local" })
+        body: JSON.stringify({ path: knowledgePath, parser: "basic" })
       });
       setResult({
         status: "ingested",
@@ -108,23 +85,7 @@ export function OnboardingWizard({ onDone, onDismiss }: OnboardingProps) {
   }
 
   async function handleNext() {
-    if (step === 0) {
-      setStep((current) => current + 1);
-      return;
-    }
-    if (step === 1) {
-      const ok = await validateConnector();
-      if (!ok) {
-        return;
-      }
-      setStep((current) => current + 1);
-      return;
-    }
     if (step === 2) {
-      setStep((current) => current + 1);
-      return;
-    }
-    if (step === 3) {
       const ok = await runIngest();
       if (!ok) {
         return;
@@ -132,9 +93,7 @@ export function OnboardingWizard({ onDone, onDismiss }: OnboardingProps) {
       setStep((current) => current + 1);
       return;
     }
-    if (step === 4) {
-      setStep((current) => current + 1);
-    }
+    setStep((current) => current + 1);
   }
 
   async function handleSubmit() {
@@ -142,13 +101,14 @@ export function OnboardingWizard({ onDone, onDismiss }: OnboardingProps) {
     if (!ok) {
       return;
     }
+    await refresh();
     onDone();
   }
 
   return (
     <Wizard
       activeStep={step}
-      canContinue={Boolean(psa)}
+      canContinue={!isBusy && Boolean(psa)}
       isBusy={isBusy}
       onBack={() => setStep((current) => Math.max(0, current - 1))}
       onNext={() => void handleNext()}
@@ -171,37 +131,12 @@ export function OnboardingWizard({ onDone, onDismiss }: OnboardingProps) {
               <option value="it-glue">IT Glue documentation</option>
             </select>
           </label>
-          <p className="screen-note">Each connector is checked against its configured health endpoint. The final demo summary uses the local ticket store; connector-specific reads and approval-gated writes are available from Connectors and Tickets.</p>
+          <p className="screen-note">Choose a connector, then configure and verify it from the real connector screen. This wizard never stores or discards provider credentials.</p>
+          <Link className="icon-button" to="/connectors">Open connector configuration</Link>
         </div>
       ) : null}
 
       {step === 1 ? (
-        <div className="grid">
-          <div className="draft-form">
-            <label>
-              API token
-              <input
-                type="password"
-                autoComplete="new-password"
-                placeholder="Paste API token"
-                value={credentials}
-                onChange={(event) => setCredentials(event.target.value)}
-              />
-            </label>
-            <p>This screen validates your endpoint health and write state with the chosen service.</p>
-            <button
-              type="button"
-              className="icon-button"
-              onClick={() => void validateConnector()}
-            >
-              Validate Connection
-            </button>
-          </div>
-          <p className="screen-note">Store secrets through the local vault in Settings after setup.</p>
-        </div>
-      ) : null}
-
-      {step === 2 ? (
         <div className="draft-form">
           <FolderPicker
             label="Knowledge folder"
@@ -213,7 +148,7 @@ export function OnboardingWizard({ onDone, onDismiss }: OnboardingProps) {
         </div>
       ) : null}
 
-      {step === 3 ? (
+      {step === 2 ? (
         <div className="draft-form">
           <p>{knowledgePath ? `Ready to ingest from ${knowledgePath}` : "Set a knowledge folder first."}</p>
           <div className="row-actions">
@@ -225,17 +160,7 @@ export function OnboardingWizard({ onDone, onDismiss }: OnboardingProps) {
         </div>
       ) : null}
 
-      {step === 4 ? (
-        <div className="draft-form">
-          <h3>Connect Launch Passport (optional)</h3>
-          <p>Launch Passport helps you review what is ready to share before launch or handoff. This appliance works fully without it.</p>
-          <div className="row-actions">
-            <button type="button" className="icon-button" onClick={() => setStep(5)}>Skip for now</button>
-          </div>
-        </div>
-      ) : null}
-
-      {step === 5 ? (
+      {step === 3 ? (
         <div className="draft-form">
           <label>
             Demo ticket id

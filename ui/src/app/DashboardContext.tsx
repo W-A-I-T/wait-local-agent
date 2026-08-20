@@ -171,6 +171,7 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
       setWorkflowRuns(asArray(settledValue(results[6] as PromiseSettledResult<WorkflowRun[]>, [])));
       setClients(asArray<ClientDirectoryEntry>(clientRows).filter((client) => client.client_id !== "__quarantine__"));
       setRefreshErrors(errors);
+      await configuration.refresh();
       if (!selectedTicketIdRef.current && ticketResponse.items[0]) {
         setSelectedTicketId(ticketResponse.items[0].id);
       }
@@ -186,7 +187,7 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
         setLoading(false);
       }
     }
-  }, []);
+  }, [configuration.refresh]);
 
   useEffect(() => {
     void refresh();
@@ -368,6 +369,7 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
     configuration.isConfigured,
     configuration.loading,
     configuration.steps,
+    configuration.refresh,
     connectors,
     createDraft,
     eventHistory,
