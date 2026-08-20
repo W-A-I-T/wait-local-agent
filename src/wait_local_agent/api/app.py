@@ -24,6 +24,7 @@ from slowapi.errors import RateLimitExceeded
 from slowapi.extension import _rate_limit_exceeded_handler
 from slowapi.middleware import SlowAPIMiddleware
 from slowapi.util import get_remote_address
+from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 from wait_local_agent.agents import AgentDefinitionError, AgentService
 from wait_local_agent.api.founder import (
@@ -1068,6 +1069,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.add_exception_handler(LaunchPassportForbidden, launch_passport_error_handler)
     app.add_exception_handler(LaunchPassportPayloadTooLarge, launch_passport_error_handler)
     app.add_exception_handler(LaunchPassportRequestError, launch_passport_error_handler)
+    app.add_middleware(
+        TrustedHostMiddleware,
+        allowed_hosts=["127.0.0.1", "localhost", "api", "testserver"],
+    )
     app.add_middleware(SlowAPIMiddleware)
     configure_pack_routes(
         app,
@@ -3222,7 +3227,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 encrypt=payload.encrypt,
                 settings=active_settings,
             )
-        except BackupEncryptionError as exc:
+        except (BackupEncryptionError, ValueError) as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         except OSError as exc:
             raise HTTPException(status_code=400, detail="backup destination could not be written") from exc
@@ -3239,7 +3244,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             )
         except FileNotFoundError as exc:
             raise HTTPException(status_code=404, detail="backup source not found") from exc
-        except BackupEncryptionError as exc:
+        except (BackupEncryptionError, ValueError) as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         except OSError as exc:
             raise HTTPException(status_code=400, detail="backup source could not be restored") from exc

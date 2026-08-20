@@ -4784,7 +4784,7 @@ def create_backup(
     settings = load_settings()
     try:
         path = backup_state(_store(), destination, encrypt=encrypt, settings=settings)
-    except BackupEncryptionError as exc:
+    except (BackupEncryptionError, ValueError) as exc:
         raise typer.BadParameter(str(exc)) from exc
     typer.echo(f"backup={path}")
 
@@ -4803,7 +4803,7 @@ def restore_backup(
     settings = load_settings()
     try:
         path = restore_state(_store(), source, encrypted=encrypted, settings=settings)
-    except BackupEncryptionError as exc:
+    except (BackupEncryptionError, ValueError) as exc:
         raise typer.BadParameter(str(exc)) from exc
     typer.echo(f"restored={path}")
 

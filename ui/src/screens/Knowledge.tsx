@@ -37,10 +37,11 @@ export function Knowledge() {
     setIsLoading(true);
     setStatusMessage("Ingesting documents...");
     try {
+      const parserName = parser === "auto" ? "" : parser;
       const result = await apiFetch<KnowledgeDocument[]>("/knowledge/ingest", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ path, parser: parser || null, ocr })
+        body: JSON.stringify({ path, parser: parserName, ocr })
       });
       setDocuments((current) => [
         ...result,
@@ -92,9 +93,9 @@ export function Knowledge() {
               Parser
               <select value={parser} onChange={(event) => setParser(event.target.value)}>
                 <option value="auto">auto</option>
-                <option value="plain">plain</option>
-                <option value="markdown">markdown</option>
-                <option value="pdf">pdf</option>
+                <option value="basic">plain</option>
+                <option value="basic">markdown</option>
+                <option value="pypdf">pdf</option>
               </select>
             </label>
             <label className="switch-label">

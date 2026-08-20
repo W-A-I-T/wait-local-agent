@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { apiFetch } from "../api/client";
 import type { ReadinessStep } from "../api/types";
 
@@ -6,6 +6,7 @@ type ConfigurationState = {
   isConfigured: boolean;
   loading: boolean;
   steps: ReadinessStep[];
+  refresh: () => Promise<void>;
 };
 
 type FetchedReadiness = {
@@ -29,31 +30,26 @@ const initialReadiness: FetchedReadiness = {
 export function useConfiguredState({ role }: { role?: string | null }): ConfigurationState {
   const [readiness, setReadiness] = useState<FetchedReadiness>(initialReadiness);
 
-  useEffect(() => {
-    let active = true;
-    void Promise.allSettled([
+  const refresh = useCallback(async () => {
+    const [clients, connectors, mappings, health] = await Promise.allSettled([
       apiFetch<unknown>("/clients"),
       apiFetch<unknown>("/connector-instances"),
       apiFetch<unknown>("/client-connector-mappings"),
       apiFetch<unknown>("/health")
-    ]).then(([clients, connectors, mappings, health]) => {
-      if (!active) {
-        return;
-      }
-      setReadiness({
-        loaded: true,
-        clientReady: clients.status === "fulfilled" && hasRealClient(clients.value),
-        connectorReady: connectors.status === "fulfilled" && hasArrayEntry(connectors.value),
-        mappingReady: mappings.status === "fulfilled" && hasVerifiedMapping(mappings.value),
-        writesDisabled: health.status === "fulfilled" && isRecord(health.value) && health.value.write_actions_enabled === false,
-        writeSafetyAvailable: health.status === "fulfilled"
-      });
+    ]);
+    setReadiness({
+      loaded: true,
+      clientReady: clients.status === "fulfilled" && hasRealClient(clients.value),
+      connectorReady: connectors.status === "fulfilled" && hasArrayEntry(connectors.value),
+      mappingReady: mappings.status === "fulfilled" && hasVerifiedMapping(mappings.value),
+      writesDisabled: health.status === "fulfilled" && isRecord(health.value) && health.value.write_actions_enabled === false,
+      writeSafetyAvailable: health.status === "fulfilled"
     });
-
-    return () => {
-      active = false;
-    };
   }, []);
+
+  useEffect(() => {
+    void refresh();
+  }, [refresh]);
 
   const steps = useMemo<ReadinessStep[]>(() => [
     {
@@ -92,7 +88,8 @@ export function useConfiguredState({ role }: { role?: string | null }): Configur
   return {
     isConfigured: steps.filter((step) => step.required).every((step) => step.status === "done"),
     loading: !readiness.loaded,
-    steps
+    steps,
+    refresh
   };
 }
 

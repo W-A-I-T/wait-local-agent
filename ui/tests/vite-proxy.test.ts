@@ -16,7 +16,9 @@ describe("Vite API proxy", () => {
       "/hardening",
       "/backup",
       "/collectors",
-      "/update-check"
+      "/update-check",
+      "/msp",
+      "/mcp"
     ].every((route) => configuredRoutes.has(route))).toBe(true);
   });
 });

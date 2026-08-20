@@ -193,7 +193,9 @@ alerts, script discovery, and command polling remain unavailable.
 `WAIT_DEMO_MODE` defaults to `false`. A non-demo appliance fails during startup
 unless at least one admin credential is available: `WAIT_ADMIN_TOKEN`,
 `WAIT_API_TOKEN`, or an active persisted `msp_admin` principal credential.
-Missing or invalid request credentials return HTTP 401.
+Role-scoped `WAIT_TECH_TOKEN` and `WAIT_VIEWER_TOKEN` remain available for
+least-privilege request access. Missing or invalid request credentials return
+HTTP 401.
 
 Production-like local installs should set:
 

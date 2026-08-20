@@ -2,11 +2,12 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { Settings } from "../src/screens/Settings";
+import { Knowledge } from "../src/screens/Knowledge";
 import { FounderJourney } from "../src/surfaces/founder/FounderJourney";
 import { OnboardingWizard } from "../src/surfaces/onboarding/OnboardingWizard";
 
 vi.mock("../src/app/DashboardContext", () => ({
-  useDashboard: () => ({ isAdmin: true })
+  useDashboard: () => ({ isAdmin: true, canWrite: true, refresh: vi.fn() })
 }));
 
 afterEach(() => {
@@ -15,19 +16,43 @@ afterEach(() => {
 });
 
 describe("wla-04 onboarding and parity surfaces", () => {
+  it("maps every knowledge parser option to the backend parser contract", async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      if (String(input) === "/knowledge/documents") return jsonResponse([]);
+      if (String(input) === "/knowledge/ingest") return jsonResponse([]);
+      throw new Error(`Unexpected request: ${String(input)}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(<Knowledge />);
+    const parser = await screen.findByRole("combobox");
+    expect(Array.from(parser.querySelectorAll("option")).map((option) => option.value)).toEqual([
+      "auto",
+      "basic",
+      "basic",
+      "pypdf"
+    ]);
+
+    fireEvent.change(screen.getByPlaceholderText("/path/to/docs"), { target: { value: "/workspace/knowledge" } });
+    fireEvent.click(screen.getByRole("button", { name: "Run ingest" }));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
+      "/knowledge/ingest",
+      expect.objectContaining({
+        body: JSON.stringify({ path: "/workspace/knowledge", parser: "", ocr: true })
+      })
+    ));
+  });
+
   it("progresses through onboarding steps and runs the ingest and demo summary calls", async () => {
     const onDone = vi.fn();
     const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
       const path = String(input);
-      if (path === "/connectors/halopsa/health") {
-        return jsonResponse({ status: "ready", message: "HaloPSA is ready." });
-      }
       if (path === "/knowledge/ingest") {
         return jsonResponse([{ path: "runbook.md" }]);
       }
-      if (path === "/tickets/HALO-1/summary") {
+      if (path === "/tickets/TCK-1001/summary") {
         return jsonResponse({
-          ticket_id: "HALO-1",
+          ticket_id: "TCK-1001",
           classification: "service",
           summary: "Printer offline",
           suggested_response: "A technician will follow up.",
@@ -42,9 +67,6 @@ describe("wla-04 onboarding and parity surfaces", () => {
 
     expect(screen.getByText("Choose your primary service connector")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Next" }));
-    expect(await screen.findByLabelText("API token")).toBeInTheDocument();
-
-    fireEvent.click(screen.getByRole("button", { name: "Next" }));
     expect(await screen.findByPlaceholderText("/path/to/knowledge")).toBeInTheDocument();
     fireEvent.change(screen.getByPlaceholderText("/path/to/knowledge"), { target: { value: "/workspace/knowledge" } });
 
@@ -52,37 +74,22 @@ describe("wla-04 onboarding and parity surfaces", () => {
     expect(await screen.findByText("Ready to ingest from /workspace/knowledge")).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: "Next" }));
-    expect(await screen.findByText("Connect Launch Passport (optional)")).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "Skip for now" }));
     expect(await screen.findByLabelText("Demo ticket id")).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: "Complete" }));
     await waitFor(() => expect(onDone).toHaveBeenCalledOnce());
 
     expect(fetchMock).toHaveBeenCalledWith("/knowledge/ingest", expect.objectContaining({ method: "POST" }));
-    expect(fetchMock).toHaveBeenCalledWith("/tickets/HALO-1/summary", expect.anything());
+    expect(fetchMock).toHaveBeenCalledWith("/tickets/TCK-1001/summary", expect.anything());
+    expect(fetchMock).toHaveBeenCalledWith("/knowledge/ingest", expect.objectContaining({
+      body: JSON.stringify({ path: "/workspace/knowledge", parser: "basic" })
+    }));
   });
 
-  it("validates ConnectWise through its real health endpoint instead of blocking the flow", async () => {
-    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
-      const path = String(input);
-      if (path === "/connectors/connectwise/health") {
-        return jsonResponse({ status: "blocked", message: "ConnectWise credentials are not configured." });
-      }
-      throw new Error(`Unexpected request: ${path}`);
-    });
-    vi.stubGlobal("fetch", fetchMock);
-
+  it("links connector setup to the real connector surface", async () => {
     render(<OnboardingWizard onDone={vi.fn()} onDismiss={vi.fn()} />);
     fireEvent.change(screen.getByRole("combobox"), { target: { value: "connectwise" } });
-    fireEvent.click(screen.getByRole("button", { name: "Next" }));
-    fireEvent.click(screen.getByRole("button", { name: "Next" }));
-
-    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
-      "/connectors/connectwise/health",
-      expect.objectContaining({ headers: expect.anything() })
-    ));
-    expect(await screen.findByText(/CONNECTWISE status is blocked/)).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Open connector configuration" })).toHaveAttribute("href", "/connectors");
   });
 
   it("renders the friendly Founder Pack install state for a 501 response", async () => {

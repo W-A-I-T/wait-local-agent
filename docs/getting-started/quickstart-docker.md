@@ -51,8 +51,7 @@ Open:
 The dashboard is the Vite UI. API requests are proxied from the dashboard container to the API container.
 
 `scripts/install.sh` generates `.env` from `.env.example` when it is missing.
-For the shipped demo stack, set `WAIT_DEMO_MODE=true` explicitly before
-starting Compose.
+It does not enable demo mode or load `.env` for host-side CLI commands.
 
 ## Production `.env` Setup
 
@@ -95,6 +94,12 @@ docker compose exec api wait-local-agent secrets set WAIT_HALOPSA_CLIENT_SECRET 
 docker compose exec api wait-local-agent secrets set WAIT_HUDU_API_KEY '<secret>'
 ```
 
+For a non-demo deployment using an external secret manager, set
+`WAIT_VAULT_KEY` in the container environment before initializing the vault.
+The vault then uses that Fernet key without creating `vault.key` beside the
+encrypted secrets file. Existing local-key vaults remain readable for
+migration.
+
 To enable encrypted backups, also store a Fernet key:
 
 ```bash
@@ -119,6 +124,7 @@ Requirements:
 - `WAIT_SECRETS_BACKEND=fernet`
 - initialized vault at `WAIT_VAULT_PATH`
 - `WAIT_BACKUP_FERNET_KEY` stored in the vault
+- backup source and destination paths remain under the persistent `/data` volume
 
 Suggested host cron example:
 

@@ -10,12 +10,13 @@ services:
       WAIT_DEMO_MODE: ${WAIT_DEMO_MODE:-false}
       WAIT_SECRETS_BACKEND: env
       WAIT_VAULT_PATH: /data/vault
+    command: ["wait-local-agent", "serve", "--host", "0.0.0.0", "--port", "8788"]
     ports:
       - "127.0.0.1:8788:8788"
     volumes:
       - wait-local-agent-data:/data
     healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8788/health', timeout=3)"]
+      test: ["CMD", "python", "-c", "import os, urllib.request; token=os.getenv('WAIT_API_TOKEN') or os.getenv('WAIT_ADMIN_TOKEN') or os.getenv('WAIT_TECH_TOKEN') or os.getenv('WAIT_VIEWER_TOKEN'); request=urllib.request.Request('http://127.0.0.1:8788/health', headers={'Authorization': f'Bearer {token}'} if token else {}); urllib.request.urlopen(request, timeout=3)"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -38,7 +39,7 @@ services:
       WAIT_COLLECTION_SCOPE: host
       WAIT_HOST_ROOT: /host
     healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8788/health', timeout=3)"]
+      test: ["CMD", "python", "-c", "import os, urllib.request; token=os.getenv('WAIT_API_TOKEN') or os.getenv('WAIT_ADMIN_TOKEN') or os.getenv('WAIT_TECH_TOKEN') or os.getenv('WAIT_VIEWER_TOKEN'); request=urllib.request.Request('http://127.0.0.1:8788/health', headers={'Authorization': f'Bearer {token}'} if token else {}); urllib.request.urlopen(request, timeout=3)"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -51,7 +52,7 @@ services:
   ui:
     image: node:22-slim
     working_dir: /app/ui
-    command: sh -c "npm install && npm run dev -- --host 0.0.0.0"
+    command: sh -c "npm ci && npm run dev -- --host 0.0.0.0"
     environment:
       VITE_API_PROXY_TARGET: http://api:8788
     ports:

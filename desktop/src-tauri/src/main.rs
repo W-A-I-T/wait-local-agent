@@ -2,7 +2,7 @@ use std::{
     error::Error,
     fs::{self, OpenOptions},
     io::{ErrorKind, Read, Write},
-    net::{TcpStream, ToSocketAddrs},
+    net::{TcpListener, TcpStream, ToSocketAddrs},
     path::{Path, PathBuf},
     sync::Mutex,
     thread,
@@ -18,7 +18,6 @@ use tauri_plugin_shell::{
 use tauri_plugin_updater::UpdaterExt;
 
 const API_HOST: &str = "127.0.0.1";
-const API_PORT: u16 = 8788;
 const HEALTH_TIMEOUT: Duration = Duration::from_secs(30);
 const TOKEN_STORAGE_KEY: &str = "wait-local-agent-api-token";
 const UPDATE_CHECK_TIMEOUT: Duration = Duration::from_secs(15);
@@ -48,12 +47,13 @@ fn main() {
 
             let app_data_dir = app.path().app_data_dir()?;
             let runtime = RuntimeConfig::load(&app_data_dir)?;
+            let api_port = reserve_api_port()?;
 
             // The existing dashboard reads its token from localStorage. Seed it
             // before the hidden window is made visible so the API remains
             // authenticated without changing the product screens.
             window.eval(&format!(
-                "window.localStorage.setItem('{}', '{}');",
+                "window.__WAIT_API_BASE__='http://{API_HOST}:{api_port}'; window.localStorage.setItem('{}', '{}');",
                 TOKEN_STORAGE_KEY, runtime.admin_token
             ))?;
 
@@ -61,7 +61,7 @@ fn main() {
                 .shell()
                 .sidecar("wait-local-agent-server")?
                 .env("WAIT_HOST", API_HOST)
-                .env("WAIT_PORT", API_PORT.to_string())
+                .env("WAIT_PORT", api_port.to_string())
                 .env("WAIT_DATA_PATH", &runtime.data_path)
                 .env("WAIT_VAULT_PATH", &runtime.vault_path)
                 .env("WAIT_ADMIN_TOKEN", &runtime.admin_token)
@@ -103,7 +103,7 @@ fn main() {
             let handle = app.handle().clone();
             let token = runtime.admin_token;
             thread::spawn(move || {
-                let ready = wait_for_health(&token);
+                let ready = wait_for_health(&token, api_port);
                 let ui_handle = handle.clone();
                 let _ = handle.run_on_main_thread(move || match ready {
                     Ok(()) => {
@@ -227,14 +227,19 @@ fn create_admin_token(path: &Path) -> Result<String, Box<dyn Error>> {
     Ok(token)
 }
 
-fn wait_for_health(token: &str) -> Result<(), Box<dyn Error + Send + Sync>> {
-    let address = (API_HOST, API_PORT)
+fn reserve_api_port() -> Result<u16, Box<dyn Error>> {
+    let listener = TcpListener::bind((API_HOST, 0))?;
+    Ok(listener.local_addr()?.port())
+}
+
+fn wait_for_health(token: &str, api_port: u16) -> Result<(), Box<dyn Error + Send + Sync>> {
+    let address = (API_HOST, api_port)
         .to_socket_addrs()?
         .next()
         .ok_or_else(|| std::io::Error::other("loopback health address did not resolve"))?;
     let deadline = Instant::now() + HEALTH_TIMEOUT;
     let request = format!(
-        "GET /health HTTP/1.1\r\nHost: {API_HOST}:{API_PORT}\r\nAuthorization: Bearer {token}\r\nConnection: close\r\n\r\n"
+        "GET /health HTTP/1.1\r\nHost: {API_HOST}:{api_port}\r\nAuthorization: Bearer {token}\r\nConnection: close\r\n\r\n"
     );
 
     loop {

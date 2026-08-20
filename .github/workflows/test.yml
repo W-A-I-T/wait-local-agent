@@ -25,6 +25,10 @@ jobs:
       - run: bandit -r src
       - run: pip-audit --skip-editable
       - run: python -m pytest --cov=wait_local_agent --cov-report=term-missing --cov-fail-under=95
+      - name: Scan repository for leaked secrets
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       - run: bash -n scripts/demo_consultant_mode.sh
       - run: WAIT_DEMO_MODE=true WAIT_DATA_PATH="${RUNNER_TEMP}/wait-consultant-demo.db" bash scripts/demo_consultant_mode.sh
       - run: bash -n scripts/validate_local_first.sh
@@ -44,6 +48,6 @@ jobs:
           node-version: "22"
           cache: npm
           cache-dependency-path: ui/package-lock.json
-      - run: npm install
+      - run: npm ci
       - run: npm run test
       - run: npm run build

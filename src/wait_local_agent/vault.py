@@ -18,13 +18,19 @@ class SecretVault:
         self.vault_path = Path(vault_path)
         self.key_path = self.vault_path / "vault.key"
         self.secrets_path = self.vault_path / "secrets.json.enc"
+        self.external_key = os.getenv("WAIT_VAULT_KEY", "").strip().encode("utf-8") or None
 
     @classmethod
     def initialize(cls, vault_path: Path) -> SecretVault:
         vault = cls(vault_path)
         vault.vault_path.mkdir(parents=True, exist_ok=True)
         _chmod(vault.vault_path, 0o700)
-        if not vault.key_path.exists():
+        if vault.external_key is not None:
+            try:
+                Fernet(vault.external_key)
+            except (TypeError, ValueError) as exc:
+                raise SecretVaultError("WAIT_VAULT_KEY is not a valid Fernet key") from exc
+        elif not vault.key_path.exists():
             vault.key_path.write_bytes(Fernet.generate_key())
             _chmod(vault.key_path, 0o600)
         if not vault.secrets_path.exists():
@@ -32,7 +38,7 @@ class SecretVault:
         return vault
 
     def is_initialized(self) -> bool:
-        return self.key_path.exists()
+        return self.secrets_path.exists() and (self.external_key is not None or self.key_path.exists())
 
     def set(self, key: str, value: str) -> None:
         _validate_key(key)
@@ -52,6 +58,11 @@ class SecretVault:
         return sorted(self._read_encrypted())
 
     def _fernet(self) -> Fernet:
+        if self.external_key is not None:
+            try:
+                return Fernet(self.external_key)
+            except (TypeError, ValueError) as exc:
+                raise SecretVaultError("WAIT_VAULT_KEY is not a valid Fernet key") from exc
         if not self.key_path.exists():
             raise SecretVaultError(f"secret vault is not initialized at {self.vault_path}")
         try:
