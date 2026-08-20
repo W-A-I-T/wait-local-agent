@@ -97,8 +97,9 @@ docker compose exec api wait-local-agent secrets set WAIT_HUDU_API_KEY '<secret>
 For a non-demo deployment using an external secret manager, set
 `WAIT_VAULT_KEY` in the container environment before initializing the vault.
 The vault then uses that Fernet key without creating `vault.key` beside the
-encrypted secrets file. Existing local-key vaults remain readable for
-migration.
+encrypted secrets file. Do not add it to an existing local-key vault unless
+the secrets have been migrated to the external key; otherwise the old
+ciphertext cannot be decrypted.
 
 To enable encrypted backups, also store a Fernet key:
 

@@ -93,8 +93,7 @@ export function Knowledge() {
               Parser
               <select value={parser} onChange={(event) => setParser(event.target.value)}>
                 <option value="auto">auto</option>
-                <option value="basic">plain</option>
-                <option value="basic">markdown</option>
+                <option value="basic">plain / markdown</option>
                 <option value="pypdf">pdf</option>
               </select>
             </label>

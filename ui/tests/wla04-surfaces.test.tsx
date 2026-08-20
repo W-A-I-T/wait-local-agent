@@ -26,12 +26,7 @@ describe("wla-04 onboarding and parity surfaces", () => {
 
     render(<Knowledge />);
     const parser = await screen.findByRole("combobox");
-    expect(Array.from(parser.querySelectorAll("option")).map((option) => option.value)).toEqual([
-      "auto",
-      "basic",
-      "basic",
-      "pypdf"
-    ]);
+    expect(Array.from(parser.querySelectorAll("option")).map((option) => option.value)).toEqual(["auto", "basic", "pypdf"]);
 
     fireEvent.change(screen.getByPlaceholderText("/path/to/docs"), { target: { value: "/workspace/knowledge" } });
     fireEvent.click(screen.getByRole("button", { name: "Run ingest" }));
@@ -63,7 +58,11 @@ describe("wla-04 onboarding and parity surfaces", () => {
     });
     vi.stubGlobal("fetch", fetchMock);
 
-    render(<OnboardingWizard onDone={onDone} onDismiss={vi.fn()} />);
+    render(
+      <MemoryRouter>
+        <OnboardingWizard onDone={onDone} onDismiss={vi.fn()} />
+      </MemoryRouter>
+    );
 
     expect(screen.getByText("Choose your primary service connector")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Next" }));
@@ -87,7 +86,11 @@ describe("wla-04 onboarding and parity surfaces", () => {
   });
 
   it("links connector setup to the real connector surface", async () => {
-    render(<OnboardingWizard onDone={vi.fn()} onDismiss={vi.fn()} />);
+    render(
+      <MemoryRouter>
+        <OnboardingWizard onDone={vi.fn()} onDismiss={vi.fn()} />
+      </MemoryRouter>
+    );
     fireEvent.change(screen.getByRole("combobox"), { target: { value: "connectwise" } });
     expect(screen.getByRole("link", { name: "Open connector configuration" })).toHaveAttribute("href", "/connectors");
   });

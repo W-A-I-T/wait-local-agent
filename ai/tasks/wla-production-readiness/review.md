@@ -68,3 +68,13 @@ boundaries.
   was recorded separately as an environment failure.
 - Kimi review launch was attempted but failed before review output because its
   storage path was read-only.
+
+## Claude Final Gate — 2026-08-20
+
+Claude reviewed the branch after the invalid API-key environment variable was
+unset. Verdict: **do not merge yet**. It accepted the scope and code direction,
+but requires a reciprocal Kimi review or recorded waiver, green CI covering the
+TestClient security tests, and a real desktop dynamic-port launch/build check.
+It also identified and prompted the now-fixed duplicate parser option and SPA
+navigation concern, plus the vault external-key migration warning now present
+in the docs.

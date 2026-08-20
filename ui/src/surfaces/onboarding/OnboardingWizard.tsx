@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { Link } from "react-router-dom";
 import { apiFetch } from "../../api/client";
 import { useDashboard } from "../../app/DashboardContext";
 import type { TicketSummaryResponse } from "../../api/types";
@@ -131,7 +132,7 @@ export function OnboardingWizard({ onDone, onDismiss }: OnboardingProps) {
             </select>
           </label>
           <p className="screen-note">Choose a connector, then configure and verify it from the real connector screen. This wizard never stores or discards provider credentials.</p>
-          <a className="icon-button" href="/connectors">Open connector configuration</a>
+          <Link className="icon-button" to="/connectors">Open connector configuration</Link>
         </div>
       ) : null}
 
