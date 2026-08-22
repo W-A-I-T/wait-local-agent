@@ -66,3 +66,31 @@
 - Confirm the patch is metadata/documentation/test-only and leaves enforcement,
   provider behavior, and platform gates unchanged.
 - Confirm env-var spelling and the explicit Power Platform deployment gates.
+
+## Blocker
+
+- 2026-08-22T05:07:54Z: Kimi cross-family review exited with status 1.
+
+## Blocker — cross-family review unavailable
+
+The required Kimi cross-family review could not run: the provider returned
+HTTP 403, "You've reached your usage limit for this billing cycle."
+
+No substitute reviewer was used. Standing workflow policy requires recording
+the blocker and returning ownership to the human rather than swapping in
+another provider.
+
+State of the change at the time of blocking:
+
+- `./scripts/validate_release.sh` passed end to end: 2691 backend tests passed,
+  total coverage 95.02% (gate is 95%), 232 UI tests passed, ruff / mypy /
+  bandit / pip-audit / public_surface_audit all clean.
+- Claude verified the diff directly: the four corrected `write_actions_enabled`
+  flags match implemented write paths, the RMM entry now reflects all six
+  vendors, and all 21 added environment variable names were checked
+  mechanically against `config.py` rather than by inspection.
+- No lockfile drift: `uv.lock` was restored to its `origin/main` state after a
+  local dependency install touched it.
+
+Resolution requires either restored Kimi quota or an explicit human waiver of
+the cross-family review for this task.
