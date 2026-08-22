@@ -22,6 +22,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal, TypedDict, cast
 
+from wait_local_agent import fs_permissions
 from wait_local_agent.client_scope import AllClients, ClientScope
 from wait_local_agent.models import utc_now
 from wait_local_agent.reports.renderers import redact_text, redact_value
@@ -151,7 +152,11 @@ class ExecutionRecorder:
             )
             return None
         if failure:
-            LOGGER.error("execution recording failed; run outcome unchanged: %s", failure[0])
+            LOGGER.error(
+                "execution recording failed; run outcome unchanged: %s",
+                failure[0],
+                exc_info=failure[0],
+            )
             return None
         return result[0] if result else None
 
@@ -248,7 +253,7 @@ class ExecutionRecorder:
             # Platforms without the required dir_fd APIs retain the previous
             # path-based behavior. Their artifact directory must be trusted.
             if not path.parent.exists():
-                path.parent.mkdir(parents=True, exist_ok=True)
+                fs_permissions.create_private_directory(path.parent)
             self._assert_artifact_path(path, root)
             if path.is_symlink():
                 raise RuntimeError(f"refusing symlink artifact path: {path}")
@@ -270,7 +275,7 @@ class ExecutionRecorder:
     def _artifact_root(self) -> Path:
         if self.artifacts_dir.is_symlink():
             raise RuntimeError("refusing symlink artifact directory")
-        self.artifacts_dir.mkdir(parents=True, exist_ok=True)
+        fs_permissions.create_private_directory(self.artifacts_dir)
         # Keep symlinks visible until the descriptor-relative open can reject
         # a root that was swapped after the initial check.
         return self.artifacts_dir.absolute()
@@ -353,13 +358,16 @@ def _write_artifact_at_fd(
         except FileExistsError:
             _verify_existing_artifact_at_fd(directory_fd, artifact_name, path)
         else:
-            os.unlink(temp_name, dir_fd=directory_fd)
+            try:
+                os.unlink(temp_name, dir_fd=directory_fd)
+            except (FileNotFoundError, PermissionError):
+                pass
     finally:
         if file_descriptor >= 0:
             os.close(file_descriptor)
         try:
             os.unlink(temp_name, dir_fd=directory_fd)
-        except FileNotFoundError:
+        except (FileNotFoundError, PermissionError):
             pass
 
 
@@ -391,7 +399,13 @@ def _sha256_fd(file_descriptor: int) -> str:
 def _write_artifact_path_based(path: Path, content: bytes) -> None:
     """Compatibility fallback for platforms without descriptor-relative APIs."""
     temp_path = path.parent / f".{path.name}.{uuid.uuid4().hex}.tmp"
-    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW
+    flags = (
+        os.O_WRONLY
+        | os.O_CREAT
+        | os.O_EXCL
+        | getattr(os, "O_NOFOLLOW", 0)
+        | getattr(os, "O_BINARY", 0)
+    )
     file_descriptor = os.open(temp_path, flags, 0o600)
     try:
         with os.fdopen(file_descriptor, "wb") as handle:
@@ -404,11 +418,17 @@ def _write_artifact_path_based(path: Path, content: bytes) -> None:
         except FileExistsError:
             if path.is_symlink() or not path.is_file() or _sha256_file(path) != path.name:
                 raise RuntimeError(f"existing artifact digest mismatch: {path}") from None
-            temp_path.unlink(missing_ok=True)
+            try:
+                temp_path.unlink(missing_ok=True)
+            except PermissionError:
+                pass
     finally:
         if file_descriptor >= 0:
             os.close(file_descriptor)
-        temp_path.unlink(missing_ok=True)
+        try:
+            temp_path.unlink(missing_ok=True)
+        except PermissionError:
+            pass
 
 
 def _capped_payload_json(value: object) -> tuple[str, str]:

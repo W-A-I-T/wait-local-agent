@@ -1,10 +1,15 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 from pathlib import Path
 
 from cryptography.fernet import Fernet, InvalidToken
+
+from wait_local_agent import fs_permissions
+
+LOGGER = logging.getLogger(__name__)
 
 
 class SecretVaultError(RuntimeError):
@@ -23,16 +28,16 @@ class SecretVault:
     @classmethod
     def initialize(cls, vault_path: Path) -> SecretVault:
         vault = cls(vault_path)
-        vault.vault_path.mkdir(parents=True, exist_ok=True)
-        _chmod(vault.vault_path, 0o700)
+        fs_permissions.create_private_directory(vault.vault_path)
         if vault.external_key is not None:
             try:
                 Fernet(vault.external_key)
             except (TypeError, ValueError) as exc:
                 raise SecretVaultError("WAIT_VAULT_KEY is not a valid Fernet key") from exc
         elif not vault.key_path.exists():
-            vault.key_path.write_bytes(Fernet.generate_key())
-            _chmod(vault.key_path, 0o600)
+            fs_permissions.write_private_bytes(
+                vault.key_path, Fernet.generate_key(), replace_existing=False
+            )
         if not vault.secrets_path.exists():
             vault._write_encrypted({})
         return vault
@@ -83,20 +88,11 @@ class SecretVault:
         return {str(key): str(value) for key, value in payload.items()}
 
     def _write_encrypted(self, payload: dict[str, str]) -> None:
-        self.vault_path.mkdir(parents=True, exist_ok=True)
-        _chmod(self.vault_path, 0o700)
+        fs_permissions.create_private_directory(self.vault_path)
         token = self._fernet().encrypt(json.dumps(payload, sort_keys=True).encode("utf-8"))
-        self.secrets_path.write_bytes(token)
-        _chmod(self.secrets_path, 0o600)
+        fs_permissions.write_private_bytes(self.secrets_path, token, replace_existing=True)
 
 
 def _validate_key(key: str) -> None:
     if not key or not key.strip():
         raise ValueError("secret key must not be empty")
-
-
-def _chmod(path: Path, mode: int) -> None:
-    try:
-        os.chmod(path, mode)
-    except OSError:
-        return

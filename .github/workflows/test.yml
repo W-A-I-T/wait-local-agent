@@ -31,6 +31,25 @@ jobs:
       - run: scripts/validate_local_first.sh
       - run: python scripts/public_surface_audit.py
 
+  backend-windows:
+    timeout-minutes: 15
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - run: python -m pip install -e ".[dev]"
+      - run: >-
+          python -m pytest -q
+          tests/test_observability.py
+          tests/test_security_vault.py
+          tests/test_config.py
+          tests/test_power_platform_deployment.py
+          tests/test_platform_support.py
+          tests/test_fs_permissions.py
+          tests/test_store_permissions.py
+
   ui:
     timeout-minutes: 10
     runs-on: ubuntu-latest

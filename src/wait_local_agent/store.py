@@ -4,6 +4,7 @@ import hashlib
 import json
 import logging
 import math
+import os
 import re
 import sqlite3
 import uuid
@@ -13,6 +14,7 @@ from enum import StrEnum
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal, cast, overload
 
+from wait_local_agent import fs_permissions, platform_support
 from wait_local_agent.client_scope import AllClients, BoundClients, ClientScope
 from wait_local_agent.consultant import blueprint_payload, parse_solution_blueprint
 from wait_local_agent.migrations import Migration, MigrationRunner
@@ -76,6 +78,8 @@ from wait_local_agent.models import (
 # Opaque capability used only by SmartActionService.  A boolean flag would make
 # it too easy for an unrelated caller to reach the smart-action state machine.
 SMART_ACTION_APPROVAL_CAPABILITY = object()
+
+LOGGER = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from wait_local_agent.collectors import CollectorResult
@@ -196,8 +200,33 @@ class Store:
         if sqlite3.sqlite_version_info < (3, 35, 0):
             raise RuntimeError("SQLite 3.35.0 or newer is required for ticket identity upserts")
         self.path = path
-        self.path.parent.mkdir(parents=True, exist_ok=True)
+        if platform_support.is_network_path(self.path) is True:
+            LOGGER.warning(
+                "SQLite state database is on a network path; WAL locking is unreliable over SMB: %s",
+                self.path,
+            )
+        fs_permissions.create_private_directory(self.path.parent)
+        try:
+            file_descriptor = fs_permissions.open_private(
+                self.path, os.O_RDWR | os.O_CREAT, exclusive=True
+            )
+        except FileExistsError:
+            if self.path.is_symlink() or not self.path.is_file():
+                raise RuntimeError(f"could not create state database at {self.path}") from None
+        except OSError as exc:
+            raise RuntimeError(f"could not create state database at {self.path}") from exc
+        else:
+            try:
+                os.close(file_descriptor)
+            except OSError as exc:
+                raise RuntimeError(f"could not create state database at {self.path}") from exc
         self._init_schema()
+        for sibling in (
+            self.path,
+            self.path.with_name(f"{self.path.name}-wal"),
+            self.path.with_name(f"{self.path.name}-shm"),
+        ):
+            fs_permissions.restrict_existing_file(sibling, missing_ok=True)
 
     def _connect(self) -> sqlite3.Connection:
         connection = sqlite3.connect(self.path)

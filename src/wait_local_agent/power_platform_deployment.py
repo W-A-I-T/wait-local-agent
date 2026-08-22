@@ -9,6 +9,7 @@ returns redacted bounded output.
 from __future__ import annotations
 
 import hashlib
+import os
 import re
 import shutil
 import stat
@@ -19,6 +20,7 @@ from pathlib import Path
 from typing import cast
 from urllib.parse import urlsplit
 
+from wait_local_agent import platform_support
 from wait_local_agent.config import Settings
 from wait_local_agent.power_platform import OpenApiDefinitionError, build_solution_command_plan
 from wait_local_agent.power_platform_package import (
@@ -409,8 +411,11 @@ def execute_power_platform_stage(
         if not raw_command or raw_command[0] != "pac":
             return _failed(stage_id, "Power Platform stage contains a non-canonical command.", results)
         command = [pac, *raw_command[1:]]
+        if _contains_cmd_metacharacter(command[1:]) and _is_batch_shim(pac):
+            return _failed(stage_id, "Power Platform stage contains an invalid command.", results)
+        launch_command = _launch_argv(pac, command[1:])
         try:
-            completed = run(command, workspace, timeout)
+            completed = run(launch_command, workspace, timeout)
         except subprocess.TimeoutExpired:
             return _failed(stage_id, "Power Platform command timed out.", results)
         except OSError:
@@ -503,10 +508,13 @@ def execute_power_platform_rollback(
         "--environment",
         environment_url,
     ]
+    if _contains_cmd_metacharacter(command[1:]) and _is_batch_shim(pac):
+        return _rollback_failed(stage_id, "Power Platform stage contains an invalid command.", [])
+    launch_command = _launch_argv(pac, command[1:])
     run = runner or _run_command
     timeout = min(max(float(settings.power_platform_command_timeout_seconds), 1.0), MAX_COMMAND_TIMEOUT_SECONDS)
     try:
-        completed = run(command, workspace, timeout)
+        completed = run(launch_command, workspace, timeout)
     except subprocess.TimeoutExpired:
         return _rollback_failed(stage_id, "Power Platform rollback command timed out.", [])
     except OSError:
@@ -618,6 +626,25 @@ def _run_command(command: list[str], cwd: Path, timeout: float) -> subprocess.Co
         check=False,
         shell=False,
     )
+
+
+def _is_batch_shim(executable: str) -> bool:
+    return executable.casefold().endswith((".cmd", ".bat"))
+
+
+def _contains_cmd_metacharacter(arguments: Sequence[str]) -> bool:
+    metacharacters = "&|<>^\"%!"
+    return any(any(character in argument for character in metacharacters) for argument in arguments)
+
+
+def _launch_argv(executable: str, arguments: list[str]) -> list[str]:
+    """Return the argv that can launch an executable or Windows batch shim."""
+
+    if not platform_support.is_windows() or not _is_batch_shim(executable):
+        return [executable, *arguments]
+    if _contains_cmd_metacharacter(arguments):
+        raise PowerPlatformDeploymentError("Power Platform stage contains an invalid command.")
+    return [os.environ.get("COMSPEC", "cmd.exe"), "/d", "/s", "/c", executable, *arguments]
 
 
 def _bounded_output(value: str | None) -> str:

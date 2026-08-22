@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 from wait_local_agent.config import load_settings
 from wait_local_agent.vault import SecretVault
 
@@ -71,7 +73,7 @@ def test_safe_defaults_are_disabled(monkeypatch) -> None:
 
     assert settings.allow_write_actions is False
     assert settings.allow_power_platform_deployment is False
-    assert str(settings.power_platform_workspace) == ".wait-local-agent/power-platform"
+    assert settings.power_platform_workspace == Path(".wait-local-agent/power-platform")
     assert settings.power_platform_command_timeout_seconds == 600.0
     assert settings.allow_http_probing is False
     assert settings.allow_cloud_fallback is False
@@ -87,7 +89,7 @@ def test_safe_defaults_are_disabled(monkeypatch) -> None:
     assert settings.end_user_brand_surface_color == "#f3f5f2"
     assert settings.demo_mode is False
     assert settings.secrets_backend == "env"
-    assert str(settings.vault_path) == ".wait-local-agent/vault"
+    assert settings.vault_path == Path(".wait-local-agent/vault")
     assert settings.local_model_provider == "deterministic"
     assert settings.local_model_timeout_seconds == 20.0
     assert settings.remote_model_provider == ""
@@ -178,7 +180,7 @@ def test_power_platform_deployment_settings_are_explicit(monkeypatch) -> None:
     settings = load_settings()
 
     assert settings.allow_power_platform_deployment is True
-    assert str(settings.power_platform_workspace) == "/srv/wait/power-platform"
+    assert settings.power_platform_workspace == Path("/srv/wait/power-platform")
     assert settings.power_platform_command_timeout_seconds == 45.0
 
 

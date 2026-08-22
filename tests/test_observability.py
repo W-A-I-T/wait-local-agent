@@ -21,6 +21,7 @@ from wait_local_agent.observability import (
     _artifact_dir_fd_supported,
     _capped_payload_json,
     _verify_existing_artifact_at_fd,
+    _write_artifact_path_based,
     build_analytics_summary,
 )
 from wait_local_agent.rbac import Role
@@ -777,6 +778,10 @@ def test_descriptor_verification_rejects_symlink_and_non_regular_file(tmp_path: 
         os.close(directory_fd)
 
 
+@pytest.mark.skipif(
+    not _artifact_dir_fd_supported(),
+    reason="directory-FD-relative operations are unavailable",
+)
 def test_descriptor_artifact_temp_creation_failure_is_propagated(tmp_path: Path, monkeypatch) -> None:
     path = tmp_path / "artifact"
     directory_fd = os.open(tmp_path, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
@@ -788,7 +793,7 @@ def test_descriptor_artifact_temp_creation_failure_is_propagated(tmp_path: Path,
         os.close(directory_fd)
 
 
-def test_recorder_failure_and_empty_result_are_swallowed(settings, monkeypatch) -> None:
+def test_recorder_failure_and_empty_result_are_swallowed(settings, monkeypatch, caplog) -> None:
     recorder = ExecutionRecorder(Store(settings.data_path))
     monkeypatch.setattr(recorder, "_record_execution", lambda **_kwargs: None)
     assert recorder.record_execution(
@@ -802,6 +807,21 @@ def test_recorder_failure_and_empty_result_are_swallowed(settings, monkeypatch) 
     assert recorder.record_execution(
         run_kind="workflow", source_run_id=None, actor="tech", status="completed", trigger_source="test"
     ) is None
+    assert caplog.records[-1].exc_info is not None
+
+
+def test_path_artifact_fallback_does_not_require_o_nofollow(tmp_path: Path, monkeypatch) -> None:
+    content = b"windows-compatible artifact"
+    digest = hashlib.sha256(content).hexdigest()
+    path = tmp_path / "artifacts" / digest[:2] / digest
+    path.parent.mkdir(parents=True)
+    monkeypatch.delattr(os, "O_NOFOLLOW", raising=False)
+    monkeypatch.setattr(observability, "_artifact_dir_fd_supported", lambda: False)
+
+    _write_artifact_path_based(path, content)
+
+    assert path.read_bytes() == content
+    assert hashlib.sha256(path.read_bytes()).hexdigest() == path.name
 
 
 def test_atomic_artifact_write_closes_descriptor_when_opening_handle_fails(
@@ -809,8 +829,14 @@ def test_atomic_artifact_write_closes_descriptor_when_opening_handle_fails(
 ) -> None:
     path = tmp_path / "artifact"
     closed: list[int] = []
+    original_close = os.close
     monkeypatch.setattr(os, "fdopen", lambda *_args, **_kwargs: (_ for _ in ()).throw(OSError("temporary artifact")))
-    monkeypatch.setattr(os, "close", lambda descriptor: closed.append(descriptor))
+
+    def close(descriptor: int) -> None:
+        closed.append(descriptor)
+        original_close(descriptor)
+
+    monkeypatch.setattr(os, "close", close)
 
     with pytest.raises(OSError, match="temporary artifact"):
         ExecutionRecorder._write_artifact_atomically(path, b"content")
