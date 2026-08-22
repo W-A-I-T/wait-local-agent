@@ -8,8 +8,18 @@ directly: tests cover platform branches on Linux by monkeypatching this module.
 from __future__ import annotations
 
 import ctypes
+import ctypes.wintypes
 import os
 from pathlib import Path
+from typing import Any
+
+
+def _configure_windows_api(windll: Any) -> None:
+    """Declare the pointer-safe signature for the drive-type probe."""
+
+    get_drive_type = windll.kernel32.GetDriveTypeW
+    get_drive_type.argtypes = [ctypes.wintypes.LPCWSTR]
+    get_drive_type.restype = ctypes.wintypes.UINT
 
 
 def is_windows() -> bool:
@@ -41,4 +51,5 @@ def is_network_path(path: Path) -> bool | None:
     if not drive_root:
         return False
     windll = ctypes.windll  # type: ignore[attr-defined]
+    _configure_windows_api(windll)
     return windll.kernel32.GetDriveTypeW(drive_root) == 4

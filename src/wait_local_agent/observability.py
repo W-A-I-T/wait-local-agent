@@ -358,13 +358,16 @@ def _write_artifact_at_fd(
         except FileExistsError:
             _verify_existing_artifact_at_fd(directory_fd, artifact_name, path)
         else:
-            os.unlink(temp_name, dir_fd=directory_fd)
+            try:
+                os.unlink(temp_name, dir_fd=directory_fd)
+            except (FileNotFoundError, PermissionError):
+                pass
     finally:
         if file_descriptor >= 0:
             os.close(file_descriptor)
         try:
             os.unlink(temp_name, dir_fd=directory_fd)
-        except FileNotFoundError:
+        except (FileNotFoundError, PermissionError):
             pass
 
 
@@ -415,11 +418,17 @@ def _write_artifact_path_based(path: Path, content: bytes) -> None:
         except FileExistsError:
             if path.is_symlink() or not path.is_file() or _sha256_file(path) != path.name:
                 raise RuntimeError(f"existing artifact digest mismatch: {path}") from None
-            temp_path.unlink(missing_ok=True)
+            try:
+                temp_path.unlink(missing_ok=True)
+            except PermissionError:
+                pass
     finally:
         if file_descriptor >= 0:
             os.close(file_descriptor)
-        temp_path.unlink(missing_ok=True)
+        try:
+            temp_path.unlink(missing_ok=True)
+        except PermissionError:
+            pass
 
 
 def _capped_payload_json(value: object) -> tuple[str, str]:

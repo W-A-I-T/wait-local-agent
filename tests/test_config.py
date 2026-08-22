@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 from wait_local_agent.config import load_settings
 from wait_local_agent.vault import SecretVault
 
@@ -178,7 +180,7 @@ def test_power_platform_deployment_settings_are_explicit(monkeypatch) -> None:
     settings = load_settings()
 
     assert settings.allow_power_platform_deployment is True
-    assert str(settings.power_platform_workspace) == "/srv/wait/power-platform"
+    assert settings.power_platform_workspace == Path("/srv/wait/power-platform")
     assert settings.power_platform_command_timeout_seconds == 45.0
 
 

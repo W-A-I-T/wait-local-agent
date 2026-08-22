@@ -62,6 +62,62 @@ def _default_backend() -> _PermissionBackend:
     return _WindowsBackend()
 
 
+def _configure_windows_api(windll: Any) -> None:
+    """Declare pointer-sized signatures for the Win32 calls used below."""
+
+    kernel32 = windll.kernel32
+    advapi32 = windll.advapi32
+    kernel32.GetCurrentProcess.argtypes = []
+    kernel32.GetCurrentProcess.restype = ctypes.wintypes.HANDLE
+    kernel32.CloseHandle.argtypes = [ctypes.wintypes.HANDLE]
+    kernel32.CloseHandle.restype = ctypes.wintypes.BOOL
+    kernel32.LocalFree.argtypes = [ctypes.wintypes.HLOCAL]
+    kernel32.LocalFree.restype = ctypes.wintypes.HLOCAL
+    advapi32.OpenProcessToken.argtypes = [
+        ctypes.wintypes.HANDLE,
+        ctypes.wintypes.DWORD,
+        ctypes.POINTER(ctypes.wintypes.HANDLE),
+    ]
+    advapi32.OpenProcessToken.restype = ctypes.wintypes.BOOL
+    advapi32.GetTokenInformation.argtypes = [
+        ctypes.wintypes.HANDLE,
+        ctypes.wintypes.DWORD,
+        ctypes.wintypes.LPVOID,
+        ctypes.wintypes.DWORD,
+        ctypes.POINTER(ctypes.wintypes.DWORD),
+    ]
+    advapi32.GetTokenInformation.restype = ctypes.wintypes.BOOL
+    advapi32.ConvertSidToStringSidW.argtypes = [
+        ctypes.wintypes.LPVOID,
+        ctypes.POINTER(ctypes.wintypes.LPWSTR),
+    ]
+    advapi32.ConvertSidToStringSidW.restype = ctypes.wintypes.BOOL
+    advapi32.ConvertStringSecurityDescriptorToSecurityDescriptorW.argtypes = [
+        ctypes.wintypes.LPCWSTR,
+        ctypes.wintypes.DWORD,
+        ctypes.POINTER(ctypes.wintypes.LPVOID),
+        ctypes.POINTER(ctypes.wintypes.DWORD),
+    ]
+    advapi32.ConvertStringSecurityDescriptorToSecurityDescriptorW.restype = ctypes.wintypes.BOOL
+    advapi32.GetSecurityDescriptorDacl.argtypes = [
+        ctypes.wintypes.LPVOID,
+        ctypes.POINTER(ctypes.wintypes.BOOL),
+        ctypes.POINTER(ctypes.wintypes.LPVOID),
+        ctypes.POINTER(ctypes.wintypes.BOOL),
+    ]
+    advapi32.GetSecurityDescriptorDacl.restype = ctypes.wintypes.BOOL
+    advapi32.SetNamedSecurityInfoW.argtypes = [
+        ctypes.wintypes.LPCWSTR,
+        ctypes.wintypes.DWORD,
+        ctypes.wintypes.DWORD,
+        ctypes.wintypes.LPVOID,
+        ctypes.wintypes.LPVOID,
+        ctypes.wintypes.LPVOID,
+        ctypes.wintypes.LPVOID,
+    ]
+    advapi32.SetNamedSecurityInfoW.restype = ctypes.wintypes.DWORD
+
+
 def open_private(path: Path, flags: int, *, exclusive: bool) -> int:
     """Open a private file with platform-compatible no-follow/binary flags."""
 
@@ -104,7 +160,7 @@ def write_private_bytes(path: Path, data: bytes, *, replace_existing: bool) -> N
             os.close(file_descriptor)
         try:
             os.unlink(temporary_path)
-        except FileNotFoundError:
+        except (FileNotFoundError, PermissionError):
             pass
 
 
@@ -115,7 +171,7 @@ def create_private_directory(path: Path, *, backend: _PermissionBackend | None =
         return
     path.mkdir(parents=True, exist_ok=True, mode=0o700)
     if not platform_support.posix_permissions_supported():
-        (backend or _default_backend()).restrict_directory(path)
+        restrict_existing_directory(path, backend=backend)
 
 
 def restrict_existing_file(
@@ -160,6 +216,7 @@ def _current_user_sid() -> str:  # pragma: no cover - raw Win32 SID syscall body
     win_error = cast(Any, ctypes.WinError)  # type: ignore[attr-defined]
     advapi32 = windll.advapi32
     kernel32 = windll.kernel32
+    _configure_windows_api(windll)
     token = ctypes.wintypes.HANDLE()
     if not advapi32.OpenProcessToken(
         kernel32.GetCurrentProcess(), 0x0008, ctypes.byref(token)
@@ -190,6 +247,7 @@ def _current_user_sid() -> str:  # pragma: no cover - raw Win32 SID syscall body
 def _apply_windows_dacl(path: Path) -> bool:  # pragma: no cover - raw Win32 ACL syscall body
     windll = ctypes.windll  # type: ignore[attr-defined]
     win_error = cast(Any, ctypes.WinError)  # type: ignore[attr-defined]
+    _configure_windows_api(windll)
     sid = _current_user_sid()
     descriptor = ctypes.wintypes.LPVOID()
     if not windll.advapi32.ConvertStringSecurityDescriptorToSecurityDescriptorW(

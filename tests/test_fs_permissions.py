@@ -39,6 +39,25 @@ def test_create_private_directory_dispatches_to_fake_windows_backend(tmp_path: P
     assert calls == [directory]
 
 
+def test_create_private_directory_logs_backend_failure(
+    tmp_path: Path, monkeypatch, caplog
+) -> None:
+    class FailingBackend:
+        def restrict_file(self, _path: Path) -> bool:
+            return True
+
+        def restrict_directory(self, _path: Path) -> bool:
+            raise OSError("ACL failed")
+
+    monkeypatch.setattr(platform_support, "posix_permissions_supported", lambda: False)
+    directory = tmp_path / "windows-private"
+    with caplog.at_level(logging.WARNING, logger=fs_permissions.LOGGER.name):
+        fs_permissions.create_private_directory(directory, backend=FailingBackend())
+
+    assert directory.is_dir()
+    assert str(directory) in caplog.text
+
+
 def test_create_private_directory_returns_for_existing_path(tmp_path: Path) -> None:
     directory = tmp_path / "existing"
     directory.mkdir()
@@ -62,6 +81,15 @@ def test_restrict_existing_file_logs_os_error(tmp_path: Path, monkeypatch, caplo
     assert str(path) in caplog.text
 
 
+@pytest.mark.skipif(os.name != "posix", reason="POSIX mode bits are not Windows permissions")
+def test_posix_backend_restricts_file(tmp_path: Path) -> None:
+    path = tmp_path / "file"
+    path.write_bytes(b"secret")
+
+    assert fs_permissions._PosixBackend.restrict_file(path) is True
+    assert stat.S_IMODE(path.stat().st_mode) == 0o600
+
+
 def test_posix_backend_logs_directory_chmod_error(tmp_path: Path, monkeypatch, caplog) -> None:
     path = tmp_path / "directory"
     path.mkdir()
@@ -72,6 +100,20 @@ def test_posix_backend_logs_directory_chmod_error(tmp_path: Path, monkeypatch, c
     monkeypatch.setattr(fs_permissions.os, "chmod", fail_chmod)
     with caplog.at_level(logging.WARNING, logger=fs_permissions.LOGGER.name):
         assert fs_permissions._PosixBackend.restrict_directory(path) is False
+
+    assert str(path) in caplog.text
+
+
+def test_posix_backend_logs_file_chmod_error(tmp_path: Path, monkeypatch, caplog) -> None:
+    path = tmp_path / "file"
+    path.write_bytes(b"secret")
+
+    def fail_chmod(*_args) -> None:
+        raise OSError("permission denied")
+
+    monkeypatch.setattr(fs_permissions.os, "chmod", fail_chmod)
+    with caplog.at_level(logging.WARNING, logger=fs_permissions.LOGGER.name):
+        assert fs_permissions._PosixBackend.restrict_file(path) is False
 
     assert str(path) in caplog.text
 
@@ -238,6 +280,38 @@ def test_private_sddl_protects_inherited_acl() -> None:
     assert fs_permissions._private_sddl("S-1-5-21-1-1-1-1000") == "D:PAI(A;;FA;;;S-1-5-21-1-1-1-1000)"
 
 
+def test_windows_api_signatures_are_pointer_safe() -> None:
+    class Function:
+        restype: object
+        argtypes: object
+
+    class Dll:
+        class Kernel32:
+            GetCurrentProcess = Function()
+            CloseHandle = Function()
+            LocalFree = Function()
+
+        class Advapi32:
+            OpenProcessToken = Function()
+            GetTokenInformation = Function()
+            ConvertSidToStringSidW = Function()
+            ConvertStringSecurityDescriptorToSecurityDescriptorW = Function()
+            GetSecurityDescriptorDacl = Function()
+            SetNamedSecurityInfoW = Function()
+
+        kernel32 = Kernel32()
+        advapi32 = Advapi32()
+
+    fs_permissions._configure_windows_api(Dll())
+    assert Dll.Kernel32.GetCurrentProcess.restype is fs_permissions.ctypes.wintypes.HANDLE
+    assert Dll.Advapi32.OpenProcessToken.restype is fs_permissions.ctypes.wintypes.BOOL
+    assert Dll.Advapi32.SetNamedSecurityInfoW.restype is fs_permissions.ctypes.wintypes.DWORD
+
+
+@pytest.mark.skipif(
+    not platform_support.posix_permissions_supported(),
+    reason="POSIX mode bits are not Windows permissions",
+)
 def test_replace_existing_private_bytes_is_atomic(tmp_path: Path) -> None:
     path = tmp_path / "secret"
     fs_permissions.write_private_bytes(path, b"first", replace_existing=False)

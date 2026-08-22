@@ -5,7 +5,7 @@
 - Runtime: `platform_support.py`, `fs_permissions.py`, `observability.py`,
   `store.py`, `vault.py`, and `power_platform_deployment.py`.
 - Tests: platform/filesystem/store permission tests plus observability, vault,
-  and PAC deployment coverage.
+  config, and PAC deployment coverage.
 - CI: `.github/workflows/test.yml` adds the scoped `backend-windows` job.
 - Task artifacts: `implementation.md`, `review.md`, and `status.json`.
 
@@ -13,10 +13,14 @@
 
 - SQLite pre-creation and WAL sibling restriction run during every `Store`
   construction; only a normal existing regular file is reopened.
-- Windows ACL code is raw `ctypes` and could only be syntax/type reviewed here;
-  the real DACL behavior needs the Windows CI job.
+- Windows ACL code uses explicit pointer-sized ctypes signatures, but the real
+  DACL behavior still needs the Windows CI job.
+- Directory ACL failures are deliberately logged and non-fatal after successful
+  directory creation, preserving artifact recording under degraded ACL setup.
 - `create_private_directory` intentionally hardens new directories only; it
   does not change permissions on an existing artifact root or vault parent.
+- Temporary artifact/key files are closed before cleanup; Windows cleanup also
+  tolerates `PermissionError` when a failed operation leaves a sharing lock.
 - PAC command launching now has a `COMSPEC` wrapper only for Windows batch
   shims; logical audit evidence remains the PAC command and its arguments.
 - Full release validation remains dependent on the project development
@@ -27,26 +31,29 @@
 
 - No dependency, SDK, API, or tooling version was added or changed by this
   task. The runtime target remains `requires-python >=3.12`.
-- The working-tree `uv.lock` delta predates the coverage follow-up and matches
-  the current dependency declarations, including PyInstaller `6.22.0`.
-- `pip check` and `UV_CACHE_DIR=/tmp/wla-uv-cache uv lock --check --offline`
-  passed. Online `pip-audit`/freshness verification was blocked by unavailable
-  PyPI DNS, so CI remains authoritative for external-package compatibility.
+- No dependency declaration, lockfile, or package/API version changed in this
+  follow-up; the runtime remains Python `>=3.12` and the existing PyInstaller
+  pin remains unchanged.
+- `pip check` passed. Offline lock checking could not resolve an uncached
+  `apscheduler` artifact for a non-active Python/platform split, and
+  `pip-audit` could not resolve `pypi.org`; CI remains authoritative for
+  external-package compatibility.
 
 ## Open Questions
 
 - Implementation questions are closed. Remaining gates are the first
-  `backend-windows` run, the full 95% release validation, and the required
-  cross-family/final review.
+  `backend-windows` run, the full 95% release validation in a compatible
+  environment, and the required cross-family/final review.
 
 ## Test Results
 
-- Passed: targeted platform/filesystem/store coverage at 100% for both new
-  modules, observability, config, PAC deployment, store, hardening AST, Ruff,
-  full mypy, Bandit, `pip check`, lock consistency, public-surface, and diff
-  checks.
-- Not completed: full 95% suite, online pip-audit, UI npm validation, and real
-  Windows execution. `tests/test_security_vault.py` is blocked by a local
+- Passed: 140 targeted Windows-aware tests; 5 vault-only tests; 100% focused
+  statement/branch coverage for both foundation modules; Ruff, mypy, Bandit,
+  `pip check`, public-surface, and diff checks.
+- Not completed: full 95% suite, online `pip-audit`, real Windows execution,
+  and cross-family review. UI validation was run separately and passed: 232
+  tests and the production build.
+  `tests/test_security_vault.py` is blocked at its first API test by a local
   Starlette `TestClient` hang before assertions run.
 
 ## Diff Summary
@@ -62,8 +69,7 @@
 
 - Verify Windows ACL application and the first CI run.
 - Recheck SQLite initialization/reopen behavior and the command-evidence shape.
-- Confirm the pre-existing `uv.lock` refresh is intentionally retained and no
-  other unrelated repository changes appear before PR creation.
+- Confirm no dependency or lockfile changes appear before PR creation.
 
 ## Blocker — cross-family review unavailable
 
@@ -74,18 +80,9 @@ No substitute reviewer was used. Standing workflow policy requires recording
 the blocker and returning ownership to the human rather than swapping in
 another provider.
 
-State of the change at the time of blocking:
-
-- `./scripts/validate_release.sh` passed end to end: 2717 backend tests passed,
-  total coverage 95.03% (gate is 95%), 232 UI tests passed, ruff / mypy /
-  bandit / pip-audit / public_surface_audit all clean.
-- `fs_permissions.py` and `platform_support.py` are both at 100% coverage.
-  Platform branches are covered by injecting fake predicates and backends on
-  Linux; coverage suppression is confined to two raw Win32 syscall bodies.
-- An initial gate run failed at 94.88% because the new platform branches were
-  uncovered. Tests were added to close the gap; the coverage threshold was not
-  lowered and no suppression was widened.
-- No lockfile drift: `uv.lock` was restored to its `origin/main` state after a
-  local dependency install modified it.
-- PR #404 is open as a draft and must not merge until this review completes or
-  is explicitly waived.
+This remains an external release gate after the Windows-CI follow-up. The
+current implementation evidence is recorded above; the local release script
+still stops at network-dependent `pip-audit`, and the aggregate suite cannot
+complete because the first API test hangs in the local Starlette environment.
+PR #404 remains open and must not merge until this review and the real
+Windows-CI run complete or are explicitly waived.

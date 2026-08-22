@@ -778,6 +778,10 @@ def test_descriptor_verification_rejects_symlink_and_non_regular_file(tmp_path: 
         os.close(directory_fd)
 
 
+@pytest.mark.skipif(
+    not _artifact_dir_fd_supported(),
+    reason="directory-FD-relative operations are unavailable",
+)
 def test_descriptor_artifact_temp_creation_failure_is_propagated(tmp_path: Path, monkeypatch) -> None:
     path = tmp_path / "artifact"
     directory_fd = os.open(tmp_path, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
@@ -825,8 +829,14 @@ def test_atomic_artifact_write_closes_descriptor_when_opening_handle_fails(
 ) -> None:
     path = tmp_path / "artifact"
     closed: list[int] = []
+    original_close = os.close
     monkeypatch.setattr(os, "fdopen", lambda *_args, **_kwargs: (_ for _ in ()).throw(OSError("temporary artifact")))
-    monkeypatch.setattr(os, "close", lambda descriptor: closed.append(descriptor))
+
+    def close(descriptor: int) -> None:
+        closed.append(descriptor)
+        original_close(descriptor)
+
+    monkeypatch.setattr(os, "close", close)
 
     with pytest.raises(OSError, match="temporary artifact"):
         ExecutionRecorder._write_artifact_atomically(path, b"content")
