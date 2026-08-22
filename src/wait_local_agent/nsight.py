@@ -31,6 +31,7 @@ import httpx
 from defusedxml import ElementTree as DefusedElementTree  # type: ignore[import-untyped]
 
 from wait_local_agent.config import Settings
+from wait_local_agent.net_security import NetSecurityError, validate_operator_url
 from wait_local_agent.reports.renderers import redact_value
 from wait_local_agent.rmm import (
     RmmAlert,
@@ -982,7 +983,10 @@ class NSightRmmAdapter(RmmInventoryProvider):
             raise NSightRmmError(
                 "N-sight live calls are blocked until WAIT_ALLOW_HTTP_PROBING=true"
             )
-        base_url = _api_url(self.settings.n_sight_base_url)
+        base_url = _api_url(
+            self.settings.n_sight_base_url,
+            allow_insecure_transport=self.settings.allow_insecure_provider_transport,
+        )
         api_key = self.settings.n_sight_api_key.strip()
         if not api_key:
             raise NSightRmmError("N-sight credentials are incomplete: WAIT_NSIGHT_API_KEY")
@@ -1032,7 +1036,7 @@ class NSightRmmAdapter(RmmInventoryProvider):
         return provider_id
 
 
-def _api_url(value: str) -> str:
+def _api_url(value: str, *, allow_insecure_transport: bool = False) -> str:
     if any(ord(character) < 32 for character in value):
         raise NSightRmmError("N-sight base URL contains unsafe characters")
     parsed = urlsplit(value.strip())
@@ -1040,6 +1044,13 @@ def _api_url(value: str) -> str:
         raise NSightRmmError("N-sight base URL must be an HTTP(S) URL")
     if parsed.username or parsed.password or parsed.query or parsed.fragment:
         raise NSightRmmError("N-sight base URL must not contain credentials or query data")
+    try:
+        validate_operator_url(value, allow_insecure_transport=allow_insecure_transport)
+    except NetSecurityError as exc:
+        raise NSightRmmError(
+            "N-sight base URL must use HTTPS; set "
+            "WAIT_ALLOW_INSECURE_PROVIDER_TRANSPORT=true to allow plain HTTP"
+        ) from exc
     base = value.strip().rstrip("/")
     return base if base.endswith("/api") else f"{base}/api/"
 

@@ -16,6 +16,7 @@ from urllib.parse import urlsplit
 import httpx
 
 from wait_local_agent.founder_bundle import sanitize_bundle
+from wait_local_agent.net_security import NetSecurityError, validate_operator_url
 
 
 class LaunchPassportError(RuntimeError):
@@ -110,9 +111,12 @@ class LaunchPassportClient:
         timeout: float = 30.0,
         *,
         transport: httpx.BaseTransport | None = None,
+        allow_insecure_transport: bool = False,
     ) -> None:
         normalized = base_url.strip().rstrip("/")
-        validate_launch_passport_base_url(normalized)
+        validate_launch_passport_base_url(
+            normalized, allow_insecure_transport=allow_insecure_transport
+        )
         if timeout <= 0:
             raise ValueError("timeout must be positive")
         self.base_url = normalized
@@ -416,7 +420,9 @@ class LaunchPassportClient:
         return UploadResult(str(artifact_id), status, safe_payload if isinstance(safe_payload, dict) else {})
 
 
-def validate_launch_passport_base_url(base_url: str) -> None:
+def validate_launch_passport_base_url(
+    base_url: str, *, allow_insecure_transport: bool = False
+) -> None:
     """Reject malformed or credential-bearing Launch Passport endpoints."""
     try:
         parsed = urlsplit(base_url)
@@ -430,6 +436,15 @@ def validate_launch_passport_base_url(base_url: str) -> None:
         or parsed.password is not None
     ):
         raise ValueError("Launch Passport base URL must use http or https without embedded credentials")
+    try:
+        validate_operator_url(
+            base_url, allow_insecure_transport=allow_insecure_transport
+        )
+    except NetSecurityError as exc:
+        raise ValueError(
+            "Launch Passport base URL must use HTTPS; set "
+            "WAIT_ALLOW_INSECURE_PROVIDER_TRANSPORT=true to allow plain HTTP"
+        ) from exc
 
 
 def _artifact_id_from_payload(payload: dict[str, Any]) -> str:

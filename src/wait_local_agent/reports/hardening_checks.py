@@ -8,6 +8,8 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal
 
+from wait_local_agent import platform_support
+
 if TYPE_CHECKING:
     from wait_local_agent.config import Settings
     from wait_local_agent.store import Store
@@ -194,10 +196,17 @@ def _mode(path: Path) -> int | None:
 
 
 def _path_evidence(path: Path | None) -> dict[str, object]:
+    posix_permissions = platform_support.posix_permissions_supported()
+    permission_model = "posix" if posix_permissions else "windows-acl"
     if path is None:
-        return {"path": None, "exists": False}
-    mode = _mode(path)
-    return {"path": str(path), "exists": mode is not None, "permission_bits": oct(mode) if mode is not None else None}
+        return {"path": None, "exists": False, "permission_model": permission_model}
+    mode = _mode(path) if posix_permissions else None
+    return {
+        "path": str(path),
+        "exists": mode is not None,
+        "permission_bits": oct(mode) if mode is not None else None,
+        "permission_model": permission_model,
+    }
 
 
 def _check_api_auth(context: HardeningContext) -> CheckResult:
@@ -222,6 +231,8 @@ def _check_rbac(context: HardeningContext) -> CheckResult:
 
 def _check_vault(context: HardeningContext) -> CheckResult:
     evidence = _path_evidence(context.vault_key_path)
+    if not platform_support.posix_permissions_supported():
+        return CheckResult(status="not_applicable", evidence=evidence)
     permission_bits = _mode(context.vault_key_path) if context.vault_key_path else None
     passed = permission_bits == 0o600
     return CheckResult(
@@ -233,6 +244,8 @@ def _check_vault(context: HardeningContext) -> CheckResult:
 
 def _check_store_permissions(context: HardeningContext) -> CheckResult:
     evidence = _path_evidence(context.store_path)
+    if not platform_support.posix_permissions_supported():
+        return CheckResult(status="not_applicable", evidence=evidence)
     permission_bits = _mode(context.store_path) if context.store_path else None
     passed = permission_bits is not None and permission_bits & 0o077 == 0
     return CheckResult(
@@ -285,6 +298,8 @@ def _check_audit_log(context: HardeningContext) -> CheckResult:
 
 def _check_data_dir(context: HardeningContext) -> CheckResult:
     evidence = _path_evidence(context.data_dir)
+    if not platform_support.posix_permissions_supported():
+        return CheckResult(status="not_applicable", evidence=evidence)
     mode = _mode(context.data_dir) if context.data_dir else None
     passed = mode is not None and mode & 0o004 == 0
     return CheckResult(

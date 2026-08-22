@@ -67,6 +67,27 @@ def test_create_private_directory_returns_for_existing_path(tmp_path: Path) -> N
     assert directory.is_dir()
 
 
+def test_existing_private_directory_does_not_change_permissions(
+    tmp_path: Path, monkeypatch
+) -> None:
+    calls: list[Path] = []
+
+    class FakeBackend:
+        def restrict_file(self, _path: Path) -> bool:
+            return True
+
+        def restrict_directory(self, path: Path) -> bool:
+            calls.append(path)
+            return True
+
+    directory = tmp_path / "existing"
+    directory.mkdir()
+    monkeypatch.setattr(platform_support, "posix_permissions_supported", lambda: False)
+
+    fs_permissions.create_private_directory(directory, backend=FakeBackend())
+    assert calls == []
+
+
 def test_restrict_existing_file_logs_os_error(tmp_path: Path, monkeypatch, caplog) -> None:
     path = tmp_path / "secret"
     path.write_bytes(b"secret")
@@ -168,6 +189,29 @@ def test_open_private_nonexclusive_does_not_require_exclusive(tmp_path: Path) ->
 
     descriptor = fs_permissions.open_private(path, os.O_WRONLY, exclusive=False)
     os.close(descriptor)
+
+
+def test_open_private_dispatches_to_windows_backend_before_write(
+    tmp_path: Path, monkeypatch
+) -> None:
+    calls: list[Path] = []
+
+    class FakeBackend:
+        def restrict_file(self, path: Path) -> bool:
+            calls.append(path)
+            return True
+
+        def restrict_directory(self, _path: Path) -> bool:
+            return True
+
+    monkeypatch.setattr(platform_support, "posix_permissions_supported", lambda: False)
+    monkeypatch.setattr(fs_permissions, "_default_backend", lambda: FakeBackend())
+    path = tmp_path / "private"
+
+    descriptor = fs_permissions.open_private(path, os.O_WRONLY | os.O_CREAT, exclusive=True)
+    os.close(descriptor)
+
+    assert calls == [path]
 
 
 def test_write_private_bytes_closes_descriptor_when_open_fails(

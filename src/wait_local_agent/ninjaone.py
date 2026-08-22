@@ -15,6 +15,7 @@ from urllib.parse import urlsplit
 import httpx
 
 from wait_local_agent.config import Settings
+from wait_local_agent.net_security import NetSecurityError, validate_operator_url
 from wait_local_agent.rmm import (
     RmmAlert,
     RmmDevice,
@@ -238,7 +239,10 @@ class NinjaOneRmmAdapter:
             raise NinjaOneRmmError(
                 "NinjaOne credentials are incomplete: WAIT_NINJAONE_BASE_URL and WAIT_NINJAONE_ACCESS_TOKEN"
             )
-        base_url = _safe_base_url(self.settings.ninjaone_base_url)
+        base_url = _safe_base_url(
+            self.settings.ninjaone_base_url,
+            allow_insecure_transport=self.settings.allow_insecure_provider_transport,
+        )
         safe_endpoint = _safe_endpoint(endpoint)
         try:
             with httpx.Client(
@@ -354,12 +358,19 @@ def _job_status(row: Mapping[str, Any]) -> Literal["queued", "succeeded", "faile
     return "queued"
 
 
-def _safe_base_url(value: str) -> str:
+def _safe_base_url(value: str, *, allow_insecure_transport: bool = False) -> str:
     parsed = urlsplit(value.strip())
     if parsed.scheme not in {"http", "https"} or not parsed.netloc:
         raise NinjaOneRmmError("NinjaOne base URL must be an HTTP(S) URL")
     if parsed.username or parsed.password or parsed.query or parsed.fragment:
         raise NinjaOneRmmError("NinjaOne base URL must not contain credentials or query data")
+    try:
+        validate_operator_url(value, allow_insecure_transport=allow_insecure_transport)
+    except NetSecurityError as exc:
+        raise NinjaOneRmmError(
+            "NinjaOne base URL must use HTTPS; set "
+            "WAIT_ALLOW_INSECURE_PROVIDER_TRANSPORT=true to allow plain HTTP"
+        ) from exc
     return value.strip().rstrip("/")
 
 

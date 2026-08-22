@@ -7,6 +7,7 @@ import httpx
 
 from wait_local_agent.config import Settings
 from wait_local_agent.models import ConnectorReadResult, HuduArticle, HuduCompany, HuduFolder
+from wait_local_agent.net_security import NetSecurityError, validate_operator_url
 
 QueryValue = str | int | float | bool | None
 Normalizer = Callable[[Mapping[str, object]], HuduCompany | HuduArticle | HuduFolder | None]
@@ -136,10 +137,14 @@ class HuduClient:
         )
 
     def _get(self, endpoint: str, *, params: dict[str, QueryValue] | None = None) -> object:
+        base_url = _api_base_url(
+            self.settings.hudu_base_url,
+            allow_insecure_transport=self.settings.allow_insecure_provider_transport,
+        )
         with self._client() as client:
             try:
                 response = client.get(
-                    f"{_api_base_url(self.settings.hudu_base_url)}/{_safe_endpoint(endpoint)}",
+                    f"{base_url}/{_safe_endpoint(endpoint)}",
                     headers={"x-api-key": self.settings.hudu_api_key},
                     params=params,
                 )
@@ -199,7 +204,13 @@ class HuduReadError(Exception):
         self.message = message
 
 
-def _api_base_url(base_url: str) -> str:
+def _api_base_url(base_url: str, *, allow_insecure_transport: bool = False) -> str:
+    try:
+        validate_operator_url(base_url, allow_insecure_transport=allow_insecure_transport)
+    except NetSecurityError as exc:
+        raise HuduReadError(
+            "Hudu base URL must use HTTPS; set WAIT_ALLOW_INSECURE_PROVIDER_TRANSPORT=true to allow plain HTTP"
+        ) from exc
     stripped = base_url.rstrip("/")
     if stripped.endswith("/api/v1"):
         return stripped

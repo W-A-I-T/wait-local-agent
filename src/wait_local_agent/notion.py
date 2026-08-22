@@ -19,6 +19,7 @@ import httpx
 
 from wait_local_agent.config import Settings
 from wait_local_agent.models import ConnectorReadResult
+from wait_local_agent.net_security import NetSecurityError, validate_operator_url
 
 DEFAULT_PAGE_SIZE = 25
 MAX_PAGE_SIZE = 100
@@ -78,8 +79,7 @@ class NotionReadError(Exception):
 
 
 class NotionClientProtocol(Protocol):
-    def health(self) -> ConnectorReadResult:
-        ...
+    def health(self) -> ConnectorReadResult: ...
 
     def search_pages(
         self,
@@ -87,16 +87,11 @@ class NotionClientProtocol(Protocol):
         client_id: str,
         query: str = "",
         page_size: int = DEFAULT_PAGE_SIZE,
-    ) -> NotionReadResponse:
-        ...
+    ) -> NotionReadResponse: ...
 
-    def get_page(self, page_id: str, *, client_id: str) -> NotionReadResponse:
-        ...
+    def get_page(self, page_id: str, *, client_id: str) -> NotionReadResponse: ...
 
-    def get_data_source(
-        self, data_source_id: str, *, client_id: str
-    ) -> NotionDataSourceResponse:
-        ...
+    def get_data_source(self, data_source_id: str, *, client_id: str) -> NotionDataSourceResponse: ...
 
     def query_data_source(
         self,
@@ -105,18 +100,11 @@ class NotionClientProtocol(Protocol):
         client_id: str,
         page_size: int = DEFAULT_PAGE_SIZE,
         start_cursor: str = "",
-    ) -> NotionReadResponse:
-        ...
+    ) -> NotionReadResponse: ...
 
-    def preview_page_comment(
-        self, page_id: str, markdown: str, *, client_id: str
-    ) -> NotionCommentOperation:
-        ...
+    def preview_page_comment(self, page_id: str, markdown: str, *, client_id: str) -> NotionCommentOperation: ...
 
-    def create_page_comment(
-        self, page_id: str, markdown: str, *, client_id: str
-    ) -> NotionCommentOperation:
-        ...
+    def create_page_comment(self, page_id: str, markdown: str, *, client_id: str) -> NotionCommentOperation: ...
 
 
 class NotionClient:
@@ -200,17 +188,13 @@ class NotionClient:
             return page_payload
         page = _normalize_page(page_payload)
         if page is None:
-            return NotionReadResponse(
-                ConnectorReadResult("failed", "Notion page response was malformed"), []
-            )
+            return NotionReadResponse(ConnectorReadResult("failed", "Notion page response was malformed"), [])
         markdown_payload = self._request("GET", f"pages/{safe_id}/markdown")
         if isinstance(markdown_payload, NotionReadResponse):
             return markdown_payload
         markdown = _markdown_value(markdown_payload)
         if markdown is None:
-            return NotionReadResponse(
-                ConnectorReadResult("failed", "Notion page markdown response was malformed"), []
-            )
+            return NotionReadResponse(ConnectorReadResult("failed", "Notion page markdown response was malformed"), [])
         hydrated = NotionPage(
             page.id,
             page.title,
@@ -224,9 +208,7 @@ class NotionClient:
             [hydrated],
         )
 
-    def get_data_source(
-        self, data_source_id: str, *, client_id: str
-    ) -> NotionDataSourceResponse:
+    def get_data_source(self, data_source_id: str, *, client_id: str) -> NotionDataSourceResponse:
         blocked = self._blocked_result()
         if blocked is not None:
             return NotionDataSourceResponse(blocked, [])
@@ -240,9 +222,7 @@ class NotionClient:
                 raise NotionReadError("Notion data source is outside the tenant scope")
         except NotionReadError as exc:
             return NotionDataSourceResponse(ConnectorReadResult("failed", exc.message), [])
-        payload = self._request(
-            "GET", f"data_sources/{safe_id}", require_page_mapping=False
-        )
+        payload = self._request("GET", f"data_sources/{safe_id}", require_page_mapping=False)
         if isinstance(payload, NotionReadResponse):
             return NotionDataSourceResponse(payload.result, [])
         data_source = _normalize_data_source(payload)
@@ -280,26 +260,18 @@ class NotionClient:
                 body["start_cursor"] = _safe_cursor(start_cursor)
         except NotionReadError as exc:
             return NotionReadResponse(ConnectorReadResult("failed", exc.message), [])
-        response = self._request(
-            "POST", f"data_sources/{safe_id}/query", body=body, require_page_mapping=False
-        )
+        response = self._request("POST", f"data_sources/{safe_id}/query", body=body, require_page_mapping=False)
         if isinstance(response, NotionReadResponse):
             return response
         rows = _payload_rows(response)
-        pages = [
-            page
-            for row in rows
-            if (page := _normalize_search_page(row)) is not None
-        ]
+        pages = [page for row in rows if (page := _normalize_search_page(row)) is not None]
         return NotionReadResponse(
             ConnectorReadResult("ready", "Notion data source query succeeded.", len(pages)),
             pages,
             _next_cursor(response),
         )
 
-    def preview_page_comment(
-        self, page_id: str, markdown: str, *, client_id: str
-    ) -> NotionCommentOperation:
+    def preview_page_comment(self, page_id: str, markdown: str, *, client_id: str) -> NotionCommentOperation:
         blocked = self._blocked_result()
         if blocked is not None:
             return NotionCommentOperation("", "failed", blocked.message)
@@ -320,9 +292,7 @@ class NotionClient:
             "Notion page comment is ready for approval.",
         )
 
-    def create_page_comment(
-        self, page_id: str, markdown: str, *, client_id: str
-    ) -> NotionCommentOperation:
+    def create_page_comment(self, page_id: str, markdown: str, *, client_id: str) -> NotionCommentOperation:
         preview = self.preview_page_comment(page_id, markdown, client_id=client_id)
         if preview.status != "preview":
             return preview
@@ -361,19 +331,19 @@ class NotionClient:
         blocked = self._blocked_result()
         if blocked is not None:
             return NotionReadResponse(blocked, [])
-        missing = (
-            self._not_configured_result()
-            if require_page_mapping
-            else self._not_configured_data_source_result()
-        )
+        missing = self._not_configured_result() if require_page_mapping else self._not_configured_data_source_result()
         if missing is not None:
             return NotionReadResponse(missing, [])
         try:
             safe_endpoint = _safe_endpoint(endpoint)
+            base_url = _api_base_url(
+                self.settings.notion_base_url,
+                allow_insecure_transport=self.settings.allow_insecure_provider_transport,
+            )
             with httpx.Client(timeout=self.settings.connector_timeout_seconds, transport=self.transport) as client:
                 response = client.request(
                     method,
-                    f"{_api_base_url(self.settings.notion_base_url)}/{safe_endpoint}",
+                    f"{base_url}/{safe_endpoint}",
                     headers={
                         "Accept": "application/json",
                         "Authorization": f"Bearer {self.settings.notion_api_token}",
@@ -425,9 +395,7 @@ class NotionClient:
     def _blocked_result(self) -> ConnectorReadResult | None:
         if self.settings.allow_http_probing:
             return None
-        return ConnectorReadResult(
-            "blocked", "Notion live reads are blocked until WAIT_ALLOW_HTTP_PROBING=true."
-        )
+        return ConnectorReadResult("blocked", "Notion live reads are blocked until WAIT_ALLOW_HTTP_PROBING=true.")
 
     def _not_configured_result(self) -> ConnectorReadResult | None:
         missing = [
@@ -439,9 +407,7 @@ class NotionClient:
             if not value
         ]
         if missing:
-            return ConnectorReadResult(
-                "not_configured", f"Notion credentials are incomplete: {', '.join(missing)}."
-            )
+            return ConnectorReadResult("not_configured", f"Notion credentials are incomplete: {', '.join(missing)}.")
         return None
 
     def _not_configured_data_source_result(self) -> ConnectorReadResult | None:
@@ -454,13 +420,11 @@ class NotionClient:
             if not value
         ]
         if missing:
-            return ConnectorReadResult(
-                "not_configured", f"Notion credentials are incomplete: {', '.join(missing)}."
-            )
+            return ConnectorReadResult("not_configured", f"Notion credentials are incomplete: {', '.join(missing)}.")
         return None
 
 
-def _api_base_url(value: str) -> str:
+def _api_base_url(value: str, *, allow_insecure_transport: bool = False) -> str:
     if any(ord(character) < 32 for character in value):
         raise NotionReadError("Notion base URL contains control characters")
     parsed = urlsplit(value.strip())
@@ -468,6 +432,12 @@ def _api_base_url(value: str) -> str:
         raise NotionReadError("Notion base URL must be an HTTP(S) URL")
     if parsed.username or parsed.password or parsed.query or parsed.fragment:
         raise NotionReadError("Notion base URL must not contain credentials or query data")
+    try:
+        validate_operator_url(value, allow_insecure_transport=allow_insecure_transport)
+    except NetSecurityError as exc:
+        raise NotionReadError(
+            "Notion base URL must use HTTPS; set WAIT_ALLOW_INSECURE_PROVIDER_TRANSPORT=true to allow plain HTTP"
+        ) from exc
     safe = value.strip().rstrip("/")
     return safe if safe.endswith("/v1") else f"{safe}/v1"
 
@@ -517,14 +487,10 @@ def _safe_comment_markdown(value: object) -> str:
     if (
         not normalized
         or len(normalized) > MAX_COMMENT_MARKDOWN_LENGTH
-        or any(
-            ord(character) < 32 and character not in {"\n", "\r", "\t"}
-            for character in normalized
-        )
+        or any(ord(character) < 32 and character not in {"\n", "\r", "\t"} for character in normalized)
     ):
         raise NotionReadError(
-            "Notion comment must be non-empty text of at most "
-            f"{MAX_COMMENT_MARKDOWN_LENGTH} characters"
+            f"Notion comment must be non-empty text of at most {MAX_COMMENT_MARKDOWN_LENGTH} characters"
         )
     return normalized
 
@@ -552,9 +518,7 @@ def _mapped_uuid_ids(
     if not isinstance(raw_ids, list) or not raw_ids:
         raise NotionReadError(f"Notion tenant {resource_name} mapping is missing")
     if len(raw_ids) > max_items:
-        raise NotionReadError(
-            f"Notion tenant {resource_name} mapping exceeds {max_items} {resource_name}s"
-        )
+        raise NotionReadError(f"Notion tenant {resource_name} mapping exceeds {max_items} {resource_name}s")
     normalized: set[str] = set()
     for raw_id in raw_ids:
         if not isinstance(raw_id, str):
@@ -687,11 +651,7 @@ def _title_from_properties(value: object) -> str:
         if not isinstance(rich_value, list):
             continue
         parts = [
-            text
-            for item in rich_value
-            if isinstance(item, Mapping)
-            for text in [_text(item.get("plain_text"))]
-            if text
+            text for item in rich_value if isinstance(item, Mapping) for text in [_text(item.get("plain_text"))] if text
         ]
         if parts:
             return "".join(parts)[:500]

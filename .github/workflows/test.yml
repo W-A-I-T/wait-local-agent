@@ -49,6 +49,7 @@ jobs:
           tests/test_platform_support.py
           tests/test_fs_permissions.py
           tests/test_store_permissions.py
+          tests/test_hardening_checks.py
 
   ui:
     timeout-minutes: 10

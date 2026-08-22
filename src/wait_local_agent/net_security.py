@@ -49,6 +49,48 @@ def _normalise_allowed_hosts(allowed_hosts: tuple[str, ...]) -> frozenset[str]:
     )
 
 
+def validate_operator_url(
+    url: str,
+    *,
+    allow_insecure_transport: bool = False,
+    allow_loopback: bool = True,
+) -> None:
+    """Validate an operator-configured provider URL without changing it.
+
+    The caller deliberately retains responsibility for any provider-specific
+    path normalization.  This function only applies the shared transport
+    policy to the configured origin.
+    """
+
+    candidate = url.strip()
+    if not candidate or len(candidate) > _MAX_URL_LENGTH:
+        raise NetSecurityError("provider origin must be bounded URL text")
+    try:
+        parsed = httpx.URL(candidate)
+    except (httpx.InvalidURL, ValueError) as exc:
+        raise NetSecurityError("provider origin must be a valid HTTP(S) URL") from exc
+
+    scheme = parsed.scheme.casefold()
+    if scheme not in {"http", "https"}:
+        raise NetSecurityError("provider origin must use HTTP or HTTPS")
+    try:
+        split = urlsplit(candidate)
+        has_userinfo = split.username is not None or split.password is not None
+    except ValueError as exc:
+        raise NetSecurityError("provider origin must not contain embedded credentials") from exc
+    if has_userinfo:
+        raise NetSecurityError("provider origin must not contain embedded credentials")
+    if not parsed.host:
+        raise NetSecurityError("provider origin must include a hostname")
+
+    host = parsed.host.casefold().rstrip(".")
+    is_loopback_host = host in _LOOPBACK_HOSTS
+    if is_loopback_host and not allow_loopback:
+        raise NetSecurityError("loopback provider origins are disabled")
+    if scheme == "http" and not is_loopback_host and not allow_insecure_transport:
+        raise NetSecurityError("non-loopback provider origins must use HTTPS")
+
+
 def validate_provider_origin(
     url: str,
     *,
@@ -68,27 +110,22 @@ def validate_provider_origin(
         parsed = httpx.URL(candidate)
     except (httpx.InvalidURL, ValueError) as exc:
         raise NetSecurityError("provider origin must be a valid HTTP(S) URL") from exc
-
     scheme = parsed.scheme.casefold()
     if scheme not in {"http", "https"}:
         raise NetSecurityError("provider origin must use HTTP or HTTPS")
     try:
-        has_userinfo = urlsplit(candidate).username is not None or urlsplit(candidate).password is not None
+        split = urlsplit(candidate)
+        has_userinfo = split.username is not None or split.password is not None
     except ValueError as exc:
         raise NetSecurityError("provider origin must not contain embedded credentials") from exc
     if has_userinfo:
         raise NetSecurityError("provider origin must not contain embedded credentials")
     if not parsed.host:
         raise NetSecurityError("provider origin must include a hostname")
-
     host = parsed.host.casefold().rstrip(".")
     if host not in _normalise_allowed_hosts(allowed_hosts):
         raise NetSecurityError("provider origin host is not allowlisted")
-    is_loopback_host = host in _LOOPBACK_HOSTS
-    if is_loopback_host and not allow_loopback:
-        raise NetSecurityError("loopback provider origins are disabled")
-    if scheme == "http" and not is_loopback_host:
-        raise NetSecurityError("non-loopback provider origins must use HTTPS")
+    validate_operator_url(candidate, allow_loopback=allow_loopback)
     return parsed.copy_with(host=host)
 
 

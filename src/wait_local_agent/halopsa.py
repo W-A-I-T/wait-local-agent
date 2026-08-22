@@ -23,6 +23,7 @@ from wait_local_agent.models import (
     HaloWriteRequest,
     HaloWriteResult,
 )
+from wait_local_agent.net_security import NetSecurityError, validate_operator_url
 
 DEFAULT_PAGE_SIZE = 50
 MAX_PAGE_SIZE = 100
@@ -191,10 +192,14 @@ class HaloPSAClient:
         self, endpoint: str, *, params: dict[str, QueryValue] | None = None
     ) -> _HaloTransportResult:
         token = self._access_token()
+        base_url = _api_base_url(
+            self.settings.halopsa_base_url,
+            allow_insecure_transport=self.settings.allow_insecure_provider_transport,
+        )
         with self._client() as client:
             try:
                 response = client.get(
-                    f"{_api_base_url(self.settings.halopsa_base_url)}/{_safe_endpoint(endpoint)}",
+                    f"{base_url}/{_safe_endpoint(endpoint)}",
                     headers={"Authorization": f"Bearer {token}"},
                     params=params,
                 )
@@ -371,10 +376,14 @@ class HaloPSAClient:
 
     def _post(self, endpoint: str, payload: object) -> tuple[object, int]:
         token = self._access_token()
+        base_url = _api_base_url(
+            self.settings.halopsa_base_url,
+            allow_insecure_transport=self.settings.allow_insecure_provider_transport,
+        )
         with self._client() as client:
             try:
                 response = client.post(
-                    f"{_api_base_url(self.settings.halopsa_base_url)}/{_safe_endpoint(endpoint)}",
+                    f"{base_url}/{_safe_endpoint(endpoint)}",
                     headers={"Authorization": f"Bearer {token}"},
                     json=payload,
                 )
@@ -553,7 +562,14 @@ class HaloReadError(Exception):
         self.retry_after = retry_after
 
 
-def _api_base_url(base_url: str) -> str:
+def _api_base_url(base_url: str, *, allow_insecure_transport: bool = False) -> str:
+    try:
+        validate_operator_url(base_url, allow_insecure_transport=allow_insecure_transport)
+    except NetSecurityError as exc:
+        raise HaloReadError(
+            "HaloPSA base URL must use HTTPS; set "
+            "WAIT_ALLOW_INSECURE_PROVIDER_TRANSPORT=true to allow plain HTTP"
+        ) from exc
     stripped = base_url.rstrip("/")
     return stripped if stripped.endswith("/api") else f"{stripped}/api"
 
@@ -566,8 +582,22 @@ def _safe_endpoint(endpoint: str) -> str:
 
 def _token_url(settings: Settings) -> str:
     if settings.halopsa_token_url:
+        try:
+            validate_operator_url(
+                settings.halopsa_token_url,
+                allow_insecure_transport=settings.allow_insecure_provider_transport,
+            )
+        except NetSecurityError as exc:
+            raise HaloReadError(
+                "HaloPSA token URL must use HTTPS; set "
+                "WAIT_ALLOW_INSECURE_PROVIDER_TRANSPORT=true to allow plain HTTP"
+            ) from exc
         return settings.halopsa_token_url
-    return f"{_api_base_url(settings.halopsa_base_url)}/auth/token"
+    base_url = _api_base_url(
+        settings.halopsa_base_url,
+        allow_insecure_transport=settings.allow_insecure_provider_transport,
+    )
+    return f"{base_url}/auth/token"
 
 
 def _bounded_page_size(page_size: int) -> int:

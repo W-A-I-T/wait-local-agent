@@ -124,7 +124,13 @@ def open_private(path: Path, flags: int, *, exclusive: bool) -> int:
     safe_flags = flags | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_BINARY", 0)
     if exclusive:
         safe_flags |= os.O_EXCL
-    return os.open(path, safe_flags, 0o600)
+    file_descriptor = os.open(path, safe_flags, 0o600)
+    if not platform_support.posix_permissions_supported():
+        # The file is now present but no caller has written secret bytes yet.
+        # ACL failures are deliberately logged by the shared helper and do not
+        # destroy the otherwise usable artifact path.
+        restrict_existing_file(path)
+    return file_descriptor
 
 
 def write_private_bytes(path: Path, data: bytes, *, replace_existing: bool) -> None:
@@ -164,7 +170,11 @@ def write_private_bytes(path: Path, data: bytes, *, replace_existing: bool) -> N
             pass
 
 
-def create_private_directory(path: Path, *, backend: _PermissionBackend | None = None) -> None:
+def create_private_directory(
+    path: Path,
+    *,
+    backend: _PermissionBackend | None = None,
+) -> None:
     """Create a new private directory and apply a Windows DACL when needed."""
 
     if path.exists():

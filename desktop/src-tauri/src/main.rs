@@ -9,6 +9,9 @@ use std::{
     time::{Duration, Instant},
 };
 
+#[cfg(unix)]
+use std::os::unix::fs::OpenOptionsExt;
+
 use tauri::{Manager, WindowEvent};
 use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogKind};
 use tauri_plugin_shell::{
@@ -209,22 +212,131 @@ fn create_admin_token(path: &Path) -> Result<String, Box<dyn Error>> {
     getrandom::fill(&mut bytes)?;
     let token: String = bytes.iter().map(|byte| format!("{byte:02x}")).collect();
 
-    let mut file = OpenOptions::new()
-        .create(true)
-        .truncate(true)
-        .write(true)
-        .open(path)?;
+    let mut options = OpenOptions::new();
+    options.create(true).truncate(true).write(true);
+    #[cfg(unix)]
+    options.mode(0o600);
+    let mut file = options.open(path)?;
+    #[cfg(windows)]
+    if let Err(error) = protect_admin_token(path) {
+        eprintln!("WAIT Local Agent could not protect admin token ACL: {error}");
+    }
     file.write_all(token.as_bytes())?;
     file.write_all(b"\n")?;
     file.flush()?;
 
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        fs::set_permissions(path, fs::Permissions::from_mode(0o600))?;
+    Ok(token)
+}
+
+#[cfg(windows)]
+fn protect_admin_token(path: &Path) -> Result<(), Box<dyn Error>> {
+    use std::io;
+    use windows_sys::Win32::Foundation::{CloseHandle, GetLastError, LocalFree, HANDLE};
+    use windows_sys::Win32::Security::Authorization::{
+        ConvertSidToStringSidW, ConvertStringSecurityDescriptorToSecurityDescriptorW,
+        SetNamedSecurityInfoW, SE_FILE_OBJECT, SDDL_REVISION_1,
+    };
+    use windows_sys::Win32::Security::{
+        DACL_SECURITY_INFORMATION, GetSecurityDescriptorDacl, GetTokenInformation,
+        PROTECTED_DACL_SECURITY_INFORMATION, TOKEN_QUERY, TOKEN_USER, TokenUser,
+    };
+    use windows_sys::Win32::System::Threading::{GetCurrentProcess, OpenProcessToken};
+
+    fn win32_error(code: u32) -> io::Error {
+        io::Error::from_raw_os_error(code as i32)
     }
 
-    Ok(token)
+    unsafe {
+        let mut token: HANDLE = std::ptr::null_mut();
+        if OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &mut token) == 0 {
+            return Err(win32_error(GetLastError()).into());
+        }
+
+        let mut required = 0_u32;
+        GetTokenInformation(
+            token,
+            TokenUser,
+            std::ptr::null_mut(),
+            0,
+            &mut required,
+        );
+        let mut token_buffer = vec![0_u8; required as usize];
+        if GetTokenInformation(
+            token,
+            TokenUser,
+            token_buffer.as_mut_ptr().cast(),
+            required,
+            &mut required,
+        ) == 0
+        {
+            let error = win32_error(GetLastError());
+            CloseHandle(token);
+            return Err(error.into());
+        }
+        let token_user = &*(token_buffer.as_ptr().cast::<TOKEN_USER>());
+        let mut sid_text: *mut u16 = std::ptr::null_mut();
+        if ConvertSidToStringSidW(token_user.User.Sid, &mut sid_text) == 0 {
+            let error = win32_error(GetLastError());
+            CloseHandle(token);
+            return Err(error.into());
+        }
+        let mut sid_length = 0_usize;
+        while *sid_text.add(sid_length) != 0 {
+            sid_length += 1;
+        }
+        let sid = String::from_utf16_lossy(std::slice::from_raw_parts(sid_text, sid_length));
+        LocalFree(sid_text.cast());
+        CloseHandle(token);
+
+        let sddl = format!("D:PAI(A;;FA;;;{sid})");
+        let sddl_w: Vec<u16> = sddl.encode_utf16().chain(std::iter::once(0)).collect();
+        let mut descriptor = std::ptr::null_mut();
+        if ConvertStringSecurityDescriptorToSecurityDescriptorW(
+            sddl_w.as_ptr(),
+            SDDL_REVISION_1,
+            &mut descriptor,
+            std::ptr::null_mut(),
+        ) == 0
+        {
+            return Err(win32_error(GetLastError()).into());
+        }
+
+        let mut dacl = std::ptr::null_mut();
+        let mut dacl_present = 0;
+        let mut dacl_defaulted = 0;
+        if GetSecurityDescriptorDacl(
+            descriptor,
+            &mut dacl_present,
+            &mut dacl,
+            &mut dacl_defaulted,
+        ) == 0
+        {
+            let error = win32_error(GetLastError());
+            LocalFree(descriptor.cast());
+            return Err(error.into());
+        }
+
+        let path_w: Vec<u16> = path
+            .as_os_str()
+            .to_string_lossy()
+            .encode_utf16()
+            .chain(std::iter::once(0))
+            .collect();
+        let result = SetNamedSecurityInfoW(
+            path_w.as_ptr(),
+            SE_FILE_OBJECT,
+            DACL_SECURITY_INFORMATION | PROTECTED_DACL_SECURITY_INFORMATION,
+            std::ptr::null_mut(),
+            std::ptr::null_mut(),
+            dacl,
+            std::ptr::null_mut(),
+        );
+        LocalFree(descriptor.cast());
+        if result != 0 {
+            return Err(win32_error(result).into());
+        }
+    }
+    Ok(())
 }
 
 fn reserve_api_port() -> Result<u16, Box<dyn Error>> {

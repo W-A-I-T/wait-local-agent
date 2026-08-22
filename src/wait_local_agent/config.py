@@ -75,6 +75,7 @@ class Settings:
     local_model_name: str
     local_model_timeout_seconds: float
     vector_backend: str
+    allow_insecure_provider_transport: bool = False
     allow_power_platform_deployment: bool = False
     api_token: str = ""
     admin_token: str = ""
@@ -230,6 +231,7 @@ def load_settings() -> Settings:
         allowed_doc_root=Path(os.getenv("WAIT_ALLOWED_DOC_ROOT", "examples/sample_docs")),
         allow_write_actions=_bool_env("WAIT_ALLOW_WRITE_ACTIONS"),
         allow_http_probing=_bool_env("WAIT_ALLOW_HTTP_PROBING"),
+        allow_insecure_provider_transport=_bool_env("WAIT_ALLOW_INSECURE_PROVIDER_TRANSPORT"),
         allow_cloud_fallback=_bool_env("WAIT_ALLOW_CLOUD_FALLBACK"),
         allow_llm_inference=_bool_env("WAIT_ALLOW_LLM_INFERENCE"),
         allow_power_platform_deployment=_bool_env("WAIT_ALLOW_POWER_PLATFORM_DEPLOYMENT"),

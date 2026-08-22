@@ -295,7 +295,10 @@ def configure_founder(
     token: str,
 ) -> dict[str, object]:
     normalized_base_url = base_url.strip().rstrip("/")
-    validate_launch_passport_base_url(normalized_base_url)
+    validate_launch_passport_base_url(
+        normalized_base_url,
+        allow_insecure_transport=settings.allow_insecure_provider_transport,
+    )
     if not project_id.strip() or "/" in project_id or "\\" in project_id:
         raise ValueError("project id must be a non-empty path segment")
     if not token.strip():
@@ -519,7 +522,11 @@ def _open_client(settings: Settings, config: dict[str, str]) -> LaunchPassportCl
         except SecretVaultError:
             return None
 
-    return LaunchPassportClient(config["lp_base_url"], token_provider)
+    return LaunchPassportClient(
+        config["lp_base_url"],
+        token_provider,
+        allow_insecure_transport=settings.allow_insecure_provider_transport,
+    )
 
 
 def _persist_poll_outcome(store: Store, artifact_id: str | None, outcome: PollOutcome) -> None:

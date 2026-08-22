@@ -19,6 +19,7 @@ from wait_local_agent.models import (
     SyncroWriteRequest,
     SyncroWriteResult,
 )
+from wait_local_agent.net_security import NetSecurityError, validate_operator_url
 
 DEFAULT_PAGE = 1
 MAX_PAGE = 1_000_000
@@ -39,8 +40,7 @@ class SyncroCommentsResponse:
 
 
 class SyncroReadProvider(Protocol):
-    def health(self) -> ConnectorReadResult:
-        ...
+    def health(self) -> ConnectorReadResult: ...
 
     def list_tickets(
         self,
@@ -50,11 +50,9 @@ class SyncroReadProvider(Protocol):
         customer_id: str | None = None,
         status: str | None = None,
         since_updated_at: str | None = None,
-    ) -> SyncroReadResponse:
-        ...
+    ) -> SyncroReadResponse: ...
 
-    def get_ticket(self, ticket_id: str) -> SyncroReadResponse:
-        ...
+    def get_ticket(self, ticket_id: str) -> SyncroReadResponse: ...
 
     def list_ticket_comments(
         self,
@@ -66,8 +64,7 @@ class SyncroReadProvider(Protocol):
         sort_direction: str = "ASC",
         created_after: str | None = None,
         created_before: str | None = None,
-    ) -> SyncroCommentsResponse:
-        ...
+    ) -> SyncroCommentsResponse: ...
 
     def list_customers(
         self,
@@ -75,19 +72,15 @@ class SyncroReadProvider(Protocol):
         page: int = DEFAULT_PAGE,
         query: str | None = None,
         business_name: str | None = None,
-    ) -> SyncroReadResponse:
-        ...
+    ) -> SyncroReadResponse: ...
 
-    def get_customer(self, customer_id: str) -> SyncroReadResponse:
-        ...
+    def get_customer(self, customer_id: str) -> SyncroReadResponse: ...
 
 
 class SyncroWriteProvider(Protocol):
-    def write_health(self) -> ConnectorReadResult:
-        ...
+    def write_health(self) -> ConnectorReadResult: ...
 
-    def execute_write(self, request: SyncroWriteRequest) -> SyncroWriteResult:
-        ...
+    def execute_write(self, request: SyncroWriteRequest) -> SyncroWriteResult: ...
 
 
 class SyncroReadError(Exception):
@@ -186,11 +179,7 @@ class SyncroClient:
             payload = self._get(f"tickets/{safe_id}/comments", params=params)
         except SyncroReadError as exc:
             return SyncroCommentsResponse(ConnectorReadResult("failed", exc.message), [], {})
-        items = [
-            item
-            for row in _payload_rows(payload, "comments")
-            if (item := _normalize_comment(row)) is not None
-        ]
+        items = [item for row in _payload_rows(payload, "comments") if (item := _normalize_comment(row)) is not None]
         return SyncroCommentsResponse(
             ConnectorReadResult(
                 "ready", f"Syncro ticket comments read succeeded from tickets/{safe_id}/comments.", len(items)
@@ -279,11 +268,7 @@ class SyncroClient:
             payload = self._get(endpoint, params=params)
         except SyncroReadError as exc:
             return SyncroReadResponse(ConnectorReadResult("failed", exc.message), [])
-        items = [
-            item
-            for row in _payload_rows(payload, payload_key)
-            if (item := normalizer(row)) is not None
-        ]
+        items = [item for row in _payload_rows(payload, payload_key) if (item := normalizer(row)) is not None]
         return SyncroReadResponse(
             ConnectorReadResult("ready", f"Syncro read succeeded from {endpoint}.", len(items)),
             items,
@@ -296,19 +281,23 @@ class SyncroClient:
         params: dict[str, str | int] | None = None,
     ) -> object:
         if not self.settings.allow_http_probing:
-            raise SyncroReadError(
-                "Syncro live reads are blocked until WAIT_ALLOW_HTTP_PROBING=true."
-            )
+            raise SyncroReadError("Syncro live reads are blocked until WAIT_ALLOW_HTTP_PROBING=true.")
         missing = self._not_configured_result()
         if missing is not None:
             raise SyncroReadError(missing.message)
         try:
+            base_url = _api_base_url(
+                _safe_base_url(
+                    self.settings.syncro_base_url,
+                    allow_insecure_transport=self.settings.allow_insecure_provider_transport,
+                )
+            )
             with httpx.Client(
                 timeout=self.settings.connector_timeout_seconds,
                 transport=self.transport,
             ) as client:
                 response = client.get(
-                    f"{_api_base_url(_safe_base_url(self.settings.syncro_base_url))}/"
+                    f"{base_url}/"
                     f"{_safe_endpoint(endpoint)}",
                     headers={
                         "Authorization": f"Bearer {self.settings.syncro_api_token}",
@@ -317,9 +306,7 @@ class SyncroClient:
                     params=params,
                 )
         except (httpx.TimeoutException, httpx.ConnectError) as exc:
-            raise SyncroReadError(
-                "Syncro request failed before receiving a response."
-            ) from exc
+            raise SyncroReadError("Syncro request failed before receiving a response.") from exc
         except httpx.HTTPError as exc:
             raise SyncroReadError("Syncro request failed.") from exc
         if response.status_code >= 400:
@@ -327,29 +314,29 @@ class SyncroClient:
         try:
             return response.json()
         except ValueError as exc:
-            raise SyncroReadError(
-                f"Syncro GET {endpoint} returned malformed JSON."
-            ) from exc
+            raise SyncroReadError(f"Syncro GET {endpoint} returned malformed JSON.") from exc
 
     def _post(self, endpoint: str, payload: dict[str, object]) -> tuple[object, int]:
         if not self.settings.allow_http_probing:
-            raise SyncroReadError(
-                "Syncro live writes are blocked until WAIT_ALLOW_HTTP_PROBING=true."
-            )
+            raise SyncroReadError("Syncro live writes are blocked until WAIT_ALLOW_HTTP_PROBING=true.")
         if not self.settings.allow_write_actions:
-            raise SyncroReadError(
-                "Syncro live writes are blocked until WAIT_ALLOW_WRITE_ACTIONS=true."
-            )
+            raise SyncroReadError("Syncro live writes are blocked until WAIT_ALLOW_WRITE_ACTIONS=true.")
         missing = self._not_configured_result()
         if missing is not None:
             raise SyncroReadError(missing.message)
         try:
+            base_url = _api_base_url(
+                _safe_base_url(
+                    self.settings.syncro_base_url,
+                    allow_insecure_transport=self.settings.allow_insecure_provider_transport,
+                )
+            )
             with httpx.Client(
                 timeout=self.settings.connector_timeout_seconds,
                 transport=self.transport,
             ) as client:
                 response = client.post(
-                    f"{_api_base_url(_safe_base_url(self.settings.syncro_base_url))}/"
+                    f"{base_url}/"
                     f"{_safe_endpoint(endpoint)}",
                     headers={
                         "Authorization": f"Bearer {self.settings.syncro_api_token}",
@@ -359,27 +346,19 @@ class SyncroClient:
                     json=payload,
                 )
         except (httpx.TimeoutException, httpx.ConnectError) as exc:
-            raise SyncroReadError(
-                "Syncro POST request failed before receiving a response."
-            ) from exc
+            raise SyncroReadError("Syncro POST request failed before receiving a response.") from exc
         except httpx.HTTPError as exc:
             raise SyncroReadError("Syncro POST request failed.") from exc
         if response.status_code >= 400:
-            raise SyncroReadError(
-                _http_error_message(response.status_code, endpoint, method="POST")
-            )
+            raise SyncroReadError(_http_error_message(response.status_code, endpoint, method="POST"))
         if response.status_code not in {200, 201}:
-            raise SyncroReadError(
-                f"Syncro POST {endpoint} returned unexpected HTTP {response.status_code}."
-            )
+            raise SyncroReadError(f"Syncro POST {endpoint} returned unexpected HTTP {response.status_code}.")
         if not response.content:
             return {}, response.status_code
         try:
             return response.json(), response.status_code
         except ValueError as exc:
-            raise SyncroReadError(
-                f"Syncro POST {endpoint} returned malformed JSON."
-            ) from exc
+            raise SyncroReadError(f"Syncro POST {endpoint} returned malformed JSON.") from exc
 
     def _blocked_result(self) -> ConnectorReadResult | None:
         if self.settings.allow_http_probing:
@@ -402,9 +381,7 @@ class SyncroClient:
             "Syncro live writes are blocked until WAIT_ALLOW_WRITE_ACTIONS=true.",
         )
 
-    def _write_blocked_write_result(
-        self, request: SyncroWriteRequest
-    ) -> SyncroWriteResult | None:
+    def _write_blocked_write_result(self, request: SyncroWriteRequest) -> SyncroWriteResult | None:
         blocked = self._write_blocked_result()
         if blocked is None:
             return None
@@ -431,9 +408,7 @@ class SyncroClient:
             )
         return None
 
-    def _not_configured_write_result(
-        self, request: SyncroWriteRequest
-    ) -> SyncroWriteResult | None:
+    def _not_configured_write_result(self, request: SyncroWriteRequest) -> SyncroWriteResult | None:
         missing = self._not_configured_result()
         if missing is None:
             return None
@@ -466,7 +441,7 @@ def _api_base_url(base_url: str) -> str:
     return f"{stripped}/api/v1"
 
 
-def _safe_base_url(base_url: str) -> str:
+def _safe_base_url(base_url: str, *, allow_insecure_transport: bool = False) -> str:
     if any(ord(character) < 32 for character in base_url):
         raise SyncroReadError("Syncro base URL contains control characters.")
     parsed = urlsplit(base_url)
@@ -474,6 +449,12 @@ def _safe_base_url(base_url: str) -> str:
         raise SyncroReadError("Syncro base URL must be an HTTP(S) URL.")
     if parsed.username or parsed.password or parsed.query or parsed.fragment:
         raise SyncroReadError("Syncro base URL must not contain credentials or query data.")
+    try:
+        validate_operator_url(base_url, allow_insecure_transport=allow_insecure_transport)
+    except NetSecurityError as exc:
+        raise SyncroReadError(
+            "Syncro base URL must use HTTPS; set WAIT_ALLOW_INSECURE_PROVIDER_TRANSPORT=true to allow plain HTTP."
+        ) from exc
     return base_url
 
 
@@ -671,23 +652,15 @@ def _write_payload(action_type: str, fields: Mapping[str, object]) -> dict[str, 
     subject = fields.get("subject")
     body = fields.get("body")
     if not isinstance(subject, str) or not subject.strip() or len(subject.strip()) > 250:
-        raise SyncroReadError(
-            "Syncro comment subject must be a non-empty string of 250 characters or fewer."
-        )
+        raise SyncroReadError("Syncro comment subject must be a non-empty string of 250 characters or fewer.")
     if not isinstance(body, str) or not body.strip() or len(body.strip()) > 32_000:
-        raise SyncroReadError(
-            "Syncro comment body must be a non-empty string of 32000 characters or fewer."
-        )
-    if any(
-        ord(character) < 32 for character in subject + body if character not in "\r\n\t"
-    ):
+        raise SyncroReadError("Syncro comment body must be a non-empty string of 32000 characters or fewer.")
+    if any(ord(character) < 32 for character in subject + body if character not in "\r\n\t"):
         raise SyncroReadError("Syncro comment fields contain control characters.")
     hidden = fields.get("hidden", True)
     do_not_email = fields.get("do_not_email", True)
     if not isinstance(hidden, bool) or not isinstance(do_not_email, bool):
-        raise SyncroReadError(
-            "Syncro comment visibility and notification flags must be booleans."
-        )
+        raise SyncroReadError("Syncro comment visibility and notification flags must be booleans.")
     return {
         "subject": subject.strip(),
         "body": body.strip(),
