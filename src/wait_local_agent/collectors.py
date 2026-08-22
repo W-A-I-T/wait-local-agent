@@ -2,6 +2,13 @@
 
 Legacy observation records are intentionally persisted as flattened
 ``<module>.metadata`` observations for compatibility with existing evidence.
+
+Host collectors that read Linux process, socket, interface, firewall, database,
+wireless, routing, endpoint-agent, or web-service sources are Linux-only by
+design. On other platforms their source functions return empty collections
+rather than failing; the typed layer reports ``EMPTY`` with a platform warning.
+Run these collectors in the Docker/Linux namespace described in
+``docs/operations/host-collection.md`` when host evidence is required.
 """
 
 from __future__ import annotations
@@ -699,6 +706,7 @@ class ProcessInventoryCollectorModule:
         return self._process_records_with_outcomes(limit=limit, strict=strict).records
 
     def _process_records_with_outcomes(self, limit=None, *, strict=False):
+        """Read Linux ``/proc`` process records; return empty off Linux by design."""
         if limit == 0:
             return _TypedCollection([])
 
@@ -933,6 +941,7 @@ class ListeningPortsCollectorModule:
         return self._socket_records_with_outcomes(limit=limit, strict=strict).records
 
     def _socket_records_with_outcomes(self, limit=None, *, strict=False):
+        """Read Linux ``/proc/net`` socket tables; return empty off Linux by design."""
         if limit == 0:
             return _TypedCollection([])
 
@@ -1230,6 +1239,7 @@ class NetworkInterfacesCollectorModule:
         return self._interface_records_with_outcomes(limit=limit, strict=strict).records
 
     def _interface_records_with_outcomes(self, limit=None, *, strict=False):
+        """Read Linux ``/sys/class/net`` interfaces; return empty off Linux by design."""
         if limit == 0:
             return _TypedCollection([])
 
@@ -1835,6 +1845,7 @@ class FirewallRulesCollectorModule:
         return self._firewall_rule_records_with_outcomes(limit=limit, strict=False).records
 
     def _firewall_rule_records_with_outcomes(self, limit=None, *, strict=False):
+        """Read Linux firewall configuration files; return empty off Linux by design."""
         if limit == 0:
             return _TypedCollection([])
 
@@ -2118,6 +2129,7 @@ class DatabaseInventoryCollectorModule:
         return self._database_records_with_outcomes(limit=limit, strict=False).records
 
     def _database_records_with_outcomes(self, limit=None, *, strict=False):
+        """Read Linux database configuration files; return empty off Linux by design."""
         if limit == 0:
             return _TypedCollection([])
 
@@ -2495,6 +2507,7 @@ class WifiInventoryCollectorModule:
         return self._wifi_records_with_outcomes(limit=limit, strict=False).records
 
     def _wifi_records_with_outcomes(self, limit=None, *, strict=False):
+        """Read Linux wireless metadata; return empty off Linux by design."""
         if limit == 0:
             return _TypedCollection([])
 
@@ -2907,6 +2920,7 @@ class RoutingTableCollectorModule:
         return self._route_records_with_outcomes(limit=limit, strict=False).records
 
     def _route_records_with_outcomes(self, limit=None, *, strict=False):
+        """Read Linux routing tables; return empty off Linux by design."""
         if limit == 0:
             return _TypedCollection([])
 
@@ -3260,6 +3274,7 @@ class EndpointAgentsCollectorModule:
         return self._agent_records_with_outcomes(limit=limit, strict=False).records
 
     def _agent_records_with_outcomes(self, limit=None, *, strict=False):
+        """Read Linux endpoint-agent markers; return empty off Linux by design."""
         if limit == 0:
             return _TypedCollection([])
 
@@ -3484,6 +3499,7 @@ class WebServicesCollectorModule:
         return self._web_service_records_with_outcomes(limit=limit, strict=False).records
 
     def _web_service_records_with_outcomes(self, limit=None, *, strict=False):
+        """Read Linux web-service configuration files; return empty off Linux by design."""
         if limit == 0:
             return _TypedCollection([])
 

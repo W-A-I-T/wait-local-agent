@@ -25,7 +25,12 @@ claimed for this matrix.
 
 All outbound calls require `WAIT_ALLOW_HTTP_PROBING=true`. Mutations also
 require `WAIT_ALLOW_WRITE_ACTIONS=true` and the applicable approval flow.
-Power Platform output is a source package, not provider import or deployment.
+The default Power Platform output is a credential-free source package for a
+later operator-run `pac solution pack`. Provider import and rollback are
+available only when both `WAIT_ALLOW_WRITE_ACTIONS` and
+`WAIT_ALLOW_POWER_PLATFORM_DEPLOYMENT` are enabled and an approved stage
+request exists; see the [Power Platform deployment stages](../consultant/consultant-power-platform-deployment.md)
+documentation.
 
 Provider setup pages: [HaloPSA](halopsa.md), [NinjaOne](ninjaone.md),
 [Datto](datto-rmm.md), [N-central](ncentral.md), [N-sight](nsight.md),

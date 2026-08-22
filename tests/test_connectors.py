@@ -350,6 +350,15 @@ def test_connector_write_status_is_scoped_to_each_connector(settings) -> None:
         autotask_username="api-user",
         autotask_secret="api-secret",
         autotask_integration_code="integration-code",
+        notion_api_token="notion-token",
+        notion_client_page_map_json='{"acme":"page"}',
+        syncro_base_url="https://syncro.example.test",
+        syncro_api_token="syncro-token",
+        m365_graph_base_url="https://graph.example.test",
+        m365_access_token="m365-token",
+        timezest_base_url="https://timezest.example.test",
+        timezest_api_key="timezest-key",
+        timezest_client_map_json='{"acme":{"connectwise_psa_company_id":1}}',
     )
 
     statuses = {status.id: status for status in list_connector_statuses(active)}
@@ -358,6 +367,28 @@ def test_connector_write_status_is_scoped_to_each_connector(settings) -> None:
     assert statuses["connectwise"].write_actions_enabled is False
     assert statuses["servicenow"].write_actions_enabled is True
     assert statuses["autotask"].write_actions_enabled is True
+    assert statuses["notion"].write_actions_enabled is True
+    assert statuses["syncro"].write_actions_enabled is True
+    assert statuses["m365"].write_actions_enabled is True
+    assert statuses["timezest"].write_actions_enabled is True
+    assert statuses["hudu"].write_actions_enabled is False
+
+
+def test_rmm_write_status_includes_screenconnect(settings) -> None:
+    active = replace(
+        settings,
+        allow_http_probing=True,
+        allow_write_actions=True,
+        screenconnect_base_url="https://screenconnect.example.test",
+        screenconnect_extension_id="extension",
+        screenconnect_auth_secret="auth-secret",
+        screenconnect_origin="https://screenconnect.example.test",
+        screenconnect_client_sessions_map_json='{"acme":"client"}',
+    )
+
+    statuses = {status.id: status for status in list_connector_statuses(active)}
+
+    assert statuses["rmm"].write_actions_enabled is True
 
 
 def test_m365_user_creation_approval_resolves_vault_secret_without_persisting_it(settings, tmp_path) -> None:

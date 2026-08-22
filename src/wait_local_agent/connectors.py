@@ -436,6 +436,7 @@ def list_connector_statuses(settings: Settings) -> list[ConnectorStatus]:
                 "to enable Notion page reads."
                 )
             ),
+            write_actions_enabled=settings.allow_write_actions and notion_configured,
             http_probing_enabled=settings.allow_http_probing,
         ),
         ConnectorStatus(
@@ -483,6 +484,7 @@ def list_connector_statuses(settings: Settings) -> list[ConnectorStatus]:
                 if syncro_status == "blocked"
                 else "Set WAIT_SYNCRO_BASE_URL and WAIT_SYNCRO_API_TOKEN to enable Syncro reads."
             ),
+            write_actions_enabled=settings.allow_write_actions and syncro_configured,
             http_probing_enabled=settings.allow_http_probing,
         ),
         ConnectorStatus(
@@ -538,6 +540,7 @@ def list_connector_statuses(settings: Settings) -> list[ConnectorStatus]:
                     "live identity, group, license, mailbox-folder, and Intune managed-device context."
                 )
             ),
+            write_actions_enabled=settings.allow_write_actions and m365_configured,
             http_probing_enabled=settings.allow_http_probing,
         ),
         ConnectorStatus(
@@ -546,7 +549,7 @@ def list_connector_statuses(settings: Settings) -> list[ConnectorStatus]:
             name="TimeZest",
             status=timezest_status,
             message=(
-                "TimeZest is configured for tenant-mapped, read-only scheduling-request lookup."
+                "TimeZest is configured for tenant-mapped scheduling-request lookup and approval-gated creation."
                 if timezest_status == "configured"
                 else "TimeZest is configured; live reads require WAIT_ALLOW_HTTP_PROBING."
                 if timezest_status == "blocked"
@@ -555,6 +558,7 @@ def list_connector_statuses(settings: Settings) -> list[ConnectorStatus]:
                     "WAIT_TIMEZEST_CLIENT_MAP_JSON to enable scheduling-request reads."
                 )
             ),
+            write_actions_enabled=settings.allow_write_actions and timezest_configured,
             http_probing_enabled=settings.allow_http_probing,
         ),
         ConnectorStatus(
@@ -581,7 +585,14 @@ def list_connector_statuses(settings: Settings) -> list[ConnectorStatus]:
             status=rmm_status,
             message=rmm_configuration_message,
             write_actions_enabled=settings.allow_write_actions
-            and (ninjaone_configured or datto_rmm_configured),
+            and (
+                ninjaone_configured
+                or datto_rmm_configured
+                or n_sight_configured
+                or ncentral_configured
+                or kaseya_rmm_configured
+                or screenconnect_configured
+            ),
             http_probing_enabled=settings.allow_http_probing,
         ),
     ]
