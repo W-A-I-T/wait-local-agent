@@ -18,14 +18,12 @@
 
 - The Windows DACL path is target-gated and uses raw Win32 APIs. It must be
   compiled on the Windows x86 target and exercised with a real token file.
-- Existing Windows vault and state directories receive the protected,
-  owner-only DACL once during startup when `SecretVault.initialize` or
-  `Store.__init__` runs. Normal directory helpers remain existence-only on
-  existing paths, so vault, state, and artifact write hot paths do not repeat
-  the SID/SDDL/DACL work. This intentionally strips inherited ACEs on those
-  startup-managed directories; it is a deliberate Windows-only upgrade
-  behavior because Windows has no umask and the POSIX permission checks are
-  `not_applicable` there.
+- Existing Windows vault, state, and artifact directories remain
+  existence-only. Retroactively applying a protected DACL can strip inherited
+  access from pre-existing files and lock the owner out; the runtime therefore
+  protects only directories and files it creates. A future Windows-aware
+  hardening check should report over-permissive existing directories without
+  changing them.
 - ACL application is intentionally nonfatal to preserve startup/token creation;
   Windows validation must confirm that failures are visible in logs and do not
   leave an unprotected artifact in an unexpected location.
@@ -53,6 +51,11 @@
   change was required.
 - Remaining compatibility risk: the local environment has no Rust toolchain,
   so the Windows compile and runtime evidence is still required.
+- The latest docs.rs release listing still identifies `windows-sys 0.61.2` as
+  the newest stable release checked on 2026-08-22. The 0.61.2 source confirms
+  `LocalFree` in `Win32_Foundation`, the security-descriptor and DACL APIs in
+  `Win32_Security` / `Win32_Security_Authorization`, and process-token APIs in
+  `Win32_System_Threading`; these match the target-gated feature list.
 
 ## Open Questions
 
@@ -62,6 +65,10 @@
   gate for the target-specific ACL code.
 - The aggregate local pytest run still reaches a pre-existing API integration
   test hang; the focused task suite and static/security checks pass.
+- PR #405's first Windows run exposed three legacy SQLite migration tests that
+  failed when parent-directory ACL repair removed inherited access. This task
+  now removes that retroactive repair entirely; the regression suite covers
+  pre-existing database migration and existing-directory no-op behavior.
 
 ## Test Results
 
@@ -69,6 +76,9 @@
   Ruff, mypy, Bandit, compileall, public-surface audit, and
   platform/store/vault/backup permission tests.
 - Passed on rerun: `pip-audit` reported no known vulnerabilities.
+- Latest local `pip-audit` could not query PyPI because outbound DNS is
+  unavailable in the sandbox; this is an infrastructure limitation, not a
+  dependency finding.
 - Incomplete locally: aggregate pytest coverage was stopped by the existing
   API-test hang; Windows Rust compilation was unavailable.
 - AST audit of `reports/hardening_checks.py` found none of the forbidden

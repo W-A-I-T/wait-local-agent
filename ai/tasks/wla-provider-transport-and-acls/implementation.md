@@ -12,16 +12,16 @@
   pinned connector factory remains strict HTTPS and retains its allowlist.
 - Made hardening permission checks explicitly POSIX-only. Non-POSIX results are
   `not_applicable` with `permission_model: windows-acl` and no remediation.
-  Existing filesystem permission helpers now dispatch the Windows backend for
-  existing directories and immediately after opening private files.
+  Filesystem permission helpers now dispatch the Windows backend immediately
+  after opening newly-created private files and when creating directories.
 - Added Windows desktop token protection using a protected DACL with the
   current user SID (`D:PAI(A;;FA;;;SID)`), applied after open and before token
   bytes are written. Unix creation uses mode `0600`; ACL failures are logged
   without hiding the usable token path.
-- Made existing-directory DACL repair explicit: the shared helper is
-  existence-only by default, while vault and state initialization opt in once
-  at startup. Artifact and vault write hot paths do not reassert inherited-ACL
-  stripping on every write.
+- Kept existing-directory permission helpers existence-only. Runtime-created
+  files and directories are protected, but pre-existing directories are never
+  retroactively re-permissioned because a protected DACL can remove inherited
+  access from unrelated files.
 - Added regression coverage for URL policy, all in-scope provider validators,
   settings defaults/opt-in, hardening behavior, and filesystem backend wiring.
 
@@ -66,4 +66,27 @@
 
 - Run the Windows desktop x86 build and dynamic-port/runtime validation in CI
   or on a Windows host.
+- Add a future Windows-aware hardening check that reports over-permissive
+  pre-existing directories without modifying their ACLs.
 - Complete the required independent review and final human merge gate.
+
+## Validation Refresh — 2026-08-22
+
+- Reconfirmed checkout identity: `W-A-I-T/wait-local-agent`, branch
+  `codex/wla-provider-transport-and-acls`, HEAD `875bae9`.
+- Focused transport, connector-factory, configuration, hardening, filesystem,
+  store/platform, and provider regression suites passed in `.venv`.
+- `ruff check .`, `mypy src tests`, `bandit -r src`, Python compileall, and
+  `scripts/public_surface_audit.py` passed. Bandit emitted only the existing
+  informational `#nosec`/comment warnings.
+- `scripts/validate_release.sh` reached `pip-audit` but could not complete
+  because this sandbox cannot resolve `pypi.org`; the earlier aggregate run
+  also remains unable to complete past the existing API integration-test hang.
+- No Rust toolchain is installed locally, so the target-gated Windows desktop
+  compile and real ACL/dynamic-port validation remain open CI/Windows-host
+  gates.
+- Removed the unsafe retroactive directory-ACL repair exposed by PR #405's
+  legacy SQLite migration failures. Existing stores now retain their original
+  access model; newly-created state paths remain protected before first write.
+  The hardening path-evidence test derives its expected permission model from
+  the platform capability.

@@ -174,13 +174,10 @@ def create_private_directory(
     path: Path,
     *,
     backend: _PermissionBackend | None = None,
-    restrict_existing: bool = False,
 ) -> None:
-    """Create a private directory and optionally restrict an existing one."""
+    """Create a new private directory and apply a Windows DACL when needed."""
 
     if path.exists():
-        if restrict_existing and not platform_support.posix_permissions_supported():
-            restrict_existing_directory(path, backend=backend)
         return
     path.mkdir(parents=True, exist_ok=True, mode=0o700)
     if not platform_support.posix_permissions_supported():

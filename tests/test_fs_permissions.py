@@ -67,7 +67,7 @@ def test_create_private_directory_returns_for_existing_path(tmp_path: Path) -> N
     assert directory.is_dir()
 
 
-def test_existing_private_directory_requires_explicit_windows_restriction(
+def test_existing_private_directory_does_not_change_permissions(
     tmp_path: Path, monkeypatch
 ) -> None:
     calls: list[Path] = []
@@ -86,11 +86,6 @@ def test_existing_private_directory_requires_explicit_windows_restriction(
 
     fs_permissions.create_private_directory(directory, backend=FakeBackend())
     assert calls == []
-
-    fs_permissions.create_private_directory(
-        directory, backend=FakeBackend(), restrict_existing=True
-    )
-    assert calls == [directory]
 
 
 def test_restrict_existing_file_logs_os_error(tmp_path: Path, monkeypatch, caplog) -> None:

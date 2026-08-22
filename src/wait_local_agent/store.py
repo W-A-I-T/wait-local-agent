@@ -205,9 +205,7 @@ class Store:
                 "SQLite state database is on a network path; WAL locking is unreliable over SMB: %s",
                 self.path,
             )
-        # Windows has no umask; re-assert the protected owner-only DACL once at
-        # startup so upgraded state directories do not retain inherited access.
-        fs_permissions.create_private_directory(self.path.parent, restrict_existing=True)
+        fs_permissions.create_private_directory(self.path.parent)
         try:
             file_descriptor = fs_permissions.open_private(
                 self.path, os.O_RDWR | os.O_CREAT, exclusive=True

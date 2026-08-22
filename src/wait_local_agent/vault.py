@@ -28,9 +28,7 @@ class SecretVault:
     @classmethod
     def initialize(cls, vault_path: Path) -> SecretVault:
         vault = cls(vault_path)
-        # Windows has no umask; re-assert the protected owner-only DACL once at
-        # startup so upgraded vault directories do not retain inherited access.
-        fs_permissions.create_private_directory(vault.vault_path, restrict_existing=True)
+        fs_permissions.create_private_directory(vault.vault_path)
         if vault.external_key is not None:
             try:
                 Fernet(vault.external_key)

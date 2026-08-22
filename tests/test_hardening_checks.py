@@ -129,12 +129,18 @@ def test_hardening_checks_reject_unpersisted_run(settings, monkeypatch) -> None:
 def test_hardening_path_edge_evidence_and_missing_backup(tmp_path: Path) -> None:
     missing = tmp_path / "missing"
     assert _mode(missing) is None
+    permission_model = (
+        "posix" if platform_support.posix_permissions_supported() else "windows-acl"
+    )
     assert _path_evidence(None) == {
         "path": None,
         "exists": False,
-        "permission_model": "posix",
+        "permission_model": permission_model,
     }
-    assert _check_vault(HardeningContext()).status == "failed"
+    expected_vault_status = (
+        "failed" if platform_support.posix_permissions_supported() else "not_applicable"
+    )
+    assert _check_vault(HardeningContext()).status == expected_vault_status
 
     result = _check_backup_recency(HardeningContext(backup_paths=(missing,)))
     assert result.status == "failed"
