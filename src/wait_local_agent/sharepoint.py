@@ -17,6 +17,7 @@ import httpx
 
 from wait_local_agent.config import Settings
 from wait_local_agent.models import ConnectorReadResult
+from wait_local_agent.net_security import NetSecurityError, validate_operator_url
 
 DEFAULT_PAGE_SIZE = 25
 MAX_PAGE_SIZE = 200
@@ -24,19 +25,21 @@ MAX_CURSOR_LENGTH = 4096
 MAX_SEGMENT_LENGTH = 256
 MAX_CONTENT_LENGTH = 20_000
 MAX_SEARCH_PAGE_SIZE = 50
-TEXT_FILE_SUFFIXES = frozenset({
-    ".csv",
-    ".html",
-    ".htm",
-    ".json",
-    ".log",
-    ".md",
-    ".markdown",
-    ".txt",
-    ".xml",
-    ".yaml",
-    ".yml",
-})
+TEXT_FILE_SUFFIXES = frozenset(
+    {
+        ".csv",
+        ".html",
+        ".htm",
+        ".json",
+        ".log",
+        ".md",
+        ".markdown",
+        ".txt",
+        ".xml",
+        ".yaml",
+        ".yml",
+    }
+)
 
 
 @dataclass(frozen=True)
@@ -69,8 +72,7 @@ class SharePointReadResponse:
 
 
 class SharePointClientProtocol(Protocol):
-    def health(self) -> ConnectorReadResult:
-        ...
+    def health(self) -> ConnectorReadResult: ...
 
     def list_documents(
         self,
@@ -79,11 +81,9 @@ class SharePointClientProtocol(Protocol):
         parent_item_id: str | None = None,
         cursor: str | None = None,
         page_size: int = DEFAULT_PAGE_SIZE,
-    ) -> SharePointReadResponse:
-        ...
+    ) -> SharePointReadResponse: ...
 
-    def get_document_content(self, site_id: str, item_id: str) -> SharePointReadResponse:
-        ...
+    def get_document_content(self, site_id: str, item_id: str) -> SharePointReadResponse: ...
 
     def search_documents(
         self,
@@ -92,8 +92,7 @@ class SharePointClientProtocol(Protocol):
         *,
         parent_item_id: str | None = None,
         limit: int = DEFAULT_PAGE_SIZE,
-    ) -> SharePointReadResponse:
-        ...
+    ) -> SharePointReadResponse: ...
 
 
 class SharePointReadError(Exception):
@@ -254,17 +253,19 @@ class SharePointClient:
 
     def _get(self, endpoint: str, *, params: dict[str, str | int] | None = None) -> object:
         if not self.settings.allow_http_probing:
-            raise SharePointReadError(
-                "SharePoint live reads are blocked until WAIT_ALLOW_HTTP_PROBING=true."
-            )
+            raise SharePointReadError("SharePoint live reads are blocked until WAIT_ALLOW_HTTP_PROBING=true.")
         missing = self._not_configured_result()
         if missing is not None:
             raise SharePointReadError(missing.message)
         try:
             safe_endpoint = _safe_endpoint(endpoint)
+            base_url = _api_base_url(
+                self.settings.sharepoint_base_url,
+                allow_insecure_transport=self.settings.allow_insecure_provider_transport,
+            )
             with httpx.Client(timeout=self.settings.connector_timeout_seconds, transport=self.transport) as client:
                 response = client.get(
-                    f"{_api_base_url(self.settings.sharepoint_base_url)}/{safe_endpoint}",
+                    f"{base_url}/{safe_endpoint}",
                     headers={
                         "Authorization": f"Bearer {self.settings.sharepoint_access_token}",
                         "Accept": "application/json",
@@ -284,14 +285,16 @@ class SharePointClient:
 
     def _get_content(self, endpoint: str, *, filename: str) -> str:
         if not self.settings.allow_http_probing:
-            raise SharePointReadError(
-                "SharePoint live reads are blocked until WAIT_ALLOW_HTTP_PROBING=true."
-            )
+            raise SharePointReadError("SharePoint live reads are blocked until WAIT_ALLOW_HTTP_PROBING=true.")
         missing = self._not_configured_result()
         if missing is not None:
             raise SharePointReadError(missing.message)
         try:
             safe_endpoint = _safe_endpoint(endpoint)
+            base_url = _api_base_url(
+                self.settings.sharepoint_base_url,
+                allow_insecure_transport=self.settings.allow_insecure_provider_transport,
+            )
             with httpx.Client(
                 timeout=self.settings.connector_timeout_seconds,
                 transport=self.transport,
@@ -299,7 +302,7 @@ class SharePointClient:
             ) as client:
                 with client.stream(
                     "GET",
-                    f"{_api_base_url(self.settings.sharepoint_base_url)}/{safe_endpoint}",
+                    f"{base_url}/{safe_endpoint}",
                     headers={
                         "Authorization": f"Bearer {self.settings.sharepoint_access_token}",
                         "Accept": "text/plain, text/*;q=0.9, application/json;q=0.8",
@@ -359,11 +362,11 @@ class SharePointClient:
         return SharePointReadResponse(missing, []) if missing else None
 
 
-def _api_base_url(base_url: str) -> str:
-    return _safe_base_url(base_url).rstrip("/")
+def _api_base_url(base_url: str, *, allow_insecure_transport: bool = False) -> str:
+    return _safe_base_url(base_url, allow_insecure_transport=allow_insecure_transport).rstrip("/")
 
 
-def _safe_base_url(base_url: str) -> str:
+def _safe_base_url(base_url: str, *, allow_insecure_transport: bool = False) -> str:
     if any(ord(character) < 32 for character in base_url):
         raise SharePointReadError("SharePoint base URL contains control characters.")
     parsed = urlsplit(base_url)
@@ -371,6 +374,12 @@ def _safe_base_url(base_url: str) -> str:
         raise SharePointReadError("SharePoint base URL must be an HTTP(S) URL.")
     if parsed.username or parsed.password or parsed.query or parsed.fragment:
         raise SharePointReadError("SharePoint base URL must not contain credentials or query data.")
+    try:
+        validate_operator_url(base_url, allow_insecure_transport=allow_insecure_transport)
+    except NetSecurityError as exc:
+        raise SharePointReadError(
+            "SharePoint base URL must use HTTPS; set WAIT_ALLOW_INSECURE_PROVIDER_TRANSPORT=true to allow plain HTTP."
+        ) from exc
     return base_url
 
 
@@ -382,8 +391,7 @@ def _safe_endpoint(endpoint: str) -> str:
         raise SharePointReadError("SharePoint endpoint is invalid.")
     if any(
         not all(
-            character.isalnum() or character in {"_", "-", ",", ".", "!", "(", ")", "'", "%", "="}
-            for character in part
+            character.isalnum() or character in {"_", "-", ",", ".", "!", "(", ")", "'", "%", "="} for character in part
         )
         for part in parts
     ):
@@ -393,8 +401,10 @@ def _safe_endpoint(endpoint: str) -> str:
 
 def _safe_segment(value: str) -> str:
     stripped = value.strip()
-    if not stripped or len(stripped) > MAX_SEGMENT_LENGTH or not all(
-        character.isalnum() or character in {"_", "-", ",", ".", "!"} for character in stripped
+    if (
+        not stripped
+        or len(stripped) > MAX_SEGMENT_LENGTH
+        or not all(character.isalnum() or character in {"_", "-", ",", ".", "!"} for character in stripped)
     ):
         raise SharePointReadError("SharePoint resource identifiers contain unsafe characters.")
     if stripped in {".", ".."}:

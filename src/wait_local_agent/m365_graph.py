@@ -17,6 +17,7 @@ import httpx
 
 from wait_local_agent.config import Settings
 from wait_local_agent.models import ConnectorReadResult
+from wait_local_agent.net_security import NetSecurityError, validate_operator_url
 
 DEFAULT_PAGE_SIZE = 25
 MAX_PAGE_SIZE = 200
@@ -330,8 +331,7 @@ class M365GraphReadProvider(Protocol):
         identity: str | None = None,
         cursor: str | None = None,
         page_size: int = DEFAULT_PAGE_SIZE,
-    ) -> M365GraphReadResponse:
-        ...
+    ) -> M365GraphReadResponse: ...
 
     def list_groups(
         self,
@@ -339,11 +339,9 @@ class M365GraphReadProvider(Protocol):
         identity: str | None = None,
         cursor: str | None = None,
         page_size: int = DEFAULT_PAGE_SIZE,
-    ) -> M365GraphGroupReadResponse:
-        ...
+    ) -> M365GraphGroupReadResponse: ...
 
-    def list_subscribed_skus(self, *, cursor: str | None = None) -> M365GraphLicenseReadResponse:
-        ...
+    def list_subscribed_skus(self, *, cursor: str | None = None) -> M365GraphLicenseReadResponse: ...
 
     def list_license_details(
         self,
@@ -351,8 +349,7 @@ class M365GraphReadProvider(Protocol):
         identity: str,
         cursor: str | None = None,
         page_size: int = DEFAULT_PAGE_SIZE,
-    ) -> M365GraphLicenseDetailReadResponse:
-        ...
+    ) -> M365GraphLicenseDetailReadResponse: ...
 
     def list_mail_folders(
         self,
@@ -360,8 +357,7 @@ class M365GraphReadProvider(Protocol):
         identity: str | None = None,
         cursor: str | None = None,
         page_size: int = DEFAULT_PAGE_SIZE,
-    ) -> M365GraphMailFolderReadResponse:
-        ...
+    ) -> M365GraphMailFolderReadResponse: ...
 
     def list_mail_messages(
         self,
@@ -370,16 +366,14 @@ class M365GraphReadProvider(Protocol):
         folder_id: str | None = None,
         cursor: str | None = None,
         page_size: int = DEFAULT_PAGE_SIZE,
-    ) -> M365GraphMailMessageReadResponse:
-        ...
+    ) -> M365GraphMailMessageReadResponse: ...
 
     def list_managed_devices(
         self,
         *,
         cursor: str | None = None,
         page_size: int = DEFAULT_PAGE_SIZE,
-    ) -> M365GraphManagedDeviceReadResponse:
-        ...
+    ) -> M365GraphManagedDeviceReadResponse: ...
 
 
 class M365GraphReadError(Exception):
@@ -424,9 +418,7 @@ class M365GraphClient:
             if identity is not None:
                 safe_identity = _safe_identity(identity)
                 escaped = safe_identity.replace("'", "''")
-                params["$filter"] = (
-                    f"id eq '{escaped}' or userPrincipalName eq '{escaped}'"
-                )
+                params["$filter"] = f"id eq '{escaped}' or userPrincipalName eq '{escaped}'"
         except M365GraphReadError as exc:
             return M365GraphReadResponse(ConnectorReadResult("failed", exc.message), [])
         return self._request_users(params)
@@ -473,9 +465,7 @@ class M365GraphClient:
             endpoint = _license_details_endpoint(identity)
             params = _license_detail_params(page_size, cursor)
         except M365GraphReadError as exc:
-            return M365GraphLicenseDetailReadResponse(
-                ConnectorReadResult("failed", exc.message), []
-            )
+            return M365GraphLicenseDetailReadResponse(ConnectorReadResult("failed", exc.message), [])
         return self._request_license_details(endpoint, params)
 
     def list_mail_folders(
@@ -686,17 +676,19 @@ class M365GraphClient:
             encoded_user_id = quote(safe_user_id, safe="")
             if operation == "add":
                 endpoint = f"groups/{encoded_group_id}/members/$ref"
+                base_url = _api_base_url(
+                    self.settings.m365_graph_base_url,
+                    allow_insecure_transport=self.settings.allow_insecure_provider_transport,
+                )
                 payload: dict[str, object] = {
                     "@odata.id": (
-                        f"{_api_base_url(self.settings.m365_graph_base_url)}"
+                        f"{base_url}"
                         f"/directoryObjects/{encoded_user_id}"
                     )
                 }
                 _, status_code = self._post(endpoint, payload)
             else:
-                endpoint = (
-                    f"groups/{encoded_group_id}/members/{encoded_user_id}/$ref"
-                )
+                endpoint = f"groups/{encoded_group_id}/members/{encoded_user_id}/$ref"
                 _, status_code = self._delete(endpoint)
         except M365GraphReadError as exc:
             return M365GraphGroupMembershipResult("failed", exc.message)
@@ -728,10 +720,7 @@ class M365GraphClient:
             payload: dict[str, object]
             if operation == "add":
                 payload = {
-                    "addLicenses": [
-                        {"disabledPlans": [], "skuId": sku_id}
-                        for sku_id in safe_sku_ids
-                    ],
+                    "addLicenses": [{"disabledPlans": [], "skuId": sku_id} for sku_id in safe_sku_ids],
                     "removeLicenses": [],
                 }
             else:
@@ -788,10 +777,7 @@ class M365GraphClient:
             return M365GraphManagedDeviceSyncResult("blocked", health.message)
         try:
             safe_device_id = _safe_directory_object_id(device_id, "device_id")
-            endpoint = (
-                "deviceManagement/managedDevices/"
-                f"{quote(safe_device_id, safe='')}/syncDevice"
-            )
+            endpoint = f"deviceManagement/managedDevices/{quote(safe_device_id, safe='')}/syncDevice"
             _, status_code = self._post(endpoint, None)
         except M365GraphReadError as exc:
             return M365GraphManagedDeviceSyncResult("failed", exc.message)
@@ -808,10 +794,7 @@ class M365GraphClient:
             return M365GraphManagedDeviceRebootResult("blocked", health.message)
         try:
             safe_device_id = _safe_directory_object_id(device_id, "device_id")
-            endpoint = (
-                "deviceManagement/managedDevices/"
-                f"{quote(safe_device_id, safe='')}/rebootNow"
-            )
+            endpoint = f"deviceManagement/managedDevices/{quote(safe_device_id, safe='')}/rebootNow"
             _, status_code = self._post(endpoint, None)
         except M365GraphReadError as exc:
             return M365GraphManagedDeviceRebootResult("failed", exc.message)
@@ -832,10 +815,7 @@ class M365GraphClient:
             return M365GraphManagedDeviceRemoteLockResult("blocked", health.message)
         try:
             safe_device_id = _safe_directory_object_id(device_id, "device_id")
-            endpoint = (
-                "deviceManagement/managedDevices/"
-                f"{quote(safe_device_id, safe='')}/remoteLock"
-            )
+            endpoint = f"deviceManagement/managedDevices/{quote(safe_device_id, safe='')}/remoteLock"
             _, status_code = self._post(endpoint, None)
         except M365GraphReadError as exc:
             return M365GraphManagedDeviceRemoteLockResult("failed", exc.message)
@@ -1044,11 +1024,7 @@ class M365GraphClient:
         except M365GraphReadError as exc:
             return M365GraphLicenseDetailReadResponse(ConnectorReadResult("failed", exc.message), [])
         rows = _payload_rows(payload)[:MAX_LICENSE_DETAIL_ITEMS]
-        items = [
-            detail
-            for row in rows
-            if (detail := _normalize_license_detail(row)) is not None
-        ]
+        items = [detail for row in rows if (detail := _normalize_license_detail(row)) is not None]
         return M365GraphLicenseDetailReadResponse(
             ConnectorReadResult("ready", "Microsoft Graph user license detail read succeeded.", len(items)),
             items,
@@ -1070,11 +1046,7 @@ class M365GraphClient:
             payload = self._get(endpoint, params=params)
         except M365GraphReadError as exc:
             return M365GraphMailFolderReadResponse(ConnectorReadResult("failed", exc.message), [])
-        items = [
-            folder
-            for row in _payload_rows(payload)
-            if (folder := _normalize_mail_folder(row)) is not None
-        ]
+        items = [folder for row in _payload_rows(payload) if (folder := _normalize_mail_folder(row)) is not None]
         return M365GraphMailFolderReadResponse(
             ConnectorReadResult("ready", "Microsoft Graph mailbox folder read succeeded.", len(items)),
             items,
@@ -1096,11 +1068,7 @@ class M365GraphClient:
             payload = self._get(endpoint, params=params)
         except M365GraphReadError as exc:
             return M365GraphMailMessageReadResponse(ConnectorReadResult("failed", exc.message), [])
-        items = [
-            message
-            for row in _payload_rows(payload)
-            if (message := _normalize_mail_message(row)) is not None
-        ]
+        items = [message for row in _payload_rows(payload) if (message := _normalize_mail_message(row)) is not None]
         return M365GraphMailMessageReadResponse(
             ConnectorReadResult(
                 "ready",
@@ -1125,11 +1093,7 @@ class M365GraphClient:
             payload = self._get("deviceManagement/managedDevices", params=params)
         except M365GraphReadError as exc:
             return M365GraphManagedDeviceReadResponse(ConnectorReadResult("failed", exc.message), [])
-        items = [
-            device
-            for row in _payload_rows(payload)
-            if (device := _normalize_managed_device(row)) is not None
-        ]
+        items = [device for row in _payload_rows(payload) if (device := _normalize_managed_device(row)) is not None]
         return M365GraphManagedDeviceReadResponse(
             ConnectorReadResult("ready", "Microsoft Graph Intune managed-device read succeeded.", len(items)),
             items,
@@ -1138,17 +1102,19 @@ class M365GraphClient:
 
     def _get(self, endpoint: str, *, params: dict[str, str | int] | None = None) -> object:
         if not self.settings.allow_http_probing:
-            raise M365GraphReadError(
-                "Microsoft Graph live reads are blocked until WAIT_ALLOW_HTTP_PROBING=true."
-            )
+            raise M365GraphReadError("Microsoft Graph live reads are blocked until WAIT_ALLOW_HTTP_PROBING=true.")
         missing = self._not_configured_result()
         if missing is not None:
             raise M365GraphReadError(missing.message)
         try:
             safe_endpoint = _safe_endpoint(endpoint)
+            base_url = _api_base_url(
+                self.settings.m365_graph_base_url,
+                allow_insecure_transport=self.settings.allow_insecure_provider_transport,
+            )
             with httpx.Client(timeout=self.settings.connector_timeout_seconds, transport=self.transport) as client:
                 response = client.get(
-                    f"{_api_base_url(self.settings.m365_graph_base_url)}/{safe_endpoint}",
+                    f"{base_url}/{safe_endpoint}",
                     headers={
                         "Authorization": f"Bearer {self.settings.m365_access_token}",
                         "Accept": "application/json",
@@ -1156,9 +1122,7 @@ class M365GraphClient:
                     params=params,
                 )
         except (httpx.TimeoutException, httpx.ConnectError) as exc:
-            raise M365GraphReadError(
-                "Microsoft Graph request failed before receiving a response."
-            ) from exc
+            raise M365GraphReadError("Microsoft Graph request failed before receiving a response.") from exc
         except httpx.HTTPError as exc:
             raise M365GraphReadError("Microsoft Graph request failed.") from exc
         if response.status_code >= 400:
@@ -1166,9 +1130,7 @@ class M365GraphClient:
         try:
             return response.json()
         except ValueError as exc:
-            raise M365GraphReadError(
-                f"Microsoft Graph GET {safe_endpoint} returned malformed JSON."
-            ) from exc
+            raise M365GraphReadError(f"Microsoft Graph GET {safe_endpoint} returned malformed JSON.") from exc
 
     def _post(
         self,
@@ -1176,18 +1138,18 @@ class M365GraphClient:
         payload: dict[str, object] | None,
     ) -> tuple[object, int]:
         if not self.settings.allow_http_probing:
-            raise M365GraphReadError(
-                "Microsoft Graph live writes are blocked until WAIT_ALLOW_HTTP_PROBING=true."
-            )
+            raise M365GraphReadError("Microsoft Graph live writes are blocked until WAIT_ALLOW_HTTP_PROBING=true.")
         if not self.settings.allow_write_actions:
-            raise M365GraphReadError(
-                "Microsoft Graph live writes are blocked until WAIT_ALLOW_WRITE_ACTIONS=true."
-            )
+            raise M365GraphReadError("Microsoft Graph live writes are blocked until WAIT_ALLOW_WRITE_ACTIONS=true.")
         missing = self._not_configured_result()
         if missing is not None:
             raise M365GraphReadError(missing.message)
         try:
             safe_endpoint = _safe_endpoint(endpoint)
+            base_url = _api_base_url(
+                self.settings.m365_graph_base_url,
+                allow_insecure_transport=self.settings.allow_insecure_provider_transport,
+            )
             with httpx.Client(timeout=self.settings.connector_timeout_seconds, transport=self.transport) as client:
                 headers = {
                     "Authorization": f"Bearer {self.settings.m365_access_token}",
@@ -1196,52 +1158,46 @@ class M365GraphClient:
                 }
                 if payload is None:
                     response = client.post(
-                        f"{_api_base_url(self.settings.m365_graph_base_url)}/{safe_endpoint}",
+                        f"{base_url}/{safe_endpoint}",
                         headers=headers,
                         content=b"",
                     )
                 else:
                     response = client.post(
-                        f"{_api_base_url(self.settings.m365_graph_base_url)}/{safe_endpoint}",
+                        f"{base_url}/{safe_endpoint}",
                         headers=headers,
                         json=payload,
                     )
         except (httpx.TimeoutException, httpx.ConnectError) as exc:
-            raise M365GraphReadError(
-                "Microsoft Graph request failed before receiving a response."
-            ) from exc
+            raise M365GraphReadError("Microsoft Graph request failed before receiving a response.") from exc
         except httpx.HTTPError as exc:
             raise M365GraphReadError("Microsoft Graph request failed.") from exc
         if response.status_code >= 400:
-            raise M365GraphReadError(
-                _http_error_message(response.status_code, safe_endpoint, method="POST")
-            )
+            raise M365GraphReadError(_http_error_message(response.status_code, safe_endpoint, method="POST"))
         if not response.content:
             return {}, response.status_code
         try:
             return response.json(), response.status_code
         except ValueError as exc:
-            raise M365GraphReadError(
-                f"Microsoft Graph POST {safe_endpoint} returned malformed JSON."
-            ) from exc
+            raise M365GraphReadError(f"Microsoft Graph POST {safe_endpoint} returned malformed JSON.") from exc
 
     def _patch(self, endpoint: str, payload: dict[str, object]) -> tuple[object, int]:
         if not self.settings.allow_http_probing:
-            raise M365GraphReadError(
-                "Microsoft Graph live writes are blocked until WAIT_ALLOW_HTTP_PROBING=true."
-            )
+            raise M365GraphReadError("Microsoft Graph live writes are blocked until WAIT_ALLOW_HTTP_PROBING=true.")
         if not self.settings.allow_write_actions:
-            raise M365GraphReadError(
-                "Microsoft Graph live writes are blocked until WAIT_ALLOW_WRITE_ACTIONS=true."
-            )
+            raise M365GraphReadError("Microsoft Graph live writes are blocked until WAIT_ALLOW_WRITE_ACTIONS=true.")
         missing = self._not_configured_result()
         if missing is not None:
             raise M365GraphReadError(missing.message)
         try:
             safe_endpoint = _safe_endpoint(endpoint)
+            base_url = _api_base_url(
+                self.settings.m365_graph_base_url,
+                allow_insecure_transport=self.settings.allow_insecure_provider_transport,
+            )
             with httpx.Client(timeout=self.settings.connector_timeout_seconds, transport=self.transport) as client:
                 response = client.patch(
-                    f"{_api_base_url(self.settings.m365_graph_base_url)}/{safe_endpoint}",
+                    f"{base_url}/{safe_endpoint}",
                     headers={
                         "Authorization": f"Bearer {self.settings.m365_access_token}",
                         "Accept": "application/json",
@@ -1250,56 +1206,46 @@ class M365GraphClient:
                     json=payload,
                 )
         except (httpx.TimeoutException, httpx.ConnectError) as exc:
-            raise M365GraphReadError(
-                "Microsoft Graph request failed before receiving a response."
-            ) from exc
+            raise M365GraphReadError("Microsoft Graph request failed before receiving a response.") from exc
         except httpx.HTTPError as exc:
             raise M365GraphReadError("Microsoft Graph request failed.") from exc
         if response.status_code >= 400:
-            raise M365GraphReadError(
-                _http_error_message(response.status_code, safe_endpoint, method="PATCH")
-            )
+            raise M365GraphReadError(_http_error_message(response.status_code, safe_endpoint, method="PATCH"))
         if not response.content:
             return {}, response.status_code
         try:
             return response.json(), response.status_code
         except ValueError as exc:
-            raise M365GraphReadError(
-                f"Microsoft Graph PATCH {safe_endpoint} returned malformed JSON."
-            ) from exc
+            raise M365GraphReadError(f"Microsoft Graph PATCH {safe_endpoint} returned malformed JSON.") from exc
 
     def _delete(self, endpoint: str) -> tuple[object, int]:
         if not self.settings.allow_http_probing:
-            raise M365GraphReadError(
-                "Microsoft Graph live writes are blocked until WAIT_ALLOW_HTTP_PROBING=true."
-            )
+            raise M365GraphReadError("Microsoft Graph live writes are blocked until WAIT_ALLOW_HTTP_PROBING=true.")
         if not self.settings.allow_write_actions:
-            raise M365GraphReadError(
-                "Microsoft Graph live writes are blocked until WAIT_ALLOW_WRITE_ACTIONS=true."
-            )
+            raise M365GraphReadError("Microsoft Graph live writes are blocked until WAIT_ALLOW_WRITE_ACTIONS=true.")
         missing = self._not_configured_result()
         if missing is not None:
             raise M365GraphReadError(missing.message)
         try:
             safe_endpoint = _safe_endpoint(endpoint)
+            base_url = _api_base_url(
+                self.settings.m365_graph_base_url,
+                allow_insecure_transport=self.settings.allow_insecure_provider_transport,
+            )
             with httpx.Client(timeout=self.settings.connector_timeout_seconds, transport=self.transport) as client:
                 response = client.delete(
-                    f"{_api_base_url(self.settings.m365_graph_base_url)}/{safe_endpoint}",
+                    f"{base_url}/{safe_endpoint}",
                     headers={
                         "Authorization": f"Bearer {self.settings.m365_access_token}",
                         "Accept": "application/json",
                     },
                 )
         except (httpx.TimeoutException, httpx.ConnectError) as exc:
-            raise M365GraphReadError(
-                "Microsoft Graph request failed before receiving a response."
-            ) from exc
+            raise M365GraphReadError("Microsoft Graph request failed before receiving a response.") from exc
         except httpx.HTTPError as exc:
             raise M365GraphReadError("Microsoft Graph request failed.") from exc
         if response.status_code >= 400:
-            raise M365GraphReadError(
-                _http_error_message(response.status_code, safe_endpoint, method="DELETE")
-            )
+            raise M365GraphReadError(_http_error_message(response.status_code, safe_endpoint, method="DELETE"))
         return {}, response.status_code
 
     def _blocked_result(self) -> ConnectorReadResult | None:
@@ -1335,16 +1281,21 @@ class M365GraphClient:
         return M365GraphReadResponse(missing, []) if missing else None
 
 
-def _api_base_url(base_url: str) -> str:
+def _api_base_url(base_url: str, *, allow_insecure_transport: bool = False) -> str:
     if any(ord(character) < 32 for character in base_url):
         raise M365GraphReadError("Microsoft Graph base URL contains control characters.")
     parsed = urlsplit(base_url)
     if parsed.scheme not in {"http", "https"} or not parsed.netloc:
         raise M365GraphReadError("Microsoft Graph base URL must be an HTTP(S) URL.")
     if parsed.username or parsed.password or parsed.query or parsed.fragment:
+        raise M365GraphReadError("Microsoft Graph base URL must not contain credentials or query data.")
+    try:
+        validate_operator_url(base_url, allow_insecure_transport=allow_insecure_transport)
+    except NetSecurityError as exc:
         raise M365GraphReadError(
-            "Microsoft Graph base URL must not contain credentials or query data."
-        )
+            "Microsoft Graph base URL must use HTTPS; set "
+            "WAIT_ALLOW_INSECURE_PROVIDER_TRANSPORT=true to allow plain HTTP."
+        ) from exc
     return base_url.rstrip("/")
 
 
@@ -1562,8 +1513,7 @@ def _password_reset_payload(
         raise M365GraphReadError("Microsoft Graph password reset flags are invalid.")
     if force_change_password_next_sign_in_with_mfa and not force_change_password_next_sign_in:
         raise M365GraphReadError(
-            "Microsoft Graph force_change_password_next_sign_in_with_mfa requires "
-            "force_change_password_next_sign_in."
+            "Microsoft Graph force_change_password_next_sign_in_with_mfa requires force_change_password_next_sign_in."
         )
     return {
         "passwordProfile": {
@@ -1667,8 +1617,7 @@ def _safe_sku_ids(values: list[str]) -> list[str]:
 def _safe_mail_nickname(value: str) -> str:
     stripped = _safe_required_text(value, "mail_nickname", 64)
     if any(
-        character not in "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789._-"
-        for character in stripped
+        character not in "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789._-" for character in stripped
     ):
         raise M365GraphReadError("Microsoft Graph mail_nickname is invalid.")
     return stripped
@@ -1676,11 +1625,7 @@ def _safe_mail_nickname(value: str) -> str:
 
 def _safe_identity(value: str) -> str:
     stripped = value.strip()
-    if (
-        not stripped
-        or len(stripped) > MAX_IDENTITY_LENGTH
-        or any(ord(character) < 32 for character in stripped)
-    ):
+    if not stripped or len(stripped) > MAX_IDENTITY_LENGTH or any(ord(character) < 32 for character in stripped):
         raise M365GraphReadError("Microsoft Graph identity is invalid.")
     return stripped
 
@@ -1712,9 +1657,7 @@ def _bounded_page_size(value: int) -> int:
 def _list_params(page_size: int, cursor: str | None) -> dict[str, str | int]:
     params: dict[str, str | int] = {
         "$top": _bounded_page_size(page_size),
-        "$select": (
-            "id,displayName,userPrincipalName,mail,accountEnabled,jobTitle,department"
-        ),
+        "$select": ("id,displayName,userPrincipalName,mail,accountEnabled,jobTitle,department"),
     }
     if cursor is not None:
         params["$skiptoken"] = _safe_cursor(cursor)
@@ -1724,9 +1667,7 @@ def _list_params(page_size: int, cursor: str | None) -> dict[str, str | int]:
 def _group_list_params(page_size: int, cursor: str | None) -> dict[str, str | int]:
     params: dict[str, str | int] = {
         "$top": _bounded_page_size(page_size),
-        "$select": (
-            "id,displayName,mail,mailNickname,description,mailEnabled,securityEnabled,groupTypes"
-        ),
+        "$select": ("id,displayName,mail,mailNickname,description,mailEnabled,securityEnabled,groupTypes"),
     }
     if cursor is not None:
         params["$skiptoken"] = _safe_cursor(cursor)
@@ -1747,10 +1688,7 @@ def _mail_message_endpoint(identity: str, folder_id: str) -> str:
 def _mail_folder_params(page_size: int, cursor: str | None) -> dict[str, str | int]:
     params: dict[str, str | int] = {
         "$top": _bounded_page_size(page_size),
-        "$select": (
-            "id,displayName,parentFolderId,childFolderCount,totalItemCount,"
-            "unreadItemCount,isHidden"
-        ),
+        "$select": ("id,displayName,parentFolderId,childFolderCount,totalItemCount,unreadItemCount,isHidden"),
     }
     if cursor is not None:
         params["$skiptoken"] = _safe_cursor(cursor)
@@ -1784,9 +1722,7 @@ def _managed_device_params(page_size: int, cursor: str | None) -> dict[str, str 
 
 def _license_list_params(cursor: str | None) -> dict[str, str | int]:
     params: dict[str, str | int] = {
-        "$select": (
-            "id,skuId,skuPartNumber,capabilityStatus,consumedUnits,appliesTo,prepaidUnits"
-        ),
+        "$select": ("id,skuId,skuPartNumber,capabilityStatus,consumedUnits,appliesTo,prepaidUnits"),
     }
     if cursor is not None:
         params["$skiptoken"] = _safe_cursor(cursor)
@@ -1845,9 +1781,7 @@ def _normalize_group(row: Mapping[str, object]) -> M365GraphGroup | None:
         return None
     group_types = row.get("groupTypes")
     normalized_group_types = (
-        tuple(value for value in group_types if isinstance(value, str))
-        if isinstance(group_types, list)
-        else ()
+        tuple(value for value in group_types if isinstance(value, str)) if isinstance(group_types, list) else ()
     )
     mail_enabled = row.get("mailEnabled")
     security_enabled = row.get("securityEnabled")

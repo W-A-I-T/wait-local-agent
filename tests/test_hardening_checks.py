@@ -6,6 +6,7 @@ from dataclasses import replace
 from datetime import UTC, datetime
 from pathlib import Path
 
+from wait_local_agent import platform_support
 from wait_local_agent.reports.builders import build_appliance_hardening_report
 from wait_local_agent.reports.hardening_checks import (
     CheckResult,
@@ -14,6 +15,8 @@ from wait_local_agent.reports.hardening_checks import (
     HardeningContext,
     HardeningRunRecord,
     _check_backup_recency,
+    _check_data_dir,
+    _check_store_permissions,
     _check_vault,
     _mode,
     _path_evidence,
@@ -126,12 +129,49 @@ def test_hardening_checks_reject_unpersisted_run(settings, monkeypatch) -> None:
 def test_hardening_path_edge_evidence_and_missing_backup(tmp_path: Path) -> None:
     missing = tmp_path / "missing"
     assert _mode(missing) is None
-    assert _path_evidence(None) == {"path": None, "exists": False}
+    assert _path_evidence(None) == {
+        "path": None,
+        "exists": False,
+        "permission_model": "posix",
+    }
     assert _check_vault(HardeningContext()).status == "failed"
 
     result = _check_backup_recency(HardeningContext(backup_paths=(missing,)))
     assert result.status == "failed"
     assert result.evidence["backups"] == []
+
+
+def test_permission_checks_are_not_applicable_without_posix_mode_bits(
+    settings, monkeypatch
+) -> None:
+    monkeypatch.setattr(platform_support, "posix_permissions_supported", lambda: False)
+    context = HardeningContext(
+        store_path=settings.data_path,
+        data_dir=settings.data_path.parent,
+        vault_key_path=settings.vault_path / "vault.key",
+    )
+
+    assert _check_vault(context).status == "not_applicable"
+    assert _check_store_permissions(context).status == "not_applicable"
+    assert _check_data_dir(context).status == "not_applicable"
+    assert _check_vault(context).remediation_hint is None
+    assert _check_store_permissions(context).remediation_hint is None
+    assert _check_data_dir(context).remediation_hint is None
+
+
+def test_non_posix_hardening_run_remains_completed_with_eight_results(
+    settings, monkeypatch
+) -> None:
+    store = Store(settings.data_path)
+    monkeypatch.setattr(platform_support, "posix_permissions_supported", lambda: False)
+
+    run = run_hardening_checks(
+        HardeningContext.from_settings(settings, store=store, audit_event_count=1)
+    )
+
+    assert run.status == "completed"
+    assert run.result_count == 8
+    assert {result.status for result in run.results} >= {"not_applicable"}
 
 
 def test_check_module_does_not_import_or_call_mutation_helpers() -> None:

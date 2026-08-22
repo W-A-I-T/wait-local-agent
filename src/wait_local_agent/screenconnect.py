@@ -21,6 +21,7 @@ from uuid import UUID
 import httpx
 
 from wait_local_agent.config import Settings
+from wait_local_agent.net_security import NetSecurityError, validate_operator_url
 from wait_local_agent.rmm import RmmAlert, RmmDevice, RmmScript, RmmScriptExecution, RmmScriptPreview
 
 MAX_SESSIONS = 100
@@ -342,9 +343,15 @@ class ScreenConnectRmmAdapter:
             raise ScreenConnectRmmError(
                 "ScreenConnect live calls are blocked until WAIT_ALLOW_HTTP_PROBING=true"
             )
-        base_url = _safe_base_url(self.settings.screenconnect_base_url)
+        base_url = _safe_base_url(
+            self.settings.screenconnect_base_url,
+            allow_insecure_transport=self.settings.allow_insecure_provider_transport,
+        )
         extension_id = _extension_id(self.settings.screenconnect_extension_id)
-        origin = _safe_origin(self.settings.screenconnect_origin)
+        origin = _safe_origin(
+            self.settings.screenconnect_origin,
+            allow_insecure_transport=self.settings.allow_insecure_provider_transport,
+        )
         if not self.settings.screenconnect_auth_secret:
             raise ScreenConnectRmmError("ScreenConnect credentials are incomplete: WAIT_SCREENCONNECT_AUTH_SECRET")
         endpoint = f"{base_url}/App_Extensions/{extension_id}/Service.ashx/{operation}"
@@ -402,21 +409,35 @@ def _safe_scalar(value: object) -> object | None:
     return value if value is None or isinstance(value, (str, int, float, bool)) else None
 
 
-def _safe_base_url(value: str) -> str:
+def _safe_base_url(value: str, *, allow_insecure_transport: bool = False) -> str:
     parsed = urlsplit(value.strip())
     if parsed.scheme not in {"http", "https"} or not parsed.netloc:
         raise ScreenConnectRmmError("ScreenConnect base URL must be an HTTP(S) URL")
     if parsed.username or parsed.password or parsed.query or parsed.fragment:
         raise ScreenConnectRmmError("ScreenConnect base URL must not contain credentials or query data")
+    try:
+        validate_operator_url(value, allow_insecure_transport=allow_insecure_transport)
+    except NetSecurityError as exc:
+        raise ScreenConnectRmmError(
+            "ScreenConnect base URL must use HTTPS; set "
+            "WAIT_ALLOW_INSECURE_PROVIDER_TRANSPORT=true to allow plain HTTP"
+        ) from exc
     return value.strip().rstrip("/")
 
 
-def _safe_origin(value: str) -> str:
+def _safe_origin(value: str, *, allow_insecure_transport: bool = False) -> str:
     parsed = urlsplit(value.strip())
     if parsed.scheme not in {"http", "https"} or not parsed.netloc or parsed.username or parsed.password:
         raise ScreenConnectRmmError("ScreenConnect Origin must be an HTTP(S) origin")
     if parsed.query or parsed.fragment or parsed.path not in {"", "/"}:
         raise ScreenConnectRmmError("ScreenConnect Origin must not contain a path or query data")
+    try:
+        validate_operator_url(value, allow_insecure_transport=allow_insecure_transport)
+    except NetSecurityError as exc:
+        raise ScreenConnectRmmError(
+            "ScreenConnect Origin must use HTTPS; set "
+            "WAIT_ALLOW_INSECURE_PROVIDER_TRANSPORT=true to allow plain HTTP"
+        ) from exc
     return value.strip().rstrip("/")
 
 

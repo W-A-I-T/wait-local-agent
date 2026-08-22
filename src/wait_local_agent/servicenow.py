@@ -20,6 +20,7 @@ from wait_local_agent.models import (
     ServiceNowWriteRequest,
     ServiceNowWriteResult,
 )
+from wait_local_agent.net_security import NetSecurityError, validate_operator_url
 
 DEFAULT_PAGE_SIZE = 25
 MAX_PAGE_SIZE = 100
@@ -34,8 +35,7 @@ class ServiceNowReadResponse:
 
 
 class ServiceNowReadProvider(Protocol):
-    def health(self) -> ConnectorReadResult:
-        ...
+    def health(self) -> ConnectorReadResult: ...
 
     def list_incidents(
         self,
@@ -43,11 +43,9 @@ class ServiceNowReadProvider(Protocol):
         page: int = 1,
         page_size: int = DEFAULT_PAGE_SIZE,
         query: str | None = None,
-    ) -> ServiceNowReadResponse:
-        ...
+    ) -> ServiceNowReadResponse: ...
 
-    def get_incident(self, sys_id: str) -> ServiceNowReadResponse:
-        ...
+    def get_incident(self, sys_id: str) -> ServiceNowReadResponse: ...
 
     def list_companies(
         self,
@@ -55,19 +53,15 @@ class ServiceNowReadProvider(Protocol):
         page: int = 1,
         page_size: int = DEFAULT_PAGE_SIZE,
         query: str | None = None,
-    ) -> ServiceNowReadResponse:
-        ...
+    ) -> ServiceNowReadResponse: ...
 
-    def get_company(self, sys_id: str) -> ServiceNowReadResponse:
-        ...
+    def get_company(self, sys_id: str) -> ServiceNowReadResponse: ...
 
 
 class ServiceNowWriteProvider(Protocol):
-    def write_health(self) -> ConnectorReadResult:
-        ...
+    def write_health(self) -> ConnectorReadResult: ...
 
-    def execute_write(self, request: ServiceNowWriteRequest) -> ServiceNowWriteResult:
-        ...
+    def execute_write(self, request: ServiceNowWriteRequest) -> ServiceNowWriteResult: ...
 
 
 class ServiceNowReadError(Exception):
@@ -160,9 +154,7 @@ class ServiceNowClient:
             endpoint = f"incident/{safe_id}"
             response_payload, status_code = self._patch(endpoint, fields)
         except ServiceNowReadError as exc:
-            return ServiceNowWriteResult(
-                "failed", exc.message, request.action_type, request.ticket_id
-            )
+            return ServiceNowWriteResult("failed", exc.message, request.action_type, request.ticket_id)
         return ServiceNowWriteResult(
             "succeeded",
             f"ServiceNow {request.action_type} write succeeded.",
@@ -227,11 +219,7 @@ class ServiceNowClient:
             payload = self._get(endpoint, params=params)
         except ServiceNowReadError as exc:
             return ServiceNowReadResponse(ConnectorReadResult("failed", exc.message), [])
-        items = [
-            item
-            for row in _payload_rows(payload)
-            if (item := normalizer(row)) is not None
-        ]
+        items = [item for row in _payload_rows(payload) if (item := normalizer(row)) is not None]
         return ServiceNowReadResponse(
             ConnectorReadResult(
                 "ready",
@@ -248,28 +236,29 @@ class ServiceNowClient:
         params: dict[str, str | int] | None = None,
     ) -> object:
         if not self.settings.allow_http_probing:
-            raise ServiceNowReadError(
-                "ServiceNow live reads are blocked until WAIT_ALLOW_HTTP_PROBING=true."
-            )
+            raise ServiceNowReadError("ServiceNow live reads are blocked until WAIT_ALLOW_HTTP_PROBING=true.")
         missing = self._not_configured_result()
         if missing is not None:
             raise ServiceNowReadError(missing.message)
         try:
+            base_url = _api_base_url(
+                self.settings.servicenow_base_url,
+                self.settings.servicenow_api_version,
+                allow_insecure_transport=self.settings.allow_insecure_provider_transport,
+            )
             with httpx.Client(
                 timeout=self.settings.connector_timeout_seconds,
                 transport=self.transport,
             ) as client:
                 response = client.get(
-                    f"{_api_base_url(self.settings.servicenow_base_url, self.settings.servicenow_api_version)}"
+                    f"{base_url}"
                     f"/{_safe_endpoint(endpoint)}",
                     auth=(self.settings.servicenow_username, self.settings.servicenow_password),
                     headers={"Accept": "application/json"},
                     params=params,
                 )
         except (httpx.TimeoutException, httpx.ConnectError) as exc:
-            raise ServiceNowReadError(
-                "ServiceNow request failed before receiving a response."
-            ) from exc
+            raise ServiceNowReadError("ServiceNow request failed before receiving a response.") from exc
         except httpx.HTTPError as exc:
             raise ServiceNowReadError("ServiceNow request failed.") from exc
         if response.status_code >= 400:
@@ -277,9 +266,7 @@ class ServiceNowClient:
         try:
             return response.json()
         except ValueError as exc:
-            raise ServiceNowReadError(
-                f"ServiceNow GET {endpoint} returned malformed JSON."
-            ) from exc
+            raise ServiceNowReadError(f"ServiceNow GET {endpoint} returned malformed JSON.") from exc
 
     def _patch(
         self,
@@ -287,46 +274,41 @@ class ServiceNowClient:
         fields: dict[str, object],
     ) -> tuple[object, int]:
         if not self.settings.allow_http_probing:
-            raise ServiceNowReadError(
-                "ServiceNow live writes are blocked until WAIT_ALLOW_HTTP_PROBING=true."
-            )
+            raise ServiceNowReadError("ServiceNow live writes are blocked until WAIT_ALLOW_HTTP_PROBING=true.")
         if not self.settings.allow_write_actions:
-            raise ServiceNowReadError(
-                "ServiceNow live writes are blocked until WAIT_ALLOW_WRITE_ACTIONS=true."
-            )
+            raise ServiceNowReadError("ServiceNow live writes are blocked until WAIT_ALLOW_WRITE_ACTIONS=true.")
         missing = self._not_configured_result()
         if missing is not None:
             raise ServiceNowReadError(missing.message)
         try:
+            base_url = _api_base_url(
+                self.settings.servicenow_base_url,
+                self.settings.servicenow_api_version,
+                allow_insecure_transport=self.settings.allow_insecure_provider_transport,
+            )
             with httpx.Client(
                 timeout=self.settings.connector_timeout_seconds,
                 transport=self.transport,
             ) as client:
                 response = client.patch(
-                    f"{_api_base_url(self.settings.servicenow_base_url, self.settings.servicenow_api_version)}"
+                    f"{base_url}"
                     f"/{_safe_endpoint(endpoint)}",
                     auth=(self.settings.servicenow_username, self.settings.servicenow_password),
                     headers={"Accept": "application/json", "Content-Type": "application/json"},
                     json=fields,
                 )
         except (httpx.TimeoutException, httpx.ConnectError) as exc:
-            raise ServiceNowReadError(
-                "ServiceNow request failed before receiving a response."
-            ) from exc
+            raise ServiceNowReadError("ServiceNow request failed before receiving a response.") from exc
         except httpx.HTTPError as exc:
             raise ServiceNowReadError("ServiceNow request failed.") from exc
         if response.status_code >= 400:
-            raise ServiceNowReadError(
-                f"ServiceNow PATCH {endpoint} failed with HTTP {response.status_code}."
-            )
+            raise ServiceNowReadError(f"ServiceNow PATCH {endpoint} failed with HTTP {response.status_code}.")
         if not response.content:
             return {}, response.status_code
         try:
             return response.json(), response.status_code
         except ValueError as exc:
-            raise ServiceNowReadError(
-                f"ServiceNow PATCH {endpoint} returned malformed JSON."
-            ) from exc
+            raise ServiceNowReadError(f"ServiceNow PATCH {endpoint} returned malformed JSON.") from exc
 
     def _blocked_result(self) -> ConnectorReadResult | None:
         if self.settings.allow_http_probing:
@@ -356,9 +338,7 @@ class ServiceNowClient:
         blocked = self._write_blocked_result()
         if blocked is None:
             return None
-        return ServiceNowWriteResult(
-            "blocked", blocked.message, request.action_type, request.ticket_id
-        )
+        return ServiceNowWriteResult("blocked", blocked.message, request.action_type, request.ticket_id)
 
     def _not_configured_write_result(
         self,
@@ -367,9 +347,7 @@ class ServiceNowClient:
         missing = self._not_configured_result()
         if missing is None:
             return None
-        return ServiceNowWriteResult(
-            "not_configured", missing.message, request.action_type, request.ticket_id
-        )
+        return ServiceNowWriteResult("not_configured", missing.message, request.action_type, request.ticket_id)
 
     def _not_configured_result(self) -> ConnectorReadResult | None:
         missing = [
@@ -396,8 +374,8 @@ class ServiceNowClient:
         return ServiceNowReadResponse(missing, []) if missing else None
 
 
-def _api_base_url(base_url: str, api_version: str = "") -> str:
-    stripped = _safe_base_url(base_url).rstrip("/")
+def _api_base_url(base_url: str, api_version: str = "", *, allow_insecure_transport: bool = False) -> str:
+    stripped = _safe_base_url(base_url, allow_insecure_transport=allow_insecure_transport).rstrip("/")
     suffix = "/api/now"
     if stripped.endswith(suffix):
         root = stripped
@@ -411,16 +389,20 @@ def _api_base_url(base_url: str, api_version: str = "") -> str:
     return root
 
 
-def _safe_base_url(base_url: str) -> str:
+def _safe_base_url(base_url: str, *, allow_insecure_transport: bool = False) -> str:
     if any(ord(character) < 32 for character in base_url):
         raise ServiceNowReadError("ServiceNow base URL contains control characters.")
     parsed = urlsplit(base_url)
     if parsed.scheme not in {"http", "https"} or not parsed.netloc:
         raise ServiceNowReadError("ServiceNow base URL must be an HTTP(S) URL.")
     if parsed.username or parsed.password or parsed.query or parsed.fragment:
+        raise ServiceNowReadError("ServiceNow base URL must not contain credentials or query data.")
+    try:
+        validate_operator_url(base_url, allow_insecure_transport=allow_insecure_transport)
+    except NetSecurityError as exc:
         raise ServiceNowReadError(
-            "ServiceNow base URL must not contain credentials or query data."
-        )
+            "ServiceNow base URL must use HTTPS; set WAIT_ALLOW_INSECURE_PROVIDER_TRANSPORT=true to allow plain HTTP."
+        ) from exc
     return base_url
 
 
@@ -441,8 +423,10 @@ def _safe_endpoint(endpoint: str) -> str:
 
 def _safe_sys_id(value: str) -> str:
     stripped = value.strip()
-    if not stripped or len(stripped) > 64 or not all(
-        character.isalnum() or character in {"_", "-"} for character in stripped
+    if (
+        not stripped
+        or len(stripped) > 64
+        or not all(character.isalnum() or character in {"_", "-"} for character in stripped)
     ):
         raise ServiceNowReadError("ServiceNow record identifiers contain unsafe characters.")
     return stripped
@@ -451,31 +435,21 @@ def _safe_sys_id(value: str) -> str:
 def _write_fields(action_type: str, fields: Mapping[str, object]) -> dict[str, object]:
     if action_type == "add_work_note":
         if set(fields) != {"work_notes"}:
-            raise ServiceNowReadError(
-                "ServiceNow add_work_note requires only the work_notes field."
-            )
+            raise ServiceNowReadError("ServiceNow add_work_note requires only the work_notes field.")
         value = fields["work_notes"]
         if not isinstance(value, str) or not value.strip() or len(value) > 4_000:
-            raise ServiceNowReadError(
-                "ServiceNow work_notes must be non-empty text of at most 4000 characters."
-            )
+            raise ServiceNowReadError("ServiceNow work_notes must be non-empty text of at most 4000 characters.")
         return {"work_notes": value.strip()}
     if action_type == "update_state":
         if set(fields) != {"incident_state"}:
-            raise ServiceNowReadError(
-                "ServiceNow update_state requires only the incident_state field."
-            )
+            raise ServiceNowReadError("ServiceNow update_state requires only the incident_state field.")
         value = fields["incident_state"]
         if not isinstance(value, str) or not value.strip() or len(value) > 20:
-            raise ServiceNowReadError(
-                "ServiceNow incident_state must be non-empty text of at most 20 characters."
-            )
+            raise ServiceNowReadError("ServiceNow incident_state must be non-empty text of at most 20 characters.")
         return {"incident_state": value.strip()}
     if action_type == "update_resolution":
         if set(fields) != {"close_code", "close_notes"}:
-            raise ServiceNowReadError(
-                "ServiceNow update_resolution requires close_code and close_notes."
-            )
+            raise ServiceNowReadError("ServiceNow update_resolution requires close_code and close_notes.")
         close_code = fields["close_code"]
         close_notes = fields["close_notes"]
         if (
@@ -484,18 +458,14 @@ def _write_fields(action_type: str, fields: Mapping[str, object]) -> dict[str, o
             or len(close_code) > 128
             or any(ord(character) < 32 for character in close_code)
         ):
-            raise ServiceNowReadError(
-                "ServiceNow close_code must be non-empty text of at most 128 characters."
-            )
+            raise ServiceNowReadError("ServiceNow close_code must be non-empty text of at most 128 characters.")
         if (
             not isinstance(close_notes, str)
             or not close_notes.strip()
             or len(close_notes) > 4_000
             or any(ord(character) < 32 for character in close_notes)
         ):
-            raise ServiceNowReadError(
-                "ServiceNow close_notes must be non-empty text of at most 4000 characters."
-            )
+            raise ServiceNowReadError("ServiceNow close_notes must be non-empty text of at most 4000 characters.")
         return {"close_code": close_code.strip(), "close_notes": close_notes.strip()}
     if action_type == "assign_incident":
         if set(fields) not in ({"assigned_to"}, {"assignment_group"}):
@@ -504,9 +474,7 @@ def _write_fields(action_type: str, fields: Mapping[str, object]) -> dict[str, o
             )
         field, value = next(iter(fields.items()))
         if not isinstance(value, str) or not value.strip() or len(value) > 64:
-            raise ServiceNowReadError(
-                f"ServiceNow {field} must be a non-empty reference of at most 64 characters."
-            )
+            raise ServiceNowReadError(f"ServiceNow {field} must be a non-empty reference of at most 64 characters.")
         if not all(character.isalnum() or character in {"_", "-"} for character in value.strip()):
             raise ServiceNowReadError(f"ServiceNow {field} contains unsafe characters.")
         return {field: value.strip()}
@@ -528,9 +496,7 @@ def _safe_query(value: str | None) -> str | None:
         return None
     stripped = value.strip()
     if len(stripped) > 500 or any(ord(character) < 32 for character in stripped):
-        raise ServiceNowReadError(
-            "ServiceNow queries are too long or contain control characters."
-        )
+        raise ServiceNowReadError("ServiceNow queries are too long or contain control characters.")
     return stripped or None
 
 

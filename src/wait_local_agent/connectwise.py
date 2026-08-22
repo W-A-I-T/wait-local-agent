@@ -25,6 +25,7 @@ from wait_local_agent.models import (
     ConnectWiseWriteRequest,
     ConnectWiseWriteResult,
 )
+from wait_local_agent.net_security import NetSecurityError, validate_operator_url
 
 QueryValue = str | int | None
 Normalizer = Callable[[Mapping[str, object]], dict[str, object] | None]
@@ -361,9 +362,13 @@ class ConnectWiseClient:
         if missing is not None:
             raise ConnectWiseReadError(missing.message)
         try:
+            base_url = _api_base_url(
+                self.settings.connectwise_base_url,
+                allow_insecure_transport=self.settings.allow_insecure_provider_transport,
+            )
             with httpx.Client(timeout=self.settings.connector_timeout_seconds, transport=self.transport) as client:
                 response = client.get(
-                    f"{_api_base_url(self.settings.connectwise_base_url)}/{_safe_endpoint(endpoint)}",
+                    f"{base_url}/{_safe_endpoint(endpoint)}",
                     headers=self._headers(),
                     params=params,
                 )
@@ -405,12 +410,16 @@ class ConnectWiseClient:
         if missing is not None:
             raise ConnectWiseReadError(missing.message)
         try:
+            base_url = _api_base_url(
+                self.settings.connectwise_base_url,
+                allow_insecure_transport=self.settings.allow_insecure_provider_transport,
+            )
             with httpx.Client(
                 timeout=self.settings.connector_timeout_seconds,
                 transport=self.transport,
             ) as client:
                 response = client.patch(
-                    f"{_api_base_url(self.settings.connectwise_base_url)}/{_safe_endpoint(endpoint)}",
+                    f"{base_url}/{_safe_endpoint(endpoint)}",
                     headers={**self._headers(), "Content-Type": "application/json"},
                     json=payload,
                 )
@@ -515,7 +524,14 @@ class ConnectWiseClient:
         )
 
 
-def _api_base_url(base_url: str) -> str:
+def _api_base_url(base_url: str, *, allow_insecure_transport: bool = False) -> str:
+    try:
+        validate_operator_url(base_url, allow_insecure_transport=allow_insecure_transport)
+    except NetSecurityError as exc:
+        raise ConnectWiseReadError(
+            "ConnectWise PSA base URL must use HTTPS; set "
+            "WAIT_ALLOW_INSECURE_PROVIDER_TRANSPORT=true to allow plain HTTP"
+        ) from exc
     stripped = base_url.rstrip("/")
     suffix = "/v4_6_release/apis/3.0"
     if stripped.endswith(suffix):

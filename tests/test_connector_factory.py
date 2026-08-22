@@ -360,6 +360,15 @@ def test_invalid_base_url_type_is_fixed() -> None:
         )
 
 
+def test_pinned_factory_keeps_strict_https_policy() -> None:
+    with pytest.raises(ConnectorFactoryError, match="network policy"):
+        _validate_urls(
+            {"base_url": "http://provider.example.test"},
+            connector_type="halopsa",
+            allowed_hosts=("provider.example.test",),
+        )
+
+
 def test_private_resolution_rejects_before_inner_transport(settings, tmp_path: Path) -> None:
     class FailingTransport(httpx.BaseTransport):
         def handle_request(self, request: httpx.Request) -> httpx.Response:

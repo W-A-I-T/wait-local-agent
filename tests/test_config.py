@@ -12,6 +12,7 @@ def test_safe_defaults_are_disabled(monkeypatch) -> None:
     monkeypatch.delenv("WAIT_POWER_PLATFORM_WORKSPACE", raising=False)
     monkeypatch.delenv("WAIT_POWER_PLATFORM_COMMAND_TIMEOUT_SECONDS", raising=False)
     monkeypatch.delenv("WAIT_ALLOW_HTTP_PROBING", raising=False)
+    monkeypatch.delenv("WAIT_ALLOW_INSECURE_PROVIDER_TRANSPORT", raising=False)
     monkeypatch.delenv("WAIT_ALLOW_CLOUD_FALLBACK", raising=False)
     monkeypatch.delenv("WAIT_ALLOW_LLM_INFERENCE", raising=False)
     monkeypatch.delenv("WAIT_API_TOKEN", raising=False)
@@ -76,6 +77,7 @@ def test_safe_defaults_are_disabled(monkeypatch) -> None:
     assert settings.power_platform_workspace == Path(".wait-local-agent/power-platform")
     assert settings.power_platform_command_timeout_seconds == 600.0
     assert settings.allow_http_probing is False
+    assert settings.allow_insecure_provider_transport is False
     assert settings.allow_cloud_fallback is False
     assert settings.allow_llm_inference is False
     assert settings.api_token == ""
@@ -156,6 +158,12 @@ def test_safe_defaults_are_disabled(monkeypatch) -> None:
     assert settings.license_key == ""
     assert settings.license_secret == ""
     assert settings.pack_signing_secret == ""
+
+
+def test_insecure_provider_transport_requires_explicit_opt_in(monkeypatch) -> None:
+    monkeypatch.setenv("WAIT_ALLOW_INSECURE_PROVIDER_TRANSPORT", "true")
+
+    assert load_settings().allow_insecure_provider_transport is True
 
 
 def test_boolean_env_accepts_disabled_values(monkeypatch) -> None:

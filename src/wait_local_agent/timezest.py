@@ -20,6 +20,7 @@ import httpx
 
 from wait_local_agent.config import Settings
 from wait_local_agent.models import ConnectorReadResult
+from wait_local_agent.net_security import NetSecurityError, validate_operator_url
 
 DEFAULT_LIMIT = 20
 MAX_LIMIT = 20
@@ -322,7 +323,11 @@ class TimeZestClient:
         missing = self._not_configured_result()
         if missing is not None:
             raise TimeZestReadError(missing.message)
-        url = _endpoint_url(self.settings.timezest_base_url, endpoint)
+        url = _endpoint_url(
+            self.settings.timezest_base_url,
+            endpoint,
+            allow_insecure_transport=self.settings.allow_insecure_provider_transport,
+        )
         try:
             with httpx.Client(
                 timeout=self.settings.connector_timeout_seconds,
@@ -491,7 +496,9 @@ def _bounded_limit(value: int) -> int:
     return value
 
 
-def _endpoint_url(base_url: str, endpoint: str) -> str:
+def _endpoint_url(
+    base_url: str, endpoint: str, *, allow_insecure_transport: bool = False
+) -> str:
     if any(ord(character) < 32 for character in base_url):
         raise TimeZestReadError("TimeZest base URL contains control characters.")
     parsed = urlsplit(base_url.strip())
@@ -499,6 +506,13 @@ def _endpoint_url(base_url: str, endpoint: str) -> str:
         raise TimeZestReadError("TimeZest base URL must be an HTTP(S) URL.")
     if parsed.username or parsed.password or parsed.query or parsed.fragment:
         raise TimeZestReadError("TimeZest base URL must not contain credentials or query data.")
+    try:
+        validate_operator_url(base_url, allow_insecure_transport=allow_insecure_transport)
+    except NetSecurityError as exc:
+        raise TimeZestReadError(
+            "TimeZest base URL must use HTTPS; set "
+            "WAIT_ALLOW_INSECURE_PROVIDER_TRANSPORT=true to allow plain HTTP."
+        ) from exc
     if endpoint not in {"v1/scheduling_requests"}:
         raise TimeZestReadError("TimeZest endpoint is not supported.")
     return f"{base_url.strip().rstrip('/')}/{endpoint}"

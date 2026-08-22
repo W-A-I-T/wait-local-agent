@@ -119,6 +119,21 @@ def test_loopback_requires_explicit_flag_and_allowlist() -> None:
     ).host == "localhost"
 
 
+def test_validate_operator_url_defaults_to_secure_non_loopback_transport() -> None:
+    with pytest.raises(net_security.NetSecurityError, match="HTTPS"):
+        net_security.validate_operator_url("http://provider.example.test")
+    net_security.validate_operator_url("http://127.0.0.1:8080")
+    net_security.validate_operator_url("http://localhost:8080")
+    net_security.validate_operator_url(
+        "http://provider.example.test", allow_insecure_transport=True
+    )
+
+
+def test_validate_operator_url_rejects_embedded_credentials() -> None:
+    with pytest.raises(net_security.NetSecurityError, match="credentials"):
+        net_security.validate_operator_url("https://user:password@provider.example.test")
+
+
 @pytest.mark.parametrize(
     "value",
     [

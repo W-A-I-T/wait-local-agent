@@ -15,6 +15,7 @@ from uuid import uuid4
 import httpx
 
 from wait_local_agent.config import Settings
+from wait_local_agent.net_security import NetSecurityError, validate_operator_url
 
 CommunicationChannel = Literal["ticket_note", "email", "teams", "slack", "sms"]
 
@@ -151,7 +152,10 @@ class _WebhookAdapter:
         self.transport = transport
 
     def send(self, message: CommunicationMessage, settings: Settings) -> CommunicationDelivery:
-        endpoint = _safe_http_url(self.endpoint)
+        endpoint = _safe_http_url(
+            self.endpoint,
+            allow_insecure_transport=settings.allow_insecure_provider_transport,
+        )
         if self.channel in {"teams", "slack"}:
             payload = {"text": message.body}
             if message.subject:
@@ -307,7 +311,7 @@ class ConfiguredCommunicationProvider(PreviewCommunicationProvider):
         raise CommunicationDeliveryError("ticket notes use the local ticket-note path")
 
 
-def _safe_http_url(value: str) -> str:
+def _safe_http_url(value: str, *, allow_insecure_transport: bool = False) -> str:
     parsed = urlsplit(value.strip())
     if parsed.scheme not in {"http", "https"} or not parsed.netloc:
         raise CommunicationDeliveryError("communication endpoint must be an HTTP(S) URL")
@@ -315,6 +319,13 @@ def _safe_http_url(value: str) -> str:
         raise CommunicationDeliveryError(
             "communication endpoint must not contain credentials or query data"
         )
+    try:
+        validate_operator_url(value, allow_insecure_transport=allow_insecure_transport)
+    except NetSecurityError as exc:
+        raise CommunicationDeliveryError(
+            "communication endpoint must use HTTPS; set "
+            "WAIT_ALLOW_INSECURE_PROVIDER_TRANSPORT=true to allow plain HTTP"
+        ) from exc
     return value.strip()
 
 

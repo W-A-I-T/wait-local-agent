@@ -15,6 +15,7 @@ import httpx
 
 from wait_local_agent.config import Settings
 from wait_local_agent.models import ConnectorReadResult
+from wait_local_agent.net_security import NetSecurityError, validate_operator_url
 
 DEFAULT_PAGE_SIZE = 25
 MAX_PAGE_SIZE = 100
@@ -62,8 +63,7 @@ Normalizer = Callable[
 
 
 class ItGlueClientProtocol(Protocol):
-    def health(self) -> ConnectorReadResult:
-        ...
+    def health(self) -> ConnectorReadResult: ...
 
     def list_documents(
         self,
@@ -72,8 +72,7 @@ class ItGlueClientProtocol(Protocol):
         folder_id: str | None = None,
         page: int = 1,
         page_size: int = DEFAULT_PAGE_SIZE,
-    ) -> ItGlueReadResponse:
-        ...
+    ) -> ItGlueReadResponse: ...
 
     def search_documents(
         self,
@@ -82,8 +81,7 @@ class ItGlueClientProtocol(Protocol):
         *,
         folder_id: str | None = None,
         limit: int = DEFAULT_PAGE_SIZE,
-    ) -> ItGlueReadResponse:
-        ...
+    ) -> ItGlueReadResponse: ...
 
 
 class ItGlueReadError(Exception):
@@ -323,9 +321,13 @@ class ItGlueClient:
             raise ItGlueReadError(missing.message)
         try:
             safe_endpoint = _safe_endpoint(endpoint)
+            base_url = _api_base_url(
+                self.settings.itglue_base_url,
+                allow_insecure_transport=self.settings.allow_insecure_provider_transport,
+            )
             with httpx.Client(timeout=self.settings.connector_timeout_seconds, transport=self.transport) as client:
                 response = client.get(
-                    f"{_api_base_url(self.settings.itglue_base_url)}/{safe_endpoint}",
+                    f"{base_url}/{safe_endpoint}",
                     headers={
                         "x-api-key": self.settings.itglue_api_key,
                         "Accept": "application/vnd.api+json",
@@ -373,11 +375,11 @@ class ItGlueClient:
         return ItGlueReadResponse(missing, []) if missing else None
 
 
-def _api_base_url(base_url: str) -> str:
-    return _safe_base_url(base_url).rstrip("/")
+def _api_base_url(base_url: str, *, allow_insecure_transport: bool = False) -> str:
+    return _safe_base_url(base_url, allow_insecure_transport=allow_insecure_transport).rstrip("/")
 
 
-def _safe_base_url(base_url: str) -> str:
+def _safe_base_url(base_url: str, *, allow_insecure_transport: bool = False) -> str:
     if any(ord(character) < 32 for character in base_url):
         raise ItGlueReadError("IT Glue base URL contains control characters.")
     parsed = urlsplit(base_url)
@@ -385,6 +387,12 @@ def _safe_base_url(base_url: str) -> str:
         raise ItGlueReadError("IT Glue base URL must be an HTTP(S) URL.")
     if parsed.username or parsed.password or parsed.query or parsed.fragment:
         raise ItGlueReadError("IT Glue base URL must not contain credentials or query data.")
+    try:
+        validate_operator_url(base_url, allow_insecure_transport=allow_insecure_transport)
+    except NetSecurityError as exc:
+        raise ItGlueReadError(
+            "IT Glue base URL must use HTTPS; set WAIT_ALLOW_INSECURE_PROVIDER_TRANSPORT=true to allow plain HTTP."
+        ) from exc
     return base_url
 
 
@@ -394,18 +402,17 @@ def _safe_endpoint(endpoint: str) -> str:
     parts = endpoint.strip("/").split("/")
     if not parts or any(not part or part in {".", ".."} for part in parts):
         raise ItGlueReadError("IT Glue endpoint is invalid.")
-    if any(
-        not all(character.isalnum() or character in {"_", "-"} for character in part)
-        for part in parts
-    ):
+    if any(not all(character.isalnum() or character in {"_", "-"} for character in part) for part in parts):
         raise ItGlueReadError("IT Glue endpoint contains unsafe characters.")
     return "/".join(parts)
 
 
 def _safe_segment(value: str) -> str:
     stripped = value.strip()
-    if not stripped or len(stripped) > 64 or not all(
-        character.isalnum() or character in {"_", "-"} for character in stripped
+    if (
+        not stripped
+        or len(stripped) > 64
+        or not all(character.isalnum() or character in {"_", "-"} for character in stripped)
     ):
         raise ItGlueReadError("IT Glue resource identifiers contain unsafe characters.")
     return stripped

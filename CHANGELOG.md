@@ -4,6 +4,12 @@ All notable changes to WAIT Local Agent will be documented in this file.
 
 ## [Unreleased]
 
+### Breaking
+
+- Provider connector origins now require HTTPS by default. Set
+  `WAIT_ALLOW_INSECURE_PROVIDER_TRANSPORT=true` only when plain HTTP is
+  deliberately required for all provider origins on a trusted network.
+
 ### Changed
 
 - The Solutions Architect screen (renamed from Consultant) now surfaces the

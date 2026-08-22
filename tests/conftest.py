@@ -21,6 +21,7 @@ def settings(tmp_path: Path) -> Settings:
         allowed_doc_root=Path("examples/sample_docs"),
         allow_write_actions=False,
         allow_http_probing=False,
+        allow_insecure_provider_transport=False,
         allow_cloud_fallback=False,
         allow_llm_inference=False,
         local_model_provider="deterministic",

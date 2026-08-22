@@ -17,6 +17,7 @@ from urllib.parse import quote, urlsplit
 import httpx
 
 from wait_local_agent.config import Settings
+from wait_local_agent.net_security import NetSecurityError, validate_operator_url
 from wait_local_agent.rmm import (
     RmmAlert,
     RmmDevice,
@@ -285,7 +286,10 @@ class DattoRmmAdapter:
                 "Datto RMM credentials are incomplete: WAIT_DATTORMM_BASE_URL and "
                 "WAIT_DATTORMM_ACCESS_TOKEN"
             )
-        base_url = _safe_base_url(self.settings.datto_rmm_base_url)
+        base_url = _safe_base_url(
+            self.settings.datto_rmm_base_url,
+            allow_insecure_transport=self.settings.allow_insecure_provider_transport,
+        )
         safe_endpoint = _safe_endpoint(endpoint)
         try:
             with httpx.Client(
@@ -400,12 +404,19 @@ def _path_segment(value: str) -> str:
     return quote(value.strip(), safe="-_.~")
 
 
-def _safe_base_url(value: str) -> str:
+def _safe_base_url(value: str, *, allow_insecure_transport: bool = False) -> str:
     parsed = urlsplit(value.strip())
     if parsed.scheme not in {"http", "https"} or not parsed.netloc:
         raise DattoRmmError("Datto RMM base URL must be an HTTP(S) URL")
     if parsed.username or parsed.password or parsed.query or parsed.fragment:
         raise DattoRmmError("Datto RMM base URL must not contain credentials or query data")
+    try:
+        validate_operator_url(value, allow_insecure_transport=allow_insecure_transport)
+    except NetSecurityError as exc:
+        raise DattoRmmError(
+            "Datto RMM base URL must use HTTPS; set "
+            "WAIT_ALLOW_INSECURE_PROVIDER_TRANSPORT=true to allow plain HTTP"
+        ) from exc
     return value.strip().rstrip("/")
 
 
