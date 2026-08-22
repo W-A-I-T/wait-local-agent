@@ -64,3 +64,28 @@
 - Recheck SQLite initialization/reopen behavior and the command-evidence shape.
 - Confirm the pre-existing `uv.lock` refresh is intentionally retained and no
   other unrelated repository changes appear before PR creation.
+
+## Blocker — cross-family review unavailable
+
+The required Kimi cross-family review could not run: the provider returned
+HTTP 403, "You've reached your usage limit for this billing cycle."
+
+No substitute reviewer was used. Standing workflow policy requires recording
+the blocker and returning ownership to the human rather than swapping in
+another provider.
+
+State of the change at the time of blocking:
+
+- `./scripts/validate_release.sh` passed end to end: 2717 backend tests passed,
+  total coverage 95.03% (gate is 95%), 232 UI tests passed, ruff / mypy /
+  bandit / pip-audit / public_surface_audit all clean.
+- `fs_permissions.py` and `platform_support.py` are both at 100% coverage.
+  Platform branches are covered by injecting fake predicates and backends on
+  Linux; coverage suppression is confined to two raw Win32 syscall bodies.
+- An initial gate run failed at 94.88% because the new platform branches were
+  uncovered. Tests were added to close the gap; the coverage threshold was not
+  lowered and no suppression was widened.
+- No lockfile drift: `uv.lock` was restored to its `origin/main` state after a
+  local dependency install modified it.
+- PR #404 is open as a draft and must not merge until this review completes or
+  is explicitly waived.
