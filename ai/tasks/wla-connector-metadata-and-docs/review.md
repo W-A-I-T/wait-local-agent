@@ -94,3 +94,14 @@ State of the change at the time of blocking:
 
 Resolution requires either restored Kimi quota or an explicit human waiver of
 the cross-family review for this task.
+
+## Cross-family review waived by the human
+
+The Kimi cross-family review could not run (provider quota exhausted, HTTP 403).
+The blocker was recorded and ownership returned to the human, who explicitly
+waived the cross-family review for this task and authorised the merge.
+
+No substitute reviewer was used. Claude's elevated final gate verified the diff
+directly, including a mechanical check that every added environment variable
+name is read by config.py. Final state at merge: backend and ui passing; local
+release gate green at 2691 backend tests and 95.02% total coverage.
