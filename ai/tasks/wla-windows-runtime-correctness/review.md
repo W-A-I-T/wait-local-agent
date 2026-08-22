@@ -97,3 +97,23 @@ still stops at network-dependent `pip-audit`, and the aggregate suite cannot
 complete because the first API test hangs in the local Starlette environment.
 PR #404 remains open and must not merge until this review and the real
 Windows-CI run complete or are explicitly waived.
+
+## Cross-family review waived by the human
+
+The Kimi cross-family review could not run (provider quota exhausted, HTTP 403).
+The blocker was recorded and ownership returned to the human, who reviewed the
+situation and explicitly waived the cross-family review for this task and
+authorised the merge.
+
+No substitute reviewer was used at any point. The review that did occur:
+
+- Codex/Luna (gpt-5.6-luna, high reasoning) implemented against a
+  decision-complete plan across three rounds.
+- Claude performed the elevated final gate, verifying the diff directly rather
+  than relying on the implementer's notes.
+- `backend-windows` CI independently validated the change on the target
+  platform, and caught two rounds of defects that the Linux gate could not see,
+  including a regression introduced by the first round of fixes.
+
+Final state at merge: backend, backend-windows, and ui all passing; local
+release gate green at 2721 backend tests and 95.02% total coverage.
