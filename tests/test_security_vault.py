@@ -141,5 +141,10 @@ def test_secret_vault_handles_key_read_payload_and_permission_failures(tmp_path,
 
     monkeypatch.setattr(fs_permissions.os, "chmod", fail_chmod)
     with caplog.at_level("WARNING", logger=fs_permissions.LOGGER.name):
-        assert fs_permissions.restrict_existing_file(tmp_path) is False
+        assert (
+            fs_permissions.restrict_existing_file(
+                tmp_path, backend=fs_permissions._PosixBackend()
+            )
+            is False
+        )
     assert str(tmp_path) in caplog.text

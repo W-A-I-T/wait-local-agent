@@ -76,7 +76,12 @@ def test_restrict_existing_file_logs_os_error(tmp_path: Path, monkeypatch, caplo
 
     monkeypatch.setattr(fs_permissions.os, "chmod", fail_chmod)
     with caplog.at_level(logging.WARNING, logger=fs_permissions.LOGGER.name):
-        assert fs_permissions.restrict_existing_file(path) is False
+        assert (
+            fs_permissions.restrict_existing_file(
+                path, backend=fs_permissions._PosixBackend()
+            )
+            is False
+        )
 
     assert str(path) in caplog.text
 

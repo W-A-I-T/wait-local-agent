@@ -21,6 +21,9 @@
   does not change permissions on an existing artifact root or vault parent.
 - Temporary artifact/key files are closed before cleanup; Windows cleanup also
   tolerates `PermissionError` when a failed operation leaves a sharing lock.
+- Follow-Up 3 keeps the POSIX permission-failure tests meaningful on Windows by
+  injecting `_PosixBackend`; it does not alter production behavior. Default
+  path assertions now compare `Path` objects, avoiding host-separator failures.
 - PAC command launching now has a `COMSPEC` wrapper only for Windows batch
   shims; logical audit evidence remains the PAC command and its arguments.
 - Full release validation remains dependent on the project development
@@ -50,6 +53,8 @@
 - Passed: 140 targeted Windows-aware tests; 5 vault-only tests; 100% focused
   statement/branch coverage for both foundation modules; Ruff, mypy, Bandit,
   `pip check`, public-surface, and diff checks.
+- Passed after Follow-Up 3: 141 Windows-aware focused tests and the changed
+  vault regression test independently.
 - Not completed: full 95% suite, online `pip-audit`, real Windows execution,
   and cross-family review. UI validation was run separately and passed: 232
   tests and the production build.
@@ -64,12 +69,18 @@
 - PAC `.cmd`/`.bat` launches are safe and auditable on Windows.
 - CI now exercises the Windows-aware test family without weakening the Ubuntu
   coverage gate.
+- The remaining test-only Windows portability assumptions are corrected without
+  weakening platform-specific assertions or changing runtime behavior.
+- The local Follow-Up 3 patch is not yet present on PR #404 because this
+  environment could neither write the shared Git index nor resolve GitHub for
+  a push. The live PR checks therefore still reflect the prior remote commit.
 
 ## Requested Review Focus
 
 - Verify Windows ACL application and the first CI run.
 - Recheck SQLite initialization/reopen behavior and the command-evidence shape.
-- Confirm no dependency or lockfile changes appear before PR creation.
+- Confirm no dependency or lockfile changes appear before merge.
+- Publish the local Follow-Up 3 patch, then rerun the Windows job before merge.
 
 ## Blocker — cross-family review unavailable
 

@@ -19,6 +19,9 @@
   Windows sharing/permission errors after closing descriptors.
 - Made the scoped Windows test files portable for Windows path rendering,
   unavailable descriptor-relative flags, and non-POSIX permission semantics.
+- Completed the remaining Windows test-portability follow-up: POSIX chmod error
+  assertions now inject the POSIX backend explicitly, and default configured
+  paths are compared as `Path` values instead of separator-sensitive strings.
 - Kept `reports/hardening_checks.py`, desktop code, UI, and migrations
   unchanged. No dependency declaration, lockfile, or version/API contract was
   changed by this task.
@@ -31,17 +34,24 @@
 - Focused Windows-aware runtime tests: 140 passed across observability,
   config, PAC deployment, platform support, filesystem permissions, and store
   permissions.
+- Follow-Up 3 focused suite: 141 passed across the same Windows-aware modules;
+  the specifically changed vault regression test also passed independently.
 - Vault-only tests that do not construct the hanging API client: 5 passed.
 - `python scripts/public_surface_audit.py`, `git diff --check`, and
   `python -m pip check`: passed.
 - `scripts/validate_release.sh`: stopped at `pip-audit` because `pypi.org`
   could not be resolved; the preceding Ruff, mypy, and Bandit steps passed.
+- `uv lock --check --offline`: could not resolve the uncached `apscheduler`
+  artifact for another supported Python/platform split; no lockfile or
+  dependency declaration changed.
+- Commit/push was not completed in this managed checkout: the shared worktree
+  Git index is read-only, and the isolated Git push path could not resolve
+  `github.com`. The final three test fixes remain present and verified locally.
 - Full pytest with the 95% gate: blocked by the first API test,
   `test_api_auth_demo_mode_allows_local_demo_without_token`, hanging in the
   local Starlette `TestClient`/AnyIO portal before an assertion.
-- `uv lock --check --offline`: could not resolve an uncached `apscheduler`
-  artifact for a supported Python/platform split; no `uv.lock` or dependency
-  declaration changed. UI validation was not reached by the release script.
+- UI validation was not reached by the release script after the network-gated
+  `pip-audit` step.
 
 ## Files Touched
 
