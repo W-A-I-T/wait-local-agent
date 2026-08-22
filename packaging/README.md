@@ -16,11 +16,11 @@ desktop shell needs state outside the current directory. `WAIT_HOST` and
 
 ## Version evidence
 
-The build-only extra pins PyInstaller `6.21.0`. [PyPI's verified project
-metadata](https://pypi.org/pypi/pyinstaller/6.21.0/json) lists `6.21.0` as the
-current stable release checked on 2026-07-20 and declares Python `>=3.8,<3.16`,
+The build-only extra pins PyInstaller `6.22.0`. [PyPI's verified project
+metadata](https://pypi.org/pypi/pyinstaller/6.22.0/json) identifies `6.22.0` as
+a mature release checked on 2026-08-21 and lists Python 3.8 through 3.15,
 which includes this project's Python `>=3.12` target. The [official PyInstaller
-6.21.0 release notes](https://pyinstaller.org/en/v6.21.0/CHANGES.html) document
-Python 3.12 support. Existing FastAPI and uvicorn dependency ranges were not
-changed; the server uses the already-supported programmatic `uvicorn.run()`
+release notes](https://pyinstaller.org/en/stable/CHANGES.html) document the
+supported Python versions. Existing FastAPI and uvicorn dependency ranges were
+not changed; the server uses the already-supported programmatic `uvicorn.run()`
 API.
