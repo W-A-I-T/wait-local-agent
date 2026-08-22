@@ -335,6 +335,70 @@ def test_execution_requires_both_explicit_gates_and_approval(settings, tmp_path:
     assert blocked["execution_started"] is False
 
 
+def test_launch_argv_handles_windows_batch_shims_and_shell_metacharacters(monkeypatch) -> None:
+    monkeypatch.setattr(deployment.platform_support, "is_windows", lambda: False)
+    assert deployment._launch_argv("pac", ["solution", "list"]) == ["pac", "solution", "list"]
+
+    monkeypatch.setattr(deployment.platform_support, "is_windows", lambda: True)
+    assert deployment._launch_argv("pac.exe", ["solution", "list"]) == ["pac.exe", "solution", "list"]
+    monkeypatch.setenv("COMSPEC", "C:\\Windows\\System32\\cmd.exe")
+    assert deployment._launch_argv("pac.CMD", ["solution", "list"]) == [
+        "C:\\Windows\\System32\\cmd.exe",
+        "/d",
+        "/s",
+        "/c",
+        "pac.CMD",
+        "solution",
+        "list",
+    ]
+    with pytest.raises(PowerPlatformDeploymentError, match="invalid command"):
+        deployment._launch_argv("pac.cmd", ["solution", "bad&arg"])
+
+
+def test_batch_shim_metacharacters_fail_closed_for_stage_and_rollback(
+    settings, tmp_path: Path, monkeypatch
+) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    configured = replace(
+        settings,
+        allow_write_actions=True,
+        allow_power_platform_deployment=True,
+        power_platform_workspace=workspace,
+    )
+    monkeypatch.setattr(deployment.platform_support, "is_windows", lambda: True)
+    monkeypatch.setattr(deployment.shutil, "which", lambda _: r"C:\Tools\pac.CMD")
+    plan = _plan(str(workspace / "solution"))
+    invalid_stage = dict(plan, stages=[{"id": "build", "commands": [["pac", "bad&arg"]]}])
+
+    stage_result = execute_power_platform_stage(invalid_stage, "build", configured, approved=True)
+
+    assert stage_result["status"] == "failed"
+    assert "invalid command" in str(stage_result["message"])
+
+    previous = workspace / "previous.zip"
+    with zipfile.ZipFile(previous, "w") as archive:
+        archive.writestr("solution.xml", "<ImportExportXml />")
+    digest = validate_power_platform_solution_package(previous, workspace)
+    unsafe_targets = [
+        {"name": "dev", "environment_url": "https://dev.crm.dynamics.com/%evil"},
+        *_targets()[1:],
+    ]
+    unsafe_plan = dict(plan, deployment_targets=unsafe_targets)
+
+    rollback_result = execute_power_platform_rollback(
+        unsafe_plan,
+        "dev",
+        configured,
+        rollback_artifact_path=previous,
+        rollback_evidence=_rollback_evidence(digest),
+        approved=True,
+    )
+
+    assert rollback_result["status"] == "failed"
+    assert "invalid command" in str(rollback_result["message"])
+
+
 def test_execution_is_shell_free_bounded_and_stops_on_failure(settings, tmp_path: Path, monkeypatch) -> None:
     workspace = tmp_path / "workspace"
     workspace.mkdir()

@@ -6,7 +6,7 @@ import pytest
 from cryptography.fernet import Fernet
 from fastapi.testclient import TestClient
 
-import wait_local_agent.vault as vault_module
+import wait_local_agent.fs_permissions as fs_permissions
 from wait_local_agent.api.app import _redact_payload, create_app
 from wait_local_agent.security import auth_required
 from wait_local_agent.vault import SecretVault, SecretVaultError
@@ -120,7 +120,7 @@ def test_redaction_covers_launch_key_variants() -> None:
     assert redacted["items"] == [{"token": "[redacted]", "safe": "also-visible"}]
 
 
-def test_secret_vault_handles_key_read_payload_and_permission_failures(tmp_path, monkeypatch) -> None:
+def test_secret_vault_handles_key_read_payload_and_permission_failures(tmp_path, monkeypatch, caplog) -> None:
     vault = SecretVault.initialize(tmp_path / "vault")
 
     def fail_read(_path: Path) -> bytes:
@@ -139,5 +139,7 @@ def test_secret_vault_handles_key_read_payload_and_permission_failures(tmp_path,
     def fail_chmod(*_args) -> None:
         raise OSError("permission denied")
 
-    monkeypatch.setattr(vault_module.os, "chmod", fail_chmod)
-    vault_module._chmod(tmp_path, 0o700)  # noqa: SLF001
+    monkeypatch.setattr(fs_permissions.os, "chmod", fail_chmod)
+    with caplog.at_level("WARNING", logger=fs_permissions.LOGGER.name):
+        assert fs_permissions.restrict_existing_file(tmp_path) is False
+    assert str(tmp_path) in caplog.text
