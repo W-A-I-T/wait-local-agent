@@ -3,12 +3,20 @@ import { useDashboard } from "../app/DashboardContext";
 import { apiFetch } from "../api/client";
 import { type KnowledgeChunk, type KnowledgeDocument } from "../api/types";
 
+export type KnowledgeParser = "auto" | "plain" | "markdown" | "pdf";
+
+export function parserPayload(parser: KnowledgeParser): "" | "basic" | "pypdf" {
+  if (parser === "auto") return "";
+  if (parser === "pdf") return "pypdf";
+  return "basic";
+}
+
 export function Knowledge() {
   const { isAdmin, canWrite } = useDashboard();
   const [documents, setDocuments] = useState<KnowledgeDocument[]>([]);
   const [chunks, setChunks] = useState<KnowledgeChunk[]>([]);
   const [path, setPath] = useState("");
-  const [parser, setParser] = useState("auto");
+  const [parser, setParser] = useState<KnowledgeParser>("auto");
   const [ocr, setOcr] = useState(true);
   const [searchText, setSearchText] = useState("");
   const [searchLimit, setSearchLimit] = useState(3);
@@ -37,11 +45,10 @@ export function Knowledge() {
     setIsLoading(true);
     setStatusMessage("Ingesting documents...");
     try {
-      const parserName = parser === "auto" ? "" : parser;
       const result = await apiFetch<KnowledgeDocument[]>("/knowledge/ingest", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ path, parser: parserName, ocr })
+        body: JSON.stringify({ path, parser: parserPayload(parser), ocr })
       });
       setDocuments((current) => [
         ...result,
@@ -91,10 +98,11 @@ export function Knowledge() {
             </label>
             <label>
               Parser
-              <select value={parser} onChange={(event) => setParser(event.target.value)}>
+              <select value={parser} onChange={(event) => setParser(event.target.value as KnowledgeParser)}>
                 <option value="auto">auto</option>
-                <option value="basic">plain / markdown</option>
-                <option value="pypdf">pdf</option>
+                <option value="plain">plain text</option>
+                <option value="markdown">markdown</option>
+                <option value="pdf">pdf</option>
               </select>
             </label>
             <label className="switch-label">

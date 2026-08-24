@@ -1,0 +1,74 @@
+import { expect, test } from "@playwright/test";
+
+const token = process.env.WAIT_BROWSER_TOKEN ?? "integration-admin-token";
+
+test.beforeEach(async ({ page }) => {
+  await page.addInitScript((value) => {
+    localStorage.setItem("wait-local-agent-api-token", value);
+    localStorage.setItem("wait-local-agent-onboarding-dismissed", "1");
+  }, token);
+});
+
+test("completes the safe local setup journey and exercises primary UI surfaces", async ({ page }) => {
+  const routes = [
+    ["/", "Operations Overview"],
+    ["/clients", "Clients"],
+    ["/integrations/connector-instances", "Connector Instances"],
+    ["/knowledge", "Knowledge"],
+    ["/playbooks", "MSP Playbooks"],
+    ["/integrations/mcp", "MCP server"],
+    ["/settings", "Admin Settings"]
+  ] as const;
+
+  for (const [path, heading] of routes) {
+    await page.goto(path);
+    await expect(page.getByRole("heading", { name: heading, exact: true })).toBeVisible();
+  }
+
+  await page.goto("/clients");
+  await page.getByRole("button", { name: "New client" }).click();
+  await page.getByLabel("Client ID").fill("browser-smoke");
+  await page.getByLabel("Name").fill("Browser Smoke Client");
+  await page.getByRole("button", { name: "Create client" }).click();
+  await expect(page.getByRole("status")).toContainText("Client created.");
+
+  await page.goto("/integrations/connector-instances");
+  await page.getByLabel("Display name").fill("Browser Smoke Connector");
+  await page.getByLabel("WAIT client (optional)").selectOption("browser-smoke");
+  await page.getByLabel("Base URL").fill("https://provider.invalid");
+  await page.getByLabel("Client ID", { exact: true }).fill("browser-client-id");
+  await page.getByLabel("Client secret").fill("browser-client-secret");
+  await page.getByLabel("Tenant").fill("browser-tenant");
+  await page.getByRole("button", { name: "Connect system" }).click();
+  await expect(page.getByRole("status")).toContainText("Connected Browser Smoke Connector");
+  await page.goto("/integrations/connector-instances");
+  await page.getByRole("button", { name: /Browser Smoke Connector/ }).click();
+
+  await page.getByLabel("External company ID").fill("browser-external-company");
+  await page.getByLabel("External company name (optional)").fill("Browser Smoke Company");
+  await page.locator("#mapping-wait-client").selectOption("browser-smoke");
+  await expect(page.getByRole("button", { name: "Create mapping" })).toBeEnabled();
+  await page.getByRole("button", { name: "Create mapping" }).click();
+  await expect(page.getByText("Mapping created.", { exact: true })).toBeVisible();
+  await expect(page.getByLabel("External company mappings").getByText("Browser Smoke Connector", { exact: true })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Verify" })).toBeVisible();
+  await page.getByRole("button", { name: "Verify" }).click();
+  await expect(page.getByText("Mapping verified.", { exact: true })).toBeVisible();
+
+  await page.goto("/?onboarding=1&step=2");
+  await expect(page.getByText("Setup complete")).toBeVisible();
+  await expect(page.getByRole("link", { name: "Open mapping verification" })).toBeVisible();
+
+  await page.goto("/playbooks");
+  const qbr = page.locator("article").filter({ hasText: "Quarterly Business Review" });
+  await expect(qbr).toBeVisible();
+  await qbr.getByLabel("Input JSON for Quarterly Business Review").fill(
+    '{"period_start":"2026-01-01","period_end":"2026-03-31"}'
+  );
+  await qbr.getByRole("button", { name: "Preview" }).click();
+  await expect(page.getByRole("status")).toContainText("Preview ready for Quarterly Business Review.");
+
+  await page.goto("/integrations/mcp");
+  await expect(page.getByRole("heading", { name: "MCP server", exact: true })).toBeVisible();
+  await expect(page.getByText("Published tool catalog")).toBeVisible();
+});

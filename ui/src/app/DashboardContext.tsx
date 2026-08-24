@@ -67,6 +67,7 @@ type DashboardContextValue = {
   setApiToken: (token: string) => void;
   setSelectedClientId: (clientId: string) => void;
   refresh: () => Promise<void>;
+  refreshConfiguration: () => Promise<void>;
   saveApiToken: () => Promise<void>;
   clearApiToken: () => Promise<void>;
   selectTicket: (ticketId: string) => void;
@@ -344,6 +345,7 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
       setApiToken,
       setSelectedClientId,
       refresh,
+      refreshConfiguration: configuration.refresh,
       saveApiToken,
       clearApiToken,
       selectTicket,

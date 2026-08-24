@@ -32,7 +32,7 @@ const verifiedFallbackHandshake: McpHandshake = {
   capabilities: { tools: { listChanged: false } },
   serverInfo: {
     name: "wait-local-agent",
-    version: "2.0.0-dev.0",
+    version: "2.0.0-rc.1",
     description: "WAIT's tenant-scoped, approval-aware local agent tool server"
   },
   instructions: "Tool calls remain subject to WAIT tenant scope, RBAC, provider readiness, approval gates, audit logging, and output redaction."

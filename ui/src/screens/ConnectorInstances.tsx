@@ -58,11 +58,12 @@ const initialMappingForm: MappingForm = {
 };
 
 export function ConnectorInstances() {
-  const { role, roleResolved } = useDashboard();
+  const { role, roleResolved, refresh, refreshConfiguration = refresh } = useDashboard();
   const canView = roleResolved && role === "admin";
   const [instances, setInstances] = useState<ConnectorInstance[]>([]);
   const [waitClients, setWaitClients] = useState<ClientDirectoryEntry[]>([]);
   const [selectedInstanceId, setSelectedInstanceId] = useState<string | null>(null);
+  const [selectedInstance, setSelectedInstance] = useState<ConnectorInstance | null>(null);
   const [mappings, setMappings] = useState<ClientConnectorMapping[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -92,7 +93,6 @@ export function ConnectorInstances() {
     mappingRequestId.current += 1;
     setLoading(true);
     setError("");
-    setSelectedInstanceId(null);
     setMappings([]);
     setMappingsError("");
     setDiscoveredCompanies([]);
@@ -139,6 +139,7 @@ export function ConnectorInstances() {
   const selectInstance = useCallback(async (instance: ConnectorInstance) => {
     const requestId = ++mappingRequestId.current;
     setSelectedInstanceId(instance.connector_instance_id);
+    setSelectedInstance(instance);
     setMappings([]);
     setMappingsError("");
     setMappingForm(initialMappingForm);
@@ -169,8 +170,6 @@ export function ConnectorInstances() {
       }
     }
   }, []);
-
-  const selectedInstance = instances.find((instance) => instance.connector_instance_id === selectedInstanceId);
 
   const discoverPath = selectedInstance ? discoveryPath(selectedInstance) : null;
 
@@ -224,7 +223,7 @@ export function ConnectorInstances() {
     setMappingError("");
     setMappingNotice("");
     try {
-      await apiFetch<ClientConnectorMapping>("/client-connector-mappings", {
+      const createdMapping = await apiFetch<ClientConnectorMapping>("/client-connector-mappings", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -234,9 +233,13 @@ export function ConnectorInstances() {
           client_id: clientId
         })
       });
-      await selectInstance(selectedInstance);
+      setMappings((current) => [
+        ...current.filter((mapping) => mapping.mapping_id !== createdMapping.mapping_id),
+        createdMapping
+      ]);
       setMappingForm(initialMappingForm);
       setMappingNotice("Mapping created.");
+      await refreshConfiguration();
     } catch (requestError) {
       setMappingError(requestError instanceof Error ? requestError.message : "Unable to create the connector mapping.");
     } finally {
@@ -252,11 +255,14 @@ export function ConnectorInstances() {
     setMappingError("");
     setMappingNotice("");
     try {
-      await apiFetch<ClientConnectorMapping>(`/client-connector-mappings/${encodeURIComponent(mappingId)}/verify`, {
+      const verifiedMapping = await apiFetch<ClientConnectorMapping>(`/client-connector-mappings/${encodeURIComponent(mappingId)}/verify`, {
         method: "POST"
       });
-      await selectInstance(selectedInstance);
+      setMappings((current) => current.map((mapping) => (
+        mapping.mapping_id === verifiedMapping.mapping_id ? verifiedMapping : mapping
+      )));
       setMappingNotice("Mapping verified.");
+      await refreshConfiguration();
     } catch (requestError) {
       setMappingError(requestError instanceof Error ? requestError.message : "Unable to verify the connector mapping.");
     } finally {
@@ -375,13 +381,14 @@ export function ConnectorInstances() {
     }
 
     try {
-      const refreshedInstances = await loadInstances();
-      const instanceToSelect = refreshedInstances.find((instance) => instance.connector_instance_id === createdInstance.connector_instance_id);
-      if (instanceToSelect) {
-        await selectInstance(instanceToSelect);
-      }
+      setInstances((current) => [
+        ...current.filter((instance) => instance.connector_instance_id !== createdInstance.connector_instance_id),
+        createdInstance
+      ]);
+      await selectInstance(createdInstance);
       setConnectForm((current) => ({ ...initialConnectForm, connectorType: current.connectorType }));
       setConnectNotice(`Connected ${displayName}. Verify it with 'Sync now' / map its companies below.`);
+      await refreshConfiguration();
     } catch (requestError) {
       setConnectError(requestError instanceof Error ? requestError.message : "Unable to create the connector instance.");
     } finally {
@@ -416,6 +423,7 @@ export function ConnectorInstances() {
           <button className="icon-button" type="button" onClick={() => void loadInstances()} disabled={loading}>
             {loading ? "Loading…" : "Refresh"}
           </button>
+          <a className="secondary-button" href={`/?onboarding=1&step=${selectedInstance ? 2 : 1}`}>Return to setup</a>
         </section>
 
         <section className="panel" aria-labelledby="connect-system-heading">

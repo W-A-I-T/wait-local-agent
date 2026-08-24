@@ -15,6 +15,7 @@ from dataclasses import asdict
 from typing import Any, Protocol
 from urllib.parse import urlparse
 
+from wait_local_agent import __version__
 from wait_local_agent.agents import ToolDefinition
 from wait_local_agent.rbac import AuthContext, Role
 from wait_local_agent.reports.renderers import redact_text, redact_value
@@ -22,7 +23,7 @@ from wait_local_agent.smart_actions import SmartActionManifest
 
 MCP_PROTOCOL_VERSION = "2025-11-25"
 MCP_SERVER_NAME = "wait-local-agent"
-MCP_SERVER_VERSION = "2.0.0-dev.0"
+MCP_SERVER_VERSION = __version__
 MAX_MCP_REQUEST_BYTES = 256 * 1024
 MAX_MCP_RESULT_BYTES = 128 * 1024
 MAX_MCP_TOOLS_PAGE = 100

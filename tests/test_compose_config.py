@@ -44,7 +44,12 @@ def _expected_default_api_service() -> dict[str, object]:
             "WAIT_ALLOWED_DOC_ROOT": "/app/examples/sample_docs",
             "WAIT_DATA_PATH": "/data/state.db",
             "WAIT_DEMO_MODE": "false",
+            "WAIT_ADMIN_TOKEN": "",
+            "WAIT_API_TOKEN": "",
+            "WAIT_CLIENT_ID": "",
             "WAIT_SECRETS_BACKEND": "env",
+            "WAIT_VAULT_KEY": "",
+            "WAIT_TRUSTED_HOSTS": "127.0.0.1,localhost,api",
             "WAIT_VAULT_PATH": "/data/vault",
         },
         "healthcheck": {

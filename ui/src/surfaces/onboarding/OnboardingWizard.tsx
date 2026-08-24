@@ -16,20 +16,21 @@ type OnboardingResult = {
 type OnboardingProps = {
   onDone: () => void;
   onDismiss: () => void;
+  initialStep?: number;
 };
 
 const steps: WizardStep[] = [
-  { id: "connector", title: "Choose your primary PSA" },
-  { id: "knowledge", title: "Set knowledge folder" },
-  { id: "ingest", title: "Import docs from knowledge" },
-  { id: "demo", title: "Run a demo ticket summary" }
+  { id: "client", title: "Create a client", description: "Create the workspace that owns your operational data." },
+  { id: "connector", title: "Connect a system", description: "Configure a connector instance in the administrator screen." },
+  { id: "mapping", title: "Verify the client mapping", description: "Map an external company and verify its ownership." },
+  { id: "knowledge", title: "Add knowledge (optional)" },
+  { id: "demo", title: "Try a fixture ticket (optional)" }
 ];
 
-export function OnboardingWizard({ onDone, onDismiss }: OnboardingProps) {
-  const { refresh = async () => {} } = useDashboard();
-  const [step, setStep] = useState(0);
+export function OnboardingWizard({ onDone, onDismiss, initialStep = 0 }: OnboardingProps) {
+  const { refresh, refreshConfiguration = refresh, isAdmin } = useDashboard();
+  const [step, setStep] = useState(() => Math.min(Math.max(initialStep, 0), steps.length - 1));
   const [isBusy, setIsBusy] = useState(false);
-  const [psa, setPsa] = useState("halopsa");
   const [knowledgePath, setKnowledgePath] = useState("");
   const [ticketId, setTicketId] = useState("TCK-1001");
   const [resultMessage, setResultMessage] = useState("Welcome — complete each setup step to unlock full operations.");
@@ -52,6 +53,7 @@ export function OnboardingWizard({ onDone, onDismiss }: OnboardingProps) {
         summary: `${docs.length} documents available for search.`
       });
       setResultMessage(`Knowledge ingest finished: ${docs.length} document(s).`);
+      await refreshConfiguration();
       return true;
     } catch (error) {
       setResultMessage(error instanceof Error ? error.message : "Knowledge ingest failed.");
@@ -85,7 +87,7 @@ export function OnboardingWizard({ onDone, onDismiss }: OnboardingProps) {
   }
 
   async function handleNext() {
-    if (step === 2) {
+    if (step === 3) {
       const ok = await runIngest();
       if (!ok) {
         return;
@@ -97,22 +99,18 @@ export function OnboardingWizard({ onDone, onDismiss }: OnboardingProps) {
   }
 
   async function handleSubmit() {
-    const ok = await runDemoSummary();
-    if (!ok) {
-      return;
-    }
-    await refresh();
+    await refreshConfiguration();
     onDone();
   }
 
   return (
     <Wizard
       activeStep={step}
-      canContinue={!isBusy && Boolean(psa)}
+      canContinue={!isBusy}
       isBusy={isBusy}
       onBack={() => setStep((current) => Math.max(0, current - 1))}
       onNext={() => void handleNext()}
-      canSubmit={!!ticketId && !isBusy}
+      canSubmit={!isBusy}
       onSubmit={() => void handleSubmit()}
       onClose={() => {
         onDismiss();
@@ -122,21 +120,41 @@ export function OnboardingWizard({ onDone, onDismiss }: OnboardingProps) {
     >
       {step === 0 ? (
         <div className="grid">
-          <label className="draft-form">
-            <strong>Choose your primary service connector</strong>
-            <select value={psa} onChange={(event) => setPsa(event.target.value)}>
-              <option value="halopsa">HaloPSA</option>
-              <option value="hudu">Hudu</option>
-              <option value="connectwise">ConnectWise PSA</option>
-              <option value="it-glue">IT Glue documentation</option>
-            </select>
-          </label>
-          <p className="screen-note">Choose a connector, then configure and verify it from the real connector screen. This wizard never stores or discards provider credentials.</p>
-          <Link className="icon-button" to="/connectors">Open connector configuration</Link>
+          <div className="draft-form">
+            <strong>{isAdmin ? "Administrator access is ready." : "Administrator access is required."}</strong>
+            <p className="screen-note">
+              Create a client record first. The wizard will keep your place while you use the real client screen.
+              Connector credentials are never collected or discarded here.
+            </p>
+            <div className="row-actions">
+              <Link className="icon-button" to="/clients?onboarding=1&step=0">Open client configuration</Link>
+              {!isAdmin ? <Link className="secondary-button" to="/settings">Open Settings</Link> : null}
+            </div>
+          </div>
         </div>
       ) : null}
 
       {step === 1 ? (
+        <div className="draft-form">
+          <strong>Connect a supported system</strong>
+          <p className="screen-note">
+            Create the connector instance in the administrator screen. Provider credentials are stored in the local vault there.
+          </p>
+          <Link className="icon-button" to="/integrations/connector-instances?onboarding=1&step=1">Open connector instance configuration</Link>
+        </div>
+      ) : null}
+
+      {step === 2 ? (
+        <div className="draft-form">
+          <strong>Verify ownership before operating</strong>
+          <p className="screen-note">
+            Select your connector instance, create the external-company mapping, and use Verify. This is the readiness gate for tenant-scoped operations.
+          </p>
+          <Link className="icon-button" to="/integrations/connector-instances?onboarding=1&step=2#connector-mappings-heading">Open mapping verification</Link>
+        </div>
+      ) : null}
+
+      {step === 3 ? (
         <div className="draft-form">
           <FolderPicker
             label="Knowledge folder"
@@ -145,12 +163,6 @@ export function OnboardingWizard({ onDone, onDismiss }: OnboardingProps) {
             placeholder="/path/to/knowledge"
           />
           <p className="screen-note">The path is used for one click onboarding ingest to seed your workspace knowledge.</p>
-        </div>
-      ) : null}
-
-      {step === 2 ? (
-        <div className="draft-form">
-          <p>{knowledgePath ? `Ready to ingest from ${knowledgePath}` : "Set a knowledge folder first."}</p>
           <div className="row-actions">
             <button type="button" className="icon-button" onClick={() => void runIngest()}>
               Start ingest now
@@ -160,17 +172,17 @@ export function OnboardingWizard({ onDone, onDismiss }: OnboardingProps) {
         </div>
       ) : null}
 
-      {step === 3 ? (
+      {step === 4 ? (
         <div className="draft-form">
           <label>
             Demo ticket id
             <input
               value={ticketId}
               onChange={(event) => setTicketId(event.target.value)}
-              placeholder="HALO-1234"
+              placeholder="TCK-1001"
             />
           </label>
-          <p className="screen-note">{result.message ?? "Run a safe demo summary call before moving into live actions."}</p>
+            <p className="screen-note">{result.message ?? "The fixture summary is optional. Run it when the local demo ticket is available, or finish setup now."}</p>
           <button type="button" className="icon-button" onClick={() => void runDemoSummary()}>
             Run ticket summary
           </button>

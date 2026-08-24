@@ -10,7 +10,7 @@
   <a href="https://github.com/W-A-I-T/wait-local-agent/actions/workflows/test.yml"><img src="https://github.com/W-A-I-T/wait-local-agent/actions/workflows/test.yml/badge.svg" alt="CI status"></a>
   <a href="LICENSE"><img src="https://img.shields.io/github/license/W-A-I-T/wait-local-agent" alt="AGPL-3.0-only license"></a>
   <a href="pyproject.toml"><img src="https://img.shields.io/badge/python-3.12%2B-3776AB?logo=python&amp;logoColor=white" alt="Python 3.12 or newer"></a>
-  <a href="CHANGELOG.md"><img src="https://img.shields.io/badge/version-2.0.0--dev.0-4c1" alt="Version 2.0.0 development"></a>
+  <a href="CHANGELOG.md"><img src="https://img.shields.io/badge/version-2.0.0--rc.1-4c1" alt="Version 2.0.0 RC 1"></a>
   <a href="docs/README.md"><img src="https://img.shields.io/badge/docs-read_the_docs-536DFE" alt="Documentation"></a>
 </p>
 

@@ -59,7 +59,7 @@ def test_load_pack_registry_tracks_locked_and_unlocked_packs(settings) -> None:
 
 
 def test_pack_routes_mount_and_cli_register_for_unlocked_pack(settings, monkeypatch) -> None:
-    candidates = _install_fake_pack_modules()
+    candidates = _install_fake_pack_modules(demo_name="demo-pack")
     monkeypatch.setattr(loader_module, "_discover_candidate_modules", lambda _: candidates)
     monkeypatch.setattr(
         app_module,
@@ -75,14 +75,14 @@ def test_pack_routes_mount_and_cli_register_for_unlocked_pack(settings, monkeypa
     client = TestClient(app_module.create_app(settings))
     runner = CliRunner()
 
-    response = client.get("/packs/demo/ping")
-    cli_result = runner.invoke(cli_module.app, ["demo", "ping"])
+    response = client.get("/packs/demo-pack/ping")
+    cli_result = runner.invoke(cli_module.app, ["demo-pack", "ping"])
 
     assert response.status_code == 200
-    assert response.json() == {"pack": "demo"}
+    assert response.json() == {"pack": "demo-pack"}
     assert cli_result.exit_code == 0
-    assert "demo-cli" in cli_result.output
-    assert get_pack("demo") is not None
+    assert "demo-pack-cli" in cli_result.output
+    assert get_pack("demo-pack") is not None
 
 
 def test_pack_routes_inherit_viewer_auth(settings, monkeypatch) -> None:
@@ -467,10 +467,12 @@ def test_prepare_installation_and_resolver_edge_cases(tmp_path) -> None:
         loader_module._resolve_typer("packs.not_router.not_callable")
 
 
-def _install_fake_pack_modules(*, licensed: bool = False, include_broken_router: bool = False) -> list[str]:
+def _install_fake_pack_modules(
+    *, licensed: bool = False, include_broken_router: bool = False, demo_name: str = "demo"
+) -> list[str]:
     _install_package("packs")
     _install_license_module()
-    _install_demo_pack("packs.demo", "demo", "1.0.0", requires_license=False)
+    _install_demo_pack("packs.demo", demo_name, "1.0.0", requires_license=False)
     candidates = ["packs.demo"]
     if licensed:
         _install_demo_pack("packs.licensed", "licensed", "2.0.0", requires_license=True)

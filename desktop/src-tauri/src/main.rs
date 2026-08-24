@@ -55,7 +55,7 @@ fn main() {
             // The existing dashboard reads its token from localStorage. Seed it
             // before the hidden window is made visible so the API remains
             // authenticated without changing the product screens.
-            window.eval(&format!(
+            window.eval(format!(
                 "window.__WAIT_API_BASE__='http://{API_HOST}:{api_port}'; window.localStorage.setItem('{}', '{}');",
                 TOKEN_STORAGE_KEY, runtime.admin_token
             ))?;
@@ -234,11 +234,11 @@ fn protect_admin_token(path: &Path) -> Result<(), Box<dyn Error>> {
     use windows_sys::Win32::Foundation::{CloseHandle, GetLastError, LocalFree, HANDLE};
     use windows_sys::Win32::Security::Authorization::{
         ConvertSidToStringSidW, ConvertStringSecurityDescriptorToSecurityDescriptorW,
-        SetNamedSecurityInfoW, SE_FILE_OBJECT, SDDL_REVISION_1,
+        SetNamedSecurityInfoW, SDDL_REVISION_1, SE_FILE_OBJECT,
     };
     use windows_sys::Win32::Security::{
-        DACL_SECURITY_INFORMATION, GetSecurityDescriptorDacl, GetTokenInformation,
-        PROTECTED_DACL_SECURITY_INFORMATION, TOKEN_QUERY, TOKEN_USER, TokenUser,
+        GetSecurityDescriptorDacl, GetTokenInformation, TokenUser, DACL_SECURITY_INFORMATION,
+        PROTECTED_DACL_SECURITY_INFORMATION, TOKEN_QUERY, TOKEN_USER,
     };
     use windows_sys::Win32::System::Threading::{GetCurrentProcess, OpenProcessToken};
 
@@ -253,13 +253,7 @@ fn protect_admin_token(path: &Path) -> Result<(), Box<dyn Error>> {
         }
 
         let mut required = 0_u32;
-        GetTokenInformation(
-            token,
-            TokenUser,
-            std::ptr::null_mut(),
-            0,
-            &mut required,
-        );
+        GetTokenInformation(token, TokenUser, std::ptr::null_mut(), 0, &mut required);
         let mut token_buffer = vec![0_u8; required as usize];
         if GetTokenInformation(
             token,
@@ -350,9 +344,7 @@ fn wait_for_health(token: &str, api_port: u16) -> Result<(), Box<dyn Error + Sen
         .next()
         .ok_or_else(|| std::io::Error::other("loopback health address did not resolve"))?;
     let deadline = Instant::now() + HEALTH_TIMEOUT;
-    let request = format!(
-        "GET /health HTTP/1.1\r\nHost: {API_HOST}:{api_port}\r\nAuthorization: Bearer {token}\r\nConnection: close\r\n\r\n"
-    );
+    let request = health_request(token, api_port);
 
     loop {
         if Instant::now() >= deadline {
@@ -378,6 +370,12 @@ fn wait_for_health(token: &str, api_port: u16) -> Result<(), Box<dyn Error + Sen
     }
 }
 
+fn health_request(token: &str, api_port: u16) -> String {
+    format!(
+        "GET /health HTTP/1.1\r\nHost: {API_HOST}:{api_port}\r\nAuthorization: Bearer {token}\r\nConnection: close\r\n\r\n"
+    )
+}
+
 fn stop_sidecar<R: tauri::Runtime>(handle: &tauri::AppHandle<R>) {
     if let Some(child) = handle
         .state::<SidecarState>()
@@ -387,5 +385,26 @@ fn stop_sidecar<R: tauri::Runtime>(handle: &tauri::AppHandle<R>) {
         .and_then(|mut child| child.take())
     {
         let _ = child.kill();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{health_request, reserve_api_port, API_HOST};
+
+    #[test]
+    fn reserve_api_port_uses_loopback_ephemeral_port() {
+        let port = reserve_api_port().expect("loopback port should be available");
+        assert!(port > 0);
+    }
+
+    #[test]
+    fn health_request_contains_authenticated_loopback_request() {
+        let request = health_request("test-token", 43127);
+
+        assert!(request.starts_with("GET /health HTTP/1.1\r\n"));
+        assert!(request.contains(&format!("Host: {API_HOST}:43127")));
+        assert!(request.contains("Authorization: Bearer test-token"));
+        assert!(request.ends_with("Connection: close\r\n\r\n"));
     }
 }
