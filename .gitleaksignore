@@ -9,3 +9,11 @@ ab32db28ff5b1ff73cae06a53ac043bc71c2b4dc:tests/test_founder_surface.py:stripe-ac
 ab32db28ff5b1ff73cae06a53ac043bc71c2b4dc:tests/test_founder_surface.py:stripe-access-token:390
 ab32db28ff5b1ff73cae06a53ac043bc71c2b4dc:tests/test_update_channel.py:generic-api-key:27
 ab32db28ff5b1ff73cae06a53ac043bc71c2b4dc:tests/test_update_channel.py:generic-api-key:29
+903cb595e8f735fcc306a68f2bee150fce58a416:docs/getting-started/local-demo.md:curl-auth-header:107
+016f12083dd69ad8e5b1d5cc048d8ccf3186b8d2:tests/test_founder_surface.py:stripe-access-token:200
+016f12083dd69ad8e5b1d5cc048d8ccf3186b8d2:tests/test_founder_surface.py:stripe-access-token:212
+12409579071106a319208d64cd4364001cf64f75:tests/test_founder_surface.py:stripe-access-token:168
+12409579071106a319208d64cd4364001cf64f75:tests/test_founder_surface.py:stripe-access-token:180
+2c2408b47397e92458c2e2c80c31b1cf82293663:tests/test_update_channel.py:generic-api-key:25
+2c2408b47397e92458c2e2c80c31b1cf82293663:tests/test_update_channel.py:generic-api-key:27
+350d90b5dee6493890094418f62024eeab637ae1:docs/local-demo.md:curl-auth-header:83
