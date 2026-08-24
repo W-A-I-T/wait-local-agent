@@ -2,3 +2,10 @@
 52e48f421cafaede4c6707669d41da60e936b7c0:tests/test_update_channel.py:generic-api-key:27
 52e48f421cafaede4c6707669d41da60e936b7c0:tests/test_update_channel.py:generic-api-key:29
 06cda2615941c229cd2b4e808508b9e140245179:docs/local-demo.md:curl-auth-header:83
+# Historical deterministic test vectors and documentation placeholders were
+# re-detected after the repository history was rebased onto the current main.
+ab32db28ff5b1ff73cae06a53ac043bc71c2b4dc:docs/getting-started/local-demo.md:curl-auth-header:112
+ab32db28ff5b1ff73cae06a53ac043bc71c2b4dc:tests/test_founder_surface.py:stripe-access-token:378
+ab32db28ff5b1ff73cae06a53ac043bc71c2b4dc:tests/test_founder_surface.py:stripe-access-token:390
+ab32db28ff5b1ff73cae06a53ac043bc71c2b4dc:tests/test_update_channel.py:generic-api-key:27
+ab32db28ff5b1ff73cae06a53ac043bc71c2b4dc:tests/test_update_channel.py:generic-api-key:29
