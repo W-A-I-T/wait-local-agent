@@ -19,6 +19,20 @@ Potential commercial rights and services may include, depending on the executed 
 - white-label rights; and
 - OEM redistribution rights.
 
+## What commercial pricing covers
+
+> Commercial pricing applies to WAIT MSP Control, licensed commercial packs, official support, and contracted commercial capabilities. The self-hosted Community runtime remains available under AGPL-3.0-only plus the applicable WAIT additional terms.
+
+The specific potential rights and services are the ones already enumerated
+above in this file and remain dependent on the executed agreement.
+
+**Managed Client** means one distinct third-party customer organization or
+tenant administered through a licensed WAIT commercial pack or WAIT MSP
+Control by a service provider.
+
+This definition is a commercial term. It does not restrict Community use or
+imply any usage metering in the public runtime.
+
 This file is **not** a commercial license, EULA, offer, warranty, or grant of any of those rights. Commercial rights require a separate agreement signed or otherwise validly executed by WAIT and the customer.
 
 A generic commercial subscription must not be assumed to include attribution removal, white-label, or OEM rights unless the applicable agreement expressly grants them.

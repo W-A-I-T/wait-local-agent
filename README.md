@@ -25,12 +25,29 @@ systems you already use, including ticketing, documentation, and Microsoft
 controls what may happen next. Nothing writes to a live system without
 explicit human approval. [Learn the architecture](docs/concepts/architecture.md).
 
+## Who can use WAIT Local Agent?
+
+Community may be used by an employer's internal technician, an independent
+consultant, an MSP or MSSP, or an enterprise, including for commercial work,
+when the Community license and attribution terms are followed. [Read the
+Community and commercial-use guide](docs/legal/community-vs-commercial-use.md).
+
 ## Screenshots
 
 | Dashboard | Connectors and governed actions |
 | --- | --- |
 | <img src="docs/media/dashboard.png" alt="WAIT Local Agent dashboard showing local tickets, workflows, and audit activity" width="100%"> | <img src="docs/media/connectors.png" alt="WAIT Local Agent connectors view showing bounded provider surfaces and action controls" width="100%"> |
 | Local operations stay visible in one reviewable workspace. | Inspect connector readiness and keep proposed changes behind the approval boundary. |
+
+## Technician ticket-resolution workflow
+
+Open a ticket, start a client-scoped Technician Chat session, review a bounded
+plan, and inspect the resulting execution and audit evidence. [Follow the
+five-minute technician quickstart](docs/getting-started/technician-quickstart.md).
+
+![Technician Chat showing a local ticket triage session](docs/media/technician-chat.png)
+
+*This is a local demo capture of the technician ticket-resolution workflow.*
 
 ## Feature highlights
 
@@ -159,7 +176,7 @@ docker compose up --build
 - `scripts/install.sh` generates `.env` from `.env.example` when it is missing.
 - The shipped `.env.example` keeps demo mode off. Set `WAIT_DEMO_MODE=true`
   explicitly for the bounded local walkthrough, or configure an admin token.
-- Linux collectors are container-scoped by default. Host collection is an explicit, security-sensitive opt-in; see [host-collection.md](docs/host-collection.md).
+- Linux collectors are container-scoped by default. Host collection is an explicit, security-sensitive opt-in; see [host-collection.md](docs/operations/host-collection.md).
 
 ### Desktop
 
@@ -243,6 +260,11 @@ import or deployment.
 | **MSP** | Commercial rights and services for managed-service operation, including separately licensed packs/control-plane capabilities where purchased. |
 | **Enterprise** | Commercial licensing, integration, assurance, support, and enterprise capabilities under contract. |
 
+Community can be used commercially, including by MSPs that follow the AGPL and
+WAIT attribution terms; commercial MSP offerings add separately licensed
+control, packs, reporting, and services. [Compare the two
+routes](docs/legal/community-vs-commercial-use.md).
+
 Community remains a real route: AGPL-3.0-only permits commercial use subject to its conditions, including the network-source obligations applicable to modified versions, and the applicable WAIT Section 7 terms require the `Powered by WAIT` attribution for covered WAIT material in interactive interfaces. Commercial agreements can separately provide private-modification rights, proprietary WAIT packs, managed-service terms, official builds, support, attribution removal, partner/co-branding, white-labeling, or OEM rights where explicitly contracted. See [ADDITIONAL_TERMS.md](ADDITIONAL_TERMS.md), [LICENSE_HISTORY.md](LICENSE_HISTORY.md), and [the public/commercial boundary](docs/concepts/open-core-boundary.md).
 
 ## Documentation
@@ -255,6 +277,17 @@ Community remains a real route: AGPL-3.0-only permits commercial use subject to 
 - [Consultant lane](docs/consultant/README.md): discovery, blueprints, governance, and Microsoft targets.
 - [Operations](docs/README.md#operations): backups, scheduling, updates, host collection, and packs.
 - [Reference](docs/README.md#development-and-reference): API, CLI, environment variables, and MCP boundaries.
+
+## Audit, diagnostics, and privacy
+
+- Audit records stay in the customer's local database and files.
+- WAIT does not see customer activity by default.
+- Commercial entitlement metering is a separate commercial-pack system, not a
+  feature of the public runtime.
+- Support uploads require explicit customer action; the planned flow includes
+  preview and local download before any optional upload.
+
+[Read the telemetry and license-metering boundary](docs/privacy/telemetry-and-license-metering.md).
 
 ## Safety defaults
 

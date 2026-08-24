@@ -14,13 +14,14 @@ bounded by the current code and the verification notes in the relevant pages.
 - [Desktop install](getting-started/desktop-install.md) — build and operate the desktop surface.
 - [Local demo](getting-started/local-demo.md) — use deterministic local demo data and flows.
 - [Configuration](getting-started/configuration.md) — safety flags, authentication, and demo mode.
+- [Technician quickstart](getting-started/technician-quickstart.md) — resolve one ticket through chat, review, approval, execution, and audit.
 
 ## Concepts
 
 - [Architecture](concepts/architecture.md) — runtime, provider-neutral consultant layer, and governed execution.
 - [Security model](concepts/security-model.md) — local-first security, tenancy, redaction, and threat boundaries.
 - [Clients and connector instances](concepts/clients-and-connectors.md) — the local client directory, connector estate, verified mappings, and quarantine handling.
-- [Public/commercial boundary](concepts/open-core-boundary.md) — AGPL 2.0 Community scope, preserved Apache 1.x history, commercial packs, and separate commercial licensing.
+- [Public/commercial boundary](concepts/open-core-boundary.md) — AGPL-3.0-only Community scope, preserved Apache 1.x history, commercial packs, and separate commercial licensing.
 - [Approvals and write gates](concepts/approvals-and-write-gates.md) — draft, review, approval, execution, and audit sequence.
 
 ## Connectors
@@ -78,6 +79,13 @@ bounded by the current code and the verification notes in the relevant pages.
 - [MSP playbooks](operations/msp-playbooks.md) — governed operational playbooks.
 - [Ecosystem integration](operations/ecosystem-integration.md) — integration surfaces and boundaries.
 - [Pack loader](operations/pack-loader.md) — installed pack loading and safety.
+- [Troubleshooting](operations/troubleshooting.md) — symptom-to-command runbook for startup, runs, audit, and connectors.
+- [Diagnostics & Support](operations/diagnostics-and-support.md) — specification for a forthcoming redacted support bundle.
+
+## Legal and privacy
+
+- [Community and commercial use](legal/community-vs-commercial-use.md) — who may use Community and what separate commercial licensing provides.
+- [Telemetry and license metering](privacy/telemetry-and-license-metering.md) — local audit, support diagnostics, and commercial metering boundaries.
 
 ## Development and reference
 
@@ -87,4 +95,4 @@ bounded by the current code and the verification notes in the relevant pages.
 - [API reference](reference/api.md) — route-group overview and running OpenAPI docs.
 - [Environment variables](reference/environment-variables.md) — configuration source of truth.
 - [MCP reference](reference/mcp.md) — MCP route and policy boundary.
-- [Licensing and commercial transition](legal/README.md) — effective AGPL 2.0 source license, preserved Apache 1.x baseline, and remaining commercial-license work.
+- [Licensing and commercial transition](legal/README.md) — effective AGPL-3.0-only source license, preserved Apache 1.x baseline, and remaining commercial-license work.
