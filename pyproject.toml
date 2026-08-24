@@ -17,7 +17,7 @@ dependencies = [
   "azure-identity==1.25.3",
   "azure-mgmt-authorization==4.0.0",
   "azure-mgmt-compute==38.3.0",
-  "azure-mgmt-network==31.0.1",
+  "azure-mgmt-network==32.0.0",
   "azure-mgmt-storage==25.1.0",
   "boto3>=1.43.51,<2.0",
   "cryptography>=50.0.0,<51",
