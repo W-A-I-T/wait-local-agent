@@ -16,8 +16,8 @@ dependencies = [
   "aiohttp>=3.14.3,<4.0",
   "azure-identity==1.25.3",
   "azure-mgmt-authorization==4.0.0",
-  "azure-mgmt-compute==38.2.0",
-  "azure-mgmt-network==31.0.1",
+  "azure-mgmt-compute==38.3.0",
+  "azure-mgmt-network==32.0.0",
   "azure-mgmt-storage==25.1.0",
   "boto3>=1.43.51,<2.0",
   "cryptography>=50.0.0,<51",
@@ -52,7 +52,7 @@ knowledge = [
   "qdrant-client>=1.12,<2",
 ]
 desktop = [
-  "pyinstaller==6.22.0",
+  "pyinstaller==6.22.2",
 ]
 dev = [
   "bandit>=1.7,<2.0",
