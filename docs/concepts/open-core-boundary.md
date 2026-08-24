@@ -63,6 +63,10 @@ is permitted when the Community terms are followed. In particular, operators
 of modified network-accessible versions must satisfy the AGPL's
 source-availability requirements.
 
+The public runtime does not gate multi-client use behind any license check;
+multi-client Community use is permitted under `AGPL-3.0-only` plus the WAIT
+attribution terms.
+
 For WAIT-copyrighted material covered by the additional terms, interactive
 user interfaces must preserve the reasonable visible attribution:
 
@@ -87,6 +91,11 @@ prohibited from using Community when it fully complies with AGPL and the
 applicable WAIT Section 7 terms, and do not imply that a generic Enterprise
 purchase automatically grants attribution removal, complete white-label, or
 OEM rights.
+
+See [Community and commercial use](../legal/community-vs-commercial-use.md) for
+the practical licensing distinction. For the separation between local audit,
+support diagnostics, and commercial entitlement metering, see [Telemetry and
+license metering](../privacy/telemetry-and-license-metering.md).
 
 ## Local install directory
 
