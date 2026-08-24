@@ -21,7 +21,7 @@ function isNotFoundError(error: unknown): boolean {
 const emptyForm: ClientForm = { client_id: "", name: "", status: "active" };
 
 export function Clients() {
-  const { role, roleResolved } = useDashboard();
+  const { role, roleResolved, refresh, refreshConfiguration = refresh } = useDashboard();
   const canMutate = roleResolved && role === "admin";
   const [clients, setClients] = useState<ClientDirectoryEntry[]>([]);
   const [selectedClientId, setSelectedClientId] = useState<string | null>(null);
@@ -161,12 +161,13 @@ export function Clients() {
       setEditing(false);
       await loadClients();
       await selectClient(client.client_id);
+      await refreshConfiguration();
     } catch (requestError) {
       setFormError(requestError instanceof Error ? requestError.message : "Unable to save the client.");
     } finally {
       setMutationBusy(false);
     }
-  }, [editing, form, loadClients, selectedClient, selectClient]);
+  }, [editing, form, loadClients, refreshConfiguration, selectedClient, selectClient]);
 
   const verifyMapping = useCallback(async (mappingId: string) => {
     setVerifyingMappingId(mappingId);
@@ -181,12 +182,13 @@ export function Clients() {
         setMappings(refreshed.filter((mapping) => mapping.client_id === selectedClientId));
       }
       setStatusMessage(`Mapping verified — ${result.retenanted_count} quarantined tickets re-tenanted.`);
+      await refreshConfiguration();
     } catch (requestError) {
       setMappingError(requestError instanceof Error ? requestError.message : "Unable to verify the mapping.");
     } finally {
       setVerifyingMappingId(null);
     }
-  }, [selectedClientId]);
+  }, [refreshConfiguration, selectedClientId]);
 
   const beginCreate = () => {
     setEditing(false);
@@ -211,6 +213,7 @@ export function Clients() {
           <p className="screen-note">Review client records, connector mappings, and lifecycle status.</p>
         </div>
         <div className="analytics-filter-actions">
+          <a className="secondary-button" href="/?onboarding=1&step=0">Return to setup</a>
           <RoleGate role={role} resolved={roleResolved} allowed={["admin"]}>
             <button className="secondary-button" type="button" onClick={beginCreate}>New client</button>
           </RoleGate>

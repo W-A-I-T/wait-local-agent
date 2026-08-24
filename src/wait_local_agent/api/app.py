@@ -26,6 +26,7 @@ from slowapi.middleware import SlowAPIMiddleware
 from slowapi.util import get_remote_address
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 
+from wait_local_agent import __version__
 from wait_local_agent.agents import AgentDefinitionError, AgentService
 from wait_local_agent.api.founder import (
     FounderNotConfiguredError,
@@ -1041,7 +1042,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     app = FastAPI(
         title="WAIT Local Agent",
-        version="1.1.1",
+        version=__version__,
         lifespan=lifespan,
     )
     limiter = Limiter(
@@ -1071,7 +1072,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.add_exception_handler(LaunchPassportRequestError, launch_passport_error_handler)
     app.add_middleware(
         TrustedHostMiddleware,
-        allowed_hosts=["127.0.0.1", "localhost", "api", "testserver"],
+        allowed_hosts=list(active_settings.trusted_hosts),
     )
     app.add_middleware(SlowAPIMiddleware)
     configure_pack_routes(
@@ -3213,7 +3214,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         if active_settings.demo_mode:
             raise HTTPException(status_code=403, detail="secrets are unavailable in demo mode")
         try:
-            SecretVault.initialize(active_settings.vault_path).set(payload.name, payload.value)
+            SecretVault.initialize(
+                active_settings.vault_path,
+                demo_mode=active_settings.demo_mode,
+            ).set(payload.name, payload.value)
         except (SecretVaultError, ValueError) as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         return {"name": payload.name, "status": "stored"}

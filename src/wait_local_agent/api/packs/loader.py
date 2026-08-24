@@ -229,7 +229,7 @@ def install_pack_tarball(
     stored_in_vault = False
     if license_key:
         if settings.secrets_backend == "fernet":
-            SecretVault.initialize(settings.vault_path).set("license_key", license_key)
+            SecretVault.initialize(settings.vault_path, demo_mode=settings.demo_mode).set("license_key", license_key)
             stored_in_vault = True
         else:
             LOGGER.warning("License key provided but vault is disabled; set WAIT_LICENSE_KEY manually")

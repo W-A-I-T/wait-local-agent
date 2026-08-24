@@ -24,5 +24,5 @@ __all__ = [
 ]
 
 # Runtime/update-channel versions use SemVer. Python distribution metadata uses
-# the PEP 440 equivalent `2.0.0.dev0` in pyproject.toml.
-__version__ = "2.0.0-dev.0"
+# the PEP 440 equivalent `2.0.0rc1` in pyproject.toml.
+__version__ = "2.0.0-rc.1"

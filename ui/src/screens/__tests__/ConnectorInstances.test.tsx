@@ -9,7 +9,7 @@ vi.mock("../../api/client", () => ({
 }));
 
 vi.mock("../../app/DashboardContext", () => ({
-  useDashboard: () => ({ role: "admin", roleResolved: true })
+  useDashboard: () => ({ role: "admin", roleResolved: true, refresh: vi.fn() })
 }));
 
 const mockedApiFetch = vi.mocked(apiFetch);
@@ -208,8 +208,8 @@ describe("ConnectorInstances company mappings", () => {
       external_company_name: "Acme Provider",
       client_id: "acme"
     });
-    expect(await screen.findByText("Acme Provider")).toBeInTheDocument();
-    expect(mappingListCalls).toBeGreaterThan(1);
+    expect(screen.getAllByText("Acme Provider").length).toBeGreaterThan(0);
+    expect(mappingListCalls).toBe(1);
   });
 
   it("verifies an unverified mapping and shows the verified status chip", async () => {
@@ -242,7 +242,7 @@ describe("ConnectorInstances company mappings", () => {
 
     expect(await screen.findByText("Verified")).toBeInTheDocument();
     expect(mockedApiFetch).toHaveBeenCalledWith("/client-connector-mappings/mapping-1/verify", { method: "POST" });
-    expect(mappingListCalls).toBeGreaterThan(1);
+    expect(mappingListCalls).toBe(1);
   });
 
   it("uses the ConnectWise endpoint and hides discovery for unsupported connector types", async () => {

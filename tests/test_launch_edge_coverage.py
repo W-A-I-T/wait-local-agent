@@ -5,7 +5,9 @@ from typer.testing import CliRunner
 
 from wait_local_agent.api.app import create_app
 from wait_local_agent.cli import app
+from wait_local_agent.client_scope import AllClients
 from wait_local_agent.config import load_settings
+from wait_local_agent.store import Store
 from wait_local_agent.vault import SecretVault, SecretVaultError
 
 
@@ -128,3 +130,21 @@ def test_demo_dataset_can_be_ingested(monkeypatch, tmp_path) -> None:
     assert "ingested=3" in tickets.output
     assert summary.exit_code == 0
     assert "classification=" in summary.output
+
+
+def test_demo_seed_is_explicit_and_idempotent(monkeypatch, tmp_path) -> None:
+    monkeypatch.setenv("WAIT_DATA_PATH", str(tmp_path / "state.db"))
+    monkeypatch.setenv("WAIT_DEMO_MODE", "true")
+    monkeypatch.setenv("WAIT_ALLOW_WRITE_ACTIONS", "false")
+    runner = CliRunner()
+
+    first = runner.invoke(app, ["demo", "seed", "--client-id", "fixture-client"])
+    second = runner.invoke(app, ["demo", "seed", "--client-id", "fixture-client"])
+
+    assert first.exit_code == 0, first.output
+    assert second.exit_code == 0, second.output
+    assert "demo_seeded=true client_id=fixture-client" in first.output
+    assert "demo_seeded=true client_id=fixture-client" in second.output
+    ticket = Store(tmp_path / "state.db").get_ticket("TCK-1001", AllClients())
+    assert ticket is not None
+    assert ticket.client_id == "fixture-client"

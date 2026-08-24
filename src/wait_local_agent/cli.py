@@ -3,6 +3,7 @@ from __future__ import annotations
 import csv
 import json
 import logging
+import os
 from collections.abc import Iterable
 from dataclasses import asdict, replace
 from pathlib import Path
@@ -220,6 +221,7 @@ audit_app = typer.Typer(help="Audit log commands.")
 knowledge_app = typer.Typer(help="Local knowledge base commands.")
 connectors_app = typer.Typer(help="Connector status and safe draft commands.")
 workflows_app = typer.Typer(help="Workflow template and run commands.")
+demo_app = typer.Typer(help="Explicit local demo data commands.")
 consultant_app = typer.Typer(help="Local-first solution consultant commands.")
 blueprints_app = typer.Typer(help="Inspectable solution blueprint commands.")
 microsoft_app = typer.Typer(help="Microsoft platform preparation commands.")
@@ -257,6 +259,7 @@ app.add_typer(audit_app, name="audit")
 app.add_typer(knowledge_app, name="knowledge")
 app.add_typer(connectors_app, name="connectors")
 app.add_typer(workflows_app, name="workflows")
+app.add_typer(demo_app, name="demo")
 consultant_app.add_typer(blueprints_app, name="blueprints")
 app.add_typer(consultant_app, name="consultant")
 microsoft_app.add_typer(microsoft_connector_app, name="connector")
@@ -727,6 +730,47 @@ def ingest(
     for ticket_file in ticket_files:
         count += store.ingest_ticket_file(ticket_file, client_id=normalized_client_id)
     typer.echo(f"ingested={count}")
+
+
+@demo_app.command("seed")
+def seed_demo_data(
+    client_id: Annotated[
+        str, typer.Option("--client-id", help="Synthetic client that owns the fixture data.")
+    ] = "acme",
+    data_root: Annotated[
+        Path, typer.Option("--data-root", help="Directory containing demo/sample_runbooks.")
+    ] = Path("demo"),
+) -> None:
+    """Seed deterministic sample documents and TCK-1001 in explicit demo mode."""
+
+    settings = load_settings()
+    if not settings.demo_mode:
+        raise typer.BadParameter("demo seed requires WAIT_DEMO_MODE=true")
+    if settings.allow_write_actions:
+        raise typer.BadParameter("demo seed requires WAIT_ALLOW_WRITE_ACTIONS=false")
+    normalized_client_id = client_id.strip()
+    if not normalized_client_id:
+        raise typer.BadParameter("--client-id must be non-empty")
+    runbook_path = data_root / "sample_runbooks"
+    ticket_path = Path("examples/sample_tickets")
+    if not runbook_path.is_dir() or not ticket_path.is_dir():
+        raise typer.BadParameter("demo assets are missing; expected demo/sample_runbooks and examples/sample_tickets")
+
+    store = Store(settings.data_path)
+    existing_client = store.get_client(AllClients(), normalized_client_id)
+    if existing_client is None:
+        store.create_client(normalized_client_id, "WAIT Local Agent demo client")
+    elif existing_client.status != "active":
+        raise typer.BadParameter("--client-id must refer to an active client")
+    documents = ingestion_service_from_settings(
+        store,
+        replace(settings, allowed_doc_root=runbook_path, document_parser="basic", allow_ocr=False),
+    ).ingest_path(runbook_path, client_id=normalized_client_id)
+    ticket_count = sum(
+        store.ingest_ticket_file(ticket_file, client_id=normalized_client_id)
+        for ticket_file in sorted(ticket_path.glob("*.json"))
+    )
+    typer.echo(f"demo_seeded=true client_id={normalized_client_id} documents={len(documents)} tickets={ticket_count}")
 
 
 @tickets_app.command("summarize")
@@ -4885,14 +4929,14 @@ def restore_exercise(
 @secrets_app.command("init")
 def init_secret_vault() -> None:
     settings = load_settings()
-    vault = SecretVault.initialize(settings.vault_path)
+    vault = SecretVault.initialize(settings.vault_path, demo_mode=settings.demo_mode)
     typer.echo(f"vault_initialized={vault.vault_path}")
 
 
 @secrets_app.command("set")
 def set_secret(key: str, value: str) -> None:
     settings = load_settings()
-    vault = SecretVault.initialize(settings.vault_path)
+    vault = SecretVault.initialize(settings.vault_path, demo_mode=settings.demo_mode)
     try:
         vault.set(key, value)
     except ValueError as exc:
@@ -4909,6 +4953,35 @@ def list_vault_secrets() -> None:
         raise typer.BadParameter(str(exc)) from exc
     for key in keys:
         typer.echo(key)
+
+
+@secrets_app.command("migrate-external-key")
+def migrate_vault_to_external_key(
+    source_key: Annotated[
+        str | None,
+        typer.Option(
+            "--source-key",
+            help="Existing local vault key. Omit to enter it securely.",
+            hide_input=True,
+        ),
+    ] = None,
+) -> None:
+    """Re-encrypt a local-key vault using WAIT_VAULT_KEY."""
+
+    destination_key = os.getenv("WAIT_VAULT_KEY", "").strip()
+    if not destination_key:
+        raise typer.BadParameter("WAIT_VAULT_KEY must be set to the new external Fernet key")
+    supplied_source_key = source_key or typer.prompt("Existing vault key", hide_input=True)
+    settings = load_settings()
+    try:
+        count = SecretVault.migrate_to_external_key(
+            settings.vault_path,
+            source_key=supplied_source_key,
+            destination_key=destination_key,
+        )
+    except SecretVaultError as exc:
+        raise typer.BadParameter(str(exc)) from exc
+    typer.echo(f"vault_migrated={settings.vault_path} secrets={count} local_key_retained=true")
 
 
 @secrets_app.command("get")

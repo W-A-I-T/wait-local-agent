@@ -150,7 +150,8 @@ jobs:
           projectPath: desktop
           tagName: ${{ github.ref_name }}
           releaseName: WAIT Local Agent ${{ github.ref_name }}
-          releaseDraft: true
+          releaseDraft: false
+          prerelease: ${{ contains(github.ref_name, '-') }}
 
       - name: Build and publish the draft release (macOS unsigned)
         if: runner.os == 'macOS' && steps.macos_signing.outputs.ready != 'true'
@@ -163,7 +164,8 @@ jobs:
           projectPath: desktop
           tagName: ${{ github.ref_name }}
           releaseName: WAIT Local Agent ${{ github.ref_name }}
-          releaseDraft: true
+          releaseDraft: false
+          prerelease: ${{ contains(github.ref_name, '-') }}
 
       - name: Build and publish the draft release (Windows signed)
         if: runner.os == 'Windows' && steps.windows_signing.outputs.ready == 'true'
@@ -176,7 +178,8 @@ jobs:
           projectPath: desktop
           tagName: ${{ github.ref_name }}
           releaseName: WAIT Local Agent ${{ github.ref_name }}
-          releaseDraft: true
+          releaseDraft: false
+          prerelease: ${{ contains(github.ref_name, '-') }}
           args: --config src-tauri/tauri.windows-signing.conf.json
 
       - name: Build and publish the draft release (Windows unsigned)
@@ -190,7 +193,8 @@ jobs:
           projectPath: desktop
           tagName: ${{ github.ref_name }}
           releaseName: WAIT Local Agent ${{ github.ref_name }}
-          releaseDraft: true
+          releaseDraft: false
+          prerelease: ${{ contains(github.ref_name, '-') }}
 
       - name: Build and publish the draft release (Linux)
         if: runner.os == 'Linux'
@@ -203,7 +207,8 @@ jobs:
           projectPath: desktop
           tagName: ${{ github.ref_name }}
           releaseName: WAIT Local Agent ${{ github.ref_name }}
-          releaseDraft: true
+          releaseDraft: false
+          prerelease: ${{ contains(github.ref_name, '-') }}
 
       - name: Publish Linux integrity artifacts
         if: runner.os == 'Linux'

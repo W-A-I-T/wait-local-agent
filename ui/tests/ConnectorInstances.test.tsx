@@ -6,7 +6,8 @@ import { Sidebar } from "../src/app/Sidebar";
 
 const dashboard = vi.hoisted(() => ({
   role: "admin" as "admin" | "viewer",
-  roleResolved: true
+  roleResolved: true,
+  refresh: vi.fn()
 }));
 
 vi.mock("../src/app/DashboardContext", () => ({

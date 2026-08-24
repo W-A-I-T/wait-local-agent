@@ -1,7 +1,7 @@
 {
   "name": "wait-local-agent-ui",
   "private": true,
-  "version": "1.1.1",
+  "version": "2.0.0-rc.1",
   "type": "module",
   "engines": {
     "node": "^22.22.2 || ^24.15.0 || >=26.0.0"
@@ -10,7 +10,9 @@
     "dev": "vite",
     "build": "tsc -b && vite build",
     "test": "vitest run",
-    "test:browser": "bash ../scripts/validate_ui_browser.sh"
+    "test:coverage": "vitest run --coverage",
+    "test:browser": "npm run test:e2e",
+    "test:e2e": "playwright test --config playwright.config.ts"
   },
   "dependencies": {
     "@vitejs/plugin-react": "^6.0.5",
@@ -22,10 +24,12 @@
     "vite": "^8.2.1"
   },
   "devDependencies": {
+    "@playwright/test": "^1.62.1",
     "@testing-library/jest-dom": "^7.0.1",
     "@testing-library/react": "^16.1.0",
     "@types/react": "^19.2.18",
     "@types/react-dom": "^19.2.4",
+    "@vitest/coverage-v8": "^4.1.10",
     "jsdom": "^30.0.1",
     "vitest": "^4.1.10"
   }

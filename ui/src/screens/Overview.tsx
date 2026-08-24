@@ -23,6 +23,8 @@ export function Overview() {
   } = useDashboard();
   const [searchParams, setSearchParams] = useSearchParams();
   const [showOnboarding, setShowOnboarding] = useState(false);
+  const requestedOnboardingStep = Number.parseInt(searchParams.get("step") ?? "0", 10);
+  const onboardingStep = Number.isFinite(requestedOnboardingStep) ? requestedOnboardingStep : 0;
 
   const shouldShowOnboarding = roleResolved && !configurationLoading && (searchParams.get("onboarding") === "1" || !isConfigured);
 
@@ -32,7 +34,8 @@ export function Overview() {
       return;
     }
     const dismissed = window.localStorage.getItem(ONBOARDING_DISMISS_KEY) === "1";
-    setShowOnboarding(!dismissed);
+    const explicitlyRequested = searchParams.get("onboarding") === "1";
+    setShowOnboarding(explicitlyRequested || !dismissed);
   }, [shouldShowOnboarding]);
 
   function dismissOnboarding() {
@@ -48,7 +51,11 @@ export function Overview() {
       {showOnboarding ? (
         <section className="modal-backdrop">
           <div className="onboarding-modal">
-            <OnboardingWizard onDone={() => dismissOnboarding()} onDismiss={() => dismissOnboarding()} />
+            <OnboardingWizard
+              initialStep={onboardingStep}
+              onDone={() => dismissOnboarding()}
+              onDismiss={() => dismissOnboarding()}
+            />
           </div>
         </section>
       ) : null}

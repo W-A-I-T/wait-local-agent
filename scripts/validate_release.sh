@@ -13,6 +13,7 @@ else
 fi
 
 ruff check .
+python3 scripts/check_release_version.py
 mypy src tests
 bandit -r src
 pip-audit --skip-editable
@@ -21,5 +22,5 @@ pip-audit --skip-editable
 
 cd "$ROOT_DIR/ui"
 npm ci
-npm run test
+npm run test:coverage
 npm run build

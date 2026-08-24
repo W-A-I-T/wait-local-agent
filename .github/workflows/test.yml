@@ -65,5 +65,70 @@ jobs:
           cache: npm
           cache-dependency-path: ui/package-lock.json
       - run: npm ci
-      - run: npm run test
+      - run: npm run test:coverage
       - run: npm run build
+
+  desktop-pr:
+    timeout-minutes: 20
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "22.22.2"
+          cache: npm
+          cache-dependency-path: |
+            ui/package-lock.json
+            desktop/package-lock.json
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - name: Install desktop check dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libappindicator3-dev libgtk-3-dev librsvg2-dev libssl-dev libwebkit2gtk-4.1-dev patchelf
+      - run: python -m pip install -e ".[desktop]"
+      - run: npm ci
+        working-directory: ui
+      - run: npm ci
+        working-directory: desktop
+      - run: bash packaging/build-sidecar.sh
+      - run: cargo fmt --manifest-path desktop/src-tauri/Cargo.toml -- --check
+      - run: cargo check --manifest-path desktop/src-tauri/Cargo.toml
+      - run: cargo test --manifest-path desktop/src-tauri/Cargo.toml
+      - run: cargo clippy --manifest-path desktop/src-tauri/Cargo.toml --all-targets -- -D warnings
+
+  gitleaks:
+    timeout-minutes: 10
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Scan repository with the checked-in ignore policy
+        run: >-
+          docker run --rm
+          -v "${GITHUB_WORKSPACE}:/repo:ro"
+          zricethezav/gitleaks:latest detect
+          --source=/repo
+          --no-banner
+          --redact
+          --exit-code=1
+          --gitleaks-ignore-path=/repo/.gitleaksignore
+
+  compose-browser:
+    timeout-minutes: 25
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "22.22.2"
+          cache: npm
+          cache-dependency-path: ui/package-lock.json
+      - run: npm ci
+        working-directory: ui
+      - run: npx playwright install --with-deps chromium
+        working-directory: ui
+      - run: WAIT_COMPOSE_RUN_BROWSER=true scripts/test_compose_integration.sh

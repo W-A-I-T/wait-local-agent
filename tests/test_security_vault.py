@@ -87,6 +87,51 @@ def test_secret_vault_can_use_an_external_fernet_key_without_writing_key_file(tm
     assert vault.get("WAIT_EXTERNAL_SECRET") == "external-value"
 
 
+def test_non_demo_vault_requires_external_key(tmp_path, monkeypatch) -> None:
+    monkeypatch.delenv("WAIT_VAULT_KEY", raising=False)
+
+    with pytest.raises(SecretVaultError, match="WAIT_VAULT_KEY is required"):
+        SecretVault.initialize(tmp_path / "production-vault", demo_mode=False)
+
+
+def test_secret_vault_explicit_migration_reencrypts_and_retains_local_key(tmp_path, monkeypatch) -> None:
+    monkeypatch.delenv("WAIT_VAULT_KEY", raising=False)
+    vault_path = tmp_path / "migrate-vault"
+    local_vault = SecretVault.initialize(vault_path)
+    local_key = local_vault.key_path.read_text(encoding="utf-8").strip()
+    local_vault.set("WAIT_MIGRATED_SECRET", "migrated-value")
+    external_key = Fernet.generate_key().decode("utf-8")
+
+    count = SecretVault.migrate_to_external_key(
+        vault_path,
+        source_key=local_key,
+        destination_key=external_key,
+    )
+
+    assert count == 1
+    assert local_vault.key_path.exists()
+    monkeypatch.setenv("WAIT_VAULT_KEY", external_key)
+    migrated = SecretVault(vault_path)
+    assert migrated.get("WAIT_MIGRATED_SECRET") == "migrated-value"
+
+
+def test_secret_vault_migration_rejects_wrong_source_without_overwriting(tmp_path, monkeypatch) -> None:
+    monkeypatch.delenv("WAIT_VAULT_KEY", raising=False)
+    vault_path = tmp_path / "wrong-source-vault"
+    local_vault = SecretVault.initialize(vault_path)
+    local_vault.set("WAIT_SECRET", "value")
+    before = local_vault.secrets_path.read_bytes()
+
+    with pytest.raises(SecretVaultError, match="could not be decrypted"):
+        SecretVault.migrate_to_external_key(
+            vault_path,
+            source_key=Fernet.generate_key().decode("utf-8"),
+            destination_key=Fernet.generate_key().decode("utf-8"),
+        )
+
+    assert local_vault.secrets_path.read_bytes() == before
+
+
 def test_secret_vault_rejects_invalid_external_fernet_key(tmp_path, monkeypatch) -> None:
     monkeypatch.setenv("WAIT_VAULT_KEY", "not-a-fernet-key")
 

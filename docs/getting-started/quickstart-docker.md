@@ -34,6 +34,21 @@ The helper:
 Without a `.env` file, Compose uses `WAIT_DEMO_MODE=false`; provide an admin
 credential or explicitly set `WAIT_DEMO_MODE=true` for the bounded local demo.
 
+For the explicit demo walkthrough, set these values before starting:
+
+```text
+WAIT_DEMO_MODE=true
+WAIT_ALLOW_WRITE_ACTIONS=false
+```
+
+After the API is healthy, seed the deterministic fixtures explicitly:
+
+```bash
+docker compose exec api wait-local-agent demo seed --client-id acme
+```
+
+Demo seeding is idempotent and is never performed by a normal non-demo startup.
+
 ### Manual
 
 ```bash

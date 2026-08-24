@@ -13,11 +13,12 @@ WORKDIR /app
 COPY pyproject.toml README.md ./
 COPY src ./src
 COPY examples ./examples
-COPY scripts ./scripts
-COPY demo ./demo
 
 RUN python -m pip install --upgrade pip \
     && python -m pip install .
+
+COPY scripts ./scripts
+COPY demo ./demo
 
 EXPOSE 8788
 

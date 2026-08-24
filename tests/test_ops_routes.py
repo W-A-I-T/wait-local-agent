@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from cryptography.fernet import Fernet
 from fastapi.testclient import TestClient
 
 import wait_local_agent.api.app as app_module
@@ -141,7 +142,8 @@ def test_pack_install_route_returns_safe_install_result(settings, tmp_path: Path
     assert "secret-license" not in response.text
 
 
-def test_sidecar_write_routes_require_admin(settings, tmp_path: Path) -> None:
+def test_sidecar_write_routes_require_admin(settings, tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setenv("WAIT_VAULT_KEY", Fernet.generate_key().decode("utf-8"))
     secure_settings = settings.__class__(
         **{
             **settings.__dict__,
