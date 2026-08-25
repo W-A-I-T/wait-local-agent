@@ -24,22 +24,34 @@ WAIT Local Agent is a local-first operator appliance composed of a small public 
 
 ## Product architecture context
 
-The product has two complementary layers: a provider-neutral Solutions
-Architect that turns requirements into inspectable blueprints, and the WAIT
-Local Agent runtime that applies policy, tenant scope, RBAC, approvals,
-execution, and audit evidence. MSP operations is an important vertical and
-catalog surface, not the product identity.
+The product has two complementary architectural layers: a provider-neutral
+Solutions Architect that turns requirements into inspectable blueprints, and
+the WAIT Local Agent runtime that applies policy, tenant scope, RBAC,
+approvals, execution, and audit evidence.
 
-The Apache 2.0 Community runtime is the shipped public boundary. Optional
-installed packs may add separately governed capabilities, but generated
-Power Platform output remains a source package for a later local PAC operation,
-not provider import or deployment evidence.
+Those layers support **three primary product streams** without creating
+separate execution engines:
 
-The runtime serves two related lanes without creating separate execution
-engines: MSP operators use tenant-scoped ticket, knowledge, connector, and
-workflow surfaces, while founder and consultant routes provide bounded local
-project and solution artifacts. Optional pack implementations may extend those
-contracts, but the public core remains usable and inspectable on its own.
+1. **MSP / IT Operations** — tenant-scoped tickets, knowledge, PSA/RMM/M365
+   context, technician workflows, playbooks, bounded actions, approvals, and
+   audit evidence.
+2. **AI Solutions Architect** — guided discovery, provider-neutral blueprints,
+   architecture decisions, governance, evaluation, and implementation handoff
+   across WAIT-native, Microsoft, MCP, PSA, RMM, API, and human-process targets.
+3. **Founder / Engineering + Launch Passport** — local project inspection,
+   evidence collection and reviewed Launch Passport handoff through the
+   founder surface and optional installed pack.
+
+These are different user journeys over the same governed runtime, not three
+independent products with separate policy or execution backends. Optional pack
+implementations may extend those contracts, but the public core remains usable
+and inspectable on its own.
+
+The current Community runtime is the shipped public boundary under the license
+terms documented at the repository root. Optional installed packs may add
+separately governed capabilities, but generated Power Platform output remains
+a source package for a later local PAC operation, not provider import or
+deployment evidence.
 
 ## Provider and model policy
 
