@@ -6,7 +6,7 @@ import hashlib
 import json
 import os
 import shutil
-import subprocess
+import subprocess  # nosec B404 - fixed local executable, fixed argv, no shell.
 import uuid
 from collections.abc import Mapping
 from pathlib import Path
@@ -73,7 +73,7 @@ def runbook_runtime_status(
     if not executable:
         return RunbookRuntimeStatus(
             "not_configured",
-            "Neither pwsh.exe nor powershell.exe was found on the Windows host.",
+            "A supported PowerShell executable was not found on the Windows host.",
         )
     candidate = Path(executable)
     if not candidate.is_absolute():
@@ -293,7 +293,7 @@ def execute_approved_runbook(
     executable_resolver: ExecutableResolver | None = None,
     platform_is_windows: PlatformPredicate | None = None,
 ) -> tuple[ApprovalRequest, RunbookExecutionResult]:
-    """Execute a stored approval exactly once and persist bounded evidence."""
+    """Execute a stored approval once and persist bounded evidence."""
 
     approval = store.get_approval_request(request_id)
     if approval is None:
