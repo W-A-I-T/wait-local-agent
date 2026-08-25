@@ -119,13 +119,13 @@ def test_client_blocks_live_reads_and_sanitizes_auth_provider_and_json_errors(se
                 )
             ),
         )
-        with pytest.raises(error_type) as exc:
+        with pytest.raises(error_type) as provider_error:
             client.discover(
                 client_id="client",
                 managing_tenant_id=MANAGING_TENANT_ID,
                 expected_customer_tenant_id=CUSTOMER_TENANT_ID,
             )
-        assert "provider-secret" not in str(exc.value)
+        assert "provider-secret" not in str(provider_error.value)
 
     malformed = AzureLighthouseClient(
         configured_settings(settings),
@@ -139,7 +139,11 @@ def test_client_blocks_live_reads_and_sanitizes_auth_provider_and_json_errors(se
             expected_customer_tenant_id=CUSTOMER_TENANT_ID,
         )
 
-    for payload, message in [([], "invalid collection"), ({}, "missing a value")]:
+    payload_cases: list[tuple[object, str]] = [
+        ([], "invalid collection"),
+        ({}, "missing a value"),
+    ]
+    for payload, message in payload_cases:
         client = AzureLighthouseClient(
             configured_settings(settings),
             FakeCredential(),
@@ -160,13 +164,13 @@ def test_token_and_transport_failures_are_sanitized(settings) -> None:
             credential,
             transport=httpx.MockTransport(lambda request: httpx.Response(200, json={"value": []})),
         )
-        with pytest.raises(AzureLighthouseAuthorizationError) as exc:
+        with pytest.raises(AzureLighthouseAuthorizationError) as auth_error:
             client.discover(
                 client_id="client",
                 managing_tenant_id=MANAGING_TENANT_ID,
                 expected_customer_tenant_id=CUSTOMER_TENANT_ID,
             )
-        assert "token-secret" not in str(exc.value)
+        assert "token-secret" not in str(auth_error.value)
 
     def timeout(request: httpx.Request) -> httpx.Response:
         raise httpx.ConnectTimeout("connection-secret", request=request)
@@ -176,13 +180,13 @@ def test_token_and_transport_failures_are_sanitized(settings) -> None:
         FakeCredential(),
         transport=httpx.MockTransport(timeout),
     )
-    with pytest.raises(AzureLighthouseProviderError, match="before receiving") as exc:
+    with pytest.raises(AzureLighthouseProviderError, match="before receiving") as transport_error:
         client.discover(
             client_id="client",
             managing_tenant_id=MANAGING_TENANT_ID,
             expected_customer_tenant_id=CUSTOMER_TENANT_ID,
         )
-    assert "connection-secret" not in str(exc.value)
+    assert "connection-secret" not in str(transport_error.value)
 
 
 def test_pagination_is_bounded_and_rejects_untrusted_next_links(settings) -> None:
