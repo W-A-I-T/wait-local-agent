@@ -71,7 +71,7 @@ def credential_from_vault(
         )
     normalize_uuid(values["client_id"], "credential client ID")
     try:
-        credential_type = getattr(import_module("azure.identity"), "ClientSecretCredential")
+        credential_type = import_module("azure.identity").ClientSecretCredential
         return credential_type(
             tenant_id=values["tenant_id"],
             client_id=values["client_id"],
