@@ -1,9 +1,9 @@
 from __future__ import annotations
 
 import hashlib
-from collections.abc import Mapping
 import json
 import subprocess
+from collections.abc import Mapping
 from dataclasses import replace
 from pathlib import Path
 from typing import cast
