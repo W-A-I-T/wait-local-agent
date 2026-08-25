@@ -55,7 +55,8 @@ class AzureArmTransport:
                 raise AzureLighthouseProviderError(
                     "Azure Resource Manager returned an invalid collection response."
                 )
-            value = payload.get("value")
+            response_payload = cast(Mapping[str, object], payload)
+            value = response_payload.get("value")
             if not isinstance(value, list):
                 raise AzureLighthouseProviderError(
                     "Azure Resource Manager collection response is missing a value array."
@@ -67,7 +68,7 @@ class AzureArmTransport:
             )
             if len(records) >= max_records:
                 return records[:max_records]
-            next_link = payload.get("nextLink")
+            next_link = response_payload.get("nextLink")
             if not isinstance(next_link, str) or not next_link:
                 return records
             url = validated_next_link(next_link)
@@ -75,7 +76,7 @@ class AzureArmTransport:
             "Azure Resource Manager pagination exceeded the bounded page limit."
         )
 
-    def object(self, path: str, params: dict[str, str]) -> Mapping[str, object]:
+    def mapping_object(self, path: str, params: dict[str, str]) -> Mapping[str, object]:
         payload = self.request_json(initial_url(path, params))
         if not isinstance(payload, Mapping):
             raise AzureLighthouseProviderError(
