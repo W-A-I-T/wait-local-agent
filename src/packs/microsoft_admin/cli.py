@@ -7,6 +7,7 @@ from typing import cast
 
 import typer
 
+from packs.azure_lighthouse.cli import app as azure_lighthouse_app
 from packs.microsoft_admin.core import (
     MicrosoftAdminError,
     MicrosoftAdminGraphClient,
@@ -24,6 +25,7 @@ from wait_local_agent.config import load_settings
 from wait_local_agent.m365_graph import M365GraphClient
 
 app = typer.Typer(help="Microsoft 365, Entra, Intune, Defender, and endpoint administration.")
+app.add_typer(azure_lighthouse_app, name="azure-lighthouse")
 
 
 @app.command("status")

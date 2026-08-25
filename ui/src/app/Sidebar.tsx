@@ -86,6 +86,7 @@ const primaryNavigation: NavigationGroup[] = [
     label: "Setup",
     items: [
       { to: "/connectors", label: "Connectors", icon: GitBranch },
+      { to: "/azure-lighthouse", label: "Azure Lighthouse", icon: Network, adminOnly: true },
       { to: "/integrations/connector-instances", label: "Connector Instances", icon: Database, adminOnly: true },
       { to: "/knowledge", label: "Knowledge", icon: BookOpenText },
       { to: "/settings", label: "Settings", icon: Activity }
