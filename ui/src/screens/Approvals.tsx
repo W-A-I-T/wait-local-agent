@@ -1,21 +1,74 @@
 import { useState } from "react";
 import { AlertTriangle, CheckCircle2, FileJson, PlayCircle, Save, Workflow, XCircle } from "lucide-react";
 import { executeEndpointFor, useDashboard } from "../app/DashboardContext";
+import { apiFetch } from "../api/client";
 import type { ApprovalRequest } from "../api/types";
 import { fieldsToText, formatPayload, parseFields } from "../lib/fields";
+
+const microsoftAdminRunbookAction = "microsoft_admin.powershell_runbook";
+
+type ExecutionNotice = {
+  kind: "success" | "danger";
+  message: string;
+};
 
 export function Approvals() {
   const {
     approvalRequests,
     pendingApprovals,
     canWrite,
+    isAdmin,
     busyId,
     updateApproval,
     executeApproval,
     savePayloadFields,
-    workflowFor
+    workflowFor,
+    refresh
   } = useDashboard();
   const [draftPayloadFields, setDraftPayloadFields] = useState<Record<number, string>>({});
+  const [runbookBusyId, setRunbookBusyId] = useState<number | null>(null);
+  const [executionNotices, setExecutionNotices] = useState<Record<number, ExecutionNotice>>({});
+
+  async function executeRequest(request: ApprovalRequest) {
+    if (request.action_type !== microsoftAdminRunbookAction) {
+      await executeApproval(request.id, request.action_type);
+      return;
+    }
+    setRunbookBusyId(request.id);
+    setExecutionNotices((current) => {
+      const next = { ...current };
+      delete next[request.id];
+      return next;
+    });
+    try {
+      const response = await apiFetch<{
+        approval: ApprovalRequest;
+        result: { status: string; message: string };
+      }>(`/packs/microsoft-admin/runbooks/approvals/${request.id}/execute`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({})
+      });
+      setExecutionNotices((current) => ({
+        ...current,
+        [request.id]: {
+          kind: response.result.status === "succeeded" ? "success" : "danger",
+          message: response.result.message
+        }
+      }));
+      await refresh();
+    } catch (error) {
+      setExecutionNotices((current) => ({
+        ...current,
+        [request.id]: {
+          kind: "danger",
+          message: error instanceof Error ? error.message : "PowerShell runbook execution failed."
+        }
+      }));
+    } finally {
+      setRunbookBusyId(null);
+    }
+  }
 
   return (
     <section className="panel approvals-panel">
@@ -26,14 +79,16 @@ export function Approvals() {
       <div className="stack-list">
         {approvalRequests.map((request) => (
           <ApprovalCard
-            busyId={busyId}
+            busy={busyId === request.id || runbookBusyId === request.id}
             canWrite={canWrite}
+            isAdmin={isAdmin}
             draftPayloadFields={draftPayloadFields}
+            executionNotice={executionNotices[request.id]}
             key={request.id}
             request={request}
             savePayloadFields={savePayloadFields}
             updateApproval={updateApproval}
-            executeApproval={executeApproval}
+            executeRequest={executeRequest}
             workflowFor={workflowFor}
             setDraftPayloadFields={setDraftPayloadFields}
           />
@@ -46,31 +101,37 @@ export function Approvals() {
 
 type ApprovalCardProps = {
   request: ApprovalRequest;
-  busyId: number | "draft" | null;
+  busy: boolean;
   canWrite: boolean;
+  isAdmin: boolean;
   draftPayloadFields: Record<number, string>;
+  executionNotice?: ExecutionNotice;
   setDraftPayloadFields: (update: (current: Record<number, string>) => Record<number, string>) => void;
   updateApproval: (requestId: number, status: "approved" | "rejected") => Promise<void>;
-  executeApproval: (requestId: number, actionType: string) => Promise<void>;
+  executeRequest: (request: ApprovalRequest) => Promise<void>;
   savePayloadFields: (request: ApprovalRequest, fields: Record<string, string>) => Promise<void>;
   workflowFor: (request: ApprovalRequest) => { status: string } | undefined;
 };
 
 function ApprovalCard({
   request,
-  busyId,
+  busy,
   canWrite,
+  isAdmin,
   draftPayloadFields,
+  executionNotice,
   setDraftPayloadFields,
   updateApproval,
-  executeApproval,
+  executeRequest,
   savePayloadFields,
   workflowFor
 }: ApprovalCardProps) {
   const payloadText = draftPayloadFields[request.id] ?? fieldsToText(request.payload?.fields);
   const workflow = workflowFor(request);
   const canExecute = Boolean(request.can_execute);
-  const hasExecuteEndpoint = executeEndpointFor(request.action_type) !== null;
+  const isRunbook = request.action_type === microsoftAdminRunbookAction;
+  const hasExecuteEndpoint = isRunbook || executeEndpointFor(request.action_type) !== null;
+  const roleCanExecute = !isRunbook || isAdmin;
 
   return (
     <div className="approval-card">
@@ -87,6 +148,11 @@ function ApprovalCard({
         <div className="blocked-reason">
           <AlertTriangle size={15} aria-hidden="true" />
           {request.block_reason}
+        </div>
+      ) : null}
+      {executionNotice ? (
+        <div className={`notice ${executionNotice.kind}`} role={executionNotice.kind === "danger" ? "alert" : "status"}>
+          {executionNotice.message}
         </div>
       ) : null}
       <div className="payload-grid">
@@ -113,11 +179,14 @@ function ApprovalCard({
           </span>
         ) : <span>No workflow run linked</span>}
       </div>
+      {isRunbook && !isAdmin ? (
+        <p className="screen-note">PowerShell runbook execution requires administrator access.</p>
+      ) : null}
       {canWrite ? (
         <div className="row-actions">
           <button
             className="icon-button"
-            disabled={busyId === request.id || request.status !== "pending"}
+            disabled={busy || request.status !== "pending"}
             type="button"
             onClick={() => void savePayloadFields(request, parseFields(payloadText))}
           >
@@ -125,7 +194,7 @@ function ApprovalCard({
             Save Fields
           </button>
           <button
-            disabled={busyId === request.id || request.status !== "pending"}
+            disabled={busy || request.status !== "pending"}
             type="button"
             onClick={() => void updateApproval(request.id, "approved")}
           >
@@ -133,7 +202,7 @@ function ApprovalCard({
             Approve
           </button>
           <button
-            disabled={busyId === request.id || request.status !== "pending"}
+            disabled={busy || request.status !== "pending"}
             type="button"
             onClick={() => void updateApproval(request.id, "rejected")}
           >
@@ -141,9 +210,9 @@ function ApprovalCard({
             Reject
           </button>
           <button
-            disabled={busyId === request.id || request.status !== "approved" || !canExecute || !hasExecuteEndpoint}
+            disabled={busy || request.status !== "approved" || !canExecute || !hasExecuteEndpoint || !roleCanExecute}
             type="button"
-            onClick={() => void executeApproval(request.id, request.action_type)}
+            onClick={() => void executeRequest(request)}
           >
             <PlayCircle size={16} aria-hidden="true" />
             Execute
