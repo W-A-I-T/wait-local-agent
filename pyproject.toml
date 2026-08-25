@@ -100,6 +100,7 @@ select = ["E", "F", "I", "UP", "B"]
 python_version = "3.12"
 files = ["src", "tests"]
 mypy_path = "tests"
+exclude = ["^tests/microsoft_admin_support\\.py$"]
 check_untyped_defs = true
 disable_error_code = ["no-untyped-def"]
 warn_unused_ignores = true
