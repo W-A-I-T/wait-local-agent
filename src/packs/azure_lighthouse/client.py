@@ -358,7 +358,7 @@ class AzureLighthouseClient:
 
     def _definition(self, definition_id: str) -> Mapping[str, object]:
         path = validate_definition_id(definition_id)
-        return self.arm.object(path, {"api-version": MANAGED_SERVICES_API_VERSION})
+        return self.arm.mapping_object(path, {"api-version": MANAGED_SERVICES_API_VERSION})
 
     def _assert_enabled(self) -> None:
         if not self.settings.allow_http_probing:
