@@ -163,15 +163,24 @@ function ApprovalCard({
           <h3><FileJson size={16} aria-hidden="true" />Payload Preview</h3>
           <pre>{formatPayload(request.payload)}</pre>
         </div>
-        <label className="payload-editor">
-          Draft Fields
-          <textarea
-            disabled={!canWrite || request.status !== "pending"}
-            rows={6}
-            value={payloadText}
-            onChange={(event) => setDraftPayloadFields((current) => ({ ...current, [request.id]: event.target.value }))}
-          />
-        </label>
+        {isRunbook ? (
+          <div className="payload-editor">
+            <strong>Digest-bound plan</strong>
+            <p className="screen-note">
+              Runbook parameters cannot be edited after draft creation. Reject this request and create a new draft to change them.
+            </p>
+          </div>
+        ) : (
+          <label className="payload-editor">
+            Draft Fields
+            <textarea
+              disabled={!canWrite || request.status !== "pending"}
+              rows={6}
+              value={payloadText}
+              onChange={(event) => setDraftPayloadFields((current) => ({ ...current, [request.id]: event.target.value }))}
+            />
+          </label>
+        )}
       </div>
       <div className="workflow-link">
         <Workflow size={15} aria-hidden="true" />
@@ -187,15 +196,17 @@ function ApprovalCard({
       ) : null}
       {canWrite ? (
         <div className="row-actions">
-          <button
-            className="icon-button"
-            disabled={busy || request.status !== "pending"}
-            type="button"
-            onClick={() => void savePayloadFields(request, parseFields(payloadText))}
-          >
-            <Save size={16} aria-hidden="true" />
-            Save Fields
-          </button>
+          {!isRunbook ? (
+            <button
+              className="icon-button"
+              disabled={busy || request.status !== "pending"}
+              type="button"
+              onClick={() => void savePayloadFields(request, parseFields(payloadText))}
+            >
+              <Save size={16} aria-hidden="true" />
+              Save Fields
+            </button>
+          ) : null}
           <button
             disabled={busy || request.status !== "pending"}
             type="button"
