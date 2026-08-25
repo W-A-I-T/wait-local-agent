@@ -132,7 +132,9 @@ describe("Approvals execute button", () => {
 
     fireEvent.click(executeButton);
 
-    expect(await screen.findByRole("alert")).toHaveTextContent("The appliance couldn't complete this request");
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "That action conflicts with the appliance's current state. Refresh and try again."
+    );
     expect(refresh).not.toHaveBeenCalled();
   });
 });
