@@ -52,6 +52,7 @@ const primaryNavigation: NavigationGroup[] = [
       { to: "/tickets", label: "Tickets", icon: ClipboardList },
       { to: "/approvals", label: "Approvals", icon: ClipboardCheck },
       { to: "/technician-chat", label: "Technician Chat", icon: MessageSquare },
+      { to: "/microsoft-admin", label: "Microsoft Admin", icon: ShieldCheck },
       { to: "/m365-actions", label: "M365 Actions", icon: ShieldCheck }
     ]
   },
