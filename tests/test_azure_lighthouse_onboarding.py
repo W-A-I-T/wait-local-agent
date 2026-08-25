@@ -46,8 +46,8 @@ def test_subscription_onboarding_bundle_is_reader_only_deterministic_and_reviewa
     assert first == second
     assert first.format == ONBOARDING_FORMAT
     assert first.role_profile == "inventory-reader"
-    assert first.template["$schema"].endswith("subscriptionDeploymentTemplate.json#")
-    assert first.parameters["$schema"].endswith("subscriptionDeploymentParameters.json#")
+    assert cast(str, first.template["$schema"]).endswith("subscriptionDeploymentTemplate.json#")
+    assert cast(str, first.parameters["$schema"]).endswith("subscriptionDeploymentParameters.json#")
     resources = first.template["resources"]
     assert isinstance(resources, list)
     resource_rows = [cast(dict[str, object], resource) for resource in resources]
@@ -83,8 +83,8 @@ def test_resource_group_onboarding_bundle_uses_resource_group_schema_and_guidanc
         principal_display_name="WAIT Operations Group",
         deployment_scope="resource_group",
     )
-    assert bundle.template["$schema"].endswith("deploymentTemplate.json#")
-    assert bundle.parameters["$schema"].endswith("deploymentParameters.json#")
+    assert cast(str, bundle.template["$schema"]).endswith("deploymentTemplate.json#")
+    assert cast(str, bundle.parameters["$schema"]).endswith("deploymentParameters.json#")
     assert "resource group" in " ".join(bundle.deployment_guidance).casefold()
     validate_onboarding_bundle(bundle)
 
