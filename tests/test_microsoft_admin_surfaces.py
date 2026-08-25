@@ -5,12 +5,12 @@ import json
 import httpx
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
+from microsoft_admin_support import _configured
 from typer.testing import CliRunner
 
 from packs.microsoft_admin.cli import app as microsoft_admin_cli
 from packs.microsoft_admin.core import MicrosoftAdminError
 from packs.microsoft_admin.router import create_router
-from microsoft_admin_support import _configured
 from wait_local_agent.models import ConnectorReadResult
 
 

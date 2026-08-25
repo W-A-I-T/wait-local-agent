@@ -4,8 +4,6 @@ from datetime import UTC, datetime
 from typing import cast
 
 import pytest
-
-from packs.microsoft_admin.core import MicrosoftAdminError, build_dashboard, diagnose_access
 from microsoft_admin_support import (
     FakeM365Core,
     FakeMicrosoftAdminProvider,
@@ -14,6 +12,8 @@ from microsoft_admin_support import (
     _response,
     _user,
 )
+
+from packs.microsoft_admin.core import MicrosoftAdminError, build_dashboard, diagnose_access
 from wait_local_agent.m365_graph import (
     M365GraphClient,
     M365GraphLicenseDetailReadResponse,

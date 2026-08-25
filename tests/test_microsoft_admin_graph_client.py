@@ -4,10 +4,10 @@ from dataclasses import replace
 from typing import Any, cast
 
 import httpx
+from microsoft_admin_support import _configured
 
 from packs.microsoft_admin import PACK_MANIFEST
 from packs.microsoft_admin.core import MicrosoftAdminGraphClient, remediation_catalog
-from microsoft_admin_support import _configured
 
 
 def test_pack_manifest_and_remediation_catalog_are_runtime_capabilities() -> None:

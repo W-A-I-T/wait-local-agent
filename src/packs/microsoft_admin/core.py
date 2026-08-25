@@ -1,18 +1,6 @@
-"""Stable facade for the Microsoft administrator pack implementation."""
+"""Public facade for the Microsoft administrator pack implementation."""
 
-from .client import (
-    MicrosoftAdminGraphClient,
-    _bounded_identity,
-    _bounded_page_size,
-    _cursor_params,
-    _failed_response,
-    _graph_base_url,
-    _list_params,
-    _next_cursor,
-    _odata_literal,
-    _payload_rows,
-    _safe_endpoint,
-)
+from .client import MicrosoftAdminGraphClient
 from .insights import build_dashboard, diagnose_access, remediation_catalog
 from .models import (
     DEFAULT_PAGE_SIZE,
@@ -25,33 +13,6 @@ from .models import (
     MicrosoftAdminFinding,
     MicrosoftAdminProvider,
     MicrosoftAdminReadResponse,
-)
-from .normalizers import (
-    _aggregate_status,
-    _boolean,
-    _dashboard_recommendations,
-    _integer,
-    _is_stale,
-    _latest_secure_score,
-    _lower,
-    _mapping,
-    _normalize_autopilot_device,
-    _normalize_compliance_policy,
-    _normalize_conditional_access_policy,
-    _normalize_intune_app,
-    _normalize_risky_user,
-    _normalize_secure_score,
-    _normalize_security_alert,
-    _normalize_security_incident,
-    _normalize_service_health,
-    _normalize_service_issue,
-    _normalize_sign_in,
-    _number,
-    _positive_int,
-    _severity_rank,
-    _sign_in_failed,
-    _string,
-    _string_list,
 )
 
 __all__ = [

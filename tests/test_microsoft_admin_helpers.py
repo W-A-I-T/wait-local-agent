@@ -5,20 +5,31 @@ from typing import cast
 
 import httpx
 import pytest
+from microsoft_admin_support import (
+    FakeM365Core,
+    FakeMicrosoftAdminProvider,
+    _configured,
+    _license,
+    _response,
+    _user,
+)
 
-from packs.microsoft_admin.core import (
-    MAX_CURSOR_LENGTH,
-    MicrosoftAdminError,
+from packs.microsoft_admin.client import (
     MicrosoftAdminGraphClient,
-    _aggregate_status,
     _bounded_identity,
     _bounded_page_size,
     _cursor_params,
     _graph_base_url,
+    _next_cursor,
+    _payload_rows,
+    _safe_endpoint,
+)
+from packs.microsoft_admin.core import MAX_CURSOR_LENGTH, MicrosoftAdminError, diagnose_access
+from packs.microsoft_admin.normalizers import (
+    _aggregate_status,
     _is_stale,
     _latest_secure_score,
     _mapping,
-    _next_cursor,
     _normalize_autopilot_device,
     _normalize_compliance_policy,
     _normalize_conditional_access_policy,
@@ -31,18 +42,7 @@ from packs.microsoft_admin.core import (
     _normalize_service_issue,
     _normalize_sign_in,
     _number,
-    _payload_rows,
-    _safe_endpoint,
     _string_list,
-    diagnose_access,
-)
-from microsoft_admin_support import (
-    FakeM365Core,
-    FakeMicrosoftAdminProvider,
-    _configured,
-    _license,
-    _response,
-    _user,
 )
 from wait_local_agent.m365_graph import (
     M365GraphClient,

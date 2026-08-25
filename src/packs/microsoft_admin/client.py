@@ -13,6 +13,8 @@ from wait_local_agent.models import ConnectorReadResult
 from wait_local_agent.net_security import NetSecurityError, build_pinned_client, validate_operator_url
 
 from .models import (
+    _ALLOWED_CURSOR_KEYS,
+    _ENDPOINTS,
     DEFAULT_PAGE_SIZE,
     MAX_CURSOR_LENGTH,
     MAX_IDENTITY_LENGTH,
@@ -20,8 +22,6 @@ from .models import (
     MAX_RECORDS_PER_SURFACE,
     MicrosoftAdminError,
     MicrosoftAdminReadResponse,
-    _ALLOWED_CURSOR_KEYS,
-    _ENDPOINTS,
 )
 from .normalizers import (
     _normalize_autopilot_device,
