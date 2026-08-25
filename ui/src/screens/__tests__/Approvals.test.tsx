@@ -18,7 +18,7 @@ function approval(overrides: Partial<ApprovalRequest> = {}): ApprovalRequest {
     action_type: "m365.user.disable",
     status: "approved",
     comment: "",
-    execution_status: "pending",
+    execution_status: "not_started",
     execution_message: "",
     can_execute: true,
     ...overrides
@@ -75,18 +75,27 @@ describe("Approvals execute button", () => {
   });
 
   it("enables approved Microsoft runbooks only for administrators", () => {
-    const request = approval({ action_type: "microsoft_admin.powershell_runbook" });
+    const request = approval({ action_type: "microsoft_admin.powershell_runbook", can_execute: false });
     expect(renderApproval(request, { isAdmin: true }).executeButton).toBeEnabled();
   });
 
   it("keeps Microsoft runbook execution disabled for technicians", () => {
-    const request = approval({ action_type: "microsoft_admin.powershell_runbook" });
+    const request = approval({ action_type: "microsoft_admin.powershell_runbook", can_execute: false });
     expect(renderApproval(request, { isAdmin: false }).executeButton).toBeDisabled();
     expect(screen.getByText("PowerShell runbook execution requires administrator access.")).toBeInTheDocument();
   });
 
+  it("does not allow a Microsoft runbook approval to be replayed", () => {
+    const request = approval({
+      action_type: "microsoft_admin.powershell_runbook",
+      execution_status: "succeeded",
+      can_execute: false
+    });
+    expect(renderApproval(request, { isAdmin: true }).executeButton).toBeDisabled();
+  });
+
   it("executes a Microsoft runbook through the pack endpoint and refreshes the queue", async () => {
-    const request = approval({ action_type: "microsoft_admin.powershell_runbook", id: 42 });
+    const request = approval({ action_type: "microsoft_admin.powershell_runbook", id: 42, can_execute: false });
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({
       approval: { ...request, execution_status: "succeeded" },
       result: { status: "succeeded", message: "PowerShell runbook completed." }
@@ -105,7 +114,7 @@ describe("Approvals execute button", () => {
   });
 
   it("shows a bounded execution error without refreshing", async () => {
-    const request = approval({ action_type: "microsoft_admin.powershell_runbook", id: 42 });
+    const request = approval({ action_type: "microsoft_admin.powershell_runbook", id: 42, can_execute: false });
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({
       detail: "PowerShell runtime is unavailable."
     }), { status: 409 })));
