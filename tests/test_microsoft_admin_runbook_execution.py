@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+from collections.abc import Mapping
 import json
 import subprocess
 from dataclasses import replace
@@ -8,6 +9,7 @@ from pathlib import Path
 from typing import cast
 
 from packs.microsoft_admin.runbooks import (
+    RunbookRunner,
     build_runbook_plan,
     execute_runbook_plan,
     resolve_powershell_executable,
@@ -213,6 +215,22 @@ def test_execute_runbook_handles_approval_timeout_failure_and_malformed_output(
     assert failed.stdout_truncated is True
     assert "must-not-leak" not in failed.stderr
 
+    def completed_runner(value: str) -> RunbookRunner:
+        def runner(
+            argv: list[str],
+            cwd: Path,
+            timeout_seconds: float,
+            environment: Mapping[str, str],
+        ) -> subprocess.CompletedProcess[str]:
+            return subprocess.CompletedProcess(
+                argv,
+                0,
+                stdout=value,
+                stderr="",
+            )
+
+        return runner
+
     for stdout, expected in [
         ("not-json", "malformed"),
         ("[]", "unsupported"),
@@ -231,12 +249,7 @@ def test_execute_runbook_handles_approval_timeout_failure_and_malformed_output(
             plan,
             configured,
             approved=True,
-            runner=lambda argv, cwd, timeout_seconds, environment, value=stdout: subprocess.CompletedProcess(
-                argv,
-                0,
-                stdout=value,
-                stderr="",
-            ),
+            runner=completed_runner(stdout),
             executable_resolver=lambda: executable,
             platform_is_windows=lambda: True,
         )

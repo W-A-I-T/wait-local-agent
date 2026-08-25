@@ -36,12 +36,14 @@ def test_approved_runbook_uses_stored_plan_exactly_once(
         runbook_id="windows.service_restart",
         parameters={"service_name": "wuauserv", "wait_seconds": 7},
     )
+    assert approval.id is not None
+    request_id = approval.id
     assert approval.action_type == RUNBOOK_ACTION_TYPE
-    fake.approvals[approval.id] = replace(approval, status="approved", approver_id="admin")
+    fake.approvals[request_id] = replace(approval, status="approved", approver_id="admin")
 
     updated, result = execute_approved_runbook(
         store,
-        approval.id,
+        request_id,
         configured,
         expected_client_id="client-1",
         runner=lambda argv, cwd, timeout_seconds, environment: subprocess.CompletedProcess(
@@ -68,7 +70,7 @@ def test_approved_runbook_uses_stored_plan_exactly_once(
     with pytest.raises(RunbookApprovalError, match="already"):
         execute_approved_runbook(
             store,
-            approval.id,
+            request_id,
             configured,
             expected_client_id="client-1",
             executable_resolver=lambda: executable,
@@ -89,34 +91,36 @@ def test_approved_runbook_rejects_wrong_type_tenant_status_and_malformed_payload
         runbook_id="windows.endpoint_health",
         parameters={},
     )
+    assert approval.id is not None
+    request_id = approval.id
 
     with pytest.raises(RunbookApprovalError, match="not approved"):
         execute_approved_runbook(
             store,
-            approval.id,
+            request_id,
             configured,
             expected_client_id="client-1",
         )
 
-    fake.approvals[approval.id] = replace(approval, action_type="other", status="approved")
+    fake.approvals[request_id] = replace(approval, action_type="other", status="approved")
     with pytest.raises(RunbookApprovalError, match="not a PowerShell"):
         execute_approved_runbook(
             store,
-            approval.id,
+            request_id,
             configured,
             expected_client_id="client-1",
         )
 
-    fake.approvals[approval.id] = replace(approval, status="approved")
+    fake.approvals[request_id] = replace(approval, status="approved")
     with pytest.raises(RunbookApprovalError, match="different tenant"):
         execute_approved_runbook(
             store,
-            approval.id,
+            request_id,
             configured,
             expected_client_id="client-2",
         )
 
-    fake.approvals[approval.id] = replace(
+    fake.approvals[request_id] = replace(
         approval,
         status="approved",
         payload_json="{",
@@ -124,12 +128,12 @@ def test_approved_runbook_rejects_wrong_type_tenant_status_and_malformed_payload
     with pytest.raises(RunbookApprovalError, match="malformed"):
         execute_approved_runbook(
             store,
-            approval.id,
+            request_id,
             configured,
             expected_client_id="client-1",
         )
 
-    fake.approvals[approval.id] = replace(
+    fake.approvals[request_id] = replace(
         approval,
         status="approved",
         payload_json="[]",
@@ -137,7 +141,7 @@ def test_approved_runbook_rejects_wrong_type_tenant_status_and_malformed_payload
     with pytest.raises(RunbookApprovalError, match="malformed"):
         execute_approved_runbook(
             store,
-            approval.id,
+            request_id,
             configured,
             expected_client_id="client-1",
         )
@@ -164,15 +168,17 @@ def test_approved_runbook_does_not_consume_approval_when_runtime_is_blocked(
         runbook_id="windows.endpoint_health",
         parameters={},
     )
-    fake.approvals[approval.id] = replace(approval, status="approved")
+    assert approval.id is not None
+    request_id = approval.id
+    fake.approvals[request_id] = replace(approval, status="approved")
     with pytest.raises(RunbookApprovalError, match="not found on the Windows host"):
         execute_approved_runbook(
             store,
-            approval.id,
+            request_id,
             configured,
             expected_client_id="client-1",
             executable_resolver=lambda: None,
             platform_is_windows=lambda: True,
         )
-    assert fake.approvals[approval.id].execution_status == "not_started"
+    assert fake.approvals[request_id].execution_status == "not_started"
     assert fake.recorded == []

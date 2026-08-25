@@ -46,8 +46,9 @@ class FakeRunbookStore:
         client_id: str | None = None,
         expires_in_seconds: int = 86_400,
     ) -> ApprovalRequest:
+        request_id = self.next_id
         request = ApprovalRequest(
-            id=self.next_id,
+            id=request_id,
             subject_id=subject_id,
             action_type=action_type,
             payload_json=json.dumps(payload, sort_keys=True),
@@ -63,7 +64,7 @@ class FakeRunbookStore:
             approver_id=None,
             expires_at="2026-08-26T00:00:00+00:00",
         )
-        self.approvals[request.id] = request
+        self.approvals[request_id] = request
         self.next_id += 1
         return request
 
