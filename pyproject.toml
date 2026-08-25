@@ -72,6 +72,7 @@ packages = ["src/wait_local_agent", "src/packs"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+pythonpath = ["tests"]
 addopts = "-q"
 
 [tool.coverage.run]
