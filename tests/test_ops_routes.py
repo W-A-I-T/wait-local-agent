@@ -37,9 +37,28 @@ def test_sidecar_ops_routes_wrap_existing_logic(settings, tmp_path: Path) -> Non
     )
 
     assert packs.status_code == 200
-    assert packs.json() == []
+    assert packs.json() == [
+        {
+            "name": "microsoft-admin",
+            "version": "0.1.0",
+            "locked": False,
+            "requires_license": False,
+        }
+    ]
     assert pack_status.status_code == 200
-    assert pack_status.json() == []
+    assert pack_status.json() == [
+        {
+            "name": "microsoft-admin",
+            "version": "0.1.0",
+            "locked": False,
+            "requires_license": False,
+            "cli_available": True,
+            "router_available": True,
+            "mounted_cli": False,
+            "mounted_router": True,
+            "error": None,
+        }
+    ]
     assert update_check.status_code == 200
     assert update_check.json()["status"] == "unknown"
     assert update_check.json()["detail"] == "disabled"
