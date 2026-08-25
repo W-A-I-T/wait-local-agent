@@ -20,11 +20,16 @@ RunbookExecutionStatus = Literal["ready", "blocked", "not_configured", "succeede
 
 
 class CompletedProcessLike(Protocol):
-    """Minimal subprocess result contract used by injectable runbook runners."""
+    """Read-only subprocess result contract used by injectable runbook runners."""
 
-    returncode: int
-    stdout: str | None
-    stderr: str | None
+    @property
+    def returncode(self) -> int: ...
+
+    @property
+    def stdout(self) -> str | None: ...
+
+    @property
+    def stderr(self) -> str | None: ...
 
 
 RunbookRunner = Callable[
