@@ -7,7 +7,6 @@ import pytest
 
 from packs.azure_lighthouse.client import AzureLighthouseClient
 from packs.azure_lighthouse.models import (
-    ARM_SCOPE,
     MAX_PAGES,
     AzureLighthouseAuthorizationError,
     AzureLighthouseBlockedError,
@@ -29,12 +28,9 @@ from tests.azure_lighthouse_support import (
     DEFINITION_ID,
     MANAGING_TENANT_ID,
     OTHER_TENANT_ID,
-    PRINCIPAL_ID,
     SUBSCRIPTION_ID,
     FakeCredential,
-    assignment_payload,
     configured_settings,
-    resource_payload,
     subscription_payload,
 )
 
