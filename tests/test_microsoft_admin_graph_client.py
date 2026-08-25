@@ -283,6 +283,10 @@ def test_microsoft_admin_graph_reads_normalize_all_supported_surfaces(settings) 
     }
     sign_in_request = next(request for request in requests if request.url.path.endswith("/auditLogs/signIns"))
     assert sign_in_request.url.params["$filter"] == "userPrincipalName eq 'adele@example.test'"
+    for defender_path in ("/security/incidents", "/security/alerts_v2"):
+        defender_request = next(request for request in requests if request.url.path.endswith(defender_path))
+        assert "$select" not in defender_request.url.params
+        assert "$orderby" not in defender_request.url.params
 
     client.list_service_health(cursor=responses[0].next_cursor)
     last_request = requests[-1]

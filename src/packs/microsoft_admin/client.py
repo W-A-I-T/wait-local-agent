@@ -219,11 +219,7 @@ class MicrosoftAdminGraphClient:
         return self._list(
             "security/incidents",
             page_size=page_size,
-            select=(
-                "id,displayName,status,severity,classification,determination,assignedTo,"
-                "createdDateTime,lastUpdateDateTime,redirectIncidentId,customTags"
-            ),
-            orderby="lastUpdateDateTime desc",
+            select=None,
             normalizer=_normalize_security_incident,
             success_message="Microsoft Defender incident read succeeded.",
             cursor=cursor,
@@ -238,11 +234,7 @@ class MicrosoftAdminGraphClient:
         return self._list(
             "security/alerts_v2",
             page_size=page_size,
-            select=(
-                "id,title,status,severity,category,serviceSource,detectionSource,createdDateTime,"
-                "lastUpdateDateTime,incidentId"
-            ),
-            orderby="lastUpdateDateTime desc",
+            select=None,
             normalizer=_normalize_security_alert,
             success_message="Microsoft Defender alert read succeeded.",
             cursor=cursor,

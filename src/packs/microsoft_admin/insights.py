@@ -172,7 +172,7 @@ def diagnose_access(
     conditional_access = provider.list_conditional_access_policies(page_size=100)
     devices_response = core_client.list_managed_devices(page_size=100)
 
-    statuses = {
+    statuses: dict[str, str] = {
         "user": user_response.result.status,
         "licenses": license_response.result.status,
         "sign_ins": sign_ins.result.status,

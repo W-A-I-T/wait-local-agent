@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import replace
+from typing import TYPE_CHECKING
 
 from packs.microsoft_admin.core import MicrosoftAdminReadResponse
 from wait_local_agent.m365_graph import (
@@ -15,6 +16,9 @@ from wait_local_agent.m365_graph import (
     M365GraphUser,
 )
 from wait_local_agent.models import ConnectorReadResult
+
+if TYPE_CHECKING:
+    from wait_local_agent.models import ConnectorStatusValue
 
 
 def _configured(settings, *, probing: bool = True):
@@ -30,7 +34,7 @@ def _configured(settings, *, probing: bool = True):
 def _response(
     items: list[dict[str, object]] | None = None,
     *,
-    status: str = "ready",
+    status: ConnectorStatusValue = "ready",
 ) -> MicrosoftAdminReadResponse:
     records = items or []
     return MicrosoftAdminReadResponse(

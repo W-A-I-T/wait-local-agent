@@ -18,7 +18,9 @@ WAIT_ALLOW_HTTP_PROBING=true
 refresh tokens, store tenant credentials, execute arbitrary Graph paths, or
 interpret a successful read as proof that a later remediation succeeded.
 Production requests use the shared DNS-pinned outbound transport. Graph paths,
-selected fields, page sizes, and pagination keys are allowlisted.
+selected fields where the endpoint supports them, page sizes, and pagination
+keys are allowlisted. Defender incidents and alerts use only the documented
+`$top`, `$skip`, and next-link pagination options.
 
 ## Read surfaces
 
@@ -66,7 +68,9 @@ Grant only the permissions needed for the surfaces enabled in a deployment. The 
 | Surface | Least-privilege permission / token requirement |
 | --- | --- |
 | Service health | `ServiceHealth.Read.All` |
-| Secure Score, Defender incidents and alerts | `SecurityEvents.Read.All` |
+| Secure Score | `SecurityEvents.Read.All` |
+| Defender incidents | `SecurityIncident.Read.All` |
+| Defender alerts v2 | `SecurityAlert.Read.All` |
 | Sign-ins | `AuditLog.Read.All` |
 | Conditional Access | `Policy.Read.All` |
 | Risky users | `IdentityRiskyUser.Read.All` |
