@@ -129,9 +129,11 @@ function ApprovalCard({
   const payloadText = draftPayloadFields[request.id] ?? fieldsToText(request.payload?.fields);
   const workflow = workflowFor(request);
   const isRunbook = request.action_type === microsoftAdminRunbookAction;
-  const canExecute = isRunbook
-    ? request.status === "approved" && request.execution_status === "not_started"
-    : Boolean(request.can_execute);
+  const canExecute = request.status === "approved" && (
+    isRunbook
+      ? request.execution_status === "not_started"
+      : Boolean(request.can_execute)
+  );
   const hasExecuteEndpoint = isRunbook || executeEndpointFor(request.action_type) !== null;
   const roleCanExecute = !isRunbook || isAdmin;
   const visibleBlockReason = isRunbook ? "" : request.block_reason;
