@@ -2,11 +2,10 @@
 
 from __future__ import annotations
 
-import subprocess
 from collections.abc import Callable, Mapping
 from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import Literal
+from typing import Literal, Protocol
 
 RUNBOOK_ACTION_TYPE = "microsoft_admin.powershell_runbook"
 RUNBOOK_PLAN_FORMAT = "wait.microsoft-admin.powershell-runbook/v1"
@@ -18,9 +17,19 @@ MAX_STRING_PARAMETER_LENGTH = 128
 RunbookEffect = Literal["read", "write"]
 RunbookParameterKind = Literal["boolean", "integer", "choice"]
 RunbookExecutionStatus = Literal["ready", "blocked", "not_configured", "succeeded", "failed"]
+
+
+class CompletedProcessLike(Protocol):
+    """Minimal subprocess result contract used by injectable runbook runners."""
+
+    returncode: int
+    stdout: str | None
+    stderr: str | None
+
+
 RunbookRunner = Callable[
     [list[str], Path, float, Mapping[str, str]],
-    subprocess.CompletedProcess[str],
+    CompletedProcessLike,
 ]
 ExecutableResolver = Callable[[], str | None]
 PlatformPredicate = Callable[[], bool]
