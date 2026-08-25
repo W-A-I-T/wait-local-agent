@@ -79,6 +79,16 @@ describe("Approvals execute button", () => {
     expect(renderApproval(request, { isAdmin: true }).executeButton).toBeEnabled();
   });
 
+  it("keeps digest-bound Microsoft runbook plans immutable", () => {
+    const request = approval({ action_type: "microsoft_admin.powershell_runbook", can_execute: false });
+    renderApproval(request, { isAdmin: true });
+
+    expect(screen.getByText("Digest-bound plan")).toBeInTheDocument();
+    expect(screen.getByText(/Runbook parameters cannot be edited/)).toBeInTheDocument();
+    expect(screen.queryByLabelText("Draft Fields")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Save Fields" })).not.toBeInTheDocument();
+  });
+
   it("keeps Microsoft runbook execution disabled for technicians", () => {
     const request = approval({ action_type: "microsoft_admin.powershell_runbook", can_execute: false });
     expect(renderApproval(request, { isAdmin: false }).executeButton).toBeDisabled();
