@@ -128,10 +128,13 @@ function ApprovalCard({
 }: ApprovalCardProps) {
   const payloadText = draftPayloadFields[request.id] ?? fieldsToText(request.payload?.fields);
   const workflow = workflowFor(request);
-  const canExecute = Boolean(request.can_execute);
   const isRunbook = request.action_type === microsoftAdminRunbookAction;
+  const canExecute = isRunbook
+    ? request.status === "approved" && request.execution_status === "not_started"
+    : Boolean(request.can_execute);
   const hasExecuteEndpoint = isRunbook || executeEndpointFor(request.action_type) !== null;
   const roleCanExecute = !isRunbook || isAdmin;
+  const visibleBlockReason = isRunbook ? "" : request.block_reason;
 
   return (
     <div className="approval-card">
@@ -144,10 +147,10 @@ function ApprovalCard({
       </div>
       <p>{request.execution_message || request.comment || "Waiting for review"}</p>
       {request.expires_at ? <p className="screen-note">Approval deadline: {request.expires_at}</p> : null}
-      {request.block_reason ? (
+      {visibleBlockReason ? (
         <div className="blocked-reason">
           <AlertTriangle size={15} aria-hidden="true" />
-          {request.block_reason}
+          {visibleBlockReason}
         </div>
       ) : null}
       {executionNotice ? (
@@ -210,7 +213,7 @@ function ApprovalCard({
             Reject
           </button>
           <button
-            disabled={busy || request.status !== "approved" || !canExecute || !hasExecuteEndpoint || !roleCanExecute}
+            disabled={busy || !canExecute || !hasExecuteEndpoint || !roleCanExecute}
             type="button"
             onClick={() => void executeRequest(request)}
           >
