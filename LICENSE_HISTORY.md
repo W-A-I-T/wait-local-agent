@@ -16,7 +16,7 @@ The preserved Apache baseline is available on:
 
 ```text
 1.x
-archive/apache-2.0-final-2026-08-15
+archive/apache-2.0-final-2026-08-10
 ```
 
 The Apache License 2.0 text is retained in [`LICENSES/Apache-2.0.txt`](LICENSES/Apache-2.0.txt) for the preserved baseline and any inherited Apache-covered material that requires the notice to remain available.
