@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { expect, test } from "@playwright/test";
 
 const token = process.env.WAIT_BROWSER_TOKEN ?? "integration-admin-token";
@@ -9,7 +10,14 @@ test.beforeEach(async ({ page }) => {
   }, token);
 });
 
-test("completes the safe local setup journey and exercises primary UI surfaces", async ({ page }) => {
+test("completes the safe local setup journey and exercises primary UI surfaces", async ({ page }, testInfo) => {
+  const fixtureSuffix = `${testInfo.retry}-${testInfo.repeatEachIndex}-${randomUUID()}`;
+  const clientId = `browser-smoke-${fixtureSuffix}`;
+  const clientName = `Browser Smoke Client ${fixtureSuffix}`;
+  const connectorName = `Browser Smoke Connector ${fixtureSuffix}`;
+  const externalCompanyId = `browser-external-company-${fixtureSuffix}`;
+  const externalCompanyName = `Browser Smoke Company ${fixtureSuffix}`;
+
   const routes = [
     ["/", "Operations Overview"],
     ["/clients", "Clients"],
@@ -27,37 +35,39 @@ test("completes the safe local setup journey and exercises primary UI surfaces",
 
   await page.goto("/clients");
   await page.getByRole("button", { name: "New client" }).click();
-  await page.getByLabel("Client ID").fill("browser-smoke");
-  await page.getByLabel("Name").fill("Browser Smoke Client");
+  await page.getByLabel("Client ID").fill(clientId);
+  await page.getByLabel("Name").fill(clientName);
   await page.getByRole("button", { name: "Create client" }).click();
   await expect(page.getByRole("status")).toContainText("Client created.");
 
   await page.goto("/integrations/connector-instances");
-  await page.getByLabel("Display name").fill("Browser Smoke Connector");
-  await page.getByLabel("WAIT client (optional)").selectOption("browser-smoke");
+  await page.getByLabel("Display name").fill(connectorName);
+  await page.getByLabel("WAIT client (optional)").selectOption(clientId);
   await page.getByLabel("Base URL").fill("https://provider.invalid");
   await page.getByLabel("Client ID", { exact: true }).fill("browser-client-id");
   await page.getByLabel("Client secret").fill("browser-client-secret");
   await page.getByLabel("Tenant").fill("browser-tenant");
   await page.getByRole("button", { name: "Connect system" }).click();
-  await expect(page.getByRole("status")).toContainText("Connected Browser Smoke Connector");
+  await expect(page.getByRole("status")).toContainText(`Connected ${connectorName}`);
   await page.goto("/integrations/connector-instances");
-  await page.getByRole("button", { name: /Browser Smoke Connector/ }).click();
+  await page.getByRole("button", { name: connectorName }).click();
 
-  await page.getByLabel("External company ID").fill("browser-external-company");
-  await page.getByLabel("External company name (optional)").fill("Browser Smoke Company");
-  await page.locator("#mapping-wait-client").selectOption("browser-smoke");
+  await page.getByLabel("External company ID").fill(externalCompanyId);
+  await page.getByLabel("External company name (optional)").fill(externalCompanyName);
+  await page.locator("#mapping-wait-client").selectOption(clientId);
   await expect(page.getByRole("button", { name: "Create mapping" })).toBeEnabled();
   await page.getByRole("button", { name: "Create mapping" }).click();
   await expect(page.getByText("Mapping created.", { exact: true })).toBeVisible();
-  await expect(page.getByLabel("External company mappings").getByText("Browser Smoke Connector", { exact: true })).toBeVisible();
+  await expect(page.getByLabel("External company mappings").getByText(connectorName, { exact: true })).toBeVisible();
   await expect(page.getByRole("button", { name: "Verify" })).toBeVisible();
   await page.getByRole("button", { name: "Verify" }).click();
   await expect(page.getByText("Mapping verified.", { exact: true })).toBeVisible();
 
   await page.goto("/?onboarding=1&step=2");
-  await expect(page.getByText("Setup complete")).toBeVisible();
   await expect(page.getByRole("link", { name: "Open mapping verification" })).toBeVisible();
+
+  await page.goto("/");
+  await expect(page.getByText("Setup complete")).toBeVisible();
 
   await page.goto("/playbooks");
   const qbr = page.locator("article").filter({ hasText: "Quarterly Business Review" });

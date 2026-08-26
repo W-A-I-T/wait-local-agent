@@ -8,8 +8,9 @@ const MARKERS: Record<ReadinessStep["status"], string> = {
 };
 
 export function SetupStatus() {
-  const { configurationSteps, isConfigured } = useDashboard();
+  const { configurationSteps, configurationLoading, isConfigured, roleResolved } = useDashboard();
   const remaining = configurationSteps.filter((step) => step.required && step.status !== "done").length;
+  const setupResolved = roleResolved && !configurationLoading;
   const firstIncomplete = configurationSteps.find((step) => step.required && step.status !== "done");
   const onboardingStep = firstIncomplete?.id === "client"
     ? 0
@@ -37,7 +38,11 @@ export function SetupStatus() {
         ))}
       </ul>
       <p className="setup-status-summary">
-        {remaining === 0 ? "Setup complete" : `Setup: ${remaining} required step${remaining === 1 ? "" : "s"} remaining`}
+        {setupResolved
+          ? remaining === 0
+            ? "Setup complete"
+            : `Setup: ${remaining} required step${remaining === 1 ? "" : "s"} remaining`
+          : "Checking setup status…"}
       </p>
       {remaining > 0 ? <a className="secondary-button" href={`/?onboarding=1&step=${onboardingStep}`}>Open setup guide</a> : null}
     </section>

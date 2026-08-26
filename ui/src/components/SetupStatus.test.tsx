@@ -12,6 +12,8 @@ describe("SetupStatus", () => {
   it("renders accessible markers and the remaining-step summary", () => {
     mockUseDashboard.mockReturnValue({
       isConfigured: false,
+      configurationLoading: false,
+      roleResolved: true,
       configurationSteps: [
         { id: "admin", label: "Administrator account", status: "done", required: true },
         { id: "client", label: "Client created", status: "done", required: true },
@@ -32,11 +34,27 @@ describe("SetupStatus", () => {
   it("renders setup complete when no required steps remain", () => {
     mockUseDashboard.mockReturnValue({
       isConfigured: true,
+      configurationLoading: false,
+      roleResolved: true,
       configurationSteps: [{ id: "admin", label: "Administrator account", status: "done", required: true }]
     });
 
     render(<SetupStatus />);
 
     expect(screen.getByText("Setup complete")).toBeInTheDocument();
+  });
+
+  it("does not report setup complete while access or readiness is unresolved", () => {
+    mockUseDashboard.mockReturnValue({
+      isConfigured: true,
+      configurationLoading: true,
+      roleResolved: false,
+      configurationSteps: [{ id: "admin", label: "Administrator account", status: "done", required: true }]
+    });
+
+    render(<SetupStatus />);
+
+    expect(screen.queryByText("Setup complete")).not.toBeInTheDocument();
+    expect(screen.getByText("Checking setup status…")).toBeInTheDocument();
   });
 });
