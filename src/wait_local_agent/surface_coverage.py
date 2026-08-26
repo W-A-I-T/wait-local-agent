@@ -9,20 +9,35 @@ SURFACE_CLASSES = frozenset({"exposed", "admin", "embedded", "hidden-by-design"}
 def enumerate_fastapi_routes(application: Any) -> list[str]:
     """Return stable method/path identifiers for every mounted HTTP route."""
 
+    from fastapi import routing as fastapi_routing
     from fastapi.routing import APIRoute
     from starlette.routing import Mount, Route
 
     identifiers: list[str] = []
+    included_router_type = getattr(fastapi_routing, "_IncludedRouter", None)
 
-    def visit(routes: Iterable[Any]) -> None:
+    def join_path(prefix: str, path: str) -> str:
+        if not prefix:
+            return path
+        return f"{prefix.rstrip('/')}/{path.lstrip('/')}"
+
+    def visit(routes: Iterable[Any], path_prefix: str = "") -> None:
         for route in routes:
+            if included_router_type is not None and isinstance(route, included_router_type):
+                for route_context in route.effective_route_contexts():
+                    original_route = route_context.original_route
+                    if not isinstance(original_route, (APIRoute, Route)):
+                        continue
+                    for method in sorted(route_context.methods or ()):
+                        identifiers.append(f"{method} {join_path(path_prefix, route_context.path)}")
+                continue
             if isinstance(route, Mount):
-                visit(route.routes)
+                visit(route.routes, join_path(path_prefix, route.path))
                 continue
             if not isinstance(route, (APIRoute, Route)):
                 continue
             for method in sorted(route.methods or ()):
-                identifiers.append(f"{method} {route.path}")
+                identifiers.append(f"{method} {join_path(path_prefix, route.path)}")
 
     visit(application.routes)
     return sorted(set(identifiers))

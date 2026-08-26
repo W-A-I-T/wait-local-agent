@@ -500,6 +500,30 @@ def test_email_delivery_supports_plain_smtp_without_auth(settings) -> None:
     assert smtp.logged_in is False
 
 
+def test_email_delivery_preserves_safe_errors_and_sanitizes_smtp_errors(settings) -> None:
+    active = replace(
+        settings,
+        allow_write_actions=True,
+        allow_http_probing=True,
+        communication_email_host="smtp.example.test",
+        communication_email_from="agent@example.test",
+    )
+    message = CommunicationMessage(channel="email", recipient="user@example.test", body="Hello")
+
+    def raise_delivery_error(*args, **kwargs):
+        raise CommunicationDeliveryError("already safe")
+
+    with pytest.raises(CommunicationDeliveryError, match="already safe"):
+        ConfiguredCommunicationProvider(active, smtp_factory=raise_delivery_error).send(message)
+
+    def raise_os_error(*args, **kwargs):
+        raise OSError("provider secret must not escape")
+
+    with pytest.raises(CommunicationDeliveryError, match="email delivery failed") as caught:
+        ConfiguredCommunicationProvider(active, smtp_factory=raise_os_error).send(message)
+    assert "provider secret" not in str(caught.value)
+
+
 @pytest.mark.parametrize(
     ("overrides", "message"),
     [

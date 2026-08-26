@@ -138,6 +138,30 @@ def test_secret_vault_rejects_invalid_external_fernet_key(tmp_path, monkeypatch)
     with pytest.raises(SecretVaultError, match="WAIT_VAULT_KEY"):
         SecretVault.initialize(tmp_path / "invalid-external-vault")
 
+    with pytest.raises(SecretVaultError, match="WAIT_VAULT_KEY"):
+        SecretVault(tmp_path / "invalid-external-vault")._fernet()  # noqa: SLF001
+
+
+def test_secret_vault_migration_rejects_missing_and_malformed_payloads(tmp_path, monkeypatch) -> None:
+    monkeypatch.delenv("WAIT_VAULT_KEY", raising=False)
+    with pytest.raises(SecretVaultError, match="no encrypted payload"):
+        SecretVault.migrate_to_external_key(
+            tmp_path / "missing-vault",
+            source_key=Fernet.generate_key().decode("utf-8"),
+            destination_key=Fernet.generate_key().decode("utf-8"),
+        )
+
+    vault_path = tmp_path / "malformed-vault"
+    vault = SecretVault.initialize(vault_path)
+    local_key = vault.key_path.read_text(encoding="utf-8").strip()
+    vault.secrets_path.write_bytes(Fernet(local_key.encode("utf-8")).encrypt(b"[]"))
+    with pytest.raises(SecretVaultError, match="payload is malformed"):
+        SecretVault.migrate_to_external_key(
+            vault_path,
+            source_key=local_key,
+            destination_key=Fernet.generate_key().decode("utf-8"),
+        )
+
 
 def test_redaction_covers_launch_key_variants() -> None:
     redacted = _redact_payload(

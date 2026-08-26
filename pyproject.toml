@@ -75,11 +75,12 @@ testpaths = ["tests"]
 addopts = "-q"
 
 [tool.coverage.run]
-source = ["wait_local_agent"]
+source = ["wait_local_agent", "packs"]
 branch = true
 
 [tool.coverage.report]
 show_missing = true
+precision = 2
 fail_under = 95
 
 [tool.ruff]

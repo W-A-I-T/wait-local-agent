@@ -109,3 +109,20 @@ def test_poll_has_bounded_attempts_and_duration() -> None:
     assert outcome.status == "timed_out"
     assert outcome.attempts == 2
     assert clock.now == 95.0
+
+
+def test_poll_times_out_before_sleep_when_duration_is_already_exhausted() -> None:
+    class AlreadyExpiredClock(FakeClock):
+        calls = 0
+
+        def clock(self) -> float:
+            self.calls += 1
+            return 0.0 if self.calls == 1 else 10.0
+
+    clock = AlreadyExpiredClock()
+
+    outcome = _poll(FakeClient([]), clock, max_duration=5.0)
+
+    assert outcome.status == "timed_out"
+    assert outcome.attempts == 0
+    assert clock.sleeps == []

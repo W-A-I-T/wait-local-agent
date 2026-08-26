@@ -11,10 +11,12 @@ from pypdf import PdfWriter
 from reportlab.pdfgen import canvas
 
 from tests.support import ensure_test_client, ingest_local
+from wait_local_agent.document_parsing import ExtractedDocument
 from wait_local_agent.knowledge import (
     KnowledgeIngestionService,
     chunk_text,
     extract_document,
+    extract_pdf_text,
     extract_title,
     ingestion_service_from_settings,
 )
@@ -521,6 +523,50 @@ def test_empty_text_file_fails_without_indexing(settings, tmp_path) -> None:
         service.ingest_path(empty)
 
     assert store.list_knowledge_documents() == []
+
+
+def test_empty_extracted_text_fails_before_persistence(settings, tmp_path) -> None:
+    doc_root = tmp_path / "docs"
+    doc_root.mkdir()
+
+    class EmptyParser:
+        supported_suffixes = {".txt"}
+
+        def extract(self, path: Path) -> ExtractedDocument:
+            return ExtractedDocument(path, "Empty", "txt", "", "checksum", "now")
+
+    active_settings = replace(settings, allowed_doc_root=doc_root)
+    store = Store(active_settings.data_path)
+    service = KnowledgeIngestionService(store, doc_root, parser=EmptyParser())
+    empty = doc_root / "empty.txt"
+    empty.write_text("placeholder", encoding="utf-8")
+
+    with pytest.raises(ValueError, match="extractable text"):
+        service.ingest_path(empty)
+
+    assert store.list_knowledge_documents() == []
+
+
+def test_directory_ingest_ignores_directories_and_unsupported_files(settings, tmp_path) -> None:
+    doc_root = tmp_path / "docs"
+    nested = doc_root / "nested"
+    nested.mkdir(parents=True)
+    (doc_root / "ignored.docx").write_text("unsupported", encoding="utf-8")
+    supported = nested / "runbook.txt"
+    supported.write_text("Runbook content", encoding="utf-8")
+    active_settings = replace(settings, allowed_doc_root=doc_root)
+    service = KnowledgeIngestionService(Store(active_settings.data_path), doc_root)
+
+    documents = service.ingest_path(doc_root)
+
+    assert [document.path for document in documents] == [str(supported)]
+
+
+def test_extract_pdf_text_wrapper_returns_text(tmp_path) -> None:
+    pdf_path = tmp_path / "runbook.pdf"
+    write_text_pdf(pdf_path, "PDF runbook content")
+
+    assert extract_pdf_text(pdf_path) == "PDF runbook content"
 
 
 def test_invalid_pdf_errors_clearly(tmp_path) -> None:
