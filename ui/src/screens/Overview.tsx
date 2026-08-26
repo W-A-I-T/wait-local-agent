@@ -1,5 +1,5 @@
 import { Activity, CheckCircle2, GitBranch, Workflow } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import { useDashboard } from "../app/DashboardContext";
 import { SetupStatus } from "../components/SetupStatus";
@@ -22,28 +22,23 @@ export function Overview() {
     roleResolved
   } = useDashboard();
   const [searchParams, setSearchParams] = useSearchParams();
-  const [showOnboarding, setShowOnboarding] = useState(false);
+  const [onboardingDismissed, setOnboardingDismissed] = useState(
+    () => window.localStorage.getItem(ONBOARDING_DISMISS_KEY) === "1"
+  );
   const requestedOnboardingStep = Number.parseInt(searchParams.get("step") ?? "0", 10);
   const onboardingStep = Number.isFinite(requestedOnboardingStep) ? requestedOnboardingStep : 0;
 
-  const shouldShowOnboarding = roleResolved && !configurationLoading && (searchParams.get("onboarding") === "1" || !isConfigured);
-
-  useEffect(() => {
-    if (!shouldShowOnboarding) {
-      setShowOnboarding(false);
-      return;
-    }
-    const dismissed = window.localStorage.getItem(ONBOARDING_DISMISS_KEY) === "1";
-    const explicitlyRequested = searchParams.get("onboarding") === "1";
-    setShowOnboarding(explicitlyRequested || !dismissed);
-  }, [shouldShowOnboarding]);
+  const explicitlyRequested = searchParams.get("onboarding") === "1";
+  const showOnboarding = roleResolved && !configurationLoading && (
+    explicitlyRequested || (!isConfigured && !onboardingDismissed)
+  );
 
   function dismissOnboarding() {
     window.localStorage.setItem(ONBOARDING_DISMISS_KEY, "1");
+    setOnboardingDismissed(true);
     const next = new URLSearchParams(searchParams);
     next.delete("onboarding");
     setSearchParams(next, { replace: true });
-    setShowOnboarding(false);
   }
 
   return (
