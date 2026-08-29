@@ -2,7 +2,9 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useRef, use
 import { apiFetch } from "../api/client";
 import {
   loadStoredApiToken,
-  persistApiToken
+  loadStoredSelectedClientId,
+  persistApiToken,
+  persistSelectedClientId
 } from "../api/headers";
 import type {
   ApprovalRequest,
@@ -34,6 +36,17 @@ const defaultWriteHealth: HaloReadResult = {
   count: 0
 };
 
+export type CapabilityGrantView = {
+  capability_key: string;
+  client_id: string | null;
+};
+
+type EffectiveCapabilityResponse = {
+  principal_id: string | null;
+  supported_capabilities: string[];
+  grants: CapabilityGrantView[];
+};
+
 type DashboardContextValue = {
   actionTypes: string[];
   apiToken: string;
@@ -41,6 +54,9 @@ type DashboardContextValue = {
   selectedClientId: string;
   clients: ClientDirectoryEntry[];
   role: AuthRoleResponse["role"];
+  capabilityGrants: CapabilityGrantView[];
+  capabilityResolved: boolean;
+  capabilityError: string;
   connectors: ConnectorStatus[];
   haloConnector?: ConnectorStatus;
   huduConnector?: ConnectorStatus;
@@ -101,9 +117,12 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
   const [apiToken, setApiToken] = useState(() => loadStoredApiToken());
   const [role, setRole] = useState<AuthRoleResponse["role"]>("viewer");
   const [clientId, setClientId] = useState("");
-  const [selectedClientId, setSelectedClientId] = useState("");
+  const [selectedClientId, setSelectedClientIdState] = useState(() => loadStoredSelectedClientId());
   const [clients, setClients] = useState<ClientDirectoryEntry[]>([]);
   const [roleResolved, setRoleResolved] = useState(false);
+  const [capabilityGrants, setCapabilityGrants] = useState<CapabilityGrantView[]>([]);
+  const [capabilityResolved, setCapabilityResolved] = useState(false);
+  const [capabilityError, setCapabilityError] = useState("");
   const [connectors, setConnectors] = useState<ConnectorStatus[]>([]);
   const [writeHealth, setWriteHealth] = useState<HaloReadResult>(defaultWriteHealth);
   const [haloTickets, setHaloTickets] = useState<HaloTicket[]>([]);
@@ -125,12 +144,21 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
     selectedTicketIdRef.current = selectedTicketId;
   }, [selectedTicketId]);
 
+  const setSelectedClientId = useCallback((nextClientId: string) => {
+    const normalized = nextClientId.trim();
+    setSelectedClientIdState(normalized);
+    persistSelectedClientId(normalized);
+  }, []);
+
   const refresh = useCallback(async () => {
     setRefreshNonce((nonce) => nonce + 1);
     const roleRequestId = ++roleRequestIdRef.current;
     setLoading(true);
     setRole("viewer");
     setRoleResolved(false);
+    setCapabilityGrants([]);
+    setCapabilityResolved(false);
+    setCapabilityError("");
     try {
       const auth = await apiFetch<AuthRoleResponse>("/auth/role");
       if (roleRequestId !== roleRequestIdRef.current) {
@@ -144,9 +172,11 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
         apiFetch<EventDelivery[]>("/automation/event-deliveries"),
         apiFetch<EventHistory[]>("/event-history"),
         apiFetch<WorkflowRun[]>("/workflow-runs"),
-        apiFetch<ClientDirectoryEntry[]>("/clients")
+        apiFetch<ClientDirectoryEntry[]>("/clients"),
+        apiFetch<EffectiveCapabilityResponse>("/packs/microsoft-admin/access/effective")
       ]);
       const errors = results
+        .slice(0, 8)
         .filter((result): result is PromiseRejectedResult => result.status === "rejected")
         .map((result) => result.reason instanceof Error ? result.reason.message : "Dashboard data unavailable.");
       const connectorRows = settledValue(results[0] as PromiseSettledResult<ConnectorStatus[]>, []);
@@ -156,6 +186,7 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
         items: []
       });
       const clientRows = settledValue(results[7] as PromiseSettledResult<ClientDirectoryEntry[]>, []);
+      const capabilityResult = results[8] as PromiseSettledResult<EffectiveCapabilityResponse>;
 
       if (roleRequestId !== roleRequestIdRef.current) {
         return;
@@ -163,6 +194,18 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
       setRole(auth.role);
       setClientId(auth.client_id ?? "");
       setRoleResolved(true);
+      if (capabilityResult.status === "fulfilled") {
+        setCapabilityGrants(Array.isArray(capabilityResult.value?.grants) ? capabilityResult.value.grants : []);
+        setCapabilityError("");
+      } else {
+        setCapabilityGrants([]);
+        setCapabilityError(
+          capabilityResult.reason instanceof Error
+            ? capabilityResult.reason.message
+            : "Microsoft Admin access could not be verified."
+        );
+      }
+      setCapabilityResolved(true);
       setConnectors(asArray(connectorRows));
       setWriteHealth(writeState);
       setHaloTickets(asArray(ticketResponse.items));
@@ -182,6 +225,9 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
       }
       setRole("viewer");
       setRoleResolved(false);
+      setCapabilityGrants([]);
+      setCapabilityResolved(false);
+      setCapabilityError("");
       setStatusMessage(error instanceof Error ? error.message : "Unable to refresh dashboard.");
     } finally {
       if (roleRequestId === roleRequestIdRef.current) {
@@ -319,6 +365,9 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
       selectedClientId,
       clients,
       role,
+      capabilityGrants,
+      capabilityResolved,
+      capabilityError,
       connectors,
       haloConnector,
       huduConnector,
@@ -367,6 +416,9 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
     clients,
     approvalRequests,
     busyId,
+    capabilityError,
+    capabilityGrants,
+    capabilityResolved,
     clearApiToken,
     configuration.isConfigured,
     configuration.loading,

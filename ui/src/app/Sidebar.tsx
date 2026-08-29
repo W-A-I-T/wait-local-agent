@@ -26,12 +26,14 @@ import {
 import { NavLink } from "react-router-dom";
 import { useDashboard } from "./DashboardContext";
 import { RoleGate } from "../components/RoleGate";
+import { useMicrosoftAdminAccess } from "../hooks/useMicrosoftAdminAccess";
 
 type NavItem = {
   to: string;
   label: string;
   icon: LucideIcon;
   adminOnly?: boolean;
+  microsoftAdminCapability?: boolean;
 };
 
 type NavigationGroup = {
@@ -52,7 +54,7 @@ const primaryNavigation: NavigationGroup[] = [
       { to: "/tickets", label: "Tickets", icon: ClipboardList },
       { to: "/approvals", label: "Approvals", icon: ClipboardCheck },
       { to: "/technician-chat", label: "Technician Chat", icon: MessageSquare },
-      { to: "/microsoft-admin", label: "Microsoft Admin", icon: ShieldCheck },
+      { to: "/microsoft-admin", label: "Microsoft Admin", icon: ShieldCheck, microsoftAdminCapability: true },
       { to: "/m365-actions", label: "M365 Actions", icon: ShieldCheck }
     ]
   },
@@ -86,8 +88,8 @@ const primaryNavigation: NavigationGroup[] = [
     label: "Setup",
     items: [
       { to: "/connectors", label: "Connectors", icon: GitBranch },
-      { to: "/azure-lighthouse", label: "Azure Lighthouse", icon: Network, adminOnly: true },
       { to: "/integrations/connector-instances", label: "Connector Instances", icon: Database, adminOnly: true },
+      { to: "/microsoft-admin/access", label: "Microsoft Admin Access", icon: ShieldCheck, adminOnly: true },
       { to: "/knowledge", label: "Knowledge", icon: BookOpenText },
       { to: "/settings", label: "Settings", icon: Activity }
     ]
@@ -123,8 +125,12 @@ function SidebarLink({ item }: { item: NavItem }) {
 
 export function Sidebar() {
   const { role, roleResolved } = useDashboard();
+  const microsoftAdmin = useMicrosoftAdminAccess();
 
   const renderItem = (item: NavItem) => {
+    if (item.microsoftAdminCapability && (!microsoftAdmin.resolved || !microsoftAdmin.allowed)) {
+      return null;
+    }
     const link = <SidebarLink key={item.to} item={item} />;
     return item.adminOnly
       ? <RoleGate key={item.to} role={role} resolved={roleResolved} allowed={["admin"]}>{link}</RoleGate>
