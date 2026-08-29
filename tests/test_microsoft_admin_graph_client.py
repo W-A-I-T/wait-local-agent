@@ -15,7 +15,7 @@ def test_pack_manifest_and_remediation_catalog_are_runtime_capabilities() -> Non
         "name": "microsoft-admin",
         "version": "0.1.0",
         "requires_license": False,
-        "api_router_factory": "packs.microsoft_admin.router.create_router",
+        "api_router_factory": "packs.microsoft_admin.gated_router.create_router",
         "cli_app": "packs.microsoft_admin.cli.app",
     }
     actions = remediation_catalog()
