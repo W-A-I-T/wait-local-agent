@@ -9,6 +9,7 @@ import httpx
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, ConfigDict, Field
 
+from packs.azure_lighthouse.router import create_router as create_azure_lighthouse_router
 from packs.microsoft_admin.core import (
     MAX_CURSOR_LENGTH,
     MAX_PAGE_SIZE,
@@ -30,10 +31,10 @@ from packs.microsoft_admin.runbooks import (
     runbook_catalog,
     runbook_runtime_status,
 )
-from wait_local_agent.client_scope import resolve_client_scope
+from wait_local_agent.capabilities import MICROSOFT_ADMIN_CAPABILITY
 from wait_local_agent.config import Settings
 from wait_local_agent.m365_graph import M365GraphClient
-from wait_local_agent.rbac import AuthContext, Role, require_role
+from wait_local_agent.rbac import AuthContext, Role, require_capability_scope, require_role
 from wait_local_agent.store import Store
 
 PageSize = Annotated[int, Query(ge=1, le=MAX_PAGE_SIZE)]
@@ -59,6 +60,7 @@ class RunbookPlanRequest(BaseModel):
 
 def create_router() -> APIRouter:
     router = APIRouter(tags=["Microsoft administrator"])
+    router.include_router(create_azure_lighthouse_router(), prefix="/azure-lighthouse")
 
     @router.get("/status")
     def status(request: Request) -> dict[str, object]:
@@ -301,13 +303,11 @@ def _store(request: Request) -> Store:
 
 
 def _scoped_client_id(context: AuthContext, requested_client_id: str | None) -> str:
-    client_id = resolve_client_scope(context, requested_client_id).client_id
-    if client_id is None:
-        raise HTTPException(
-            status_code=403,
-            detail="PowerShell runbook operations require one explicit tenant.",
-        )
-    return client_id
+    return require_capability_scope(
+        context,
+        MICROSOFT_ADMIN_CAPABILITY,
+        requested_client_id,
+    )
 
 
 def _runbook_dependencies(
