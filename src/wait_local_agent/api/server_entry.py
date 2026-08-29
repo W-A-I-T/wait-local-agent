@@ -26,3 +26,7 @@ def _port_from_env(value: str | None) -> int:
     except ValueError:
         return DEFAULT_PORT
     return port if 1 <= port <= 65535 else DEFAULT_PORT
+
+
+if __name__ == "__main__":
+    main()
