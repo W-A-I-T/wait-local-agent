@@ -68,14 +68,15 @@ wait-local-agent = "wait_local_agent.cli:app"
 wait-local-agent-server = "wait_local_agent.api.server_entry:main"
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/wait_local_agent"]
+packages = ["src/wait_local_agent", "src/packs"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+pythonpath = ["tests"]
 addopts = "-q"
 
 [tool.coverage.run]
-source = ["wait_local_agent"]
+source = ["wait_local_agent", "packs"]
 branch = true
 
 [tool.coverage.report]
@@ -99,6 +100,8 @@ select = ["E", "F", "I", "UP", "B"]
 [tool.mypy]
 python_version = "3.12"
 files = ["src", "tests"]
+mypy_path = "tests"
+exclude = ["^tests/microsoft_admin_support\\.py$"]
 check_untyped_defs = true
 disable_error_code = ["no-untyped-def"]
 warn_unused_ignores = true
