@@ -11,6 +11,12 @@
       "POST /packs/microsoft-admin/azure-lighthouse/discover": "exposed",
       "POST /packs/microsoft-admin/azure-lighthouse/inventory": "exposed",
       "POST /packs/microsoft-admin/azure-lighthouse/onboarding/plan": "exposed"
+    },
+    "typer_commands": {
+      "microsoft-admin azure-lighthouse discover discover": "exposed",
+      "microsoft-admin azure-lighthouse inventory inventory": "exposed",
+      "microsoft-admin azure-lighthouse onboarding-plan onboarding-plan": "exposed",
+      "microsoft-admin azure-lighthouse status status": "exposed"
     }
   }
 }
