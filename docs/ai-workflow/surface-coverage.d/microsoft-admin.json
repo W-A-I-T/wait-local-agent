@@ -1,0 +1,32 @@
+{
+  "classes": [
+    "admin",
+    "embedded",
+    "exposed",
+    "hidden-by-design"
+  ],
+  "surfaces": {
+    "fastapi_routes": {
+      "GET /packs/microsoft-admin/dashboard": "exposed",
+      "GET /packs/microsoft-admin/endpoint/apps": "exposed",
+      "GET /packs/microsoft-admin/endpoint/autopilot": "exposed",
+      "GET /packs/microsoft-admin/endpoint/compliance-policies": "exposed",
+      "GET /packs/microsoft-admin/identity/conditional-access": "exposed",
+      "GET /packs/microsoft-admin/identity/risky-users": "exposed",
+      "GET /packs/microsoft-admin/identity/sign-ins": "exposed",
+      "GET /packs/microsoft-admin/remediations": "exposed",
+      "GET /packs/microsoft-admin/runbooks": "exposed",
+      "GET /packs/microsoft-admin/runbooks/status": "exposed",
+      "GET /packs/microsoft-admin/security/alerts": "exposed",
+      "GET /packs/microsoft-admin/security/incidents": "exposed",
+      "GET /packs/microsoft-admin/security/secure-score": "exposed",
+      "GET /packs/microsoft-admin/service-health": "exposed",
+      "GET /packs/microsoft-admin/service-issues": "exposed",
+      "GET /packs/microsoft-admin/status": "exposed",
+      "POST /packs/microsoft-admin/diagnostics/access": "exposed",
+      "POST /packs/microsoft-admin/runbooks/approvals/{request_id}/execute": "exposed",
+      "POST /packs/microsoft-admin/runbooks/drafts": "exposed",
+      "POST /packs/microsoft-admin/runbooks/plan": "exposed"
+    }
+  }
+}
