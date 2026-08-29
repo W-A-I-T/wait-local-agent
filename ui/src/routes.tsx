@@ -32,7 +32,29 @@ import { SyncReconciliation } from "./screens/SyncReconciliation";
 import { Clients } from "./screens/Clients";
 import { M365Actions } from "./screens/M365Actions";
 import { MicrosoftAdmin } from "./screens/MicrosoftAdmin";
-import { AzureLighthouse } from "./screens/AzureLighthouse";
+import { MicrosoftAdminAccess } from "./screens/MicrosoftAdminAccess";
+import { MicrosoftAdminCapabilityGate } from "./components/MicrosoftAdminCapabilityGate";
+import { RoleGate } from "./components/RoleGate";
+import { useDashboard } from "./app/DashboardContext";
+
+function MicrosoftAdminAccessRoute() {
+  const { role, roleResolved } = useDashboard();
+  return (
+    <RoleGate
+      role={role}
+      resolved={roleResolved}
+      allowed={["admin"]}
+      fallback={(
+        <section className="panel" role="alert">
+          <h2>Administrator access required</h2>
+          <p className="screen-note">Only administrators can assign Microsoft Admin capability grants.</p>
+        </section>
+      )}
+    >
+      <MicrosoftAdminAccess />
+    </RoleGate>
+  );
+}
 
 export function AppRoutes() {
   return (
@@ -41,8 +63,15 @@ export function AppRoutes() {
       <Route path="clients" element={<Clients />} />
       <Route path="connectors" element={<Connectors />} />
       <Route path="m365-actions" element={<M365Actions />} />
-      <Route path="microsoft-admin" element={<MicrosoftAdmin />} />
-      <Route path="azure-lighthouse" element={<AzureLighthouse />} />
+      <Route
+        path="microsoft-admin"
+        element={(
+          <MicrosoftAdminCapabilityGate>
+            <MicrosoftAdmin />
+          </MicrosoftAdminCapabilityGate>
+        )}
+      />
+      <Route path="microsoft-admin/access" element={<MicrosoftAdminAccessRoute />} />
       <Route path="knowledge" element={<Knowledge />} />
       <Route path="workflows" element={<Workflows />} />
       <Route path="automation/events" element={<Events />} />

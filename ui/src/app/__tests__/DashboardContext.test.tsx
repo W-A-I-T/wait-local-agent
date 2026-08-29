@@ -23,7 +23,18 @@ function deferred<T>(): Deferred<T> {
 }
 
 function DashboardHarness() {
-  const { clientId, clients, isAdmin, refresh, roleResolved, selectedClientId, setSelectedClientId } = useDashboard();
+  const {
+    capabilityError,
+    capabilityGrants,
+    capabilityResolved,
+    clientId,
+    clients,
+    isAdmin,
+    refresh,
+    roleResolved,
+    selectedClientId,
+    setSelectedClientId
+  } = useDashboard();
   return (
     <>
       <button type="button" onClick={() => void refresh()}>Refresh credentials</button>
@@ -32,6 +43,9 @@ function DashboardHarness() {
       <output data-testid="legacy-client-id">{clientId}</output>
       <output data-testid="selected-client-id">{selectedClientId}</output>
       <output data-testid="client-directory">{clients.map((client) => client.client_id).join(",")}</output>
+      <output data-testid="capability-resolved">{capabilityResolved ? "capabilities resolved" : "capabilities unresolved"}</output>
+      <output data-testid="capability-grants">{capabilityGrants.map((grant) => `${grant.capability_key}:${grant.client_id ?? "global"}`).join(",")}</output>
+      <output data-testid="capability-error">{capabilityError}</output>
       {isAdmin ? <button type="button">Admin controls</button> : null}
     </>
   );
@@ -39,6 +53,7 @@ function DashboardHarness() {
 
 describe("DashboardContext role refresh", () => {
   beforeEach(() => {
+    window.localStorage.clear();
     mockedApiFetch.mockReset();
     mockedApiFetch.mockImplementation((path: string) => {
       if (path === "/auth/role") {
@@ -82,7 +97,7 @@ describe("DashboardContext role refresh", () => {
     expect(screen.queryByRole("button", { name: "Admin controls" })).not.toBeInTheDocument();
   });
 
-  it("keeps the selector separate from clientId and populates client options", async () => {
+  it("keeps the selector separate from clientId, persists scope, and loads capability grants", async () => {
     mockedApiFetch.mockImplementation((path: string) => {
       if (path === "/auth/role") {
         return Promise.resolve({
@@ -99,6 +114,13 @@ describe("DashboardContext role refresh", () => {
           { client_id: "__quarantine__", name: "Quarantine", status: "quarantine" }
         ]) as ReturnType<typeof apiFetch>;
       }
+      if (path === "/packs/microsoft-admin/access/effective") {
+        return Promise.resolve({
+          principal_id: "operator",
+          supported_capabilities: ["microsoft_admin"],
+          grants: [{ capability_key: "microsoft_admin", client_id: "client-a" }]
+        }) as ReturnType<typeof apiFetch>;
+      }
       return Promise.resolve(defaultResponse(path)) as ReturnType<typeof apiFetch>;
     });
 
@@ -107,11 +129,38 @@ describe("DashboardContext role refresh", () => {
     await waitFor(() => expect(screen.getByTestId("client-directory")).toHaveTextContent("client-a,client-b"));
     expect(screen.getByTestId("legacy-client-id")).toHaveTextContent("legacy-client");
     expect(screen.getByTestId("selected-client-id")).toHaveTextContent("");
+    expect(screen.getByTestId("capability-resolved")).toHaveTextContent("capabilities resolved");
+    expect(screen.getByTestId("capability-grants")).toHaveTextContent("microsoft_admin:client-a");
 
     fireEvent.click(screen.getByRole("button", { name: "Select client A" }));
 
     expect(screen.getByTestId("selected-client-id")).toHaveTextContent("client-a");
     expect(screen.getByTestId("legacy-client-id")).toHaveTextContent("legacy-client");
+    expect(window.localStorage.getItem("wait-local-agent-selected-client")).toBe("client-a");
+  });
+
+  it("fails the capability state closed without failing the overall authenticated dashboard refresh", async () => {
+    mockedApiFetch.mockImplementation((path: string) => {
+      if (path === "/auth/role") {
+        return Promise.resolve({
+          role: "viewer",
+          client_id: "client-a",
+          api_auth_required: true,
+          demo_mode: false
+        }) as ReturnType<typeof apiFetch>;
+      }
+      if (path === "/packs/microsoft-admin/access/effective") {
+        return Promise.reject(new Error("capability service denied")) as ReturnType<typeof apiFetch>;
+      }
+      return Promise.resolve(defaultResponse(path)) as ReturnType<typeof apiFetch>;
+    });
+
+    render(<DashboardProvider><DashboardHarness /></DashboardProvider>);
+
+    await waitFor(() => expect(screen.getByText("access resolved")).toBeInTheDocument());
+    expect(screen.getByTestId("capability-resolved")).toHaveTextContent("capabilities resolved");
+    expect(screen.getByTestId("capability-grants")).toHaveTextContent("");
+    expect(screen.getByTestId("capability-error")).toHaveTextContent("capability service denied");
   });
 
   it("increments refreshNonce exactly once per refresh call, including on the error path", async () => {
@@ -143,16 +192,11 @@ describe("DashboardContext role refresh", () => {
 
     render(<DashboardProvider><NonceHarness /></DashboardProvider>);
 
-    // Mount refresh: nonce moves from 0 to exactly 1.
     await waitFor(() => expect(screen.getByTestId("refresh-nonce")).toHaveTextContent("1"));
 
-    // Refresh where an awaited fetch rejects (recorded via Promise.allSettled):
-    // still exactly one increment.
     fireEvent.click(screen.getByRole("button", { name: "Refresh nonce" }));
     await waitFor(() => expect(screen.getByTestId("refresh-nonce")).toHaveTextContent("2"));
 
-    // Refresh where /auth/role rejects (the catch path): still exactly one
-    // increment, and no further bump once the call settles.
     failRole = true;
     fireEvent.click(screen.getByRole("button", { name: "Refresh nonce" }));
     await waitFor(() => expect(screen.getByTestId("refresh-nonce")).toHaveTextContent("3"));
@@ -168,6 +212,9 @@ function defaultResponse(path: string): unknown {
   }
   if (path === "/connectors/halopsa/write-health") {
     return { status: "blocked", message: "Write health unavailable.", count: 0 };
+  }
+  if (path === "/packs/microsoft-admin/access/effective") {
+    return { principal_id: null, supported_capabilities: [], grants: [] };
   }
   return [];
 }
