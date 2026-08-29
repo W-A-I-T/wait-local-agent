@@ -8,6 +8,7 @@ import io
 import json
 import logging
 import pkgutil
+import sys
 import tarfile
 from collections.abc import Iterable
 from dataclasses import dataclass, field
@@ -22,6 +23,13 @@ from wait_local_agent.config import Settings
 from wait_local_agent.vault import SecretVault
 
 LOGGER = logging.getLogger(__name__)
+
+# PyInstaller bundles hidden imports into its frozen import archive, but that archive is
+# not guaranteed to be enumerable through pkgutil.iter_modules(). Keep the built-in
+# public packs explicit so a frozen desktop sidecar can discover the same first-party
+# capability surface as a source/wheel install. Dynamic discovery still runs below for
+# ordinary installs and separately installed packs.
+_BUILTIN_FROZEN_PACK_MODULES = ("packs.microsoft_admin",)
 
 
 @dataclass(frozen=True)
@@ -300,7 +308,11 @@ def _safe_member_path(member_name: str) -> Path:
 def _discover_candidate_modules(candidate_module_names: Iterable[str] | None) -> list[str]:
     if candidate_module_names is not None:
         return list(dict.fromkeys(candidate_module_names))
+
     candidates: list[str] = []
+    if getattr(sys, "frozen", False):
+        candidates.extend(_BUILTIN_FROZEN_PACK_MODULES)
+
     try:
         packs_module = importlib.import_module("packs")
     except ImportError:
