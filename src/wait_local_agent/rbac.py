@@ -243,7 +243,7 @@ def _principal_auth_context(
         else next(iter(sorted(client_ids)), None)
     )
     is_msp_admin = "msp_admin" in principal.global_roles
-    primary_role = client_roles.get(primary_client_id)
+    primary_role = client_roles.get(primary_client_id) if primary_client_id is not None else None
     role = Role.ADMIN if is_msp_admin else primary_role
     if role is None:
         raise _unauthorized("principal has no usable role")
