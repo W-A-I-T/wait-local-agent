@@ -1,0 +1,17 @@
+{
+  "classes": [
+    "admin",
+    "embedded",
+    "exposed",
+    "hidden-by-design"
+  ],
+  "surfaces": {
+    "fastapi_routes": {
+      "GET /packs/microsoft-admin/access/effective": "exposed",
+      "GET /packs/microsoft-admin/access/grants": "admin",
+      "GET /packs/microsoft-admin/access/principals": "admin",
+      "POST /packs/microsoft-admin/access/grants": "admin",
+      "POST /packs/microsoft-admin/access/grants/revoke": "admin"
+    }
+  }
+}
