@@ -98,10 +98,12 @@ describe("MicrosoftAdminAccess", () => {
     render(<MicrosoftAdminAccess />);
 
     await screen.findByText("Client: alpha");
-    fireEvent.change(screen.getByLabelText("Principal"), { target: { value: "msp-admin" } });
     const globalCheckbox = screen.getByLabelText(/Global Microsoft Admin access/);
-    expect(globalCheckbox).toBeEnabled();
-    fireEvent.click(globalCheckbox);
+    expect(globalCheckbox).toBeDisabled();
+
+    fireEvent.change(screen.getByLabelText("Principal"), { target: { value: "msp-admin" } });
+    await waitFor(() => expect(screen.getByLabelText(/Global Microsoft Admin access/)).toBeEnabled());
+    fireEvent.click(screen.getByLabelText(/Global Microsoft Admin access/));
     expect(screen.queryByLabelText("Client")).not.toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: "Revoke" }));
