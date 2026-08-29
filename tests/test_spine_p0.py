@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import sqlite3
 from pathlib import Path
+from typing import TypedDict
 
 import pytest
 from fastapi import APIRouter, FastAPI, WebSocket
@@ -22,11 +23,16 @@ SURFACE_MANIFEST_PATH = Path(__file__).parents[1] / "docs/ai-workflow/surface-co
 SURFACE_MANIFEST_FRAGMENT_DIR = Path(__file__).parents[1] / "docs/ai-workflow/surface-coverage.d"
 
 
-def _load_surface_manifest() -> dict[str, object]:
+class SurfaceManifest(TypedDict):
+    classes: list[str]
+    surfaces: dict[str, dict[str, str]]
+
+
+def _load_surface_manifest() -> SurfaceManifest:
     manifest = json.loads(SURFACE_MANIFEST_PATH.read_text(encoding="utf-8"))
     expected_classes = sorted(SURFACE_CLASSES)
     assert manifest["classes"] == expected_classes
-    classified = {
+    classified: dict[str, dict[str, str]] = {
         surface_name: dict(entries)
         for surface_name, entries in manifest["surfaces"].items()
     }
