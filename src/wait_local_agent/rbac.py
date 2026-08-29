@@ -166,12 +166,16 @@ def require_capability(capability_key: str, minimum: Role = Role.VIEWER):
     def dependency(
         request: Request,
         authorization: Annotated[str | None, Header()] = None,
+        selected_client_id: Annotated[str | None, Header(alias="X-WAIT-Client-ID")] = None,
     ) -> AuthContext:
         settings = request.app.state.settings
         context = resolve_auth_context(settings, authorization, request.app.state.store)
         if context.role < minimum:
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="insufficient role")
-        requested_client_id = request.query_params.get("client_id")
+        query_client_id = request.query_params.get("client_id")
+        if query_client_id and selected_client_id and query_client_id != selected_client_id:
+            raise HTTPException(status_code=400, detail="conflicting Microsoft Admin client scopes")
+        requested_client_id = query_client_id or selected_client_id
         client_id = context.client_id
         if requested_client_id is not None:
             client_id = resolve_client_scope(context, requested_client_id).client_id
