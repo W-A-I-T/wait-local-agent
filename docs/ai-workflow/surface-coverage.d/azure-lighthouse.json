@@ -1,0 +1,16 @@
+{
+  "classes": [
+    "admin",
+    "embedded",
+    "exposed",
+    "hidden-by-design"
+  ],
+  "surfaces": {
+    "fastapi_routes": {
+      "GET /packs/microsoft-admin/azure-lighthouse/status": "exposed",
+      "POST /packs/microsoft-admin/azure-lighthouse/discover": "exposed",
+      "POST /packs/microsoft-admin/azure-lighthouse/inventory": "exposed",
+      "POST /packs/microsoft-admin/azure-lighthouse/onboarding/plan": "exposed"
+    }
+  }
+}
