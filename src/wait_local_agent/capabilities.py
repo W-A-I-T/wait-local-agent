@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+import sqlite3
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
@@ -147,7 +148,7 @@ def grant_capability(
             """,
             (normalized_principal, normalized_capability, scope),
         ).fetchone()
-    if row is None:  # pragma: no cover - protected by the preceding upsert
+    if row is None:
         raise RuntimeError("capability grant was not persisted")
     return _grant_from_row(row)
 
@@ -186,7 +187,7 @@ def revoke_capability(
             """,
             (normalized_principal, normalized_capability, scope),
         ).fetchone()
-    if row is None:  # pragma: no cover - protected by the update row count
+    if row is None:
         raise RuntimeError("capability grant disappeared after revoke")
     return _grant_from_row(row)
 
@@ -237,7 +238,7 @@ def list_principals(store: Store) -> list[PrincipalSummary]:
     return result
 
 
-def _apply_capability_migration(connection) -> None:
+def _apply_capability_migration(connection: sqlite3.Connection) -> None:
     connection.execute(
         """
         create table if not exists principal_capability_grants (
@@ -261,7 +262,11 @@ def _apply_capability_migration(connection) -> None:
     )
 
 
-def _validate_grant_target(connection, principal_id: str, client_id: str | None) -> None:
+def _validate_grant_target(
+    connection: sqlite3.Connection,
+    principal_id: str,
+    client_id: str | None,
+) -> None:
     principal = connection.execute(
         "select active from principals where principal_id = ?",
         (principal_id,),
@@ -299,7 +304,7 @@ def _validate_grant_target(connection, principal_id: str, client_id: str | None)
         raise ValueError("principal has no role for the requested client")
 
 
-def _grant_from_row(row) -> CapabilityGrant:
+def _grant_from_row(row: sqlite3.Row) -> CapabilityGrant:
     return CapabilityGrant(
         principal_id=str(row[0]),
         capability_key=str(row[1]),
