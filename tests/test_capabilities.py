@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import sqlite3
+
 import pytest
 
 from wait_local_agent.capabilities import (
@@ -15,7 +17,7 @@ from wait_local_agent.store import Store
 
 
 def _principal_with_client(store: Store, principal_id: str, client_id: str, role: str = "viewer") -> None:
-    store.create_principal(principal_id, "technician", principal_id)
+    store.create_principal(principal_id, kind="staff", display_name=principal_id)
     store.add_principal_client_role(principal_id, client_id, role)
 
 
@@ -41,7 +43,7 @@ def test_client_capability_grant_lifecycle_and_migration(settings) -> None:
     )
     listed = list_capability_grants(store, principal_id="tech-alpha")
     assert listed == [granted]
-    with store._connect() as connection:  # noqa: SLF001 - migration assertion
+    with sqlite3.connect(store.path) as connection:
         migration = connection.execute(
             "select name from schema_migrations where version = ?",
             (CAPABILITY_MIGRATION_VERSION,),
@@ -135,7 +137,7 @@ def test_global_capability_grant_requires_and_supports_msp_admin(settings) -> No
     store = Store(settings.data_path)
     store.create_client("alpha", "Alpha")
     store.create_client("beta", "Beta")
-    store.create_principal("msp-admin", "technician", "MSP Admin")
+    store.create_principal("msp-admin", kind="staff", display_name="MSP Admin")
     store.add_principal_global_role("msp-admin", "msp_admin")
 
     grant = grant_capability(
@@ -155,7 +157,7 @@ def test_global_capability_grant_requires_and_supports_msp_admin(settings) -> No
 def test_principal_summary_preserves_roles(settings) -> None:
     store = Store(settings.data_path)
     store.create_client("alpha", "Alpha")
-    store.create_principal("tech", "technician", "Tech")
+    store.create_principal("tech", kind="staff", display_name="Tech")
     store.add_principal_client_role("tech", "alpha", "technician")
     store.add_principal_global_role("tech", "msp_admin")
 
@@ -163,6 +165,6 @@ def test_principal_summary_preserves_roles(settings) -> None:
     tech = next(item for item in principals if item.principal_id == "tech")
 
     assert tech.active is True
-    assert tech.kind == "technician"
+    assert tech.kind == "staff"
     assert tech.client_roles == (("alpha", "technician"),)
     assert tech.global_roles == ("msp_admin",)
