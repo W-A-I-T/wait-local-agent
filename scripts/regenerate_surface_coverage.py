@@ -17,11 +17,39 @@ from wait_local_agent.surface_coverage import SURFACE_CLASSES, build_surface_inv
 
 ROOT = Path(__file__).resolve().parents[1]
 MANIFEST_PATH = ROOT / "docs/ai-workflow/surface-coverage.json"
+MANIFEST_FRAGMENT_DIR = ROOT / "docs/ai-workflow/surface-coverage.d"
 DEFAULT_CLASS = "exposed"
 
 
+def _previous_classifications() -> tuple[dict[str, dict[str, str]], dict[str, set[str]]]:
+    manifest = json.loads(MANIFEST_PATH.read_text(encoding="utf-8"))
+    expected_classes = sorted(SURFACE_CLASSES)
+    if manifest.get("classes") != expected_classes:
+        raise ValueError("surface manifest classes do not match the supported classes")
+    combined = {
+        surface_name: dict(entries)
+        for surface_name, entries in manifest.get("surfaces", {}).items()
+    }
+    fragment_entries: dict[str, set[str]] = {}
+    if MANIFEST_FRAGMENT_DIR.exists():
+        for fragment_path in sorted(MANIFEST_FRAGMENT_DIR.glob("*.json")):
+            fragment = json.loads(fragment_path.read_text(encoding="utf-8"))
+            if fragment.get("classes") != expected_classes:
+                raise ValueError(f"surface fragment classes are invalid: {fragment_path}")
+            for surface_name, entries in fragment.get("surfaces", {}).items():
+                target = combined.setdefault(surface_name, {})
+                duplicates = set(target).intersection(entries)
+                if duplicates:
+                    raise ValueError(
+                        f"duplicate surface classifications in {fragment_path}: {sorted(duplicates)}"
+                    )
+                target.update(entries)
+                fragment_entries.setdefault(surface_name, set()).update(entries)
+    return combined, fragment_entries
+
+
 def regenerate() -> None:
-    previous = json.loads(MANIFEST_PATH.read_text(encoding="utf-8"))
+    previous_surfaces, fragment_entries = _previous_classifications()
     with tempfile.TemporaryDirectory(prefix="wait-surface-") as temporary_directory:
         settings = replace(
             load_settings(),
@@ -40,16 +68,17 @@ def regenerate() -> None:
             agent_service=agent_service,
         )
 
-    previous_surfaces = previous.get("surfaces", {})
     surfaces: dict[str, dict[str, str]] = {}
     surface_names = [name for name in ("fastapi_routes", "mcp_tools", "typer_commands") if name in inventory]
     surface_names.extend(name for name in inventory if name not in surface_names)
     for surface_name in surface_names:
         entries = inventory[surface_name]
         previous_classifications = previous_surfaces.get(surface_name, {})
+        owned_by_fragments = fragment_entries.get(surface_name, set())
         surfaces[surface_name] = {
             entry: previous_classifications.get(entry, DEFAULT_CLASS)
             for entry in entries
+            if entry not in owned_by_fragments
         }
 
     invalid_classes = {
