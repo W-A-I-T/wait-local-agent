@@ -9,6 +9,7 @@ import httpx
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, ConfigDict, Field
 
+from packs.azure_lighthouse.router import create_router as create_azure_lighthouse_router
 from packs.microsoft_admin.core import (
     MAX_CURSOR_LENGTH,
     MAX_PAGE_SIZE,
@@ -59,6 +60,7 @@ class RunbookPlanRequest(BaseModel):
 
 def create_router() -> APIRouter:
     router = APIRouter(tags=["Microsoft administrator"])
+    router.include_router(create_azure_lighthouse_router(), prefix="/azure-lighthouse")
 
     @router.get("/status")
     def status(request: Request) -> dict[str, object]:
