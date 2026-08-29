@@ -13,22 +13,72 @@ from packs.microsoft_admin.cli import app as microsoft_admin_cli
 from packs.microsoft_admin.router import create_router
 from packs.microsoft_admin.runbooks import RunbookRuntimeStatus
 from tests.microsoft_admin_runbook_support import (
-    FakeRunbookStore,
     _execution_settings,
     _fake_powershell,
 )
+from wait_local_agent.capabilities import MICROSOFT_ADMIN_CAPABILITY, grant_capability
+from wait_local_agent.store import Store
+
+
+def _runbook_principal(
+    store: Store,
+    *,
+    principal_id: str,
+    credential: str,
+    role: str,
+    grant: bool,
+) -> None:
+    store.create_principal(principal_id, kind="staff", display_name=principal_id)
+    store.add_principal_credential(principal_id, credential)
+    store.add_principal_client_role(principal_id, "client-1", role)
+    if grant:
+        grant_capability(
+            store,
+            principal_id=principal_id,
+            capability_key=MICROSOFT_ADMIN_CAPABILITY,
+            client_id="client-1",
+            actor_id="bootstrap",
+        )
 
 
 def test_runbook_router_creates_tenant_approval_and_executes_as_admin(
     settings,
     tmp_path: Path,
 ) -> None:
-    configured = _execution_settings(settings, tmp_path)
+    configured = replace(
+        _execution_settings(settings, tmp_path),
+        admin_token="",
+        tech_token="",
+        viewer_token="",
+    )
     executable = _fake_powershell(tmp_path)
-    fake = FakeRunbookStore()
+    store = Store(configured.data_path)
+    store.create_client("client-1", "Client 1")
+    _runbook_principal(
+        store,
+        principal_id="viewer-runbooks",
+        credential="viewer-token",
+        role="viewer",
+        grant=False,
+    )
+    _runbook_principal(
+        store,
+        principal_id="tech-runbooks",
+        credential="tech-token",
+        role="technician",
+        grant=True,
+    )
+    _runbook_principal(
+        store,
+        principal_id="admin-runbooks",
+        credential="admin-token",
+        role="admin",
+        grant=True,
+    )
+
     app = FastAPI()
     app.state.settings = configured
-    app.state.store = fake
+    app.state.store = store
     app.state.microsoft_admin_windows_predicate = lambda: True
     app.state.microsoft_admin_powershell_resolver = lambda: executable
     app.state.microsoft_admin_runbook_runner = (
@@ -91,10 +141,10 @@ def test_runbook_router_creates_tenant_approval_and_executes_as_admin(
     )
     assert draft.status_code == 200
     request_id = draft.json()["approval"]["id"]
-    fake.approvals[request_id] = replace(
-        fake.approvals[request_id],
-        status="approved",
-        approver_id="admin",
+    store.update_approval_request(
+        request_id,
+        "approved",
+        approver_id="admin-runbooks",
     )
 
     execute = client.post(
