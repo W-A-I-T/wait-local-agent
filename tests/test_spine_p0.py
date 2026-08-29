@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import sqlite3
 from pathlib import Path
+from typing import TypedDict
 
 import pytest
 from fastapi import APIRouter, FastAPI, WebSocket
@@ -19,6 +20,34 @@ from wait_local_agent.store import Store
 from wait_local_agent.surface_coverage import SURFACE_CLASSES, build_surface_inventory, enumerate_fastapi_routes
 
 SURFACE_MANIFEST_PATH = Path(__file__).parents[1] / "docs/ai-workflow/surface-coverage.json"
+SURFACE_MANIFEST_FRAGMENT_DIR = Path(__file__).parents[1] / "docs/ai-workflow/surface-coverage.d"
+
+
+class SurfaceManifest(TypedDict):
+    classes: list[str]
+    surfaces: dict[str, dict[str, str]]
+
+
+def _load_surface_manifest() -> SurfaceManifest:
+    manifest = json.loads(SURFACE_MANIFEST_PATH.read_text(encoding="utf-8"))
+    expected_classes = sorted(SURFACE_CLASSES)
+    assert manifest["classes"] == expected_classes
+    classified: dict[str, dict[str, str]] = {
+        surface_name: dict(entries)
+        for surface_name, entries in manifest["surfaces"].items()
+    }
+    if SURFACE_MANIFEST_FRAGMENT_DIR.exists():
+        for fragment_path in sorted(SURFACE_MANIFEST_FRAGMENT_DIR.glob("*.json")):
+            fragment = json.loads(fragment_path.read_text(encoding="utf-8"))
+            assert fragment["classes"] == expected_classes
+            for surface_name, entries in fragment["surfaces"].items():
+                target = classified.setdefault(surface_name, {})
+                duplicates = set(target).intersection(entries)
+                assert not duplicates, (
+                    f"duplicate surface classifications in {fragment_path}: {sorted(duplicates)}"
+                )
+                target.update(entries)
+    return {"classes": expected_classes, "surfaces": classified}
 
 
 def test_store_migrations_are_idempotent_and_connection_pragmas_are_safe(tmp_path: Path) -> None:
@@ -108,7 +137,7 @@ def test_surface_manifest_classifies_every_runtime_surface(settings) -> None:
         cli_application=cli_app,
         agent_service=agent_service,
     )
-    manifest = json.loads(SURFACE_MANIFEST_PATH.read_text(encoding="utf-8"))
+    manifest = _load_surface_manifest()
     assert manifest["classes"] == sorted(SURFACE_CLASSES)
     classified = manifest["surfaces"]
     assert set(classified) == set(inventory)
