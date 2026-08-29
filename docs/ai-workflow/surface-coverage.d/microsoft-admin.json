@@ -27,6 +27,15 @@
       "POST /packs/microsoft-admin/runbooks/approvals/{request_id}/execute": "exposed",
       "POST /packs/microsoft-admin/runbooks/drafts": "exposed",
       "POST /packs/microsoft-admin/runbooks/plan": "exposed"
+    },
+    "typer_commands": {
+      "microsoft-admin dashboard dashboard": "exposed",
+      "microsoft-admin diagnose-access diagnose-access": "exposed",
+      "microsoft-admin plan-runbook plan-runbook": "exposed",
+      "microsoft-admin remediations remediations": "exposed",
+      "microsoft-admin runbook-status runbook-status": "exposed",
+      "microsoft-admin runbooks runbooks": "exposed",
+      "microsoft-admin status status": "exposed"
     }
   }
 }
