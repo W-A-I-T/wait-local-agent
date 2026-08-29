@@ -227,7 +227,7 @@ def _principal_auth_context(
     settings: Settings,
     token: str,
     principal: PrincipalAuthRecord,
-    store: Store,
+    store: Store | None = None,
 ) -> AuthContext:
     client_roles = {client_id: _role_from_label(role) for client_id, role in principal.client_roles}
     client_ids = frozenset(client_roles)
@@ -247,6 +247,7 @@ def _principal_auth_context(
     role = Role.ADMIN if is_msp_admin else primary_role
     if role is None:
         raise _unauthorized("principal has no usable role")
+    principal_store = store or _store_for_settings(settings)
     return AuthContext(
         role=role,
         presented_token=token,
@@ -255,7 +256,7 @@ def _principal_auth_context(
         client_ids=client_ids,
         is_msp_admin=is_msp_admin,
         demo_mode=False,
-        capability_grants=active_capability_grants(store, principal.principal_id),
+        capability_grants=active_capability_grants(principal_store, principal.principal_id),
     )
 
 
