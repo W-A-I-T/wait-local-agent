@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from dataclasses import replace
+
 from fastapi import Depends, FastAPI
 from fastapi.testclient import TestClient
 
@@ -21,7 +23,8 @@ def _app(settings, store: Store) -> FastAPI:
 
 
 def test_selected_client_header_is_validated_as_scope_not_authority(settings) -> None:
-    store = Store(settings.data_path)
+    configured = replace(settings, demo_mode=False)
+    store = Store(configured.data_path)
     store.create_client("alpha", "Alpha")
     store.create_client("beta", "Beta")
     store.create_principal("viewer-ab", kind="staff", display_name="Viewer AB")
@@ -35,7 +38,7 @@ def test_selected_client_header_is_validated_as_scope_not_authority(settings) ->
         client_id="beta",
         actor_id="bootstrap",
     )
-    client = TestClient(_app(settings, store))
+    client = TestClient(_app(configured, store))
     auth = {"Authorization": "Bearer viewer-secret"}
 
     beta = client.get("/protected", headers={**auth, "X-WAIT-Client-ID": "beta"})
