@@ -40,6 +40,11 @@ def test_power_automate_plan_is_review_only_and_approval_aware() -> None:
     assert result["deployment_started"] is False
 
 
+def test_power_automate_plan_rejects_oversized_text_fields() -> None:
+    with pytest.raises(PowerAutomatePlanError, match="workflow_name must be non-empty text"):
+        build_power_automate_flow_plan(**_plan(workflow_name="x" * 241))
+
+
 @pytest.mark.parametrize(
     ("change", "message"),
     [

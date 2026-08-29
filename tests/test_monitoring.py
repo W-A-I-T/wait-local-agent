@@ -70,3 +70,13 @@ def test_agent_health_summary_handles_empty_records() -> None:
         "agents": [],
         "payloads_exposed": False,
     }
+
+
+def test_agent_health_summary_marks_disabled_agent_without_runs() -> None:
+    definition = _definition("disabled-agent", enabled=False)
+    waiting = _definition("waiting-agent")
+
+    summary = build_agent_health_summary([], [definition, waiting], client_id="acme")
+
+    health = {agent["agent_id"]: agent["health"] for agent in summary["agents"]}
+    assert health == {"disabled-agent": "disabled", "waiting-agent": "no_runs"}

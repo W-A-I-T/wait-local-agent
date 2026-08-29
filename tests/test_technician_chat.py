@@ -62,6 +62,11 @@ def test_technician_chat_supports_explicit_bounded_plan_preview() -> None:
     assert "plan preview" in command.reply
 
 
+def test_technician_chat_requires_ticket_id_for_plan_preview() -> None:
+    with pytest.raises(TechnicianChatParseError, match="include a ticket ID"):
+        parse_technician_message("plan triage and suggest a fix")
+
+
 @pytest.mark.parametrize(
     "message",
     [

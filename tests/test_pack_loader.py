@@ -40,7 +40,7 @@ def clear_pack_modules() -> Iterator[None]:
     for name, module in original_modules.items():
         if name == "packs" or name.startswith("packs.") or name == "sync" or name.startswith("sync."):
             sys.modules[name] = module
-    cli_module.sync_pack_cli([])
+    cli_module.sync_pack_cli()
 
 
 def test_load_pack_registry_tracks_locked_and_unlocked_packs(settings) -> None:

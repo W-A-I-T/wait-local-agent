@@ -6,13 +6,16 @@ from PyInstaller.utils.hooks import collect_submodules
 
 project_root = Path(SPEC).resolve().parents[1]
 source_root = project_root / "src"
+hiddenimports = collect_submodules("wait_local_agent")
+if (source_root / "packs").is_dir():
+    hiddenimports.extend(collect_submodules("packs"))
 
 a = Analysis(
     [str(source_root / "wait_local_agent" / "api" / "server_entry.py")],
     pathex=[str(source_root)],
     binaries=[],
     datas=[],
-    hiddenimports=collect_submodules("wait_local_agent"),
+    hiddenimports=hiddenimports,
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],

@@ -5,7 +5,8 @@ import sqlite3
 from pathlib import Path
 
 import pytest
-from fastapi import FastAPI
+from fastapi import APIRouter, FastAPI, WebSocket
+from starlette.routing import Mount, Route
 
 from tests.support import ingest_local
 from wait_local_agent.agents import AgentService
@@ -15,7 +16,7 @@ from wait_local_agent.cli import app as cli_app
 from wait_local_agent.migrations import Migration, MigrationRunner
 from wait_local_agent.smart_actions import SmartActionService
 from wait_local_agent.store import Store
-from wait_local_agent.surface_coverage import SURFACE_CLASSES, build_surface_inventory
+from wait_local_agent.surface_coverage import SURFACE_CLASSES, build_surface_inventory, enumerate_fastapi_routes
 
 SURFACE_MANIFEST_PATH = Path(__file__).parents[1] / "docs/ai-workflow/surface-coverage.json"
 
@@ -128,3 +129,44 @@ def test_surface_inventory_is_stable_for_a_fastapi_smoke_app() -> None:
         cli_application=cli_app,
         agent_service=type("Catalog", (), {"list_tools": lambda self: []})(),
     )["fastapi_routes"]
+
+
+def test_surface_inventory_expands_nested_included_router_prefixes() -> None:
+    nested_router = APIRouter(prefix="/azure-lighthouse")
+
+    @nested_router.get("/status")
+    def nested_status() -> dict[str, bool]:
+        return {"ok": True}
+
+    @nested_router.websocket("/events")
+    async def nested_events(websocket: WebSocket) -> None:
+        return None
+
+    parent_router = APIRouter()
+
+    @parent_router.get("/status")
+    def parent_status() -> dict[str, bool]:
+        return {"ok": True}
+
+    parent_router.include_router(nested_router)
+    application = FastAPI()
+    application.include_router(parent_router, prefix="/packs/microsoft-admin")
+
+    def mounted_status() -> dict[str, bool]:
+        return {"ok": True}
+
+    application.router.routes.append(
+        Mount("/mounted", routes=[Route("/status", mounted_status, methods=["GET"])])
+    )
+
+    @application.websocket("/root-events")
+    async def root_events(websocket: WebSocket) -> None:
+        return None
+
+    inventory = enumerate_fastapi_routes(application)
+
+    assert "GET /packs/microsoft-admin/azure-lighthouse/status" in inventory
+    assert "GET /packs/microsoft-admin/status" in inventory
+    assert "GET /mounted/status" in inventory
+    assert not any(path.endswith("/events") for path in inventory)
+    assert "GET /root-events" not in inventory

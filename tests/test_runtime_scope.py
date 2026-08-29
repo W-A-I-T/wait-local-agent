@@ -48,6 +48,13 @@ def test_detect_collection_scope_finds_container_markers(
     assert detect_collection_scope(root=tmp_path) == "container"
 
 
+def test_non_host_pid_one_process_name_is_container_evidence(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.delenv("WAIT_COLLECTION_SCOPE", raising=False)
+    _write_marker(tmp_path, "proc/1/sched", "custom-init (1, #threads: 1)")
+
+    assert detect_collection_scope(root=tmp_path) == "container"
+
+
 def test_collection_scope_override_wins_over_filesystem_detection(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

@@ -528,6 +528,7 @@ def test_syncro_helpers_and_invalid_inputs(settings) -> None:
     assert _list_params(2, {"query": "x", "status": None}) == {"page": 2, "query": "x"}
     assert _normalize_ticket({}) is None
     assert _normalize_customer({}) is None
+    assert _comment_meta([]) == {}
 
     invalid_helpers = (
         (_safe_base_url, "https://bad\x00.test"),

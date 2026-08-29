@@ -12,6 +12,7 @@ from wait_local_agent.rmm import (
     RmmScript,
     RmmScriptExecution,
     RmmScriptPreview,
+    rmm_provider_from_settings,
 )
 from wait_local_agent.smart_actions import (
     ActionContext,
@@ -712,3 +713,12 @@ def test_rmm_provider_failures_are_safe(settings) -> None:
     assert RmmScriptPreviewAction().run(
         context, {"script_id": "s", "device_id": "d"}
     ).error_detail == "RMM script preview failed"
+
+
+def test_rmm_provider_selects_configured_ninjaone_without_network_calls(settings) -> None:
+    provider = rmm_provider_from_settings(
+        replace(settings, ninjaone_base_url="https://ninjaone.example.test"),
+        Store(settings.data_path),
+    )
+
+    assert provider.adapter_id == "ninjaone"

@@ -24,7 +24,7 @@ jobs:
       - run: mypy src tests
       - run: bandit -r src
       - run: pip-audit --skip-editable
-      - run: python -m pytest --cov=wait_local_agent --cov-report=term-missing --cov-fail-under=95
+      - run: python -m pytest --cov=wait_local_agent --cov=packs --cov-report=term-missing --cov-fail-under=95
       - run: bash -n scripts/demo_consultant_mode.sh
       - run: WAIT_DEMO_MODE=true WAIT_DATA_PATH="${RUNNER_TEMP}/wait-consultant-demo.db" bash scripts/demo_consultant_mode.sh
       - run: bash -n scripts/validate_local_first.sh
@@ -96,6 +96,24 @@ jobs:
       - run: npm ci
         working-directory: desktop
       - run: bash packaging/build-sidecar.sh
+      - name: Verify capability packs in the sidecar
+        if: ${{ hashFiles('src/packs/**') != '' }}
+        run: |
+          WAIT_DEMO_MODE=true \
+          WAIT_DATA_PATH="${RUNNER_TEMP}/wait-sidecar-check.db" \
+          WAIT_HOST=127.0.0.1 \
+          WAIT_PORT=8788 \
+          "${GITHUB_WORKSPACE}/dist/wait-local-agent-server" >"${RUNNER_TEMP}/wait-sidecar.log" 2>&1 &
+          sidecar_pid=$!
+          trap 'kill "$sidecar_pid" 2>/dev/null || true' EXIT
+          for attempt in {1..30}; do
+            if curl --fail --silent http://127.0.0.1:8788/health >/dev/null; then
+              break
+            fi
+            sleep 1
+          done
+          response="$(curl --fail --silent http://127.0.0.1:8788/packs/status)"
+          python -c 'import json, sys; statuses = json.loads(sys.argv[1]); assert any(item.get("mounted_router") for item in statuses), statuses' "$response"
       - run: cargo fmt --manifest-path desktop/src-tauri/Cargo.toml -- --check
       - run: cargo check --manifest-path desktop/src-tauri/Cargo.toml
       - run: cargo test --manifest-path desktop/src-tauri/Cargo.toml

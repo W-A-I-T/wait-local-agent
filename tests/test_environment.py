@@ -184,3 +184,16 @@ def test_environment_discovery_rejects_secret_or_control_material(systems) -> No
             requested_systems=systems,
             connector_statuses=[],
         )
+
+
+def test_environment_discovery_ignores_non_string_probe_ids() -> None:
+    result = discover_environment(
+        client_id="acme",
+        requested_systems=["Microsoft 365"],
+        connector_statuses=[_status("m365", "Microsoft 365 / Entra", "configured")],
+        configured_client_id="acme",
+        probe_results={1: {"passed": True}},  # type: ignore[dict-item]
+    )
+
+    assert result["systems"][0]["status"] == "configured"
+    assert result["systems"][0]["probe"]["status"] == "not_run"
