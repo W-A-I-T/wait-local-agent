@@ -91,7 +91,14 @@ def test_microsoft_admin_is_default_deny_and_grant_takes_effect_next_request(set
     assert viewer_allowed.status_code == 200
     assert viewer_allowed.json()
     assert viewer_beta_denied.status_code == 403
-    assert viewer_beta_denied.json()["detail"] == "microsoft_admin capability required"
+    assert viewer_beta_denied.json()["detail"] == {
+        "code": "capability_required",
+        "capability": MICROSOFT_ADMIN_CAPABILITY,
+        "reason": "client_scope_mismatch",
+        "remediation": (
+            "Use a client covered by this principal's microsoft_admin grant or add a grant for the requested client."
+        ),
+    }
     assert effective_after.json()["grants"] == [
         {"capability_key": MICROSOFT_ADMIN_CAPABILITY, "client_id": "alpha"}
     ]
@@ -113,6 +120,30 @@ def test_microsoft_admin_is_default_deny_and_grant_takes_effect_next_request(set
     assert revoked.status_code == 200
     assert revoked.json()["active"] is False
     assert denied_after_revoke.status_code == 403
+
+
+def test_microsoft_admin_capability_denials_explain_bootstrap_and_missing_grants(settings) -> None:
+    secure = _secure_settings(settings)
+    store = Store(secure.data_path)
+    store.create_client("alpha", "Alpha")
+    _seed_staff(store, "viewer-alpha", "viewer-alpha-secret", "viewer", clients=("alpha",))
+    client = TestClient(create_app(secure))
+
+    bootstrap_denied = client.get(
+        "/packs/microsoft-admin/status?client_id=alpha",
+        headers=_auth("bootstrap-admin"),
+    )
+    principal_denied = client.get(
+        "/packs/microsoft-admin/status?client_id=alpha",
+        headers=_auth("viewer-alpha-secret"),
+    )
+
+    assert bootstrap_denied.status_code == 403
+    assert bootstrap_denied.json()["detail"]["reason"] == "no_principal"
+    assert bootstrap_denied.json()["detail"]["code"] == "capability_required"
+    assert principal_denied.status_code == 403
+    assert principal_denied.json()["detail"]["reason"] == "no_grant"
+    assert principal_denied.json()["detail"]["capability"] == MICROSOFT_ADMIN_CAPABILITY
 
 
 def test_runbook_draft_rechecks_capability_for_payload_client(settings) -> None:
@@ -148,7 +179,7 @@ def test_runbook_draft_rechecks_capability_for_payload_client(settings) -> None:
 
     assert alpha_plan.status_code == 200
     assert beta_plan.status_code == 403
-    assert beta_plan.json()["detail"] == "microsoft_admin capability required for client beta"
+    assert beta_plan.json()["detail"]["reason"] == "client_scope_mismatch"
     assert beta_draft.status_code == 403
 
 
@@ -179,7 +210,7 @@ def test_runbook_execute_rechecks_capability_for_approval_client(settings) -> No
     )
 
     assert response.status_code == 403
-    assert response.json()["detail"] == "microsoft_admin capability required for client beta"
+    assert response.json()["detail"]["reason"] == "client_scope_mismatch"
 
 
 def test_access_management_requires_msp_operator_and_demo_is_read_only(settings) -> None:

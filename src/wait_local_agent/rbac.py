@@ -4,7 +4,7 @@ import hashlib
 from dataclasses import dataclass
 from enum import IntEnum
 from secrets import compare_digest
-from typing import TYPE_CHECKING, Annotated
+from typing import TYPE_CHECKING, Annotated, Literal
 
 from fastapi import Header, HTTPException, Request, status
 
@@ -35,6 +35,21 @@ class Role(IntEnum):
 
     def label(self) -> str:
         return self.name.lower()
+
+
+CapabilityFailureReason = Literal["no_principal", "no_grant", "client_scope_mismatch"]
+
+
+_CAPABILITY_REMEDIATIONS: dict[CapabilityFailureReason, str] = {
+    "no_principal": (
+        "Environment bootstrap tokens carry no capability grants; create a database principal and grant "
+        "microsoft_admin, or enable demo mode."
+    ),
+    "no_grant": "Grant microsoft_admin to this database principal for the requested client.",
+    "client_scope_mismatch": (
+        "Use a client covered by this principal's microsoft_admin grant or add a grant for the requested client."
+    ),
+}
 
 
 @dataclass(frozen=True)
@@ -177,13 +192,17 @@ def require_capability(capability_key: str, minimum: Role = Role.VIEWER):
             raise HTTPException(status_code=400, detail="conflicting Microsoft Admin client scopes")
         requested_client_id = query_client_id or selected_client_id
         client_id = context.client_id
+        if (
+            requested_client_id
+            and not context.demo_mode
+            and not context.is_msp_admin
+            and requested_client_id.strip() not in context.client_ids
+        ):
+            raise _capability_required(capability_key, "client_scope_mismatch")
         if requested_client_id is not None:
             client_id = resolve_client_scope(context, requested_client_id).client_id
         if not context.has_capability(capability_key, client_id):
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail=f"{capability_key} capability required",
-            )
+            raise _capability_required(capability_key, _capability_failure_reason(context, capability_key))
         return context
 
     return dependency
@@ -196,6 +215,13 @@ def require_capability_scope(
 ) -> str:
     """Resolve one authorized client and require a grant for that exact scope."""
 
+    if (
+        requested_client_id
+        and not context.demo_mode
+        and not context.is_msp_admin
+        and requested_client_id.strip() not in context.client_ids
+    ):
+        raise _capability_required(capability_key, "client_scope_mismatch")
     client_id = resolve_client_scope(context, requested_client_id).client_id
     if client_id is None:
         raise HTTPException(
@@ -203,11 +229,31 @@ def require_capability_scope(
             detail="capability operation requires one explicit client",
         )
     if not context.has_capability(capability_key, client_id):
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail=f"{capability_key} capability required for client {client_id}",
-        )
+        raise _capability_required(capability_key, _capability_failure_reason(context, capability_key))
     return client_id
+
+
+def _capability_failure_reason(context: AuthContext, capability_key: str) -> CapabilityFailureReason:
+    if context.principal_id is None:
+        return "no_principal"
+    if not any(granted_key == capability_key for granted_key, _ in context.capability_grants):
+        return "no_grant"
+    return "client_scope_mismatch"
+
+
+def _capability_required(
+    capability_key: str,
+    reason: CapabilityFailureReason,
+) -> HTTPException:
+    return HTTPException(
+        status_code=status.HTTP_403_FORBIDDEN,
+        detail={
+            "code": "capability_required",
+            "capability": capability_key,
+            "reason": reason,
+            "remediation": _CAPABILITY_REMEDIATIONS[reason],
+        },
+    )
 
 
 def _extract_bearer_token(authorization: str | None) -> str:
