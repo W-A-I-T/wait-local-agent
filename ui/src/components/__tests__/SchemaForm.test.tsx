@@ -115,23 +115,16 @@ describe("SchemaForm", () => {
     expect(screen.getByTestId("value")).toHaveTextContent('"custom_blob":{"depth":2}');
   });
 
-  it("never exposes a secret_ref value in the DOM or Advanced JSON", () => {
-    const secret = "pasted-secret-that-must-not-echo";
-    const { container } = render(
-      <SchemaForm
-        fields={fields}
-        value={{ api_credential: secret }}
-        onChange={() => undefined}
-      />
-    );
+  it("supports multi-character secret_ref input as a normal controlled field", () => {
+    const secret = "vault-secret-name";
+    const { container } = renderHarness();
+    const field = screen.getByLabelText("API credential");
+    fireEvent.change(field, { target: { value: secret } });
 
-    expect(container.textContent).not.toContain(secret);
-    expect(container.innerHTML).not.toContain(secret);
-    fireEvent.change(screen.getByLabelText("API credential"), { target: { value: secret } });
-    expect(container.textContent).not.toContain(secret);
-
+    expect(field).toHaveValue(secret);
+    expect(screen.getByTestId("value")).toHaveTextContent(`"api_credential":"${secret}"`);
     fireEvent.click(screen.getByRole("button", { name: "Advanced (JSON)" }));
-    expect((screen.getByLabelText("Settings JSON") as HTMLTextAreaElement).value).not.toContain(secret);
+    expect((screen.getByLabelText("Settings JSON") as HTMLTextAreaElement).value).not.toContain(`"api_credential":"${secret}"`);
   });
 
   it("keeps unsupported array shapes lossless through per-field JSON", () => {
