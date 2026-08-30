@@ -56,11 +56,11 @@ const primaryNavigation: NavigationGroup[] = [
       { to: "/microsoft-admin", label: "Microsoft Admin", icon: ShieldCheck, microsoftAdminCapability: true }
     ]
   },
-  {
     label: "Control",
     items: [
       { to: "/connectors", label: "Connectors", icon: GitBranch },
       { to: "/workflows", label: "Automations", icon: Workflow },
+      { to: "/agent-platform", label: "Agent Platform", icon: Bot },
       { to: "/approvals", label: "Approvals", icon: ClipboardCheck },
       { to: "/executions", label: "Activity", icon: Activity },
       { to: "/audit", label: "Audit", icon: FileSearch },
