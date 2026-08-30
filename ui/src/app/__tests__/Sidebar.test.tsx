@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { Sidebar } from "../Sidebar";
@@ -26,6 +26,26 @@ const destinations = [
   ["Sync / Reconciliation", "/operations/reconciliation"], ["Appliance Health", "/system/appliance-health"], ["Extensions / Packs", "/system/extensions"], ["MCP", "/integrations/mcp"], ["Workflow Designer", "/workflow-designer"], ["Templates", "/templates"], ["Scheduled Jobs", "/scheduled-jobs"], ["Smart Action Runs", "/smart-actions/runs"], ["Executions", "/executions"], ["Backfills", "/backfills"]
 ] as const;
 
+const groupedDestinations = {
+  Operations: [
+    ["Tickets", "/tickets"], ["Technician Chat", "/technician-chat"], ["Microsoft Admin", "/microsoft-admin"]
+  ],
+  Control: [
+    ["Connectors", "/connectors"], ["Workflows", "/workflows"], ["Approvals", "/approvals"], ["Executions", "/executions"], ["Audit", "/audit"], ["Reports", "/reports"]
+  ],
+  Workspace: [
+    ["Knowledge", "/knowledge"], ["Schedules", "/automation/schedules"], ["Workflow Designer", "/workflow-designer"], ["Agents", "/agents"]
+  ],
+  Solutions: [
+    ["M365 Actions", "/m365-actions"], ["Solutions Architect", "/consultant"]
+  ]
+} as const;
+
+const advancedDestinations = [
+  ["Playbooks", "/playbooks"], ["Smart Actions", "/integrations/smart-actions"], ["Events", "/automation/events"], ["Analytics", "/analytics"], ["Collectors", "/collectors"], ["Launch Passport", "/founder"],
+  ["Connector Instances", "/integrations/connector-instances"], ["Microsoft Admin Access", "/microsoft-admin/access"], ["Settings", "/settings"], ["Sync / Reconciliation", "/operations/reconciliation"], ["Appliance Health", "/system/appliance-health"], ["Extensions / Packs", "/system/extensions"], ["MCP", "/integrations/mcp"], ["Templates", "/templates"], ["Scheduled Jobs", "/scheduled-jobs"], ["Smart Action Runs", "/smart-actions/runs"], ["Backfills", "/backfills"]
+] as const;
+
 function renderSidebar(role: "admin" | "viewer", microsoftAdminAllowed = true) {
   mockedUseDashboard.mockReturnValue({ role, roleResolved: true } as never);
   mockedMicrosoftAdminAccess.mockReturnValue({
@@ -47,16 +67,28 @@ describe("Sidebar navigation IA", () => {
   it("renders the product groups and keeps every destination path for an authorized admin", () => {
     renderSidebar("admin", true);
 
-    expect(screen.getByText("Operations")).toBeInTheDocument();
-    expect(screen.getByText("Automations")).toBeInTheDocument();
-    expect(screen.getByText("Evidence & Reports")).toBeInTheDocument();
-    expect(screen.getByText("Setup")).toBeInTheDocument();
+    for (const [group, links] of Object.entries(groupedDestinations)) {
+      const section = screen.getByText(group).closest("section");
+      expect(section).not.toBeNull();
+      if (!section) throw new Error(`Missing navigation group: ${group}`);
+      for (const [label, path] of links) {
+        expect(within(section).getByRole("link", { name: label })).toHaveAttribute("href", path);
+      }
+    }
 
     const advanced = screen.getByText("System / Advanced");
-    expect(advanced.closest("details")).not.toHaveAttribute("open");
+    const drawer = advanced.closest("details");
+    expect(drawer).not.toBeNull();
+    if (!drawer) throw new Error("Missing System / Advanced drawer");
+    expect(drawer).not.toHaveAttribute("open");
     fireEvent.click(advanced);
 
+    for (const [label, path] of advancedDestinations) {
+      expect(within(drawer).getByRole("link", { name: label })).toHaveAttribute("href", path);
+    }
+
     for (const [label, path] of destinations) {
+      expect(screen.getAllByRole("link", { name: label })).toHaveLength(1);
       expect(screen.getByRole("link", { name: label })).toHaveAttribute("href", path);
     }
   });
