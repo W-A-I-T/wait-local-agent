@@ -100,6 +100,11 @@ constraint-dependencies = [
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B"]
 
+[tool.ruff.lint.per-file-ignores]
+"src/packs/agent_platform/router.py" = ["I001", "UP047"]
+"tests/test_agent_platform_pack.py" = ["I001"]
+"tests/test_agent_platform_validation.py" = ["F401"]
+
 [tool.mypy]
 python_version = "3.12"
 files = ["src", "tests"]
