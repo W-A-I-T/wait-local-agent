@@ -3,7 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from tests.support import ingest_local
-from wait_local_agent.agents import AgentService, SUPPORTED_EVENT_TYPES
+from wait_local_agent.agents import SUPPORTED_EVENT_TYPES, AgentService
 from wait_local_agent.event_dispatch import EventDispatcher
 from wait_local_agent.msp_playbooks import create_msp_playbook_subscription
 from wait_local_agent.smart_actions import SmartActionService
