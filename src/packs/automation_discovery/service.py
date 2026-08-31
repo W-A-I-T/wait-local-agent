@@ -260,7 +260,7 @@ def build_historical_discovery(
     client_id: str,
     days: int = 60,
     min_tickets: int = 3,
-) -> dict[str, object]:
+) -> dict[str, Any]:
     """Rank recurring historical ticket families without enabling any automation."""
 
     if not 7 <= days <= 365:
@@ -287,7 +287,7 @@ def build_historical_discovery(
         else:
             grouped[category.category_id].append(ticket)
 
-    opportunities: list[dict[str, object]] = []
+    opportunities: list[dict[str, Any]] = []
     rule_by_id = {rule.category_id: rule for rule in CATEGORY_RULES}
     for category_id, category_tickets in grouped.items():
         if len(category_tickets) < min_tickets:
@@ -346,14 +346,14 @@ def build_historical_discovery(
     }
 
 
-def build_mapping_readiness(store: Store, *, client_id: str) -> dict[str, object]:
+def build_mapping_readiness(store: Store, *, client_id: str) -> dict[str, Any]:
     """Summarize cross-system client mapping evidence for discovery readiness."""
 
     scope = BoundClients(frozenset({client_id}))
     mappings = store.list_client_connector_mappings(scope)
     instances = {item.connector_instance_id: item for item in store.list_connector_instances()}
     families: dict[str, dict[str, int]] = defaultdict(lambda: {"verified": 0, "unverified": 0})
-    details: list[dict[str, object]] = []
+    details: list[dict[str, Any]] = []
     for mapping in mappings:
         instance = instances.get(mapping.connector_instance_id)
         connector_type = instance.connector_type if instance else "unknown"
@@ -385,8 +385,8 @@ def _opportunity(
     rule: CategoryRule,
     tickets: list[Ticket],
     labor_by_ticket: dict[str, int],
-    mapping_readiness: dict[str, object],
-) -> dict[str, object]:
+    mapping_readiness: dict[str, Any],
+) -> dict[str, Any]:
     measured_ticket_ids = [ticket.id for ticket in tickets if ticket.id in labor_by_ticket]
     measured_minutes = sum(labor_by_ticket.get(ticket.id, 0) for ticket in tickets)
     source_counts = Counter(ticket.source_system or "local" for ticket in tickets)
@@ -431,13 +431,13 @@ def _dynamic_opportunities(
     *,
     labor_by_ticket: dict[str, int],
     min_tickets: int,
-) -> list[dict[str, object]]:
+) -> list[dict[str, Any]]:
     buckets: dict[str, list[Ticket]] = defaultdict(list)
     for ticket in tickets:
         signature = _subject_signature(ticket.subject)
         if signature:
             buckets[signature].append(ticket)
-    results: list[dict[str, object]] = []
+    results: list[dict[str, Any]] = []
     for signature, members in sorted(buckets.items(), key=lambda item: (-len(item[1]), item[0])):
         if len(members) < min_tickets:
             continue
@@ -478,7 +478,7 @@ def _dynamic_opportunities(
     return results
 
 
-def _workflow_match(workflow_id: str) -> dict[str, object]:
+def _workflow_match(workflow_id: str) -> dict[str, Any]:
     template = get_workflow_template(workflow_id)
     if template is None:
         return {"id": workflow_id, "available": False}
@@ -491,7 +491,7 @@ def _workflow_match(workflow_id: str) -> dict[str, object]:
     }
 
 
-def _playbook_match(playbook_id: str) -> dict[str, object]:
+def _playbook_match(playbook_id: str) -> dict[str, Any]:
     playbook = next((item for item in MSP_PLAYBOOKS if item.id == playbook_id), None)
     if playbook is None:
         return {"id": playbook_id, "available": False}
@@ -505,7 +505,7 @@ def _playbook_match(playbook_id: str) -> dict[str, object]:
 
 def _prerequisite_status(
     prerequisites: tuple[str, ...],
-    mapping_readiness: dict[str, object],
+    mapping_readiness: dict[str, Any],
 ) -> list[dict[str, str]]:
     raw_families = mapping_readiness.get("families", {})
     families = raw_families if isinstance(raw_families, dict) else {}
@@ -577,7 +577,7 @@ def _connector_family(connector_type: str) -> str:
     return "other"
 
 
-def _opportunity_sort_key(item: dict[str, object]) -> tuple[int, int, str]:
+def _opportunity_sort_key(item: dict[str, Any]) -> tuple[int, int, str]:
     measured = int(item.get("measured_labor_minutes", 0))
     count = int(item.get("ticket_count", 0))
     return (-measured, -count, str(item.get("label", "")))
