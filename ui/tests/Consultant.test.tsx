@@ -50,6 +50,19 @@ describe("Consultant", () => {
           deployment_started: false
         }), { status: 200 }));
       }
+      if (path === "/consultant/blueprints/bp-acme") {
+        return Promise.resolve(new Response(JSON.stringify({
+          id: "bp-acme",
+          client_id: "acme",
+          created_by: "architect",
+          created_at: "2026-08-11T00:00:00Z",
+          updated_at: "2026-08-11T00:00:00Z",
+          solution: { name: "Employee onboarding" },
+          risk: "medium",
+          agents: [{ id: "onboarding", name: "Onboarding", purpose: "Coordinate onboarding", tools: [], knowledge: [] }],
+          workflows: [{ id: "onboarding-flow", name: "Onboarding flow", trigger: "HR request", steps: ["Validate manager", "Prepare approval"] }]
+        }), { status: 200 }));
+      }
       if (path === "/consultant/use-cases") {
         return Promise.resolve(new Response(JSON.stringify({
           use_cases: [{

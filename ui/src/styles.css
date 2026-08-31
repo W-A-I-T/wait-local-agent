@@ -1427,6 +1427,104 @@ nav a:hover {
   gap: 10px;
 }
 
+.consultant-chain {
+  display: grid;
+  gap: 16px;
+}
+
+.consultant-chain-card {
+  border: 1px solid #e4ebe8;
+  border-radius: 12px;
+  padding: 16px;
+}
+
+.consultant-chain-card .panel-heading {
+  margin-bottom: 12px;
+}
+
+.consultant-detail-grid {
+  display: grid;
+  gap: 12px;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  margin: 0;
+}
+
+.consultant-detail-grid div {
+  background: #f7faf8;
+  border: 1px solid #e4ebe8;
+  border-radius: 8px;
+  padding: 10px;
+}
+
+.consultant-detail-grid dt {
+  color: #60706a;
+  font-size: 0.8rem;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.consultant-detail-grid dd {
+  margin: 4px 0 0;
+}
+
+.consultant-environment {
+  margin-top: 16px;
+}
+
+.consultant-environment-table {
+  border-collapse: collapse;
+  min-width: 680px;
+  width: 100%;
+}
+
+.consultant-environment-table caption {
+  font-size: 0.9rem;
+  font-weight: 800;
+  margin-bottom: 8px;
+  text-align: left;
+}
+
+.consultant-environment-table th,
+.consultant-environment-table td {
+  border-bottom: 1px solid #e4ebe8;
+  padding: 10px 8px;
+  text-align: left;
+  vertical-align: top;
+}
+
+.consultant-environment-table thead th {
+  color: #60706a;
+  font-size: 0.8rem;
+  text-transform: uppercase;
+}
+
+.consultant-review-checklist {
+  background: #f7faf8;
+  border: 1px solid #e4ebe8;
+  border-radius: 8px;
+  margin-top: 14px;
+  padding: 12px;
+}
+
+.consultant-review-checklist ul {
+  display: grid;
+  gap: 8px;
+  list-style: none;
+  margin: 10px 0 0;
+  padding: 0;
+}
+
+.consultant-review-checklist li {
+  align-items: center;
+  display: flex;
+  gap: 8px;
+  justify-content: space-between;
+}
+
+.consultant-delivery-link {
+  margin-top: 16px;
+}
+
 .consultant-blueprint {
   align-items: flex-start;
   background: #f7faf8;
@@ -3759,6 +3857,7 @@ dd svg {
   .connector-resource-params,
   .scalepad-qbr-grid,
   .flag-grid,
+  .consultant-detail-grid,
   .solution-delivery-screen,
   .solution-pipeline,
   .solution-gate-grid,
