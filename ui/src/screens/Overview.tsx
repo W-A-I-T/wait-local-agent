@@ -1,4 +1,4 @@
-import { Activity, CheckCircle2, GitBranch, Workflow } from "lucide-react";
+import { Activity, CheckCircle2, GitBranch, Sparkles, Workflow } from "lucide-react";
 import { useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import { useDashboard } from "../app/DashboardContext";
@@ -86,6 +86,20 @@ export function Overview() {
             <strong>{workflowRuns.length} workflow runs</strong>
             <span>Open the approval queue to review actions</span>
           </Link>
+          <section className="overview-card" aria-labelledby="automate-something-heading">
+            <Sparkles size={20} aria-hidden="true" />
+            <strong id="automate-something-heading">Automate something</strong>
+            <span>No ticket required</span>
+            <nav className="overview-automation-links" aria-label="No-ticket automation">
+              <Link to="/scheduled-jobs">On a schedule</Link>
+              <Link to="/automation/schedules">When an event happens</Link>
+              <Link to="/consultant">Design a solution</Link>
+            </nav>
+            <p className="overview-card-note">
+              Report-only playbooks (qbr-review, automation-opportunity-review, recurring-service-review) run with just a client via{" "}
+              <Link to="/playbooks">Playbooks</Link>.
+            </p>
+          </section>
         </div>
       </section>
 

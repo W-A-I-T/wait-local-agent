@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import replace
 from pathlib import Path
 
 from fastapi.testclient import TestClient
@@ -38,6 +39,16 @@ def test_auth_role_endpoint_reports_rbac_roles_and_legacy_api_token(settings) ->
     assert admin.json()["role"] == "admin"
     assert legacy.status_code == 200
     assert legacy.json()["role"] == "admin"
+
+
+def test_auth_role_endpoint_reports_end_user_support_setting(settings) -> None:
+    for enabled in (False, True):
+        client = TestClient(create_app(replace(settings, end_user_support_enabled=enabled)))
+
+        response = client.get("/auth/role")
+
+        assert response.status_code == 200
+        assert response.json()["end_user_support_enabled"] is enabled
 
 
 def test_route_enforcement_matches_rbac_contract(settings) -> None:
