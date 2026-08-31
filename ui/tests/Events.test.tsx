@@ -105,7 +105,7 @@ describe("Events screen", () => {
     expect(screen.getByText("Pending")).toBeInTheDocument();
     expect(screen.getByText("halopsa.write")).toBeInTheDocument();
     expect(screen.getByText("Ticket update recorded")).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: "Events" })).toHaveAttribute("href", "/automation/events");
+    expect(screen.getByRole("link", { name: "Activity" })).toHaveAttribute("href", "/executions");
 
     fireEvent.click(screen.getByRole("button", { name: "Open delivery 7: ticket.updated" }));
     expect(await screen.findByRole("heading", { name: "Delivery 7" })).toBeInTheDocument();

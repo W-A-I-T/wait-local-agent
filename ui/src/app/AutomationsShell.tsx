@@ -58,7 +58,15 @@ export function AutomationsShell({ children }: { children: ReactNode }) {
             );
           })}
         </nav>
-        <p className="automations-description">{activeTab.description}</p>
+        <p className="automations-description">
+          {activeTab.description}
+          {activeTab.to === "/workflows" ? (
+            <span className="automation-cross-link">
+              {" "}
+              <Link to="/executions">Run history → Activity</Link>
+            </span>
+          ) : null}
+        </p>
       </section>
       {children}
     </div>

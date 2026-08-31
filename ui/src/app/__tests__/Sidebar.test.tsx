@@ -18,12 +18,12 @@ const mockedMicrosoftAdminAccess = vi.mocked(useMicrosoftAdminAccess);
 const destinations = [
   ["Overview", "/"], ["Clients", "/clients"],
   ["Tickets", "/tickets"], ["Approvals", "/approvals"], ["Technician Chat", "/technician-chat"], ["Microsoft Admin", "/microsoft-admin"], ["M365 Actions", "/m365-actions"], ["Azure Lighthouse", "/microsoft-admin/azure-lighthouse"],
-  ["Automations", "/workflows"], ["Agents", "/agents"], ["Events", "/automation/events"], ["Schedules", "/automation/schedules"],
+  ["Automations", "/workflows"], ["Agents", "/agents"], ["Activity", "/executions"],
   ["Solutions Architect", "/consultant"],
   ["Reports", "/reports"], ["Analytics", "/analytics"], ["Audit", "/audit"], ["Collectors", "/collectors"],
   ["Launch Passport", "/founder"],
   ["Connectors", "/connectors"], ["Connector Instances", "/integrations/connector-instances"], ["Microsoft Admin Access", "/microsoft-admin/access"], ["Knowledge", "/knowledge"], ["Settings", "/settings"],
-  ["Sync / Reconciliation", "/operations/reconciliation"], ["Appliance Health", "/system/appliance-health"], ["Extensions / Packs", "/system/extensions"], ["MCP", "/integrations/mcp"], ["Scheduled Jobs", "/scheduled-jobs"], ["Smart Action Runs", "/smart-actions/runs"], ["Executions", "/executions"], ["Backfills", "/backfills"]
+  ["Sync / Reconciliation", "/operations/reconciliation"], ["Appliance Health", "/system/appliance-health"], ["Extensions / Packs", "/system/extensions"], ["MCP", "/integrations/mcp"]
 ] as const;
 
 const groupedDestinations = {
@@ -31,10 +31,10 @@ const groupedDestinations = {
     ["Tickets", "/tickets"], ["Technician Chat", "/technician-chat"], ["Microsoft Admin", "/microsoft-admin"]
   ],
   Control: [
-    ["Connectors", "/connectors"], ["Automations", "/workflows"], ["Approvals", "/approvals"], ["Executions", "/executions"], ["Audit", "/audit"], ["Reports", "/reports"]
+    ["Connectors", "/connectors"], ["Automations", "/workflows"], ["Approvals", "/approvals"], ["Activity", "/executions"], ["Audit", "/audit"], ["Reports", "/reports"]
   ],
   Workspace: [
-    ["Knowledge", "/knowledge"], ["Schedules", "/automation/schedules"], ["Agents", "/agents"]
+    ["Knowledge", "/knowledge"], ["Agents", "/agents"]
   ],
   Solutions: [
     ["M365 Actions", "/m365-actions"], ["Azure Lighthouse", "/microsoft-admin/azure-lighthouse"], ["Solutions Architect", "/consultant"]
@@ -42,8 +42,8 @@ const groupedDestinations = {
 } as const;
 
 const advancedDestinations = [
-  ["Events", "/automation/events"], ["Analytics", "/analytics"], ["Collectors", "/collectors"], ["Launch Passport", "/founder"],
-  ["Connector Instances", "/integrations/connector-instances"], ["Microsoft Admin Access", "/microsoft-admin/access"], ["Settings", "/settings"], ["Sync / Reconciliation", "/operations/reconciliation"], ["Appliance Health", "/system/appliance-health"], ["Extensions / Packs", "/system/extensions"], ["MCP", "/integrations/mcp"], ["Scheduled Jobs", "/scheduled-jobs"], ["Smart Action Runs", "/smart-actions/runs"], ["Backfills", "/backfills"]
+  ["Analytics", "/analytics"], ["Collectors", "/collectors"], ["Launch Passport", "/founder"],
+  ["Connector Instances", "/integrations/connector-instances"], ["Microsoft Admin Access", "/microsoft-admin/access"], ["Settings", "/settings"], ["Sync / Reconciliation", "/operations/reconciliation"], ["Appliance Health", "/system/appliance-health"], ["Extensions / Packs", "/system/extensions"], ["MCP", "/integrations/mcp"]
 ] as const;
 
 function renderSidebar(role: "admin" | "viewer", microsoftAdminAllowed = true, microsoftAdminNavAllowed = microsoftAdminAllowed) {
@@ -156,8 +156,9 @@ describe("Sidebar navigation IA", () => {
       expect(screen.queryByRole("link", { name: label })).not.toBeInTheDocument();
     }
 
-    for (const label of ["Scheduled Jobs", "Smart Action Runs", "Executions", "Backfills"]) {
-      expect(screen.getByRole("link", { name: label })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Activity" })).toHaveAttribute("href", "/executions");
+    for (const label of ["Events", "Schedules", "Scheduled Jobs", "Smart Action Runs", "Executions", "Backfills"]) {
+      expect(screen.queryByRole("link", { name: label })).not.toBeInTheDocument();
     }
   });
 
