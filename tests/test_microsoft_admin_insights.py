@@ -185,7 +185,7 @@ def test_access_diagnostic_finds_identity_license_ca_risk_service_and_endpoint_c
     }.issubset(codes)
     assert {finding.action_id for finding in diagnostic.findings if finding.action_id} == {
         "m365-license-change",
-        "m365-session-revoke",
+        "m365-session-revocation",
         "m365-managed-device-sync",
     }
     assert diagnostic.to_dict()["user_identity"] == "adele@example.test"

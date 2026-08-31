@@ -8,6 +8,7 @@ from microsoft_admin_support import _configured
 
 from packs.microsoft_admin import PACK_MANIFEST
 from packs.microsoft_admin.core import MicrosoftAdminGraphClient, remediation_catalog
+from wait_local_agent.smart_actions import default_registry
 
 
 def test_pack_manifest_and_remediation_catalog_are_runtime_capabilities() -> None:
@@ -21,13 +22,13 @@ def test_pack_manifest_and_remediation_catalog_are_runtime_capabilities() -> Non
     actions = remediation_catalog()
     assert {item["action_id"] for item in actions} == {
         "m365-managed-device-sync",
-        "m365-session-revoke",
+        "m365-session-revocation",
         "m365-license-change",
-        "m365-authentication-method-delete",
-        "m365-user-disable",
+        "m365-authentication-method-remove",
         "m365-managed-device-retire",
     }
     assert all(item["approval_required"] is True for item in actions)
+    assert all(default_registry.get(str(item["action_id"])) for item in actions)
 
 
 def test_microsoft_admin_client_blocks_and_reports_missing_configuration(settings) -> None:

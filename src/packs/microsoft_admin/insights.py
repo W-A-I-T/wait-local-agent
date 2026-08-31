@@ -287,7 +287,7 @@ def diagnose_access(
                     "Investigate the identity and use the existing approval-gated session revocation "
                     "or authentication remediation flow."
                 ),
-                action_id="m365-session-revoke",
+                action_id="m365-session-revocation",
                 approval_required=True,
             )
         )
@@ -414,7 +414,7 @@ def remediation_catalog() -> list[dict[str, object]]:
             "description": "Trigger an Intune managed-device synchronization through the core approval flow.",
         },
         {
-            "action_id": "m365-session-revoke",
+            "action_id": "m365-session-revocation",
             "risk_level": 3,
             "approval_required": True,
             "description": "Revoke Microsoft Entra sign-in sessions through the core approval flow.",
@@ -426,16 +426,10 @@ def remediation_catalog() -> list[dict[str, object]]:
             "description": "Add or remove explicit Microsoft 365 SKUs through the core approval flow.",
         },
         {
-            "action_id": "m365-authentication-method-delete",
+            "action_id": "m365-authentication-method-remove",
             "risk_level": 4,
             "approval_required": True,
             "description": "Remove one explicit MFA method through the core approval flow.",
-        },
-        {
-            "action_id": "m365-user-disable",
-            "risk_level": 4,
-            "approval_required": True,
-            "description": "Disable a Microsoft Entra account through the core approval flow.",
         },
         {
             "action_id": "m365-managed-device-retire",
