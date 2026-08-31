@@ -10,6 +10,10 @@ vi.mock("../app/DashboardContext", () => ({
 describe("Consultant architecture decisions", () => {
   let rejectDiscoverySessions = false;
   let rejectBlueprints = false;
+  let emptyBlueprints = false;
+  let discoverySessionsStatus: number | null = null;
+  let useCasesStatus: number | null = null;
+  let rejectMonitoring = false;
   let rejectArchitecture = false;
   let rejectPlaybookGeneration = false;
   let holdPlaybookGeneration = false;
@@ -18,6 +22,10 @@ describe("Consultant architecture decisions", () => {
   beforeEach(() => {
     rejectDiscoverySessions = false;
     rejectBlueprints = false;
+    emptyBlueprints = false;
+    discoverySessionsStatus = null;
+    useCasesStatus = null;
+    rejectMonitoring = false;
     rejectArchitecture = false;
     rejectPlaybookGeneration = false;
     holdPlaybookGeneration = false;
@@ -25,7 +33,7 @@ describe("Consultant architecture decisions", () => {
     vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL) => {
       const path = String(input);
       const responses: Record<string, unknown> = {
-        "/consultant/blueprints": [{
+        "/consultant/blueprints": emptyBlueprints ? [] : [{
           id: "bp-acme",
           client_id: "acme",
           created_by: "architect",
@@ -78,6 +86,15 @@ describe("Consultant architecture decisions", () => {
       if (rejectDiscoverySessions && path === "/consultant/discovery/sessions") {
         return Promise.reject(new Error("Forbidden"));
       }
+      if (discoverySessionsStatus !== null && path === "/consultant/discovery/sessions") {
+        return Promise.resolve(new Response(JSON.stringify({ detail: "section unavailable" }), { status: discoverySessionsStatus }));
+      }
+      if (useCasesStatus !== null && path === "/consultant/use-cases") {
+        return Promise.resolve(new Response(JSON.stringify({ detail: "section unavailable" }), { status: useCasesStatus }));
+      }
+      if (rejectMonitoring && path === "/consultant/monitoring/agents") {
+        return Promise.reject(new Error("Monitoring unavailable"));
+      }
       if (rejectArchitecture && path === "/consultant/blueprints/bp-acme/architecture") {
         return Promise.reject(new Error("Architecture unavailable"));
       }
@@ -123,6 +140,33 @@ describe("Consultant architecture decisions", () => {
     expect(screen.getByText("Local cache")).toBeInTheDocument();
     expect(screen.getByText("Manager review")).toBeInTheDocument();
     expect(screen.getByText(/No inference started · No execution started · No deployment started/)).toBeInTheDocument();
+  });
+
+  it("isolates gated, empty, and retryable initial sections", async () => {
+    discoverySessionsStatus = 403;
+    useCasesStatus = 404;
+    rejectMonitoring = true;
+    render(<MemoryRouter><Consultant /></MemoryRouter>);
+
+    expect(await screen.findByText("Requires the Microsoft Admin pack or Microsoft Admin capability.")).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Open Extensions / Packs" })).toHaveAttribute("href", "/system/extensions");
+    expect(screen.getByText("No Solutions Architect use cases are available.")).toBeInTheDocument();
+    expect(await screen.findByText(/Unable to load agent monitoring/)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Retry monitoring" })).toBeInTheDocument();
+    expect(screen.queryByText("Some sections couldn't load")).not.toBeInTheDocument();
+
+    rejectMonitoring = false;
+    fireEvent.click(screen.getByRole("button", { name: "Retry monitoring" }));
+    expect(await screen.findByText("Agents in scope")).toBeInTheDocument();
+  });
+
+  it("gives an empty blueprint list a path into solution discovery", async () => {
+    emptyBlueprints = true;
+    render(<MemoryRouter><Consultant /></MemoryRouter>);
+
+    expect(await screen.findByText(/No solution blueprints yet\. Create one:/)).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Solution discovery below" })).toHaveAttribute("href", "#solution-discovery");
+    expect(screen.getByRole("heading", { name: "Solution discovery" })).toBeInTheDocument();
   });
 
   it("keeps the blueprint list when discovery sessions fail", async () => {

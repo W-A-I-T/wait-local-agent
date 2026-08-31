@@ -2,7 +2,7 @@ import { FormEvent, useCallback, useEffect, useState } from "react";
 import { AlertTriangle, Compass, RefreshCw } from "lucide-react";
 import { Link } from "react-router-dom";
 import { useDashboard } from "../app/DashboardContext";
-import { apiFetch } from "../api/client";
+import { ApiRequestError, apiFetch } from "../api/client";
 import { StatusChip } from "../components/StatusChip";
 import { humanizeName } from "../lib/fields";
 import type {
@@ -39,6 +39,65 @@ const DEFAULT_POWER_APPS_ACTIONS = JSON.stringify([
   { id: "employee_lookup", connector_id: "m365", method: "GET" },
   { id: "employee_create", connector_id: "m365", method: "POST", approval_required: true },
 ], null, 2);
+
+type ConsultantSection = "blueprints" | "discoverySessions" | "useCases" | "monitoring";
+type SectionLoadStatus = "loading" | "ready" | "empty" | "gated" | "error";
+type SectionLoadState = { status: SectionLoadStatus; detail?: string };
+type SectionLoadStates = Record<ConsultantSection, SectionLoadState>;
+
+const SECTION_DETAILS: Record<ConsultantSection, { label: string; pack: string; retryLabel: string }> = {
+  blueprints: { label: "solution blueprints", pack: "Microsoft Admin", retryLabel: "blueprints" },
+  discoverySessions: { label: "guided discovery sessions", pack: "Microsoft Admin", retryLabel: "discovery sessions" },
+  useCases: { label: "Solutions Architect use cases", pack: "Microsoft Admin", retryLabel: "use cases" },
+  monitoring: { label: "agent monitoring", pack: "Microsoft Admin", retryLabel: "monitoring" },
+};
+
+const INITIAL_SECTION_STATES: SectionLoadStates = {
+  blueprints: { status: "loading" },
+  discoverySessions: { status: "loading" },
+  useCases: { status: "loading" },
+  monitoring: { status: "loading" },
+};
+
+function sectionStateForError(error: unknown): SectionLoadState {
+  if (error instanceof ApiRequestError && error.status === 403) {
+    return { status: "gated" };
+  }
+  if (error instanceof ApiRequestError && error.status === 404) {
+    return { status: "empty" };
+  }
+  return {
+    status: "error",
+    detail: error instanceof Error ? error.message : "The section could not be loaded.",
+  };
+}
+
+function SectionLoadNotice({
+  section,
+  state,
+  onRetry,
+}: {
+  section: ConsultantSection;
+  state: SectionLoadState;
+  onRetry: () => void;
+}) {
+  const details = SECTION_DETAILS[section];
+  if (state.status === "gated") {
+    return (
+      <div className="notice" role="status">
+        Requires the {details.pack} pack or Microsoft Admin capability. <Link to="/system/extensions">Open Extensions / Packs</Link>
+      </div>
+    );
+  }
+  if (state.status === "error") {
+    return (
+      <div className="notice danger" role="alert">
+        Unable to load {details.label}. {state.detail} <button type="button" onClick={onRetry}>Retry {details.retryLabel}</button>
+      </div>
+    );
+  }
+  return null;
+}
 
 export function Consultant() {
   const { canWrite, clientId: scopedClientId } = useDashboard();
@@ -82,56 +141,78 @@ export function Consultant() {
   const [playbookLoading, setPlaybookLoading] = useState(false);
   const [playbookNotice, setPlaybookNotice] = useState("");
   const [message, setMessage] = useState("");
-  const [loadNotice, setLoadNotice] = useState("");
   const [loading, setLoading] = useState(false);
+  const [sectionStates, setSectionStates] = useState<SectionLoadStates>(INITIAL_SECTION_STATES);
+
+  const setSectionState = useCallback((section: ConsultantSection, state: SectionLoadState) => {
+    setSectionStates((current) => ({ ...current, [section]: state }));
+  }, []);
+
+  const loadBlueprints = useCallback(async () => {
+    setSectionState("blueprints", { status: "loading" });
+    try {
+      const result = await apiFetch<ConsultantBlueprint[]>("/consultant/blueprints");
+      const rows = Array.isArray(result) ? result : [];
+      setBlueprints(rows);
+      setSelectedId((currentSelectedId) => (
+        currentSelectedId && rows.some((row) => row.id === currentSelectedId)
+          ? currentSelectedId
+          : rows[0]?.id ?? null
+      ));
+      setArchitecture((currentArchitecture) => (
+        currentArchitecture && rows.some((row) => row.id === currentArchitecture.blueprint_id)
+          ? currentArchitecture
+          : null
+      ));
+      setSectionState("blueprints", { status: rows.length ? "ready" : "empty" });
+    } catch (error) {
+      setSectionState("blueprints", sectionStateForError(error));
+    }
+  }, [setSectionState]);
+
+  const loadUseCases = useCallback(async () => {
+    setSectionState("useCases", { status: "loading" });
+    try {
+      const result = await apiFetch<{ use_cases: ConsultantUseCase[] }>("/consultant/use-cases");
+      const rows = Array.isArray(result.use_cases) ? result.use_cases : [];
+      setUseCases(rows);
+      setSectionState("useCases", { status: rows.length ? "ready" : "empty" });
+    } catch (error) {
+      setSectionState("useCases", sectionStateForError(error));
+    }
+  }, [setSectionState]);
+
+  const loadMonitoring = useCallback(async () => {
+    setSectionState("monitoring", { status: "loading" });
+    try {
+      const result = await apiFetch<ConsultantMonitoring>("/consultant/monitoring/agents");
+      setMonitoring(result);
+      setSectionState("monitoring", { status: "ready" });
+    } catch (error) {
+      setSectionState("monitoring", sectionStateForError(error));
+    }
+  }, [setSectionState]);
+
+  const loadDiscoverySessions = useCallback(async () => {
+    setSectionState("discoverySessions", { status: "loading" });
+    try {
+      const result = await apiFetch<ConsultantDiscoverySession[]>("/consultant/discovery/sessions");
+      const rows = Array.isArray(result) ? result : [];
+      setDiscoverySessions(rows);
+      setSectionState("discoverySessions", { status: rows.length ? "ready" : "empty" });
+    } catch (error) {
+      setSectionState("discoverySessions", sectionStateForError(error));
+    }
+  }, [setSectionState]);
 
   const refresh = useCallback(async () => {
     setLoading(true);
     try {
-      const [blueprintsResult, useCasesResult, monitoringResult, sessionsResult] = await Promise.allSettled([
-        apiFetch<ConsultantBlueprint[]>("/consultant/blueprints"),
-        apiFetch<{ use_cases: ConsultantUseCase[] }>("/consultant/use-cases"),
-        apiFetch<ConsultantMonitoring>("/consultant/monitoring/agents"),
-        apiFetch<ConsultantDiscoverySession[]>("/consultant/discovery/sessions"),
-      ]);
-      const failedSections: string[] = [];
-      if (blueprintsResult.status === "fulfilled") {
-        setBlueprints(blueprintsResult.value);
-        setSelectedId((currentSelectedId) => (
-          currentSelectedId && blueprintsResult.value.some((row) => row.id === currentSelectedId)
-            ? currentSelectedId
-            : blueprintsResult.value[0]?.id ?? null
-        ));
-        setArchitecture((currentArchitecture) => (
-          currentArchitecture && blueprintsResult.value.some((row) => row.id === currentArchitecture.blueprint_id)
-            ? currentArchitecture
-            : null
-        ));
-      } else {
-        failedSections.push("blueprints");
-      }
-      if (useCasesResult.status === "fulfilled") {
-        setUseCases(useCasesResult.value.use_cases);
-      } else {
-        failedSections.push("use cases");
-      }
-      if (monitoringResult.status === "fulfilled") {
-        setMonitoring(monitoringResult.value);
-      } else {
-        failedSections.push("monitoring");
-      }
-      if (sessionsResult.status === "fulfilled") {
-        setDiscoverySessions(sessionsResult.value);
-      } else {
-        failedSections.push("discovery sessions");
-      }
-      setLoadNotice(failedSections.length > 0
-        ? `Some sections couldn't load: ${failedSections.join(", ")}.`
-        : "");
+      await Promise.all([loadBlueprints(), loadUseCases(), loadMonitoring(), loadDiscoverySessions()]);
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [loadBlueprints, loadDiscoverySessions, loadMonitoring, loadUseCases]);
 
   useEffect(() => {
     void refresh();
@@ -479,8 +560,14 @@ export function Consultant() {
         </div>
         {message ? <div className="notice danger" role="alert"><AlertTriangle size={16} aria-hidden="true" />{message}</div> : null}
         {playbookNotice ? <div className="notice success" role="status">{playbookNotice} <Link to="/playbooks">Playbooks</Link></div> : null}
-        {loadNotice ? <div className="notice danger" role="alert"><AlertTriangle size={16} aria-hidden="true" />{loadNotice}</div> : null}
-        {blueprints.length === 0 ? <p>No solution blueprints are available for this tenant.</p> : (
+        <SectionLoadNotice section="blueprints" state={sectionStates.blueprints} onRetry={() => void loadBlueprints()} />
+        {sectionStates.blueprints.status === "loading" && blueprints.length === 0 ? <p className="screen-note">Loading solution blueprints…</p> : null}
+        {sectionStates.blueprints.status !== "loading" && sectionStates.blueprints.status !== "gated" && sectionStates.blueprints.status !== "error" && blueprints.length === 0 ? (
+          <>
+            <p className="screen-note">No solution blueprints are available for this tenant.</p>
+            <p>No solution blueprints yet. Create one: run <a href="#solution-discovery">Solution discovery below</a>, then Promote the result to a blueprint.</p>
+          </>
+        ) : blueprints.length > 0 ? (
           <div className="consultant-blueprint-list">
             {blueprints.map((blueprint) => (
               <button
@@ -495,7 +582,7 @@ export function Consultant() {
               </button>
             ))}
           </div>
-        )}
+        ) : null}
       </section>
 
       <section className="panel">
@@ -508,7 +595,7 @@ export function Consultant() {
         </div>
         <div className="notice">
           <strong>Local fixture only.</strong>{" "}
-          No Microsoft, PSA, RMM, documentation, Teams, live-provider, or deployment call is started. The walkthrough generates only local review manifests and a non-deployable package. It requires an existing tenant-scoped ticket and never seeds one.
+          No Microsoft, PSA, RMM, documentation, Teams, live-provider, or deployment call is started. The walkthrough generates only local review manifests and a non-deployable package. It requires an existing tenant-scoped ticket and never seeds one. You can start without a ticket in Solution discovery or blueprints.
         </div>
         <div className="grid">
           <label>
@@ -563,7 +650,7 @@ export function Consultant() {
         ) : null}
       </section>
 
-      <section className="panel">
+      <section className="panel" id="solution-discovery">
         <div className="panel-heading">
           <div>
             <h2>Solution discovery</h2>
@@ -654,6 +741,9 @@ export function Consultant() {
             ) : null}
           </div>
         ) : null}
+        <SectionLoadNotice section="discoverySessions" state={sectionStates.discoverySessions} onRetry={() => void loadDiscoverySessions()} />
+        {sectionStates.discoverySessions.status === "loading" && discoverySessions.length === 0 ? <p className="screen-note">Loading saved guided discovery sessions…</p> : null}
+        {sectionStates.discoverySessions.status === "empty" ? <p className="screen-note">No saved guided discovery sessions yet.</p> : null}
         <div className="notice">
           <strong>Guided discovery</strong>{" "}
           <span>Answer one bounded evidence question at a time. The assistant records your answers and does not infer missing requirements.</span>
@@ -736,6 +826,9 @@ export function Consultant() {
           </div>
           {monitoring ? <StatusChip status={monitoring.failed_runs ? "needs_review" : "completed"} /> : null}
         </div>
+        <SectionLoadNotice section="monitoring" state={sectionStates.monitoring} onRetry={() => void loadMonitoring()} />
+        {sectionStates.monitoring.status === "loading" && !monitoring ? <p className="screen-note">Loading agent monitoring…</p> : null}
+        {sectionStates.monitoring.status === "empty" ? <p className="screen-note">No agent monitoring data is available yet.</p> : null}
         {monitoring ? (
           <div className="flag-grid">
             <span><strong>{monitoring.agent_count}</strong><br />Agents in scope</span>
@@ -743,11 +836,13 @@ export function Consultant() {
             <span><strong>{monitoring.failed_runs}</strong><br />Failed runs</span>
           </div>
         ) : null}
+        <SectionLoadNotice section="useCases" state={sectionStates.useCases} onRetry={() => void loadUseCases()} />
+        {sectionStates.useCases.status === "loading" && useCases.length === 0 ? <p className="screen-note">Loading Solutions Architect use cases…</p> : null}
         {useCases.length > 0 ? (
           <div className="consultant-component-list">
             {useCases.map((useCase) => <UseCaseCard useCase={useCase} key={useCase.id} />)}
           </div>
-        ) : <p>No Solutions Architect use cases are available.</p>}
+        ) : sectionStates.useCases.status !== "loading" && sectionStates.useCases.status !== "gated" && sectionStates.useCases.status !== "error" ? <p>No Solutions Architect use cases are available.</p> : null}
       </section>
 
       <section className="panel">
