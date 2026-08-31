@@ -52,60 +52,56 @@ const primaryNavigation: NavigationGroup[] = [
     label: "Operations",
     items: [
       { to: "/tickets", label: "Tickets", icon: ClipboardList },
-      { to: "/approvals", label: "Approvals", icon: ClipboardCheck },
       { to: "/technician-chat", label: "Technician Chat", icon: MessageSquare },
-      { to: "/microsoft-admin", label: "Microsoft Admin", icon: ShieldCheck, microsoftAdminCapability: true },
-      { to: "/m365-actions", label: "M365 Actions", icon: ShieldCheck }
+      { to: "/microsoft-admin", label: "Microsoft Admin", icon: ShieldCheck, microsoftAdminCapability: true }
     ]
   },
   {
-    label: "Automations",
-    items: [
-      { to: "/playbooks", label: "Playbooks", icon: LibraryBig },
-      { to: "/workflows", label: "Workflows", icon: Workflow },
-      { to: "/agents", label: "Agents", icon: Bot },
-      { to: "/integrations/smart-actions", label: "Smart Actions", icon: Sparkles },
-      { to: "/automation/events", label: "Events", icon: Activity },
-      { to: "/automation/schedules", label: "Schedules", icon: CalendarClock }
-    ]
-  },
-  {
-    items: [{ to: "/consultant", label: "Solutions Architect", icon: Compass }]
-  },
-  {
-    label: "Evidence & Reports",
-    items: [
-      { to: "/reports", label: "Reports", icon: BarChart3 },
-      { to: "/analytics", label: "Analytics", icon: BarChart3 },
-      { to: "/audit", label: "Audit", icon: FileSearch },
-      { to: "/collectors", label: "Collectors", icon: Database }
-    ]
-  },
-  {
-    items: [{ to: "/founder", label: "Launch Passport", icon: Sparkles }]
-  },
-  {
-    label: "Setup",
+    label: "Control",
     items: [
       { to: "/connectors", label: "Connectors", icon: GitBranch },
-      { to: "/integrations/connector-instances", label: "Connector Instances", icon: Database, adminOnly: true },
-      { to: "/microsoft-admin/access", label: "Microsoft Admin Access", icon: ShieldCheck, adminOnly: true },
+      { to: "/workflows", label: "Workflows", icon: Workflow },
+      { to: "/approvals", label: "Approvals", icon: ClipboardCheck },
+      { to: "/executions", label: "Executions", icon: Activity },
+      { to: "/audit", label: "Audit", icon: FileSearch },
+      { to: "/reports", label: "Reports", icon: BarChart3 }
+    ]
+  },
+  {
+    label: "Workspace",
+    items: [
       { to: "/knowledge", label: "Knowledge", icon: BookOpenText },
-      { to: "/settings", label: "Settings", icon: Activity }
+      { to: "/automation/schedules", label: "Schedules", icon: CalendarClock },
+      { to: "/workflow-designer", label: "Workflow Designer", icon: Workflow },
+      { to: "/agents", label: "Agents", icon: Bot }
+    ]
+  },
+  {
+    label: "Solutions",
+    items: [
+      { to: "/m365-actions", label: "M365 Actions", icon: ShieldCheck },
+      { to: "/consultant", label: "Solutions Architect", icon: Compass }
     ]
   }
 ];
 
 const advancedNavigation: NavItem[] = [
+  { to: "/playbooks", label: "Playbooks", icon: LibraryBig },
+  { to: "/integrations/smart-actions", label: "Smart Actions", icon: Sparkles },
+  { to: "/automation/events", label: "Events", icon: Activity },
+  { to: "/analytics", label: "Analytics", icon: BarChart3 },
+  { to: "/collectors", label: "Collectors", icon: Database },
+  { to: "/founder", label: "Launch Passport", icon: Sparkles },
+  { to: "/integrations/connector-instances", label: "Connector Instances", icon: Database, adminOnly: true },
+  { to: "/microsoft-admin/access", label: "Microsoft Admin Access", icon: ShieldCheck, adminOnly: true },
+  { to: "/settings", label: "Settings", icon: Activity },
   { to: "/operations/reconciliation", label: "Sync / Reconciliation", icon: Database, adminOnly: true },
   { to: "/system/appliance-health", label: "Appliance Health", icon: ShieldCheck, adminOnly: true },
   { to: "/system/extensions", label: "Extensions / Packs", icon: PackageOpen, adminOnly: true },
   { to: "/integrations/mcp", label: "MCP", icon: Network, adminOnly: true },
-  { to: "/workflow-designer", label: "Workflow Designer", icon: Workflow },
   { to: "/templates", label: "Templates", icon: Files },
   { to: "/scheduled-jobs", label: "Scheduled Jobs", icon: CalendarClock },
   { to: "/smart-actions/runs", label: "Smart Action Runs", icon: Activity },
-  { to: "/executions", label: "Executions", icon: Activity },
   { to: "/backfills", label: "Backfills", icon: ListChecks }
 ];
 
