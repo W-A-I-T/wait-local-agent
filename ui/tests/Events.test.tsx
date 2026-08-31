@@ -1,80 +1,92 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { Events } from "../src/screens/Events";
 import { Sidebar } from "../src/app/Sidebar";
+import { DashboardProvider } from "../src/app/DashboardContext";
+import { Events } from "../src/screens/Events";
 
-const dashboard = vi.hoisted(() => ({
-  role: "viewer" as "admin" | "viewer",
-  roleResolved: true
-}));
-
-vi.mock("../src/app/DashboardContext", () => ({
-  useDashboard: () => dashboard
-}));
+function jsonResponse(payload: unknown, init?: ResponseInit): Response {
+  return new Response(JSON.stringify(payload), {
+    status: init?.status ?? 200,
+    headers: { "Content-Type": "application/json" },
+    ...init
+  });
+}
 
 const deliveries = [
   {
     id: 7,
-    idempotency_key: "evt-7",
     event_type: "ticket.updated",
-    entity_type: "ticket",
-    entity_id: "HALO-1",
-    payload: { status: "Open" },
+    entity_id: "HALO-7",
+    client_id: "alpha",
     status: "failed",
-    error_detail: "Agent triage was blocked",
-    matched_agent_count: 1,
-    retry_count: 1,
+    attempt: 2,
     max_retries: 3,
-    retry_delay_seconds: 60,
-    next_retry_at: "2026-08-15T10:02:00Z",
-    received_at: "2026-08-15T10:00:00Z",
-    processed_at: "2026-08-15T10:01:00Z",
-    client_id: "acme"
+    error: "Agent triage was blocked",
+    created_at: "2026-08-16T08:00:00Z",
+    updated_at: "2026-08-16T08:01:00Z",
+    payload: { source: "halopsa.write" }
   },
   {
     id: 8,
-    idempotency_key: "evt-8",
     event_type: "ticket.created",
-    entity_type: "ticket",
-    entity_id: "HALO-2",
+    entity_id: "HALO-8",
+    client_id: "alpha",
     status: "delivered",
-    retry_count: 0,
+    attempt: 1,
     max_retries: 3,
-    retry_delay_seconds: 60,
-    received_at: "2026-08-15T09:00:00Z",
-    processed_at: "2026-08-15T09:00:01Z",
-    client_id: "acme"
+    error: "",
+    created_at: "2026-08-16T08:02:00Z",
+    updated_at: "2026-08-16T08:02:30Z",
+    payload: {}
   },
   {
     id: 9,
-    idempotency_key: "evt-9",
     event_type: "ticket.pending",
-    entity_type: "ticket",
-    entity_id: "HALO-3",
+    entity_id: "HALO-9",
+    client_id: "alpha",
     status: "pending",
-    retry_count: 0,
+    attempt: 0,
     max_retries: 3,
-    retry_delay_seconds: 60,
-    received_at: "2026-08-15T08:00:00Z",
-    processed_at: "",
-    client_id: "acme"
+    error: "",
+    created_at: "2026-08-16T08:03:00Z",
+    updated_at: "2026-08-16T08:03:00Z",
+    payload: {}
   }
 ];
 
-const history = [{
-  id: 1,
-  event_type: "halopsa.write",
-  subject_id: "HALO-1",
-  status: "succeeded",
-  message: "Ticket update recorded",
-  payload_json: "{}",
-  created_at: "2026-08-15T10:01:00Z",
-  client_id: "acme"
-}];
+const history = [
+  {
+    id: 1,
+    event_type: "ticket.updated",
+    entity_id: "HALO-7",
+    client_id: "alpha",
+    status: "accepted",
+    summary: "Ticket update recorded",
+    created_at: "2026-08-16T08:00:00Z"
+  }
+];
+
+vi.mock("../src/app/DashboardContext", async () => {
+  const actual = await vi.importActual<typeof import("../src/app/DashboardContext")>("../src/app/DashboardContext");
+  return {
+    ...actual,
+    useDashboard: () => ({
+      role: "viewer",
+      roleResolved: true,
+      endUserSupportEnabled: false,
+      configurationSteps: [],
+      configurationLoading: false,
+      isConfigured: true
+    })
+  };
+});
+
+vi.mock("../src/hooks/useMicrosoftAdminAccess", () => ({
+  useMicrosoftAdminAccess: () => ({ allowed: false, navAllowed: false, resolved: true, grants: [], error: "", refresh: vi.fn() })
+}));
 
 afterEach(() => {
-  vi.restoreAllMocks();
   vi.unstubAllGlobals();
 });
 
@@ -105,7 +117,7 @@ describe("Events screen", () => {
     expect(screen.getByText("Pending")).toBeInTheDocument();
     expect(screen.getByText("halopsa.write")).toBeInTheDocument();
     expect(screen.getByText("Ticket update recorded")).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: "Activity" })).toHaveAttribute("href", "/executions");
+    expect(screen.getByRole("link", { name: "Activity" })).toHaveAttribute("href", "/activity/runs");
 
     fireEvent.click(screen.getByRole("button", { name: "Open delivery 7: ticket.updated" }));
     expect(await screen.findByRole("heading", { name: "Delivery 7" })).toBeInTheDocument();
@@ -131,9 +143,3 @@ describe("Events screen", () => {
     await waitFor(() => expect(screen.queryByText("Loading Events…")).not.toBeInTheDocument());
   });
 });
-
-function jsonResponse(payload: unknown): Response {
-  return new Response(JSON.stringify(payload), {
-    headers: { "Content-Type": "application/json" }
-  });
-}
