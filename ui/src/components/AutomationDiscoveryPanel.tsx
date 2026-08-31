@@ -61,7 +61,7 @@ export function AutomationDiscoveryPanel() {
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState("");
 
-  const runDiscovery = async () => {
+  const runDiscovery = () => {
     const normalizedClient = clientId.trim();
     if (!normalizedClient) {
       setMessage("Select a client before analyzing historical tickets.");
@@ -69,20 +69,22 @@ export function AutomationDiscoveryPanel() {
     }
     setLoading(true);
     setMessage("");
-    try {
-      const query = new URLSearchParams({
-        client_id: normalizedClient,
-        days: String(days),
-        min_tickets: String(minTickets)
+    const query = new URLSearchParams({
+      client_id: normalizedClient,
+      days: String(days),
+      min_tickets: String(minTickets)
+    });
+    void apiFetch<DiscoveryResult>(`/packs/automation-discovery/historical?${query.toString()}`)
+      .then((data) => {
+        setResult(data);
+      })
+      .catch((error: unknown) => {
+        setResult(null);
+        setMessage(error instanceof Error ? error.message : "Unable to analyze historical PSA tickets.");
+      })
+      .finally(() => {
+        setLoading(false);
       });
-      const data = await apiFetch<DiscoveryResult>(`/packs/automation-discovery/historical?${query.toString()}`);
-      setResult(data);
-    } catch (error) {
-      setResult(null);
-      setMessage(error instanceof Error ? error.message : "Unable to analyze historical PSA tickets.");
-    } finally {
-      setLoading(false);
-    }
   };
 
   return (
@@ -100,7 +102,7 @@ export function AutomationDiscoveryPanel() {
 
       <div className="analytics-filters">
         <label>
-          Client ID
+          Discovery client ID
           <input value={clientId} onChange={(event) => setClientId(event.target.value)} placeholder="Required client" />
         </label>
         <label>
@@ -123,7 +125,7 @@ export function AutomationDiscoveryPanel() {
           />
         </label>
         <div className="analytics-filter-actions">
-          <button type="button" disabled={loading} onClick={() => void runDiscovery()}>
+          <button type="button" disabled={loading} onClick={runDiscovery}>
             {loading ? "Analyzing…" : "Analyze ticket history"}
           </button>
         </div>
