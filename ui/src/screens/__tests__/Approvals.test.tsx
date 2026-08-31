@@ -27,14 +27,14 @@ function approval(overrides: Partial<ApprovalRequest> = {}): ApprovalRequest {
 
 function renderApproval(
   request: ReturnType<typeof approval>,
-  options: { liveWritesReady?: boolean; isAdmin?: boolean } = {}
+  options: { canWrite?: boolean; liveWritesReady?: boolean; isAdmin?: boolean } = {}
 ) {
   const executeApproval = vi.fn().mockResolvedValue(undefined);
   const refresh = vi.fn().mockResolvedValue(undefined);
   mockedUseDashboard.mockReturnValue({
     approvalRequests: [request],
     pendingApprovals: [],
-    canWrite: true,
+    canWrite: options.canWrite ?? true,
     isAdmin: options.isAdmin ?? true,
     busyId: null,
     updateApproval: vi.fn(),
@@ -94,10 +94,48 @@ describe("Approvals execute button", () => {
 
   it.each([
     ["connectwise.x", false, "approved"],
-    ["smart_action:foo", true, "approved"],
     ["m365.user.disable", true, "pending"]
   ])("disables %s when the approval cannot be explicitly executed", (actionType, canExecute, status) => {
     expect(renderApproval(approval({ action_type: actionType, can_execute: canExecute, status })).executeButton).toBeDisabled();
+  });
+
+  it("explains why an unmapped action has no manual execute button", () => {
+    mockedUseDashboard.mockReturnValue({
+      approvalRequests: [approval({ action_type: "smart_action:foo" })],
+      pendingApprovals: [],
+      canWrite: true,
+      isAdmin: true,
+      busyId: null,
+      updateApproval: vi.fn(),
+      executeApproval: vi.fn(),
+      savePayloadFields: vi.fn(),
+      workflowFor: () => undefined,
+      refresh: vi.fn(),
+      liveWritesReady: false
+    } as never);
+    render(<Approvals />);
+
+    expect(screen.queryByRole("button", { name: "Execute" })).not.toBeInTheDocument();
+    expect(screen.getByText("Executed from its own workflow after approval — no manual execute here.")).toBeInTheDocument();
+  });
+
+  it("explains the technician requirement for mapped execute actions", () => {
+    const { executeButton } = renderApproval(approval(), { canWrite: false });
+
+    expect(executeButton).toBeDisabled();
+    expect(executeButton).toHaveAttribute("title", "Requires technician access");
+    expect(screen.queryByRole("button", { name: "Approve" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Reject" })).not.toBeInTheDocument();
+  });
+
+  it("explains HaloPSA Safe Mode when it gates an approved execution", () => {
+    const { executeButton } = renderApproval(
+      approval({ action_type: "halopsa.add_note", can_execute: false }),
+      { liveWritesReady: false }
+    );
+
+    expect(executeButton).toBeDisabled();
+    expect(executeButton).toHaveAttribute("title", "Writes are in Safe Mode — see the write-gate indicator");
   });
 
   it("enables approved Microsoft runbooks only for administrators", () => {
