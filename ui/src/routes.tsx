@@ -38,6 +38,7 @@ import { MicrosoftAdminCapabilityGate } from "./components/MicrosoftAdminCapabil
 import { RoleGate } from "./components/RoleGate";
 import { useDashboard } from "./app/DashboardContext";
 import { AutomationsShell } from "./app/AutomationsShell";
+import { ActivityShell } from "./app/ActivityShell";
 
 const AzureLighthouse = lazy(() => import("./screens/AzureLighthouse").then(({ AzureLighthouse: screen }) => ({ default: screen })));
 const NotFound = lazy(() => import("./screens/NotFound"));
@@ -97,8 +98,8 @@ export function AppRoutes() {
       <Route path="microsoft-admin/access" element={<MicrosoftAdminAccessRoute />} />
       <Route path="knowledge" element={<Knowledge />} />
       <Route path="workflows" element={<AutomationsShell><Workflows /></AutomationsShell>} />
-      <Route path="automation/events" element={<Events />} />
-      <Route path="automation/schedules" element={<Schedules />} />
+      <Route path="automation/events" element={<ActivityShell><Events /></ActivityShell>} />
+      <Route path="automation/schedules" element={<ActivityShell><Schedules /></ActivityShell>} />
       <Route path="workflow-designer" element={<AutomationsShell><WorkflowDesigner /></AutomationsShell>} />
       <Route path="templates" element={<AutomationsShell><Templates /></AutomationsShell>} />
       <Route path="playbooks" element={<AutomationsShell><Playbooks /></AutomationsShell>} />
@@ -106,22 +107,22 @@ export function AppRoutes() {
       <Route path="collectors" element={<Collectors />} />
       <Route path="reports" element={<Reports />} />
       <Route path="audit" element={<Audit />} />
-      <Route path="scheduled-jobs" element={<ScheduledJobs />} />
+      <Route path="scheduled-jobs" element={<ActivityShell><ScheduledJobs /></ActivityShell>} />
       <Route path="founder" element={<FounderJourney />} />
       <Route path="tickets" element={<Tickets />} />
       <Route path="approvals" element={<Approvals />} />
       <Route path="analytics" element={<Analytics />} />
       <Route path="agents" element={<Agents />} />
       <Route path="technician-chat" element={<TechnicianChat />} />
-      <Route path="backfills" element={<Backfills />} />
-      <Route path="executions" element={<Executions />} />
+      <Route path="backfills" element={<ActivityShell><Backfills /></ActivityShell>} />
+      <Route path="executions" element={<ActivityShell><Executions /></ActivityShell>} />
       <Route path="settings" element={<Settings />} />
       <Route path="system/appliance-health" element={<ApplianceHealth />} />
       <Route path="system/extensions" element={<ExtensionsPacks />} />
       <Route path="integrations/mcp" element={<McpIntegration />} />
       <Route path="integrations/connector-instances" element={<ConnectorInstances />} />
       <Route path="integrations/smart-actions" element={<AutomationsShell><SmartActionCatalog /></AutomationsShell>} />
-      <Route path="smart-actions/runs" element={<SmartActionRuns />} />
+      <Route path="smart-actions/runs" element={<ActivityShell><SmartActionRuns /></ActivityShell>} />
       <Route path="operations/reconciliation" element={<SyncReconciliation />} />
       <Route
         path="*"

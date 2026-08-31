@@ -1,11 +1,9 @@
 import type { LucideIcon } from "lucide-react";
 import {
   Activity,
-  ListChecks,
   Bot,
   BarChart3,
   BookOpenText,
-  CalendarClock,
   ClipboardCheck,
   ClipboardList,
   Compass,
@@ -60,7 +58,7 @@ const primaryNavigation: NavigationGroup[] = [
       { to: "/connectors", label: "Connectors", icon: GitBranch },
       { to: "/workflows", label: "Automations", icon: Workflow },
       { to: "/approvals", label: "Approvals", icon: ClipboardCheck },
-      { to: "/executions", label: "Executions", icon: Activity },
+      { to: "/executions", label: "Activity", icon: Activity },
       { to: "/audit", label: "Audit", icon: FileSearch },
       { to: "/reports", label: "Reports", icon: BarChart3 }
     ]
@@ -69,7 +67,6 @@ const primaryNavigation: NavigationGroup[] = [
     label: "Workspace",
     items: [
       { to: "/knowledge", label: "Knowledge", icon: BookOpenText },
-      { to: "/automation/schedules", label: "Schedules", icon: CalendarClock },
       { to: "/agents", label: "Agents", icon: Bot }
     ]
   },
@@ -84,7 +81,6 @@ const primaryNavigation: NavigationGroup[] = [
 ];
 
 const advancedNavigation: NavItem[] = [
-  { to: "/automation/events", label: "Events", icon: Activity },
   { to: "/analytics", label: "Analytics", icon: BarChart3 },
   { to: "/collectors", label: "Collectors", icon: Database },
   { to: "/founder", label: "Launch Passport", icon: Sparkles },
@@ -94,10 +90,7 @@ const advancedNavigation: NavItem[] = [
   { to: "/operations/reconciliation", label: "Sync / Reconciliation", icon: Database, adminOnly: true },
   { to: "/system/appliance-health", label: "Appliance Health", icon: ShieldCheck, adminOnly: true },
   { to: "/system/extensions", label: "Extensions / Packs", icon: PackageOpen, adminOnly: true },
-  { to: "/integrations/mcp", label: "MCP", icon: Network, adminOnly: true },
-  { to: "/scheduled-jobs", label: "Scheduled Jobs", icon: CalendarClock },
-  { to: "/smart-actions/runs", label: "Smart Action Runs", icon: Activity },
-  { to: "/backfills", label: "Backfills", icon: ListChecks }
+  { to: "/integrations/mcp", label: "MCP", icon: Network, adminOnly: true }
 ];
 
 function SidebarLink({ item }: { item: NavItem }) {

@@ -33,4 +33,14 @@ describe("AutomationsShell", () => {
     expect(screen.getByText(tab.description)).toBeInTheDocument();
     expect(screen.getByRole("link", { name: tab.label })).toHaveAttribute("aria-current", "page");
   });
+
+  it("links Run history to Activity from the Run tab description", () => {
+    render(
+      <MemoryRouter initialEntries={["/workflows"]}>
+        <AutomationsShell><div /></AutomationsShell>
+      </MemoryRouter>
+    );
+
+    expect(screen.getByRole("link", { name: "Run history → Activity" })).toHaveAttribute("href", "/executions");
+  });
 });
