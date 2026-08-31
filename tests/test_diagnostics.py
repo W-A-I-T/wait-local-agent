@@ -420,14 +420,15 @@ def test_logging_and_upload_configuration_from_environment(monkeypatch: pytest.M
 def test_default_log_directory_is_not_repo_relative(monkeypatch: pytest.MonkeyPatch, settings: Settings) -> None:
     from wait_local_agent.structured_logging import configured_log_directory
 
-    monkeypatch.setenv("XDG_STATE_HOME", str(settings.data_path.parent / "state-home"))
+    state_env = "LOCALAPPDATA" if os.name == "nt" else "XDG_STATE_HOME"
+    monkeypatch.setenv(state_env, str(settings.data_path.parent / "state-home"))
     relative = replace(settings, data_path=Path(".wait-local-agent/state.db"), log_dir=None)
     log_dir = configured_log_directory(relative)
     assert log_dir.is_absolute()
     assert log_dir.is_relative_to(settings.data_path.parent / "state-home")
     assert diagnostics_module._log_directory(relative).is_relative_to(settings.data_path.parent / "state-home")
 
-    monkeypatch.delenv("XDG_STATE_HOME")
+    monkeypatch.delenv(state_env)
     fallback = configured_log_directory(relative)
     assert fallback.is_absolute()
     assert "wait-local-agent" in fallback.parts
@@ -509,7 +510,7 @@ def test_install_mode_build_commit_and_ip_edge_helpers(monkeypatch: pytest.Monke
     monkeypatch.delattr(sys, "frozen")
     monkeypatch.setattr(Path, "exists", lambda self: False)
     assert diagnostics_module._install_mode() == "cli"
-    monkeypatch.setattr(Path, "exists", lambda self: str(self) == "/.dockerenv")
+    monkeypatch.setattr(Path, "exists", lambda self: self == Path("/.dockerenv"))
     assert diagnostics_module._install_mode() == "docker"
     monkeypatch.setattr(Path, "exists", original_exists)
 
