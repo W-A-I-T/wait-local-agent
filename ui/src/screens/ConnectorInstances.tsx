@@ -1,9 +1,11 @@
-import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
+import { Fragment, useCallback, useEffect, useRef, useState, type FormEvent } from "react";
 import { apiFetch } from "../api/client";
 import type { ClientConnectorMapping, ClientDirectoryEntry, ConnectorInstance, PollSummary } from "../api/types";
 import { useDashboard } from "../app/DashboardContext";
 import { RoleGate } from "../components/RoleGate";
 import { StatusChip } from "../components/StatusChip";
+import { EmptyState } from "../components/EmptyState";
+import { LoadingState } from "../components/LoadingState";
 
 type ConnectorType = "halopsa" | "connectwise";
 
@@ -31,6 +33,14 @@ type ConnectForm = {
   publicKey: string;
   privateKey: string;
   connectWiseClientId: string;
+};
+
+type InstanceEditDraft = {
+  connectorType: string;
+  displayName: string;
+  clientId: string;
+  configJson: string;
+  status: string;
 };
 
 const initialConnectForm: ConnectForm = {
@@ -65,6 +75,11 @@ export function ConnectorInstances() {
   const [waitClients, setWaitClients] = useState<ClientDirectoryEntry[]>([]);
   const [selectedInstanceId, setSelectedInstanceId] = useState<string | null>(null);
   const [selectedInstance, setSelectedInstance] = useState<ConnectorInstance | null>(null);
+  const [instanceEditDrafts, setInstanceEditDrafts] = useState<Record<string, InstanceEditDraft>>({});
+  const [editingInstanceId, setEditingInstanceId] = useState<string | null>(null);
+  const [instanceEditErrors, setInstanceEditErrors] = useState<Record<string, string>>({});
+  const [loadingInstanceDetailId, setLoadingInstanceDetailId] = useState<string | null>(null);
+  const [savingInstanceId, setSavingInstanceId] = useState<string | null>(null);
   const [mappings, setMappings] = useState<ClientConnectorMapping[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -151,12 +166,16 @@ export function ConnectorInstances() {
     setDiscoverError("");
     setMappingsLoading(true);
     try {
-      const result = await apiFetch<ClientConnectorMapping[]>(
-        `/client-connector-mappings?connector_instance_id=${encodeURIComponent(instance.connector_instance_id)}`
-      );
+      const [detail, result] = await Promise.all([
+        Promise.resolve().then(() => apiFetch<ConnectorInstance>(`/connector-instances/${encodeURIComponent(instance.connector_instance_id)}`)).catch(() => instance),
+        apiFetch<ClientConnectorMapping[]>(
+          `/client-connector-mappings?connector_instance_id=${encodeURIComponent(instance.connector_instance_id)}`
+        )
+      ]);
       if (requestId !== mappingRequestId.current) {
         return;
       }
+      setSelectedInstance(detail);
       if (!Array.isArray(result)) {
         throw new Error("The appliance returned invalid connector mapping data.");
       }
@@ -171,6 +190,84 @@ export function ConnectorInstances() {
       }
     }
   }, []);
+
+  async function editInstance(instance: ConnectorInstance) {
+    if (loadingInstanceDetailId || savingInstanceId) return;
+    setLoadingInstanceDetailId(instance.connector_instance_id);
+    setInstanceEditErrors((current) => ({ ...current, [instance.connector_instance_id]: "" }));
+    try {
+      const detail = await apiFetch<ConnectorInstance>(`/connector-instances/${encodeURIComponent(instance.connector_instance_id)}`);
+      setInstanceEditDrafts((current) => ({ ...current, [instance.connector_instance_id]: editDraftFromInstance(detail) }));
+      setEditingInstanceId(instance.connector_instance_id);
+    } catch (requestError) {
+      setInstanceEditErrors((current) => ({
+        ...current,
+        [instance.connector_instance_id]: requestError instanceof Error ? requestError.message : "Unable to load connector instance details."
+      }));
+    } finally {
+      setLoadingInstanceDetailId(null);
+    }
+  }
+
+  function updateInstanceDraft(instanceId: string, changes: Partial<InstanceEditDraft>) {
+    setInstanceEditDrafts((current) => ({ ...current, [instanceId]: { ...current[instanceId], ...changes } }));
+    setInstanceEditErrors((current) => ({ ...current, [instanceId]: "" }));
+  }
+
+  async function saveInstance(instance: ConnectorInstance) {
+    if (savingInstanceId) return;
+    const draft = instanceEditDrafts[instance.connector_instance_id];
+    if (!draft) return;
+    const configJson = draft.configJson.trim();
+    if (!draft.displayName.trim() || !configJson) {
+      setInstanceEditErrors((current) => ({ ...current, [instance.connector_instance_id]: "Display name and configuration are required." }));
+      return;
+    }
+    try {
+      const parsedConfig = JSON.parse(configJson);
+      if (!parsedConfig || typeof parsedConfig !== "object" || Array.isArray(parsedConfig)) {
+        throw new Error("Configuration must be a JSON object.");
+      }
+    } catch (error) {
+      setInstanceEditErrors((current) => ({
+        ...current,
+        [instance.connector_instance_id]: error instanceof Error ? error.message : "Configuration must be valid JSON."
+      }));
+      return;
+    }
+    const body: Record<string, unknown> = {};
+    if (draft.connectorType !== instance.connector_type) body.connector_type = draft.connectorType;
+    if (draft.displayName.trim() !== instance.display_name) body.display_name = draft.displayName.trim();
+    if (draft.clientId.trim() !== (instance.client_id ?? "")) body.client_id = draft.clientId.trim() || null;
+    if (configJson !== instance.config_json) body.config_json = configJson;
+    if (draft.status !== instance.status) body.status = draft.status;
+    if (Object.keys(body).length === 0) {
+      setInstanceEditErrors((current) => ({ ...current, [instance.connector_instance_id]: "Change at least one field before saving." }));
+      return;
+    }
+    setSavingInstanceId(instance.connector_instance_id);
+    setInstanceEditErrors((current) => ({ ...current, [instance.connector_instance_id]: "" }));
+    try {
+      const updated = await apiFetch<ConnectorInstance>(`/connector-instances/${encodeURIComponent(instance.connector_instance_id)}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body)
+      });
+      setInstances((current) => current.map((item) => item.connector_instance_id === updated.connector_instance_id ? updated : item));
+      if (selectedInstanceId === updated.connector_instance_id) setSelectedInstance(updated);
+      setEditingInstanceId(null);
+      await refreshConfiguration();
+    } catch (requestError) {
+      setInstanceEditErrors((current) => ({
+        ...current,
+        [instance.connector_instance_id]: requestStatus(requestError) === 409
+          ? "This connector instance conflicts with another configured instance. Review the values and try again."
+          : requestError instanceof Error ? requestError.message : "Unable to save connector instance changes."
+      }));
+    } finally {
+      setSavingInstanceId(null);
+    }
+  }
 
   const discoverPath = selectedInstance ? discoveryPath(selectedInstance) : null;
 
@@ -530,16 +627,7 @@ export function ConnectorInstances() {
           </div>
         ) : null}
 
-        {loading ? (
-          <section className="panel" aria-busy="true">
-            <p className="screen-note">Loading Connector Instances…</p>
-          </section>
-        ) : instances.length === 0 ? (
-          <section className="panel empty-state">
-            <h3>No connector instances are configured.</h3>
-            <p>Configured connector instances will appear here for administrator review.</p>
-          </section>
-        ) : (
+        {loading ? <LoadingState label="Loading Connector Instances…" /> : instances.length === 0 ? <EmptyState title="No connector instances are configured." why="Configured connector instances will appear here for administrator review." /> : (
           <section className="panel" aria-labelledby="connector-instances-heading">
             <div className="panel-heading">
               <div>
@@ -557,12 +645,14 @@ export function ConnectorInstances() {
                     <th scope="col">Status</th>
                     <th scope="col">Owning client</th>
                     <th scope="col">Credential</th>
+                    <th scope="col">Actions</th>
                   </tr>
                 </thead>
                 <tbody>
                   {instances.map((instance) => {
                     const selected = instance.connector_instance_id === selectedInstanceId;
                     return (
+                      <Fragment key={instance.connector_instance_id}>
                       <tr key={instance.connector_instance_id}>
                         <td>
                           <button
@@ -579,7 +669,52 @@ export function ConnectorInstances() {
                         <td><StatusChip status={instance.status} /></td>
                         <td>{instance.client_id || "Unassigned"}</td>
                         <td><PresenceBadge configured={Boolean(instance.credential_ref)} /></td>
+                        <td>
+                          <button className="icon-button" type="button" onClick={() => void editInstance(instance)} disabled={loadingInstanceDetailId === instance.connector_instance_id || savingInstanceId !== null}>
+                            {loadingInstanceDetailId === instance.connector_instance_id ? "Loading…" : "Edit"}
+                          </button>
+                        </td>
                       </tr>
+                      {editingInstanceId === instance.connector_instance_id && instanceEditDrafts[instance.connector_instance_id] ? (
+                        <tr key={`${instance.connector_instance_id}-edit`}>
+                          <td colSpan={6}>
+                            <form className="playbook-edit-form" onSubmit={(event) => { event.preventDefault(); void saveInstance(instance); }}>
+                              <div className="grid">
+                                <label>Connector type
+                                  <input value={instanceEditDrafts[instance.connector_instance_id].connectorType} onChange={(event) => updateInstanceDraft(instance.connector_instance_id, { connectorType: event.target.value })} />
+                                </label>
+                                <label>Display name
+                                  <input aria-label="Edit connector display name" value={instanceEditDrafts[instance.connector_instance_id].displayName} onChange={(event) => updateInstanceDraft(instance.connector_instance_id, { displayName: event.target.value })} />
+                                </label>
+                                <label>WAIT client (optional)
+                                  <select value={instanceEditDrafts[instance.connector_instance_id].clientId} onChange={(event) => updateInstanceDraft(instance.connector_instance_id, { clientId: event.target.value })}>
+                                    <option value="">No WAIT client association</option>
+                                    {waitClients.map((client) => <option key={client.client_id} value={client.client_id}>{client.name} ({client.client_id})</option>)}
+                                  </select>
+                                </label>
+                                <label>Status
+                                  <select value={instanceEditDrafts[instance.connector_instance_id].status} onChange={(event) => updateInstanceDraft(instance.connector_instance_id, { status: event.target.value })}>
+                                    <option value="active">Active</option>
+                                    <option value="inactive">Inactive</option>
+                                    <option value="disabled">Disabled</option>
+                                    {instance.status === "error" ? <option value="error">Error</option> : null}
+                                  </select>
+                                </label>
+                              </div>
+                              <label>Configuration JSON
+                                <textarea rows={5} value={instanceEditDrafts[instance.connector_instance_id].configJson} onChange={(event) => updateInstanceDraft(instance.connector_instance_id, { configJson: event.target.value })} spellCheck={false} />
+                              </label>
+                              <p className="screen-note">Credential references are never editable or displayed here. Store a replacement credential separately before changing its reference.</p>
+                              {instanceEditErrors[instance.connector_instance_id] ? <p className="inline-error" role="alert">{instanceEditErrors[instance.connector_instance_id]}</p> : null}
+                              <div className="template-actions">
+                                <button type="submit" disabled={savingInstanceId === instance.connector_instance_id}>{savingInstanceId === instance.connector_instance_id ? "Saving…" : "Save changes"}</button>
+                                <button type="button" className="icon-button" disabled={savingInstanceId === instance.connector_instance_id} onClick={() => setEditingInstanceId(null)}>Cancel</button>
+                              </div>
+                            </form>
+                          </td>
+                        </tr>
+                      ) : null}
+                      </Fragment>
                     );
                   })}
                 </tbody>
@@ -605,6 +740,12 @@ export function ConnectorInstances() {
               </button>
             ) : <span>No instance selected</span>}
           </div>
+          {selectedInstance ? <div className="event-row" aria-label="Connector instance detail">
+            <span><strong>{selectedInstance.connector_type}</strong> · {selectedInstance.connector_instance_id}</span>
+            <span>Status: {selectedInstance.status}</span>
+            <span>Client: {selectedInstance.client_id || "Unassigned"}</span>
+            <span>Credential: {selectedInstance.credential_ref ? "Configured" : "Not configured"}</span>
+          </div> : null}
 
           {!selectedInstance ? (
             <p className="screen-note">Select a connector instance above to load its external-company to WAIT-client mappings.</p>
@@ -778,6 +919,16 @@ function slug(value: string): string {
 
 function PresenceBadge({ configured }: { configured: boolean }) {
   return <span className={`status-chip ${configured ? "ok" : "neutral"}`}>{configured ? "Configured" : "Not configured"}</span>;
+}
+
+function editDraftFromInstance(instance: ConnectorInstance): InstanceEditDraft {
+  return {
+    connectorType: instance.connector_type,
+    displayName: instance.display_name,
+    clientId: instance.client_id ?? "",
+    configJson: instance.config_json,
+    status: instance.status
+  };
 }
 
 function VerificationBadge({ verified }: { verified: boolean }) {

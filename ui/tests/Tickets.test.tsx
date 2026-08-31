@@ -31,6 +31,9 @@ describe("Tickets customer conversation", () => {
       if (path === "/tickets/EUS-1/end-user-messages/1/halopsa-drafts" && init?.method === "POST") {
         return Promise.resolve(json({ approval_request_id: 7 }));
       }
+      if (path === "/connectors/connectwise/tickets/CW-1/drafts" && init?.method === "POST") {
+        return Promise.resolve(json({ approval_request_id: 8 }));
+      }
       throw new Error(`Unexpected request: ${path}`);
     }));
   });
@@ -69,6 +72,24 @@ describe("Tickets customer conversation", () => {
     await waitFor(() => expect(vi.mocked(fetch)).toHaveBeenCalledWith(
       "/tickets/EUS-1/end-user-messages/1/halopsa-drafts",
       expect.objectContaining({ method: "POST", body: JSON.stringify({ external_ticket_id: "HALO-42" }) })
+    ));
+  });
+
+  it("creates a ConnectWise approval draft through the parity route", async () => {
+    render(<Tickets />);
+
+    fireEvent.change(screen.getByPlaceholderText("EUS-..."), { target: { value: "CW-1" } });
+    fireEvent.change(screen.getByLabelText("Draft provider"), { target: { value: "connectwise" } });
+    fireEvent.change(screen.getByLabelText("Draft payload"), { target: { value: "status=In Progress" } });
+    fireEvent.click(screen.getByRole("button", { name: "Create draft" }));
+
+    expect(await screen.findByText("ConnectWise approval draft 8 created. Review it before execution.")).toBeInTheDocument();
+    await waitFor(() => expect(vi.mocked(fetch)).toHaveBeenCalledWith(
+      "/connectors/connectwise/tickets/CW-1/drafts",
+      expect.objectContaining({
+        method: "POST",
+        body: JSON.stringify({ action_type: "update_status", fields: { status: "In Progress" } })
+      })
     ));
   });
 });

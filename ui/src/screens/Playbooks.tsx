@@ -36,6 +36,13 @@ type RestoreRequest = {
   version: number;
 };
 
+type SubscriptionDraft = {
+  inputMapping: string;
+  enabled: boolean;
+  eventType: string;
+  playbookId: string;
+};
+
 function uniqueValues(values: string[]): string[] {
   return [...new Set(values.filter(Boolean))];
 }
@@ -86,6 +93,10 @@ export function Playbooks() {
   const [editErrors, setEditErrors] = useState<Record<string, string>>({});
   const [savingEntryId, setSavingEntryId] = useState<string | null>(null);
   const [confirmingRestore, setConfirmingRestore] = useState<RestoreRequest | null>(null);
+  const [subscriptionDrafts, setSubscriptionDrafts] = useState<Record<string, SubscriptionDraft>>({});
+  const [editingSubscriptionId, setEditingSubscriptionId] = useState<string | null>(null);
+  const [subscriptionEditErrors, setSubscriptionEditErrors] = useState<Record<string, string>>({});
+  const [savingSubscriptionId, setSavingSubscriptionId] = useState<string | null>(null);
   const [message, setMessage] = useState("");
 
   const entryBySourceId = useMemo(
@@ -363,6 +374,59 @@ export function Playbooks() {
     }
   }
 
+  async function editSubscription(subscription: MspPlaybookSubscription) {
+    if (!canWrite) return;
+    try {
+      const current = await apiFetch<MspPlaybookSubscription>(`/msp/playbook-subscriptions/${encodeURIComponent(subscription.id)}`);
+      setSubscriptionDrafts((drafts) => ({
+        ...drafts,
+        [subscription.id]: {
+          inputMapping: jsonText(current.input_mapping),
+          enabled: current.enabled,
+          eventType: current.event_type,
+          playbookId: current.playbook_id
+        }
+      }));
+      setSubscriptionEditErrors((errors) => ({ ...errors, [subscription.id]: "" }));
+      setEditingSubscriptionId(subscription.id);
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Unable to load the event subscription.");
+    }
+  }
+
+  async function saveSubscription(subscription: MspPlaybookSubscription) {
+    if (!canWrite) return;
+    const draft = subscriptionDrafts[subscription.id];
+    if (!draft) return;
+    let inputMapping: unknown;
+    try {
+      inputMapping = JSON.parse(draft.inputMapping);
+    } catch {
+      setSubscriptionEditErrors((errors) => ({ ...errors, [subscription.id]: "Input mapping must be valid JSON." }));
+      return;
+    }
+    if (!inputMapping || typeof inputMapping !== "object" || Array.isArray(inputMapping)) {
+      setSubscriptionEditErrors((errors) => ({ ...errors, [subscription.id]: "Input mapping must be a JSON object." }));
+      return;
+    }
+    setSavingSubscriptionId(subscription.id);
+    setSubscriptionEditErrors((errors) => ({ ...errors, [subscription.id]: "" }));
+    try {
+      const updated = await apiFetch<MspPlaybookSubscription>(`/msp/playbook-subscriptions/${encodeURIComponent(subscription.id)}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ input_mapping: inputMapping, enabled: draft.enabled })
+      });
+      setSubscriptions((current) => current.map((item) => item.id === updated.id ? updated : item));
+      setEditingSubscriptionId(null);
+      setMessage("Event subscription saved.");
+    } catch (error) {
+      setSubscriptionEditErrors((errors) => ({ ...errors, [subscription.id]: error instanceof Error ? error.message : "Unable to save the event subscription." }));
+    } finally {
+      setSavingSubscriptionId(null);
+    }
+  }
+
   return (
     <div className="screen-stack">
       <section className="panel">
@@ -592,9 +656,43 @@ export function Playbooks() {
                 <span>{subscription.event_type}</span>
               </div>
               <StatusChip status={subscription.enabled ? "enabled" : "disabled"} />
+              <button type="button" disabled={!canWrite} onClick={() => void editSubscription(subscription)}>Edit</button>
               <button type="button" disabled={!canWrite} onClick={() => void toggleSubscription(subscription)}>
                 {subscription.enabled ? "Disable" : "Enable"}
               </button>
+              {editingSubscriptionId === subscription.id && subscriptionDrafts[subscription.id] ? (
+                <form className="playbook-edit-form" onSubmit={(event) => { event.preventDefault(); void saveSubscription(subscription); }}>
+                  <div className="grid">
+                    <label>
+                      Event type
+                      <input value={subscriptionDrafts[subscription.id].eventType} readOnly />
+                    </label>
+                    <label>
+                      Playbook binding
+                      <input value={playbookNameById.get(subscriptionDrafts[subscription.id].playbookId) ?? subscriptionDrafts[subscription.id].playbookId} readOnly />
+                    </label>
+                  </div>
+                  <label>
+                    Input mapping JSON
+                    <textarea rows={5} value={subscriptionDrafts[subscription.id].inputMapping} onChange={(event) => setSubscriptionDrafts((drafts) => ({
+                      ...drafts,
+                      [subscription.id]: { ...drafts[subscription.id], inputMapping: event.target.value }
+                    }))} spellCheck={false} />
+                  </label>
+                  <label className="checkbox-label">
+                    <input type="checkbox" checked={subscriptionDrafts[subscription.id].enabled} onChange={(event) => setSubscriptionDrafts((drafts) => ({
+                      ...drafts,
+                      [subscription.id]: { ...drafts[subscription.id], enabled: event.target.checked }
+                    }))} />
+                    Enabled
+                  </label>
+                  {subscriptionEditErrors[subscription.id] ? <p className="inline-error" role="alert">{subscriptionEditErrors[subscription.id]}</p> : null}
+                  <div className="template-actions">
+                    <button type="submit" disabled={savingSubscriptionId === subscription.id}>{savingSubscriptionId === subscription.id ? "Saving…" : "Save changes"}</button>
+                    <button type="button" className="icon-button" disabled={savingSubscriptionId === subscription.id} onClick={() => setEditingSubscriptionId(null)}>Cancel</button>
+                  </div>
+                </form>
+              ) : null}
             </article>
           ))}
         </div>

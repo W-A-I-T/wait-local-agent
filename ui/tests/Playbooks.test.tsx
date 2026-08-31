@@ -138,6 +138,44 @@ describe("Playbooks", () => {
     expect(body.provenance).toBe("Updated by Acme operator.");
   });
 
+  it("edits a subscription through the verified GET/PATCH contract", async () => {
+    const subscription = {
+      id: "subscription-1",
+      playbook_id: "ticket-intake-review",
+      event_type: "ticket.created",
+      client_id: "acme",
+      input_mapping: { ticket_id: "entity_id" },
+      enabled: true,
+      created_at: "2026-08-08T00:00:00Z",
+      updated_at: "2026-08-08T00:00:00Z"
+    };
+    const fetchMock = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      const path = String(input);
+      if (path === "/msp/playbooks") return Promise.resolve(new Response(JSON.stringify([{ id: "ticket-intake-review", name: "Ticket Intake Review", version: 1, trigger: "ticket.created", description: "Review tickets.", risk_level: "low", steps: [], output_evidence: [] }]), { status: 200 }));
+      if (path === "/msp/playbook-entries") return Promise.resolve(new Response(JSON.stringify([]), { status: 200 }));
+      if (path === "/msp/playbook-subscriptions" && !init?.method) return Promise.resolve(new Response(JSON.stringify([subscription]), { status: 200 }));
+      if (path === "/msp/playbook-subscriptions/subscription-1" && !init?.method) return Promise.resolve(new Response(JSON.stringify(subscription), { status: 200 }));
+      if (path === "/msp/playbook-subscriptions/subscription-1" && init?.method === "PATCH") {
+        const body = JSON.parse(String(init.body));
+        return Promise.resolve(new Response(JSON.stringify({ ...subscription, ...body, updated_at: "2026-08-08T01:00:00Z" }), { status: 200 }));
+      }
+      throw new Error(`Unexpected request: ${path}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(<MemoryRouter><Playbooks /></MemoryRouter>);
+
+    expect((await screen.findAllByText("ticket.created")).length).toBeGreaterThan(0);
+    fireEvent.click(screen.getByRole("button", { name: "Edit" }));
+    fireEvent.change(await screen.findByLabelText("Input mapping JSON"), { target: { value: '{"ticket_id":"id"}' } });
+    fireEvent.click(screen.getByRole("button", { name: "Save changes" }));
+
+    expect(await screen.findByText("Event subscription saved.")).toBeInTheDocument();
+    const patchCall = fetchMock.mock.calls.find(([input, init]) => String(input) === "/msp/playbook-subscriptions/subscription-1" && init?.method === "PATCH");
+    expect(patchCall).toBeDefined();
+    expect(JSON.parse(String(patchCall?.[1]?.body))).toEqual({ input_mapping: { ticket_id: "id" }, enabled: true });
+  });
+
   it("loads two selected revisions, renders their diff, and confirms restore", async () => {
     const entry = {
       id: "entry-qbr",
