@@ -183,7 +183,8 @@ def test_unified_activity_route_respects_tenant_scope_and_filters(settings) -> N
         connection.execute(
             """
             insert into execution_runs
-              (run_kind, source_run_id, actor, client_id, status, started_at, finished_at, trigger_source, metadata_json)
+              (run_kind, source_run_id, actor, client_id, status,
+               started_at, finished_at, trigger_source, metadata_json)
             values ('agent', 101, 'alpha-tech', 'alpha', 'completed', '2026-08-30T10:00:00+00:00',
                     '2026-08-30T10:01:00+00:00', 'manual', '{}')
             """
@@ -191,7 +192,8 @@ def test_unified_activity_route_respects_tenant_scope_and_filters(settings) -> N
         connection.execute(
             """
             insert into execution_runs
-              (run_kind, source_run_id, actor, client_id, status, started_at, finished_at, trigger_source, metadata_json)
+              (run_kind, source_run_id, actor, client_id, status,
+               started_at, finished_at, trigger_source, metadata_json)
             values ('workflow', 202, 'beta-tech', 'beta', 'failed', '2026-08-30T11:00:00+00:00',
                     '2026-08-30T11:01:00+00:00', 'event', '{}')
             """
