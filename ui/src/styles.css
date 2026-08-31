@@ -2416,6 +2416,34 @@ dd svg {
   justify-content: flex-end;
 }
 
+.m365-category {
+  display: grid;
+  gap: 12px;
+}
+
+.m365-category > .panel-heading {
+  margin-bottom: 0;
+}
+
+.m365-action-grid {
+  display: grid;
+  gap: 18px;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 360px), 1fr));
+}
+
+.m365-action-card {
+  margin: 0;
+}
+
+.m365-action-card form {
+  display: grid;
+  gap: 12px;
+}
+
+.m365-action-card .notice {
+  margin-bottom: 0;
+}
+
 .schema-field {
   display: grid;
   gap: 6px;
