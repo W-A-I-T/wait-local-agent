@@ -3,7 +3,10 @@ import { MemoryRouter } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { Consultant } from "../src/screens/Consultant";
 
-const dashboard = vi.hoisted(() => ({ clientId: "acme" }));
+const dashboard = vi.hoisted(() => ({
+  clientId: "acme",
+  clients: [{ client_id: "acme", name: "Acme Support", status: "active" }]
+}));
 
 vi.mock("../src/app/DashboardContext", () => ({
   useDashboard: () => ({ canWrite: true, clientId: dashboard.clientId })
@@ -346,7 +349,8 @@ describe("Consultant", () => {
     render(<MemoryRouter><Consultant /></MemoryRouter>);
 
     expect(await screen.findByText("No solution blueprints are available for this tenant.")).toBeInTheDocument();
-    fireEvent.change(screen.getByLabelText("Customer workspace ID"), { target: { value: "acme-browser" } });
+    fireEvent.click(screen.getByRole("button", { name: "Enter a new workspace ID" }));
+    fireEvent.change(screen.getByRole("textbox", { name: "Customer workspace ID" }), { target: { value: "acme-browser" } });
     fireEvent.change(screen.getByLabelText("Business goal"), { target: { value: "We want to automate employee onboarding" } });
     fireEvent.click(screen.getByRole("button", { name: "Assess discovery" }));
 

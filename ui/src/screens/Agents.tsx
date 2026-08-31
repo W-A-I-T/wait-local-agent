@@ -4,6 +4,7 @@ import { apiFetch } from "../api/client";
 import { EmptyState } from "../components/EmptyState";
 import { LoadingState } from "../components/LoadingState";
 import { AgentToolPicker } from "../components/AgentToolPicker";
+import { ClientIdSelect } from "../components/ClientIdSelect";
 import type { AgentApprovalRule, AgentDefinition, AgentFailurePolicy, AgentPlan, AgentRevision, AgentRevisionDiff, AgentRunDetail, AgentTool } from "../api/types";
 
 type RevisionSelection = {
@@ -40,7 +41,7 @@ function renderDiffValue(value: unknown): string {
 }
 
 export function Agents() {
-  const { canWrite, connectors = [] } = useDashboard();
+  const { canWrite, clients = [], connectors = [] } = useDashboard();
   const [agents, setAgents] = useState<AgentDefinition[]>([]);
   const [tools, setTools] = useState<AgentTool[]>([]);
   const [loading, setLoading] = useState(true);
@@ -381,7 +382,7 @@ export function Agents() {
         <form id="agent-form" className="draft-form" onSubmit={createAgent}>
           <div className="grid">
             <label>Name<input value={name} onChange={(event) => setName(event.target.value)} placeholder="MFA triage" /></label>
-            <label>Client id (optional)<input value={clientId} onChange={(event) => setClientId(event.target.value)} /></label>
+            <ClientIdSelect label="Client id (optional)" value={clientId} onChange={setClientId} clients={clients} id="agent-client-id" />
           </div>
           <label>Description<textarea rows={2} value={description} onChange={(event) => setDescription(event.target.value)} /></label>
           <label>Approval deadline (hours, optional)<input type="number" min="1" max="720" step="1" value={approvalExpiryHours} onChange={(event) => setApprovalExpiryHours(event.target.value)} placeholder="Tool default" /></label>

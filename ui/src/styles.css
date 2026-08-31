@@ -2509,6 +2509,30 @@ button:disabled {
   gap: 6px;
 }
 
+.client-id-select {
+  display: grid;
+  gap: 6px;
+}
+
+.client-id-select-toggle {
+  align-items: flex-start;
+  background: transparent;
+  border: 0;
+  color: #1f6f55;
+  font-size: 0.82rem;
+  justify-content: flex-start;
+  padding: 0;
+  text-align: left;
+  width: fit-content;
+}
+
+.client-id-select-toggle:hover,
+.client-id-select-toggle:focus-visible {
+  background: transparent;
+  color: #235d43;
+  text-decoration: underline;
+}
+
 .draft-form input,
 .draft-form select,
 .draft-form textarea {

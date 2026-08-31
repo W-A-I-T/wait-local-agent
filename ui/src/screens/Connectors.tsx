@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState, type FormEvent } from "react";
 import { useDashboard } from "../app/DashboardContext";
 import { apiFetch } from "../api/client";
 import { type ConnectorStatus } from "../api/types";
+import { ClientIdSelect } from "../components/ClientIdSelect";
 import { ConnectorExplorer } from "../components/ConnectorExplorer";
 import { connectorSetup } from "../lib/connectorSetup";
 
@@ -44,7 +45,7 @@ type ScreenConnectActionResponse = {
 type NotionCommentActionResponse = ScreenConnectActionResponse;
 
 export function Connectors() {
-  const { connectors, haloConnector, huduConnector, writeHealth, loading, canWrite } = useDashboard();
+  const { clients = [], connectors, haloConnector, huduConnector, writeHealth, loading, canWrite } = useDashboard();
   const [halopsaHealth, setHalopsaHealth] = useState<HealthState | null>(null);
   const [connectwiseHealth, setConnectwiseHealth] = useState<HealthState | null>(null);
   const [connectwiseWriteHealth, setConnectwiseWriteHealth] = useState<HealthState | null>(null);
@@ -349,7 +350,7 @@ export function Connectors() {
         </div>
         <p className="screen-note">Prepare a bounded note or message for one locally mapped session. WAIT validates the tenant/session map and places the proposed provider mutation in the approval queue.</p>
         <div className="grid">
-          <label>Client ID<input aria-label="ScreenConnect client ID" value={screenConnectClientId} onChange={(event) => setScreenConnectClientId(event.target.value)} placeholder="acme" /></label>
+          <ClientIdSelect label="ScreenConnect client ID" value={screenConnectClientId} onChange={setScreenConnectClientId} clients={clients} required id="screenconnect-client-id" />
           <label>Session UUID<input aria-label="ScreenConnect session UUID" value={screenConnectSessionId} onChange={(event) => setScreenConnectSessionId(event.target.value)} placeholder="11111111-2222-3333-4444-555555555555" /></label>
         </div>
         <form className="draft-form" onSubmit={(event) => void prepareScreenConnectAction(event, "screenconnect-session-note")}>
@@ -372,7 +373,7 @@ export function Connectors() {
         <p className="screen-note">Prepare a bounded Markdown comment for one locally mapped Notion page. The provider call happens only after technician approval.</p>
         <form className="draft-form" onSubmit={(event) => void prepareNotionComment(event)}>
           <div className="grid">
-            <label>Client ID<input aria-label="Notion client ID" value={notionClientId} onChange={(event) => setNotionClientId(event.target.value)} placeholder="acme" /></label>
+            <ClientIdSelect label="Notion client ID" value={notionClientId} onChange={setNotionClientId} clients={clients} required id="notion-client-id" />
             <label>Page UUID<input aria-label="Notion page UUID" value={notionPageId} onChange={(event) => setNotionPageId(event.target.value)} placeholder="11111111-2222-3333-4444-555555555555" /></label>
           </div>
           <label>Markdown comment<textarea aria-label="Notion Markdown comment" rows={3} maxLength={10000} value={notionComment} onChange={(event) => setNotionComment(event.target.value)} placeholder="Add a bounded review comment" /></label>

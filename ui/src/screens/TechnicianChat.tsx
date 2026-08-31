@@ -2,10 +2,11 @@ import { FormEvent, useCallback, useEffect, useState } from "react";
 import { CheckCircle2, MessageSquare, Plus, Send, XCircle } from "lucide-react";
 import { apiFetch } from "../api/client";
 import { useDashboard } from "../app/DashboardContext";
+import { ClientIdSelect } from "../components/ClientIdSelect";
 import type { SmartActionRun, TechnicianChatResponse, TechnicianChatSession } from "../api/types";
 
 export function TechnicianChat() {
-  const { canWrite } = useDashboard();
+  const { canWrite, clients = [] } = useDashboard();
   const [sessions, setSessions] = useState<TechnicianChatSession[]>([]);
   const [activeSession, setActiveSession] = useState<TechnicianChatSession | null>(null);
   const [clientId, setClientId] = useState("");
@@ -202,7 +203,7 @@ export function TechnicianChat() {
         {plan ? <div className="technician-plan" role="status"><strong>Bounded plan preview · {plan.status}</strong>{plan.blocked_reason ? <p>{plan.blocked_reason}</p> : null}{plan.steps.length ? <ol>{plan.steps.map((step) => <li key={`${step.index}-${step.tool_id}`}><strong>{step.name}</strong><span>{step.reason} · {step.approval_required ? "approval required" : "read-only or deterministic"}</span></li>)}</ol> : <p>No approved steps were selected.</p>}</div> : null}
         <form className="draft-form" onSubmit={(event) => void createSession(event)}>
           <div className="grid">
-            <label>Client id (optional for a scoped technician token)<input value={clientId} onChange={(event) => setClientId(event.target.value)} placeholder="acme" /></label>
+            <ClientIdSelect label="Client id (optional for a scoped technician token)" value={clientId} onChange={setClientId} clients={clients} id="technician-client-id" />
             <label>Ticket id (optional)<input value={ticketId} onChange={(event) => setTicketId(event.target.value)} placeholder="TCK-1001" /></label>
           </div>
           <button type="submit" disabled={busy !== null}><Plus size={17} aria-hidden="true" />{busy === "create" ? "Starting…" : "New chat session"}</button>

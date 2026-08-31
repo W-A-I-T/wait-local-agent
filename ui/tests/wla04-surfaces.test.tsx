@@ -32,7 +32,7 @@ describe("wla-04 onboarding and parity surfaces", () => {
     vi.stubGlobal("fetch", fetchMock);
 
     render(<Knowledge />);
-    const parser = await screen.findByRole("combobox");
+    const parser = await screen.findByLabelText("Parser");
     expect(Array.from(parser.querySelectorAll("option")).map((option) => option.value)).toEqual(["auto", "plain", "markdown", "pdf"]);
 
     fireEvent.change(screen.getByPlaceholderText("/path/to/docs"), { target: { value: "/workspace/knowledge" } });
