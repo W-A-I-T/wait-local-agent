@@ -3,6 +3,7 @@ from __future__ import annotations
 import csv
 import io
 import json
+import os
 import re
 import shutil
 import sqlite3
@@ -24,7 +25,10 @@ from slowapi.errors import RateLimitExceeded
 from slowapi.extension import _rate_limit_exceeded_handler
 from slowapi.middleware import SlowAPIMiddleware
 from slowapi.util import get_remote_address
+from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.middleware.trustedhost import TrustedHostMiddleware
+from starlette.staticfiles import StaticFiles
+from starlette.types import Scope
 
 from wait_local_agent import __version__
 from wait_local_agent.agents import AgentDefinitionError, AgentService
@@ -959,6 +963,30 @@ class QuarantineReclassificationRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
+class SPAStaticFiles(StaticFiles):
+    """Serve compiled assets and fall back to the dashboard entrypoint."""
+
+    def __init__(self, *, directory: Path) -> None:
+        super().__init__(directory=directory)
+        self.index_path = directory / "index.html"
+
+    async def get_response(self, path: str, scope: Scope) -> Response:
+        # The API is intentionally not mounted below /api today, but reserve
+        # that namespace so a future API route cannot be hidden by the SPA.
+        reserved_prefixes = ("api", "docs", "packs")
+        reserved = path == "openapi.json" or any(
+            path == prefix or path.startswith(f"{prefix}/") for prefix in reserved_prefixes
+        )
+
+        try:
+            return await super().get_response(path, scope)
+        except StarletteHTTPException as exc:
+            if exc.status_code != 404 or scope["method"] not in {"GET", "HEAD"} or reserved:
+                raise
+
+        return FileResponse(self.index_path, media_type="text/html")
+
+
 def create_app(settings: Settings | None = None) -> FastAPI:
     active_settings = settings or load_settings()
     if active_settings.demo_mode:
@@ -1126,6 +1154,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             ),
             "m365_configured": bool(active_settings.m365_graph_base_url and active_settings.m365_access_token),
         }
+
+    @app.get("/healthz", include_in_schema=False)
+    @limiter.exempt
+    def healthz() -> dict[str, str]:
+        return {"status": "ok"}
 
     @app.get("/auth/role")
     def auth_role(context: ViewerAccess) -> dict[str, object]:
@@ -7020,6 +7053,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             "next_run_at": job.next_run_at,
             "params": _safe_json_object(job.params_json),
         }
+
+    ui_dist_value = os.getenv("WAIT_UI_DIST", "").strip()
+    if ui_dist_value:
+        ui_dist = Path(ui_dist_value)
+        if ui_dist.is_dir() and (ui_dist / "index.html").is_file():
+            app.mount("/", SPAStaticFiles(directory=ui_dist), name="ui")
 
     return app
 
