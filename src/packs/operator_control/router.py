@@ -181,7 +181,10 @@ def create_router() -> APIRouter:
         return {
             "principal": principal_to_dict(row),
             "credential": token,
-            "credential_notice": "This credential is returned once. All prior credentials for this principal are revoked.",
+            "credential_notice": (
+                "This credential is returned once. "
+                "All prior credentials for this principal are revoked."
+            ),
         }
 
     @router.post("/principals/{principal_id}/credentials/revoke-all")
