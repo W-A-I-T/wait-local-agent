@@ -152,3 +152,10 @@ jobs:
       - run: npx playwright install --with-deps chromium
         working-directory: ui
       - run: WAIT_COMPOSE_RUN_BROWSER=true scripts/test_compose_integration.sh
+
+  prod-compose:
+    timeout-minutes: 25
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - run: scripts/test_prod_compose.sh

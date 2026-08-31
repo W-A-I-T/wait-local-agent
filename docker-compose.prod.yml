@@ -1,0 +1,31 @@
+services:
+  api:
+    image: ghcr.io/w-a-i-t/wait-local-agent:${WAIT_IMAGE_TAG:-stable}
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      WAIT_DATA_PATH: /data/state.db
+      WAIT_ALLOWED_DOC_ROOT: /app/examples/sample_docs
+      WAIT_DEMO_MODE: ${WAIT_DEMO_MODE:-false}
+      WAIT_API_TOKEN: ${WAIT_API_TOKEN:-}
+      WAIT_ADMIN_TOKEN: ${WAIT_ADMIN_TOKEN:-}
+      WAIT_TECH_TOKEN: ${WAIT_TECH_TOKEN:-}
+      WAIT_VIEWER_TOKEN: ${WAIT_VIEWER_TOKEN:-}
+      WAIT_SECRETS_BACKEND: ${WAIT_SECRETS_BACKEND:-fernet}
+      WAIT_VAULT_KEY: ${WAIT_VAULT_KEY:-}
+      WAIT_VAULT_PATH: /data/vault
+      WAIT_TRUSTED_HOSTS: ${WAIT_TRUSTED_HOSTS:-127.0.0.1,localhost}
+    ports:
+      - "127.0.0.1:${WAIT_COMPOSE_API_PORT:-8788}:8788"
+    volumes:
+      - wait-local-agent-data:/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8788/healthz', timeout=3)"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  wait-local-agent-data:

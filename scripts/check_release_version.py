@@ -4,6 +4,7 @@ import json
 import re
 import sys
 import tomllib
+from argparse import ArgumentParser
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -12,6 +13,10 @@ PEP440_VERSION = "2.0.0rc1"
 
 
 def main() -> int:
+    parser = ArgumentParser(description="Check that release metadata is aligned.")
+    parser.add_argument("--tag", help="also verify a release tag such as v2.0.0-rc.1")
+    args = parser.parse_args()
+
     pyproject = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
     cargo = tomllib.loads((ROOT / "desktop/src-tauri/Cargo.toml").read_text(encoding="utf-8"))
     ui_package = json.loads((ROOT / "ui/package.json").read_text(encoding="utf-8"))
@@ -44,6 +49,14 @@ def main() -> int:
         print("release version check failed:", file=sys.stderr)
         print("\n".join(failures), file=sys.stderr)
         return 1
+    if args.tag is not None:
+        tag_version = args.tag.removeprefix("v")
+        if args.tag == tag_version or tag_version != EXTERNAL_VERSION:
+            print(
+                f"release tag check failed: {args.tag!r} does not match {EXTERNAL_VERSION!r}",
+                file=sys.stderr,
+            )
+            return 1
     print(f"release version aligned: {EXTERNAL_VERSION} (Python {PEP440_VERSION})")
     return 0
 
