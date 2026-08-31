@@ -24,7 +24,7 @@ describe("MicrosoftAdminCapabilityGate", () => {
   });
 
   it("fails closed while the capability is unresolved", () => {
-    mockedAccess.mockReturnValue({ allowed: false, resolved: false, grants: [], error: "", refresh: vi.fn() });
+    mockedAccess.mockReturnValue({ allowed: false, navAllowed: false, resolved: false, grants: [], error: "", refresh: vi.fn() });
     renderGate();
 
     expect(screen.getByText("Checking Microsoft Admin access…")).toBeInTheDocument();
@@ -32,7 +32,7 @@ describe("MicrosoftAdminCapabilityGate", () => {
   });
 
   it("renders a direct-route denial when the selected client is not granted", () => {
-    mockedAccess.mockReturnValue({ allowed: false, resolved: true, grants: [], error: "", refresh: vi.fn() });
+    mockedAccess.mockReturnValue({ allowed: false, navAllowed: false, resolved: true, grants: [], error: "", refresh: vi.fn() });
     renderGate();
 
     expect(screen.getByRole("alert")).toHaveTextContent("Microsoft Admin access denied");
@@ -40,7 +40,7 @@ describe("MicrosoftAdminCapabilityGate", () => {
   });
 
   it("renders protected content only after a capability grant resolves", () => {
-    mockedAccess.mockReturnValue({ allowed: true, resolved: true, grants: [], error: "", refresh: vi.fn() });
+    mockedAccess.mockReturnValue({ allowed: true, navAllowed: true, resolved: true, grants: [], error: "", refresh: vi.fn() });
     renderGate();
 
     expect(screen.getByText("protected content")).toBeInTheDocument();

@@ -27,9 +27,14 @@ export function useMicrosoftAdminAccess() {
       && (grant.client_id === null || (selectedClientId !== "" && grant.client_id === selectedClientId))
     ));
   }, [grants, resolved, selectedClientId]);
+  const navAllowed = useMemo(() => {
+    if (!resolved) return false;
+    return grants.some((grant) => grant.capability_key === MICROSOFT_ADMIN_CAPABILITY);
+  }, [grants, resolved]);
 
   return {
     allowed,
+    navAllowed,
     resolved,
     grants,
     error: capabilityError ?? "",

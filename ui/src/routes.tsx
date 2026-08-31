@@ -1,4 +1,5 @@
-import { Navigate, Route, Routes } from "react-router-dom";
+import { lazy, Suspense } from "react";
+import { Route, Routes } from "react-router-dom";
 import { Approvals } from "./screens/Approvals";
 import { Analytics } from "./screens/Analytics";
 import { Agents } from "./screens/Agents";
@@ -37,6 +38,17 @@ import { MicrosoftAdminCapabilityGate } from "./components/MicrosoftAdminCapabil
 import { RoleGate } from "./components/RoleGate";
 import { useDashboard } from "./app/DashboardContext";
 
+const AzureLighthouse = lazy(() => import("./screens/AzureLighthouse").then(({ AzureLighthouse: screen }) => ({ default: screen })));
+const NotFound = lazy(() => import("./screens/NotFound"));
+
+function RouteLoading() {
+  return (
+    <section className="panel" aria-live="polite">
+      <h2>Loading screen…</h2>
+    </section>
+  );
+}
+
 function MicrosoftAdminAccessRoute() {
   const { role, roleResolved } = useDashboard();
   return (
@@ -71,6 +83,16 @@ export function AppRoutes() {
           </MicrosoftAdminCapabilityGate>
         )}
       />
+      <Route
+        path="microsoft-admin/azure-lighthouse"
+        element={(
+          <MicrosoftAdminCapabilityGate>
+            <Suspense fallback={<RouteLoading />}>
+              <AzureLighthouse />
+            </Suspense>
+          </MicrosoftAdminCapabilityGate>
+        )}
+      />
       <Route path="microsoft-admin/access" element={<MicrosoftAdminAccessRoute />} />
       <Route path="knowledge" element={<Knowledge />} />
       <Route path="workflows" element={<Workflows />} />
@@ -100,7 +122,14 @@ export function AppRoutes() {
       <Route path="integrations/smart-actions" element={<SmartActionCatalog />} />
       <Route path="smart-actions/runs" element={<SmartActionRuns />} />
       <Route path="operations/reconciliation" element={<SyncReconciliation />} />
-      <Route path="*" element={<Navigate to="/" replace />} />
+      <Route
+        path="*"
+        element={(
+          <Suspense fallback={<RouteLoading />}>
+            <NotFound />
+          </Suspense>
+        )}
+      />
     </Routes>
   );
 }
