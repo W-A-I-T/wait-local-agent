@@ -11,9 +11,13 @@ describe("ActivityShell", () => {
       </MemoryRouter>
     );
 
+    const smartActionTab = activityTabs.find((tab) => tab.to === "/smart-actions/runs");
+    expect(smartActionTab).toBeDefined();
+    if (!smartActionTab) throw new Error("Missing Smart Action Runs activity tab");
+
     expect(screen.getByRole("heading", { name: "Activity & scheduling" })).toBeInTheDocument();
     expect(screen.getByText("Smart Action Runs", { selector: ".automations-subtitle" })).toBeInTheDocument();
-    expect(screen.getByText(activityTabs[3].description)).toBeInTheDocument();
+    expect(screen.getByText(smartActionTab.description)).toBeInTheDocument();
     expect(screen.getByText("Existing screen content")).toBeInTheDocument();
 
     for (const tab of activityTabs) {
