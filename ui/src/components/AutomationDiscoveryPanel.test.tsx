@@ -1,4 +1,4 @@
-import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { apiFetch } from "../api/client";
 import { AutomationDiscoveryPanel } from "./AutomationDiscoveryPanel";
@@ -79,19 +79,29 @@ describe("AutomationDiscoveryPanel", () => {
     expect(screen.getByText(/Review the opportunity before enabling anything/)).toBeInTheDocument();
   });
 
-  it("renders API failures without retaining stale results", async () => {
-    let rejectRequest: ((reason?: unknown) => void) | undefined;
-    mockedApiFetch.mockImplementation(
-      () => new Promise((_resolve, reject) => { rejectRequest = reject; })
-    );
+  it("renders an explicit empty-evidence state without implying automation was enabled", async () => {
+    mockedApiFetch.mockResolvedValue({
+      ...result,
+      ticket_count: 12,
+      opportunity_count: 0,
+      opportunities: [],
+      labor: {
+        ...result.labor,
+        measured_minutes: 0,
+        measured: false,
+        measured_ticket_count: 0,
+        estimate_minutes: 0,
+        derivation: "No normalized PSA time entries were available; no labor duration was inferred."
+      },
+      next_step: "Collect more historical evidence before reviewing an automation candidate."
+    });
     render(<AutomationDiscoveryPanel />);
     fireEvent.change(screen.getByLabelText("Discovery client ID"), { target: { value: "acme" } });
     fireEvent.click(screen.getByRole("button", { name: "Analyze ticket history" }));
-    await waitFor(() => expect(rejectRequest).toBeDefined());
-    await act(async () => {
-      rejectRequest?.(new Error("mapping scope required"));
-      await Promise.resolve();
-    });
-    expect(await screen.findByRole("alert")).toHaveTextContent("mapping scope required");
+
+    expect(await screen.findByText("No repeated ticket family reached the selected evidence threshold.")).toBeInTheDocument();
+    expect(screen.getByText("Unavailable")).toBeInTheDocument();
+    expect(screen.getByText(/no labor duration was inferred/i)).toBeInTheDocument();
+    expect(screen.getByText(/Collect more historical evidence/)).toBeInTheDocument();
   });
 });
