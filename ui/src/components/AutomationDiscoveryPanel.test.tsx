@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { apiFetch } from "../api/client";
 import { AutomationDiscoveryPanel } from "./AutomationDiscoveryPanel";
@@ -80,12 +80,18 @@ describe("AutomationDiscoveryPanel", () => {
   });
 
   it("renders API failures without retaining stale results", async () => {
-    mockedApiFetch.mockImplementation(async () => {
-      throw new Error("mapping scope required");
-    });
+    let rejectRequest: ((reason?: unknown) => void) | undefined;
+    mockedApiFetch.mockImplementation(
+      () => new Promise((_resolve, reject) => { rejectRequest = reject; })
+    );
     render(<AutomationDiscoveryPanel />);
     fireEvent.change(screen.getByLabelText("Discovery client ID"), { target: { value: "acme" } });
     fireEvent.click(screen.getByRole("button", { name: "Analyze ticket history" }));
+    await waitFor(() => expect(rejectRequest).toBeDefined());
+    await act(async () => {
+      rejectRequest?.(new Error("mapping scope required"));
+      await Promise.resolve();
+    });
     expect(await screen.findByRole("alert")).toHaveTextContent("mapping scope required");
   });
 });
