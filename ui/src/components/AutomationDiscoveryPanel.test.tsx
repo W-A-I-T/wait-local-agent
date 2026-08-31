@@ -64,7 +64,7 @@ describe("AutomationDiscoveryPanel", () => {
     mockedApiFetch.mockResolvedValue(result);
     render(<AutomationDiscoveryPanel />);
 
-    fireEvent.change(screen.getByLabelText("Client ID"), { target: { value: " acme " } });
+    fireEvent.change(screen.getByLabelText("Discovery client ID"), { target: { value: " acme " } });
     fireEvent.change(screen.getByLabelText("History window"), { target: { value: "90" } });
     fireEvent.click(screen.getByRole("button", { name: "Analyze ticket history" }));
 
@@ -80,9 +80,11 @@ describe("AutomationDiscoveryPanel", () => {
   });
 
   it("renders API failures without retaining stale results", async () => {
-    mockedApiFetch.mockRejectedValue(new Error("mapping scope required"));
+    mockedApiFetch.mockImplementation(async () => {
+      throw new Error("mapping scope required");
+    });
     render(<AutomationDiscoveryPanel />);
-    fireEvent.change(screen.getByLabelText("Client ID"), { target: { value: "acme" } });
+    fireEvent.change(screen.getByLabelText("Discovery client ID"), { target: { value: "acme" } });
     fireEvent.click(screen.getByRole("button", { name: "Analyze ticket history" }));
     expect(await screen.findByRole("alert")).toHaveTextContent("mapping scope required");
   });
