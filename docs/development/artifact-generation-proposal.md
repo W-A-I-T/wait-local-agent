@@ -1,8 +1,8 @@
 # Proposal: Microsoft-Importable Artifact Generation (Phase 4b)
 
 Status: PROPOSAL — each item needs an explicit go/no-go from the product owner.
-Author: Claude (planning). Implementation, if approved, follows the standard
-Codex packet workflow.
+Author: planning workstream. Implementation, if approved, follows the
+standard internal packet workflow.
 
 ## Why
 
