@@ -3,8 +3,15 @@ import { MemoryRouter } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { Consultant } from "./Consultant";
 
+const dashboard = vi.hoisted(() => ({
+  canWrite: true,
+  clientId: "acme",
+  authState: "authenticated",
+  writeHealth: { status: "blocked" },
+}));
+
 vi.mock("../app/DashboardContext", () => ({
-  useDashboard: () => ({ canWrite: true, clientId: "acme" }),
+  useDashboard: () => dashboard,
 }));
 
 describe("Consultant architecture decisions", () => {
@@ -15,6 +22,10 @@ describe("Consultant architecture decisions", () => {
   let useCasesStatus: number | null = null;
   let rejectMonitoring = false;
   let rejectArchitecture = false;
+  let environmentStatus: number | null = null;
+  let governanceStatus: number | null = null;
+  let evaluationStatus: number | null = null;
+  let deliveryStatus: number | null = null;
   let rejectPlaybookGeneration = false;
   let holdPlaybookGeneration = false;
   let resolvePlaybookGeneration: (() => void) | null = null;
@@ -27,6 +38,11 @@ describe("Consultant architecture decisions", () => {
     useCasesStatus = null;
     rejectMonitoring = false;
     rejectArchitecture = false;
+    environmentStatus = null;
+    governanceStatus = null;
+    evaluationStatus = null;
+    deliveryStatus = null;
+    dashboard.authState = "authenticated";
     rejectPlaybookGeneration = false;
     holdPlaybookGeneration = false;
     resolvePlaybookGeneration = null;
@@ -79,6 +95,17 @@ describe("Consultant architecture decisions", () => {
             open_questions: null,
           }],
         },
+        "/consultant/blueprints/bp-acme": {
+          id: "bp-acme",
+          client_id: "acme",
+          created_by: "architect",
+          created_at: "2026-08-17T00:00:00Z",
+          updated_at: "2026-08-17T00:00:00Z",
+          solution: { name: "Employee onboarding" },
+          risk: "medium",
+          agents: [],
+          workflows: [],
+        },
       };
       if (rejectBlueprints && path === "/consultant/blueprints") {
         return Promise.reject(new Error("Blueprints unavailable"));
@@ -97,6 +124,95 @@ describe("Consultant architecture decisions", () => {
       }
       if (rejectArchitecture && path === "/consultant/blueprints/bp-acme/architecture") {
         return Promise.reject(new Error("Architecture unavailable"));
+      }
+      if (environmentStatus !== null && path === "/consultant/environment-discovery") {
+        return Promise.resolve(new Response(JSON.stringify({ detail: "environment unavailable" }), { status: environmentStatus }));
+      }
+      if (governanceStatus !== null && path === "/consultant/governance/evaluate") {
+        return Promise.resolve(new Response(JSON.stringify({ detail: "governance unavailable" }), { status: governanceStatus }));
+      }
+      if (evaluationStatus !== null && path === "/consultant/evaluations") {
+        return Promise.resolve(new Response(JSON.stringify({ detail: "controlled evaluation execution requires local demo mode with writes disabled" }), { status: evaluationStatus }));
+      }
+      if (deliveryStatus !== null && path === "/consultant/delivery-plan") {
+        return Promise.resolve(new Response(JSON.stringify({ detail: "delivery unavailable" }), { status: deliveryStatus }));
+      }
+      if (path === "/consultant/environment-discovery") {
+        return Promise.resolve(new Response(JSON.stringify({
+          format: "wait-local-agent.environment-discovery",
+          format_version: 1,
+          client_id: "acme",
+          source: "customer_declarations_and_local_connector_configuration",
+          probe_requested: true,
+          probe_performed: true,
+          systems: Array.from({ length: 13 }, (_, index) => ({
+            id: "system-" + (index + 1),
+            name: index === 0 ? "HaloPSA" : "System " + (index + 1),
+            kind: "connector",
+            connector_id: index === 0 ? "halopsa" : "connector-" + (index + 1),
+            status: index === 0 ? "authorized" : "not_configured",
+            provider_status: index === 0 ? "configured" : "not_configured",
+            evidence: ["local_connector_configuration"],
+            tenant_scope: "acme",
+            probe: index === 0 ? { status: "passed", layer: "connector", message: "healthy" } : { status: "not_run", layer: "not_run", message: "not requested" },
+          })),
+          unresolved: [],
+          limitations: [],
+          readiness: "needs_environment_verification",
+          inference_started: false,
+          execution_started: false,
+          deployment_started: false,
+        }), { status: 200 }));
+      }
+      if (path === "/consultant/governance/evaluate") {
+        return Promise.resolve(new Response(JSON.stringify({
+          client_id: "acme",
+          status: "needs_review",
+          finding_counts: { high: 0, medium: 1, info: 0 },
+          findings: [{ severity: "medium", code: "architecture_review_required", message: "Review required." }],
+          connectors: [],
+          policy_mapping: [{ policy_id: "approval_for_state_changes", status: "needs_review", evidence: "Review" }],
+          authorization_changed: false,
+          execution_started: false,
+          deployment_started: false,
+        }), { status: 200 }));
+      }
+      if (path === "/consultant/evaluations") {
+        return Promise.resolve(new Response(JSON.stringify({
+          case_count: 1,
+          dimensions: { functional: 100, tenant_isolation: 100 },
+          production_readiness: "pass",
+          execution_started: dashboard.authState === "demo",
+          execution_mode: dashboard.authState === "demo" ? "controlled" : "observation",
+          cases: [{ id: "architecture-review", checks: { functional: true }, passed: true }],
+        }), { status: 200 }));
+      }
+      if (path === "/consultant/delivery-plan") {
+        return Promise.resolve(new Response(JSON.stringify({
+          format: "wait-local-agent.consultant-delivery-plan",
+          format_version: 1,
+          client_id: "acme",
+          summary: {},
+          checks: { architecture: false, evaluation: true, governance: false, credentials: true },
+          production_readiness: "needs_review",
+          deployment_targets: ["Teams", "Power Automate"],
+          review_package: null,
+          review_package_generated: false,
+          review_package_digest: null,
+          delivery_bundle: null,
+          delivery_bundle_generated: false,
+          delivery_bundle_digest: null,
+          delivery_bundle_status: "not_generated",
+          deployable_source_package: null,
+          deployable_source_package_generated: false,
+          deployable_source_package_digest: null,
+          deployment_package_generated: false,
+          deployment_package_status: "not_generated",
+          production_deployment_requires_approval: true,
+          execution_started: false,
+          deployment_started: false,
+          authorization_changed: false,
+        }), { status: 200 }));
       }
       if (path === "/consultant/blueprints/bp-acme/generate-playbook") {
         if (rejectPlaybookGeneration) {
@@ -140,6 +256,81 @@ describe("Consultant architecture decisions", () => {
     expect(screen.getByText("Local cache")).toBeInTheDocument();
     expect(screen.getByText("Manager review")).toBeInTheDocument();
     expect(screen.getByText(/No inference started · No execution started · No deployment started/)).toBeInTheDocument();
+  });
+
+  it("loads blueprint detail, probes the environment matrix, and passes review results through the chain", async () => {
+    render(<MemoryRouter><Consultant /></MemoryRouter>);
+
+    fireEvent.click(await screen.findByRole("button", { name: /Employee onboarding/ }));
+    expect(await screen.findByRole("heading", { name: "Blueprint detail" })).toBeInTheDocument();
+    expect(screen.getByText("Created by")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Probe environment" }));
+    const matrix = await screen.findByRole("table", { name: "Environment status matrix" });
+    expect(matrix.querySelectorAll("tbody tr")).toHaveLength(13);
+    expect(screen.getByText("authorized", { exact: false })).toBeInTheDocument();
+    const environmentCall = vi.mocked(fetch).mock.calls.find(([input]) => String(input) === "/consultant/environment-discovery");
+    expect(environmentCall?.[1]).toMatchObject({
+      body: expect.stringContaining('"probe":true'),
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "Evaluate governance" }));
+    expect(await screen.findByRole("heading", { name: "Governance checklist" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Run agent evaluation" }));
+    expect(await screen.findByRole("heading", { name: "Evaluation checklist" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Build delivery plan" }));
+    expect(await screen.findByText(/not_generated handoff/)).toBeInTheDocument();
+
+    const deliveryCall = vi.mocked(fetch).mock.calls.find(([input]) => String(input) === "/consultant/delivery-plan");
+    const deliveryBody = JSON.parse(String(deliveryCall?.[1]?.body));
+    expect(deliveryBody.architecture).toMatchObject({ blueprint_id: "bp-acme" });
+    expect(deliveryBody.governance).toMatchObject({ status: "needs_review" });
+    expect(deliveryBody.evaluation).toMatchObject({ production_readiness: "pass" });
+    expect(deliveryBody.review_artifacts[0]).toMatchObject({ client_id: "acme", probe_requested: true });
+  });
+
+  it("labels controlled evaluation accurately and sends execution only in demo Safe Mode", async () => {
+    dashboard.authState = "demo";
+    render(<MemoryRouter><Consultant /></MemoryRouter>);
+
+    fireEvent.click(await screen.findByRole("button", { name: /Employee onboarding/ }));
+    expect(await screen.findByRole("heading", { name: "Evaluate & ship" })).toBeInTheDocument();
+    const mode = screen.getByLabelText("Evaluation mode");
+    expect(screen.getByRole("option", { name: "Controlled local execution (demo + Safe Mode only)" })).not.toBeDisabled();
+    fireEvent.change(mode, { target: { value: "controlled" } });
+    fireEvent.change(screen.getByLabelText("Evaluation agent ID"), { target: { value: "agent-acme" } });
+    fireEvent.click(screen.getByRole("button", { name: "Run agent evaluation" }));
+
+    expect(await screen.findByText(/controlled local execution recorded/)).toBeInTheDocument();
+    const evaluationCall = vi.mocked(fetch).mock.calls.find(([input]) => String(input) === "/consultant/evaluations");
+    const evaluationBody = JSON.parse(String(evaluationCall?.[1]?.body));
+    expect(evaluationBody.execution).toMatchObject({ agent_id: "agent-acme", client_id: "acme" });
+  });
+
+  it("keeps new section failures retryable or gated", async () => {
+    environmentStatus = 500;
+    governanceStatus = 403;
+    evaluationStatus = 409;
+    render(<MemoryRouter><Consultant /></MemoryRouter>);
+
+    fireEvent.click(await screen.findByRole("button", { name: /Employee onboarding/ }));
+    fireEvent.click(screen.getByRole("button", { name: "Probe environment" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("environment evidence");
+    expect(screen.getByRole("button", { name: "Retry environment probe" })).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Evaluate governance" }));
+    expect(await screen.findByText(/Requires the Microsoft Admin pack/)).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Open Extensions / Packs" })).toHaveAttribute("href", "/system/extensions");
+
+    dashboard.authState = "demo";
+    environmentStatus = null;
+    governanceStatus = null;
+    fireEvent.click(screen.getByRole("button", { name: "Retry environment probe" }));
+    fireEvent.click(screen.getByRole("button", { name: "Evaluate governance" }));
+    expect(await screen.findByRole("heading", { name: "Governance checklist" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Run agent evaluation" }));
+    expect(await screen.findByRole("button", { name: "Retry evaluation" })).toBeInTheDocument();
+    expect(screen.getByRole("alert")).toHaveTextContent("controlled evaluation execution requires local demo mode with writes disabled");
   });
 
   it("isolates gated, empty, and retryable initial sections", async () => {

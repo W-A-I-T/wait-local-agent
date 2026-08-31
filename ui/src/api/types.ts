@@ -525,6 +525,102 @@ export type ConsultantArchitecture = {
   };
 };
 
+export type ConsultantEnvironmentSystem = {
+  id: string;
+  name: string;
+  kind: string;
+  connector_id?: string | null;
+  status: string;
+  evidence: string[];
+  limitation?: string | null;
+  tenant_scope: string;
+  provider_status?: string;
+  http_probing_enabled?: boolean;
+  write_actions_enabled?: boolean;
+  probe?: {
+    status: string;
+    layer: string;
+    message?: string;
+  };
+};
+
+export type ConsultantEnvironmentResult = {
+  format: string;
+  format_version: number;
+  client_id: string;
+  source: string;
+  probe_requested: boolean;
+  probe_performed: boolean;
+  systems: ConsultantEnvironmentSystem[];
+  unresolved: Array<{ system: string; reason: string }>;
+  limitations: Array<{ system: string; reason: string }>;
+  readiness: string;
+  inference_started: boolean;
+  execution_started: boolean;
+  deployment_started: boolean;
+};
+
+export type ConsultantGovernanceResult = {
+  client_id: string;
+  status: string;
+  finding_counts: { high: number; medium: number; info: number };
+  findings: Array<{ severity: string; code: string; message: string; component_id?: string }>;
+  connectors: Array<{
+    connector_id: string;
+    host?: string | null;
+    action_count: number;
+    write_action_ids: string[];
+    authentication_types: unknown[];
+    review_status: string;
+  }>;
+  policy_mapping: Array<{ policy_id: string; status: string; evidence: string }>;
+  authorization_changed: boolean;
+  execution_started: boolean;
+  deployment_started: boolean;
+};
+
+export type ConsultantEvaluationResult = {
+  case_count: number;
+  dimensions: Record<string, number>;
+  production_readiness: string;
+  execution_started: boolean;
+  execution_mode: "observation" | "controlled" | string;
+  cases: Array<{
+    id: string;
+    checks: Record<string, boolean>;
+    passed: boolean;
+    execution?: Record<string, unknown>;
+  }>;
+  executed_case_count?: number;
+  execution_errors?: Array<{ case_id: string; error: string }>;
+};
+
+export type ConsultantDeliveryPlan = {
+  format: string;
+  format_version: number;
+  client_id: string;
+  summary: Record<string, number | string | boolean>;
+  checks: Record<string, boolean>;
+  production_readiness: string;
+  deployment_targets: string[];
+  review_package?: Record<string, unknown> | null;
+  review_package_generated: boolean;
+  review_package_digest?: string | null;
+  delivery_bundle?: ConsultantDeliveryBundle | null;
+  delivery_bundle_generated: boolean;
+  delivery_bundle_digest?: string | null;
+  delivery_bundle_status: string;
+  deployable_source_package?: Record<string, unknown> | null;
+  deployable_source_package_generated: boolean;
+  deployable_source_package_digest?: string | null;
+  deployment_package_generated: boolean;
+  deployment_package_status: string;
+  production_deployment_requires_approval: boolean;
+  execution_started: boolean;
+  deployment_started: boolean;
+  authorization_changed: boolean;
+};
+
 export type ConsultantUseCase = {
   id: string;
   title: string;
