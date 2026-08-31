@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useDashboard } from "../app/DashboardContext";
-import { apiFetch } from "../api/client";
+import { ApiRequestError, apiFetch } from "../api/client";
 import { Link } from "react-router-dom";
 import { StatusChip } from "../components/StatusChip";
 import type {
@@ -13,12 +13,60 @@ import type {
 
 type JsonResult = Record<string, unknown>;
 
+export const MSP_PLAYBOOK_ENTRY_PATCH_FIELDS = ["definition", "provenance", "enabled"] as const;
+
+type PlaybookDraft = {
+  name: string;
+  trigger: string;
+  description: string;
+  riskLevel: string;
+  steps: string;
+  outputEvidence: string;
+  provenance: string;
+  enabled: boolean;
+};
+
+type RevisionSelection = {
+  fromVersion: string;
+  toVersion: string;
+};
+
+type RestoreRequest = {
+  entryId: string;
+  version: number;
+};
+
 function uniqueValues(values: string[]): string[] {
   return [...new Set(values.filter(Boolean))];
 }
 
 function jsonText(value: unknown): string {
   return JSON.stringify(value, null, 2) ?? String(value);
+}
+
+function draftFromEntry(entry: MspPlaybookEntry): PlaybookDraft {
+  return {
+    name: entry.definition.name,
+    trigger: entry.definition.trigger,
+    description: entry.definition.description,
+    riskLevel: entry.definition.risk_level,
+    steps: jsonText(entry.definition.steps),
+    outputEvidence: jsonText(entry.definition.output_evidence),
+    provenance: entry.provenance,
+    enabled: entry.enabled
+  };
+}
+
+function validationMessage(error: unknown): string {
+  if (error instanceof ApiRequestError && error.status === 422) {
+    const detail = error.technicalDetail.split(": ").at(-1)?.trim();
+    if (detail) return `Validation error: ${detail}`;
+  }
+  return error instanceof Error ? error.message : "Unable to save playbook changes.";
+}
+
+function renderDiffValue(value: unknown): string {
+  return typeof value === "string" ? value : jsonText(value);
 }
 
 export function Playbooks() {
@@ -28,10 +76,16 @@ export function Playbooks() {
   const [subscriptions, setSubscriptions] = useState<MspPlaybookSubscription[]>([]);
   const [revisions, setRevisions] = useState<Record<string, MspPlaybookRevision[]>>({});
   const [diffs, setDiffs] = useState<Record<string, MspPlaybookRevisionDiff>>({});
+  const [revisionSelections, setRevisionSelections] = useState<Record<string, RevisionSelection>>({});
   const [previews, setPreviews] = useState<Record<string, JsonResult>>({});
   const [runs, setRuns] = useState<Record<string, JsonResult>>({});
   const [ticketIds, setTicketIds] = useState<Record<string, string>>({});
   const [payloads, setPayloads] = useState<Record<string, string>>({});
+  const [drafts, setDrafts] = useState<Record<string, PlaybookDraft>>({});
+  const [editingEntryId, setEditingEntryId] = useState<string | null>(null);
+  const [editErrors, setEditErrors] = useState<Record<string, string>>({});
+  const [savingEntryId, setSavingEntryId] = useState<string | null>(null);
+  const [confirmingRestore, setConfirmingRestore] = useState<RestoreRequest | null>(null);
   const [message, setMessage] = useState("");
 
   const entryBySourceId = useMemo(
@@ -160,21 +214,111 @@ export function Playbooks() {
     }
   }
 
+  function editEntry(entry: MspPlaybookEntry) {
+    if (!canWrite) return;
+    setDrafts((current) => ({ ...current, [entry.id]: draftFromEntry(entry) }));
+    setEditErrors((current) => ({ ...current, [entry.id]: "" }));
+    setEditingEntryId(entry.id);
+  }
+
+  function updateDraft(entry: MspPlaybookEntry, changes: Partial<PlaybookDraft>) {
+    setDrafts((current) => ({
+      ...current,
+      [entry.id]: { ...(current[entry.id] ?? draftFromEntry(entry)), ...changes }
+    }));
+    setEditErrors((current) => ({ ...current, [entry.id]: "" }));
+  }
+
+  async function saveEntry(entry: MspPlaybookEntry) {
+    if (!canWrite) return;
+    const draft = drafts[entry.id] ?? draftFromEntry(entry);
+    let steps: unknown;
+    let outputEvidence: unknown;
+    try {
+      steps = JSON.parse(draft.steps);
+    } catch {
+      setEditErrors((current) => ({ ...current, [entry.id]: "Validation error: steps must be valid JSON." }));
+      return;
+    }
+    try {
+      outputEvidence = JSON.parse(draft.outputEvidence);
+    } catch {
+      setEditErrors((current) => ({ ...current, [entry.id]: "Validation error: output evidence must be valid JSON." }));
+      return;
+    }
+    if (!Array.isArray(steps)) {
+      setEditErrors((current) => ({ ...current, [entry.id]: "Validation error: steps must be a JSON array." }));
+      return;
+    }
+    if (!Array.isArray(outputEvidence)) {
+      setEditErrors((current) => ({ ...current, [entry.id]: "Validation error: output evidence must be a JSON array." }));
+      return;
+    }
+    if (!draft.provenance.trim()) {
+      setEditErrors((current) => ({ ...current, [entry.id]: "Validation error: provenance cannot be empty." }));
+      return;
+    }
+
+    setSavingEntryId(entry.id);
+    setEditErrors((current) => ({ ...current, [entry.id]: "" }));
+    try {
+      const body = {
+        definition: {
+          name: draft.name.trim(),
+          trigger: draft.trigger.trim(),
+          description: draft.description.trim(),
+          risk_level: draft.riskLevel,
+          steps,
+          output_evidence: outputEvidence,
+          ...(entry.definition.local_fixture === undefined ? {} : { local_fixture: entry.definition.local_fixture })
+        },
+        provenance: draft.provenance.trim(),
+        enabled: draft.enabled
+      } satisfies Record<(typeof MSP_PLAYBOOK_ENTRY_PATCH_FIELDS)[number], unknown>;
+      const updated = await apiFetch<MspPlaybookEntry>(`/msp/playbook-entries/${encodeURIComponent(entry.id)}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body)
+      });
+      setEntries((current) => current.map((item) => item.id === updated.id ? updated : item));
+      setEditingEntryId(null);
+      setMessage(`Saved ${updated.definition.name} as version ${updated.version}.`);
+      await refresh();
+    } catch (error) {
+      setEditErrors((current) => ({ ...current, [entry.id]: validationMessage(error) }));
+    } finally {
+      setSavingEntryId(null);
+    }
+  }
+
   async function showRevisions(entry: MspPlaybookEntry) {
     try {
       const rows = await apiFetch<MspPlaybookRevision[]>(
         `/msp/playbook-entries/${encodeURIComponent(entry.id)}/revisions`
       );
       setRevisions((current) => ({ ...current, [entry.id]: rows }));
+      setRevisionSelections((current) => ({
+        ...current,
+        [entry.id]: { fromVersion: "", toVersion: "" }
+      }));
+      setDiffs((current) => {
+        const next = { ...current };
+        delete next[entry.id];
+        return next;
+      });
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "Unable to load playbook history.");
     }
   }
 
-  async function compareRevision(entry: MspPlaybookEntry, revision: MspPlaybookRevision) {
+  async function compareRevisions(entry: MspPlaybookEntry) {
+    const selection = revisionSelections[entry.id];
+    if (!selection?.fromVersion || !selection.toVersion || selection.fromVersion === selection.toVersion) {
+      return;
+    }
     try {
       const diff = await apiFetch<MspPlaybookRevisionDiff>(
-        `/msp/playbook-entries/${encodeURIComponent(entry.id)}/revisions/diff?from_version=${revision.version}&to_version=${entry.version}`
+        `/msp/playbook-entries/${encodeURIComponent(entry.id)}/revisions/diff?from_version=${encodeURIComponent(selection.fromVersion)}&to_version=${encodeURIComponent(selection.toVersion)}`
       );
       setDiffs((current) => ({ ...current, [entry.id]: diff }));
     } catch (error) {
@@ -184,13 +328,20 @@ export function Playbooks() {
 
   async function restoreRevision(entry: MspPlaybookEntry, revision: MspPlaybookRevision) {
     if (!canWrite) return;
+    setConfirmingRestore({ entryId: entry.id, version: revision.version });
+  }
+
+  async function confirmRestore(entry: MspPlaybookEntry, version: number) {
+    if (!canWrite) return;
+    setConfirmingRestore(null);
     try {
       const restored = await apiFetch<MspPlaybookEntry>(
-        `/msp/playbook-entries/${encodeURIComponent(entry.id)}/revisions/${revision.version}/restore`,
+        `/msp/playbook-entries/${encodeURIComponent(entry.id)}/revisions/${version}/restore`,
         { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" }
       );
       setEntries((current) => current.map((item) => item.id === restored.id ? restored : item));
       setMessage(`Restored ${restored.definition.name} as version ${restored.version}.`);
+      setDrafts((current) => ({ ...current, [restored.id]: draftFromEntry(restored) }));
       await showRevisions(restored);
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "Unable to restore playbook history.");
@@ -230,17 +381,21 @@ export function Playbooks() {
           {playbooks.length === 0 ? <p>No playbooks are available.</p> : null}
           {playbooks.map((playbook) => {
             const entry = entryBySourceId.get(playbook.id);
+            const definition = entry?.definition ?? playbook;
             const previewResult = previews[playbook.id];
             const runResult = runs[playbook.id];
-            const requiredInputs = uniqueValues(playbook.steps.flatMap((step) => step.required_inputs ?? []));
+            const requiredInputs = uniqueValues(definition.steps.flatMap((step) => step.required_inputs ?? []));
             const workflowSteps = uniqueValues(
-              playbook.steps.filter((step) => step.kind === "workflow").map((step) => step.name)
+              definition.steps.filter((step) => step.kind === "workflow").map((step) => step.name)
             );
+            const draft = entry ? drafts[entry.id] : undefined;
+            const selection = entry ? revisionSelections[entry.id] : undefined;
+            const diff = entry ? diffs[entry.id] : undefined;
             return (
               <article className="table-row playbook-row" key={playbook.id}>
                 <div>
-                  <strong>{playbook.name}</strong>
-                  <span>{playbook.description}</span>
+                  <strong>{definition.name}</strong>
+                  <span>{definition.description}</span>
                   <div className="status-chip-wrap">
                     <StatusChip status={entry ? "published" : "unpublished"} hint={entry ? `Version ${entry.version}` : "Publish a tenant copy to manage availability."} />
                     {entry ? <StatusChip status={entry.enabled ? "enabled" : "disabled"} /> : null}
@@ -248,9 +403,9 @@ export function Playbooks() {
                 </div>
                 <div>
                   <strong>Trigger</strong>
-                  <span>{playbook.trigger}</span>
+                  <span>{definition.trigger}</span>
                   <strong>Risk</strong>
-                  <span><StatusChip status={playbook.risk_level} /></span>
+                  <span><StatusChip status={definition.risk_level} /></span>
                 </div>
                 <div>
                   <strong>Requirements</strong>
@@ -271,9 +426,63 @@ export function Playbooks() {
                   ) : (
                     <button type="button" disabled={!canWrite} onClick={() => void publish(playbook)}>Publish</button>
                   )}
+                  {entry ? <button type="button" disabled={!canWrite} onClick={() => editEntry(entry)}>Edit</button> : null}
                   <button type="button" disabled={!canWrite || Boolean(entry && !entry.enabled)} onClick={() => void preview(playbook)}>Preview</button>
                   <button type="button" disabled={!canWrite || Boolean(entry && !entry.enabled)} onClick={() => void run(playbook)}>Run</button>
                 </div>
+                {entry && editingEntryId === entry.id && draft ? (
+                  <form className="playbook-edit-form" onSubmit={(event) => { event.preventDefault(); void saveEntry(entry); }}>
+                    <div className="panel-heading">
+                      <h3>Edit published playbook</h3>
+                      <span>Changes create version {entry.version + 1}</span>
+                    </div>
+                    <div className="grid">
+                      <label>
+                        Name
+                        <input value={draft.name} onChange={(event) => updateDraft(entry, { name: event.target.value })} />
+                      </label>
+                      <label>
+                        Trigger
+                        <input value={draft.trigger} onChange={(event) => updateDraft(entry, { trigger: event.target.value })} />
+                      </label>
+                      <label>
+                        Risk level
+                        <select value={draft.riskLevel} onChange={(event) => updateDraft(entry, { riskLevel: event.target.value })}>
+                          <option value="low">Low</option>
+                          <option value="medium">Medium</option>
+                          <option value="high">High</option>
+                        </select>
+                      </label>
+                      <label>
+                        Provenance
+                        <input value={draft.provenance} onChange={(event) => updateDraft(entry, { provenance: event.target.value })} />
+                      </label>
+                    </div>
+                    <label>
+                      Description
+                      <textarea rows={3} value={draft.description} onChange={(event) => updateDraft(entry, { description: event.target.value })} />
+                    </label>
+                    <div className="grid">
+                      <label>
+                        Steps JSON
+                        <textarea rows={7} value={draft.steps} onChange={(event) => updateDraft(entry, { steps: event.target.value })} spellCheck={false} />
+                      </label>
+                      <label>
+                        Output evidence JSON
+                        <textarea rows={7} value={draft.outputEvidence} onChange={(event) => updateDraft(entry, { outputEvidence: event.target.value })} spellCheck={false} />
+                      </label>
+                    </div>
+                    <label className="checkbox-label">
+                      <input type="checkbox" checked={draft.enabled} onChange={(event) => updateDraft(entry, { enabled: event.target.checked })} />
+                      Enabled
+                    </label>
+                    {editErrors[entry.id] ? <p className="inline-error" role="alert">{editErrors[entry.id]}</p> : null}
+                    <div className="template-actions">
+                      <button type="submit" disabled={!canWrite || savingEntryId === entry.id}>{savingEntryId === entry.id ? "Saving…" : "Save changes"}</button>
+                      <button type="button" disabled={savingEntryId === entry.id} onClick={() => setEditingEntryId(null)}>Cancel</button>
+                    </div>
+                  </form>
+                ) : null}
                 <div className="grid">
                   <label>
                     Ticket id (optional)
@@ -297,19 +506,67 @@ export function Playbooks() {
                 {previewResult ? <pre className="technical-details">Preview: {jsonText(previewResult)}</pre> : null}
                 {runResult ? <pre className="technical-details">Run: {jsonText(runResult)}</pre> : null}
                 {entry ? (
-                  <details>
+                  <details className="playbook-revisions-drawer">
                     <summary onClick={() => { if (!revisions[entry.id]) void showRevisions(entry); }}>History and recovery</summary>
                     {revisions[entry.id] ? (
-                      <div className="event-list">
+                      <div className="event-list" aria-label={`Revisions for ${definition.name}`}>
+                        <div className="grid revision-selector">
+                          <label>
+                            From revision
+                            <select
+                              aria-label={`From revision for ${definition.name}`}
+                              value={selection?.fromVersion ?? ""}
+                              onChange={(event) => setRevisionSelections((current) => ({
+                                ...current,
+                                [entry.id]: { fromVersion: event.target.value, toVersion: selection?.toVersion ?? "" }
+                              }))}
+                            >
+                              <option value="">Choose a version</option>
+                              {revisions[entry.id].map((revision) => <option key={revision.version} value={revision.version}>Version {revision.version}</option>)}
+                            </select>
+                          </label>
+                          <label>
+                            To revision
+                            <select
+                              aria-label={`To revision for ${definition.name}`}
+                              value={selection?.toVersion ?? ""}
+                              onChange={(event) => setRevisionSelections((current) => ({
+                                ...current,
+                                [entry.id]: { fromVersion: selection?.fromVersion ?? "", toVersion: event.target.value }
+                              }))}
+                            >
+                              <option value="">Choose a version</option>
+                              {revisions[entry.id].map((revision) => <option key={revision.version} value={revision.version}>Version {revision.version}</option>)}
+                            </select>
+                          </label>
+                          <button
+                            type="button"
+                            disabled={!selection?.fromVersion || !selection.toVersion || selection.fromVersion === selection.toVersion}
+                            onClick={() => void compareRevisions(entry)}
+                          >
+                            Compare revisions
+                          </button>
+                        </div>
                         {revisions[entry.id].map((revision) => (
                           <article className="event-row" key={revision.id}>
                             <span>Version {revision.version}</span>
                             <span>{revision.created_at}</span>
-                            <button type="button" onClick={() => void compareRevision(entry, revision)} disabled={revision.version === entry.version}>Compare to current</button>
-                            <button type="button" onClick={() => void restoreRevision(entry, revision)} disabled={!canWrite || revision.version === entry.version}>Restore</button>
+                            <button type="button" disabled={!canWrite || revision.version === entry.version} onClick={() => void restoreRevision(entry, revision)}>Restore</button>
                           </article>
                         ))}
-                        {diffs[entry.id] ? <pre className="technical-details">Changes: {jsonText(diffs[entry.id])}</pre> : null}
+                        {confirmingRestore?.entryId === entry.id ? (
+                          <div className="notice confirm-panel" role="alertdialog" aria-label="Confirm playbook restore">
+                            <p>Restore version {confirmingRestore.version} of {definition.name}? This creates a new current version.</p>
+                            <div className="template-actions">
+                              <button type="button" onClick={() => void confirmRestore(entry, confirmingRestore.version)}>Confirm restore</button>
+                              <button type="button" className="icon-button" onClick={() => setConfirmingRestore(null)}>Cancel</button>
+                            </div>
+                          </div>
+                        ) : null}
+                        {diff ? <div className="playbook-diff" aria-label={`Revision diff for ${definition.name}`}>
+                          <strong>Changes: v{diff.from_version} → v{diff.to_version}</strong>
+                          {diff.changed_fields.length === 0 ? <p>No changes.</p> : <ul>{diff.changed_fields.map((field) => <li key={field}><code>{field}</code><div><span>Before</span><pre>{renderDiffValue(diff.from[field])}</pre></div><div><span>After</span><pre>{renderDiffValue(diff.to[field])}</pre></div></li>)}</ul>}
+                        </div> : null}
                       </div>
                     ) : <p className="screen-note">Loading history.</p>}
                   </details>
