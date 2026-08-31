@@ -3,8 +3,10 @@ import { useDashboard } from "../app/DashboardContext";
 import { apiFetch } from "../api/client";
 import { EmptyState } from "../components/EmptyState";
 import { LoadingState } from "../components/LoadingState";
+import { SchemaForm, validateRequiredFields, type SchemaFormValue } from "../components/SchemaForm";
 import { Link } from "react-router-dom";
 import { type WorkflowRun, type WorkflowRunComparison, type WorkflowTemplate } from "../api/types";
+import { workflowPayloadFields } from "../lib/structured-inputs";
 
 export function Workflows() {
   const { isAdmin, canWrite } = useDashboard();
@@ -18,9 +20,12 @@ export function Workflows() {
   const [templateId, setTemplateId] = useState("");
   const [ticketId, setTicketId] = useState("");
   const [clientId, setClientId] = useState("");
-  const [payloadText, setPayloadText] = useState("{}");
+  const [payload, setPayload] = useState<SchemaFormValue>({});
+  const [payloadErrors, setPayloadErrors] = useState<Record<string, string>>({});
+  const [payloadJsonValid, setPayloadJsonValid] = useState(true);
   const [message, setMessage] = useState("");
   const selectedTemplate = templates.find((template) => template.id === templateId);
+  const payloadFields = workflowPayloadFields(selectedTemplate);
 
   const refreshRuns = useCallback(async () => {
     try {
@@ -48,28 +53,28 @@ export function Workflows() {
       setMessage("Choose a template and provide a ticket id.");
       return;
     }
-    let inputPayload: Record<string, unknown>;
-    try {
-      const parsed: unknown = JSON.parse(payloadText);
-      if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
-        throw new Error("not an object");
-      }
-      inputPayload = parsed as Record<string, unknown>;
-    } catch {
+    if (!payloadJsonValid) {
       setMessage("Payload must be valid JSON object.");
       return;
     }
+    const requiredErrors = validateRequiredFields(payloadFields, payload);
+    if (Object.keys(requiredErrors).length > 0) {
+      setPayloadErrors(requiredErrors);
+      setMessage("Complete the required template fields before starting the workflow.");
+      return;
+    }
+    setPayloadErrors({});
     try {
-      const payload = {
+      const requestPayload = {
         template_id: templateId,
         ticket_id: ticketId,
         client_id: clientId || undefined,
-        payload: inputPayload
+        payload
       };
       await apiFetch<WorkflowRun>(`/workflows/templates/${encodeURIComponent(templateId)}/runs`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload)
+        body: JSON.stringify(requestPayload)
       });
       setMessage("Workflow run started.");
       await refreshRuns();
@@ -112,11 +117,18 @@ export function Workflows() {
         <p className="screen-note automation-cross-link">
           Want to customize? <Link to="/templates">→ My templates</Link> · <Link to="/workflow-designer">Designer</Link>
         </p>
-        <form id="workflow-run-form" className="draft-form" onSubmit={runTemplate}>
+        <form id="workflow-run-form" className="draft-form" onSubmit={runTemplate} noValidate>
           <div className="grid">
             <label>
               Template
-              <select value={templateId} onChange={(event) => setTemplateId(event.target.value)}>
+              <select
+                value={templateId}
+                onChange={(event) => {
+                  setTemplateId(event.target.value);
+                  setPayloadErrors({});
+                  setPayloadJsonValid(true);
+                }}
+              >
                 <option value="">Choose template</option>
                 {templates.map((template) => (
                   <option key={template.id} value={template.id}>{template.name}</option>
@@ -131,19 +143,22 @@ export function Workflows() {
               Client id (optional)
               <input value={clientId} onChange={(event) => setClientId(event.target.value)} />
             </label>
-            <label>
-              Template payload JSON
-              <textarea
-                rows={4}
-                value={payloadText}
-                onChange={(event) => setPayloadText(event.target.value)}
-                aria-describedby="workflow-payload-help"
-              />
-            </label>
           </div>
+          <SchemaForm
+            key={selectedTemplate?.id ?? "workflow-inputs"}
+            fields={payloadFields}
+            value={payload}
+            onChange={(next) => { setPayload(next); setPayloadErrors({}); }}
+            errors={payloadErrors}
+            idPrefix={`workflow-${selectedTemplate?.id ?? "input"}`}
+            emptyMessage="No additional fields required."
+            advancedLabel="Raw JSON (advanced)"
+            jsonLabel="Raw JSON"
+            onJsonValidityChange={setPayloadJsonValid}
+          />
           <p id="workflow-payload-help" className="screen-note">
-            {selectedTemplate?.payload_schema?.required?.length
-              ? `Required: ${selectedTemplate.payload_schema.required.join(", ")}. `
+            {payloadFields.some((field) => field.required)
+              ? `Required fields are marked. `
               : "No additional fields are required. "}
             Use a bounded JSON object; the server validates the selected template schema.
           </p>

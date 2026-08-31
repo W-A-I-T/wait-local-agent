@@ -62,6 +62,114 @@ describe("Playbooks", () => {
     expect(await screen.findByText("Started Ticket Intake Review.")).toBeInTheDocument();
   });
 
+  it("renders required playbook inputs and keeps form and raw JSON in sync", async () => {
+    const fetchMock = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      const path = String(input);
+      if (path === "/msp/playbooks") {
+        return Promise.resolve(new Response(JSON.stringify([{
+          id: "software-inventory-review",
+          name: "Software Inventory Review",
+          version: 1,
+          trigger: "schedule.daily",
+          description: "Review software.",
+          risk_level: "low",
+          steps: [{ id: "inventory", name: "Inventory", kind: "workflow", description: "Read software.", required_inputs: ["device_id"] }],
+          output_evidence: ["workflow_run_ids"]
+        }]), { status: 200 }));
+      }
+      if (path === "/msp/playbook-entries") {
+        return Promise.resolve(new Response(JSON.stringify([]), { status: 200 }));
+      }
+      if (path === "/msp/playbook-subscriptions") {
+        return Promise.resolve(new Response(JSON.stringify([]), { status: 200 }));
+      }
+      if (path === "/msp/playbooks/software-inventory-review/preview" && init?.method === "POST") {
+        return Promise.resolve(new Response(JSON.stringify({ execution_started: false, approval_required: false, steps: [] }), { status: 200 }));
+      }
+      throw new Error(`Unexpected request: ${path}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(<MemoryRouter><Playbooks /></MemoryRouter>);
+
+    const deviceId = await screen.findByLabelText("Device id");
+    fireEvent.click(screen.getByRole("button", { name: "Preview" }));
+    expect(await screen.findByText("Device id is required.")).toBeInTheDocument();
+    expect(fetchMock.mock.calls.some(([input]) => String(input).endsWith("/preview"))).toBe(false);
+
+    fireEvent.change(deviceId, { target: { value: "device-1" } });
+    fireEvent.click(screen.getByRole("button", { name: "Raw JSON (advanced)" }));
+    const raw = screen.getByLabelText("Raw JSON");
+    expect((raw as HTMLTextAreaElement).value).toContain('"device_id": "device-1"');
+    fireEvent.change(raw, { target: { value: '{"device_id":"device-2"}' } });
+    fireEvent.click(screen.getByRole("button", { name: "Back to form" }));
+    expect(screen.getByLabelText("Device id")).toHaveValue("device-2");
+
+    fireEvent.click(screen.getByRole("button", { name: "Preview" }));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
+      "/msp/playbooks/software-inventory-review/preview",
+      expect.objectContaining({
+        method: "POST",
+        body: JSON.stringify({ ticket_id: undefined, client_id: "acme", payload: { device_id: "device-2" } })
+      })
+    ));
+  });
+
+  it("validates the published definition inputs used by preview", async () => {
+    const entry = {
+      id: "entry-ticket-intake",
+      source_playbook_id: "ticket-intake-review",
+      definition: {
+        id: "ticket-intake-review",
+        name: "Published Ticket Intake Review",
+        version: 2,
+        trigger: "ticket.created",
+        description: "Published review.",
+        risk_level: "low",
+        steps: [{ id: "triage", name: "Triage", kind: "workflow", description: "Classify the ticket.", required_inputs: ["device_id"] }],
+        output_evidence: ["workflow_run_ids"],
+        local_fixture: true
+      },
+      provenance: "Published review.",
+      enabled: true,
+      version: 2,
+      created_at: "2026-08-08T00:00:00Z",
+      updated_at: "2026-08-08T00:00:00Z",
+      client_id: "acme"
+    };
+    const fetchMock = vi.fn((input: RequestInfo | URL) => {
+      const path = String(input);
+      if (path === "/msp/playbooks") {
+        return Promise.resolve(new Response(JSON.stringify([{
+          id: "ticket-intake-review",
+          name: "Ticket Intake Review",
+          version: 1,
+          trigger: "ticket.created",
+          description: "Review a new ticket.",
+          risk_level: "low",
+          steps: [{ id: "triage", name: "Triage", kind: "workflow", description: "Classify the ticket.", required_inputs: [] }],
+          output_evidence: ["workflow_run_ids"]
+        }]), { status: 200 }));
+      }
+      if (path === "/msp/playbook-entries") {
+        return Promise.resolve(new Response(JSON.stringify([entry]), { status: 200 }));
+      }
+      if (path === "/msp/playbook-subscriptions") {
+        return Promise.resolve(new Response(JSON.stringify([]), { status: 200 }));
+      }
+      throw new Error(`Unexpected request: ${path}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(<MemoryRouter><Playbooks /></MemoryRouter>);
+
+    expect(await screen.findByText("Published Ticket Intake Review")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Preview" }));
+
+    expect(await screen.findByText("Device id is required.")).toBeInTheDocument();
+    expect(fetchMock.mock.calls.some(([input]) => String(input).endsWith("/preview"))).toBe(false);
+  });
+
   it("edits a published entry with only the backend-supported patch fields", async () => {
     const entry = {
       id: "entry-qbr",

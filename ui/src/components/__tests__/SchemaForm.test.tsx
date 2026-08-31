@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { fireEvent, render, screen } from "@testing-library/react";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import type { CollectorConfigField } from "../../api/types";
 import { SchemaForm, validateRequiredFields, type SchemaFormValue } from "../SchemaForm";
 
@@ -101,6 +101,24 @@ describe("SchemaForm", () => {
 
     expect(screen.getByText(/not complete yet/)).toBeInTheDocument();
     expect(screen.getByTestId("value")).toHaveTextContent('"source_name":"demo"');
+  });
+
+  it("reports non-object JSON drafts as invalid", () => {
+    const validity = vi.fn();
+    render(
+      <SchemaForm
+        fields={fields}
+        value={{ source_name: "demo" }}
+        onChange={() => undefined}
+        onJsonValidityChange={validity}
+      />
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Advanced (JSON)" }));
+    fireEvent.change(screen.getByLabelText("Settings JSON"), { target: { value: "[]" } });
+
+    expect(screen.getByText("Settings must be a JSON object.")).toBeInTheDocument();
+    expect(validity).toHaveBeenLastCalledWith(false);
   });
 
   it("falls back to a per-field JSON input for unknown schema nodes", () => {

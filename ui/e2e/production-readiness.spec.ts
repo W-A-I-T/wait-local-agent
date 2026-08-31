@@ -72,9 +72,8 @@ test("completes the safe local setup journey and exercises primary UI surfaces",
   await page.goto("/playbooks");
   const qbr = page.locator("article").filter({ hasText: "Quarterly Business Review" });
   await expect(qbr).toBeVisible();
-  await qbr.getByLabel("Input JSON for Quarterly Business Review").fill(
-    '{"period_start":"2026-01-01","period_end":"2026-03-31"}'
-  );
+  await qbr.getByLabel("Period start").fill("2026-01-01");
+  await qbr.getByLabel("Period end").fill("2026-03-31");
   await qbr.getByRole("button", { name: "Preview" }).click();
   await expect(page.getByRole("status")).toContainText("Preview ready for Quarterly Business Review.");
 

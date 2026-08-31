@@ -20,24 +20,34 @@ describe("Workflows", () => {
       if (path === "/workflows/templates") {
         return Promise.resolve(new Response(JSON.stringify([
           {
-            id: "ticket-sla-risk-review",
-            name: "Ticket SLA Risk Review",
+            id: "stale-ticket-sweep-review",
+            name: "Stale Ticket Sweep Review",
             trigger: "schedule.daily",
-            description: "Review ticket age.",
-            action_type: "ticket.sla_assessment",
+            description: "Review stale tickets.",
+            action_type: "ticket.stale_sweep",
             approval_required: false,
             risk_level: "low",
             preview_fields: [],
-            tool_id: "ticket-sla-assessment",
+            tool_id: "stale-ticket-sweep",
             payload_schema: {
               type: "object",
-              required: ["thresholds_minutes"],
-              properties: { thresholds_minutes: "object" }
+              required: ["stale_after_minutes"],
+              properties: { stale_after_minutes: "positive integer" }
             }
+          },
+          {
+            id: "ticket-triage",
+            name: "Ticket Triage",
+            trigger: "ticket.created",
+            description: "Classify tickets.",
+            action_type: "ticket.triage",
+            approval_required: false,
+            risk_level: "low",
+            preview_fields: []
           }
         ]), { status: 200 }));
       }
-      if (path === "/workflows/templates/ticket-sla-risk-review/runs") {
+      if (path === "/workflows/templates/stale-ticket-sweep-review/runs") {
         return Promise.resolve(new Response(JSON.stringify({ id: 3, status: "completed" }), { status: 200 }));
       }
       if (path === "/workflow-runs/1/compare/2") {
@@ -72,24 +82,53 @@ describe("Workflows", () => {
   it("submits the selected template payload through the workflow UI", async () => {
     render(<MemoryRouter><Workflows /></MemoryRouter>);
 
-    await screen.findByRole("option", { name: "Ticket SLA Risk Review" });
-    fireEvent.change(screen.getByLabelText("Template"), { target: { value: "ticket-sla-risk-review" } });
+    await screen.findByRole("option", { name: "Stale Ticket Sweep Review" });
+    fireEvent.change(screen.getByLabelText("Template"), { target: { value: "stale-ticket-sweep-review" } });
     fireEvent.change(screen.getByLabelText("Ticket id"), { target: { value: "TCK-1" } });
-    fireEvent.change(screen.getByLabelText("Template payload JSON"), {
-      target: { value: '{"thresholds_minutes":{"high":1}}' }
-    });
+    fireEvent.change(screen.getByLabelText("Stale after minutes"), { target: { value: "30" } });
     fireEvent.click(screen.getByRole("button", { name: "Start Workflow" }));
 
     await waitFor(() => expect(vi.mocked(fetch)).toHaveBeenCalledWith(
-      "/workflows/templates/ticket-sla-risk-review/runs",
+      "/workflows/templates/stale-ticket-sweep-review/runs",
       expect.objectContaining({
         body: JSON.stringify({
-          template_id: "ticket-sla-risk-review",
+          template_id: "stale-ticket-sweep-review",
           ticket_id: "TCK-1",
           client_id: undefined,
-          payload: { thresholds_minutes: { high: 1 } }
+          payload: { stale_after_minutes: 30 }
         })
       })
     ));
+  });
+
+  it("round-trips structured workflow fields through the raw JSON fallback", async () => {
+    render(<MemoryRouter><Workflows /></MemoryRouter>);
+
+    await screen.findByRole("option", { name: "Stale Ticket Sweep Review" });
+    fireEvent.change(screen.getByLabelText("Template"), { target: { value: "stale-ticket-sweep-review" } });
+    fireEvent.change(screen.getByLabelText("Stale after minutes"), { target: { value: "30" } });
+    fireEvent.click(screen.getByRole("button", { name: "Raw JSON (advanced)" }));
+
+    const raw = screen.getByLabelText("Raw JSON");
+    expect((raw as HTMLTextAreaElement).value).toContain('"stale_after_minutes": 30');
+    fireEvent.change(raw, { target: { value: '{"stale_after_minutes":45}' } });
+    fireEvent.click(screen.getByRole("button", { name: "Back to form" }));
+
+    expect(screen.getByLabelText("Stale after minutes")).toHaveValue(45);
+  });
+
+  it("shows the no-fields state and blocks missing required inputs", async () => {
+    render(<MemoryRouter><Workflows /></MemoryRouter>);
+
+    await screen.findByRole("option", { name: "Stale Ticket Sweep Review" });
+    fireEvent.change(screen.getByLabelText("Template"), { target: { value: "stale-ticket-sweep-review" } });
+    fireEvent.change(screen.getByLabelText("Ticket id"), { target: { value: "TCK-1" } });
+    fireEvent.click(screen.getByRole("button", { name: "Start Workflow" }));
+
+    expect(await screen.findByText("Stale after minutes is required.")).toBeInTheDocument();
+    expect(vi.mocked(fetch).mock.calls.some(([input]) => String(input).endsWith("/runs"))).toBe(false);
+
+    fireEvent.change(screen.getByLabelText("Template"), { target: { value: "ticket-triage" } });
+    expect(screen.getByText("No additional fields required.")).toBeInTheDocument();
   });
 });
