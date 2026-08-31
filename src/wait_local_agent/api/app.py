@@ -1137,6 +1137,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             "is_msp_admin": context.is_msp_admin,
             "api_auth_required": auth_required(active_settings),
             "demo_mode": active_settings.demo_mode,
+            "end_user_support_enabled": active_settings.end_user_support_enabled,
         }
 
     @app.get("/settings/security")

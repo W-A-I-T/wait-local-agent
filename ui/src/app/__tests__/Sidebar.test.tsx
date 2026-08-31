@@ -46,8 +46,13 @@ const advancedDestinations = [
   ["Connector Instances", "/integrations/connector-instances"], ["Microsoft Admin Access", "/microsoft-admin/access"], ["Settings", "/settings"], ["Sync / Reconciliation", "/operations/reconciliation"], ["Appliance Health", "/system/appliance-health"], ["Extensions / Packs", "/system/extensions"], ["MCP", "/integrations/mcp"]
 ] as const;
 
-function renderSidebar(role: "admin" | "viewer", microsoftAdminAllowed = true, microsoftAdminNavAllowed = microsoftAdminAllowed) {
-  mockedUseDashboard.mockReturnValue({ role, roleResolved: true } as never);
+function renderSidebar(
+  role: "admin" | "viewer",
+  microsoftAdminAllowed = true,
+  microsoftAdminNavAllowed = microsoftAdminAllowed,
+  endUserSupportEnabled = false
+) {
+  mockedUseDashboard.mockReturnValue({ role, roleResolved: true, endUserSupportEnabled } as never);
   mockedMicrosoftAdminAccess.mockReturnValue({
     allowed: microsoftAdminAllowed,
     navAllowed: microsoftAdminNavAllowed,
@@ -105,6 +110,18 @@ describe("Sidebar navigation IA", () => {
     renderSidebar("viewer", false);
 
     expect(screen.queryByRole("link", { name: "Microsoft Admin" })).not.toBeInTheDocument();
+  });
+
+  it("shows the end-user support entry only when the surface is enabled", () => {
+    renderSidebar("admin", true, true, true);
+
+    expect(screen.getByRole("link", { name: "End-user support" })).toHaveAttribute("href", "/end-user");
+  });
+
+  it("hides the end-user support entry when the surface is disabled", () => {
+    renderSidebar("admin", true, true, false);
+
+    expect(screen.queryByRole("link", { name: "End-user support" })).not.toBeInTheDocument();
   });
 
   it("shows the Microsoft Admin pack navigation for a client grant when All clients is selected", () => {

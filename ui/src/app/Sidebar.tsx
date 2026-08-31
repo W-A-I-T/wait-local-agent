@@ -10,6 +10,7 @@ import {
   Database,
   FileSearch,
   GitBranch,
+  LifeBuoy,
   LayoutDashboard,
   MessageSquare,
   Network,
@@ -30,6 +31,7 @@ type NavItem = {
   icon: LucideIcon;
   adminOnly?: boolean;
   microsoftAdminCapability?: boolean;
+  endUserSupport?: boolean;
 };
 
 type NavigationGroup = {
@@ -49,6 +51,7 @@ const primaryNavigation: NavigationGroup[] = [
     items: [
       { to: "/tickets", label: "Tickets", icon: ClipboardList },
       { to: "/technician-chat", label: "Technician Chat", icon: MessageSquare },
+      { to: "/end-user", label: "End-user support", icon: LifeBuoy, endUserSupport: true },
       { to: "/microsoft-admin", label: "Microsoft Admin", icon: ShieldCheck, microsoftAdminCapability: true }
     ]
   },
@@ -108,7 +111,7 @@ function SidebarLink({ item }: { item: NavItem }) {
 }
 
 export function Sidebar() {
-  const { role, roleResolved, configurationSteps, configurationLoading, isConfigured } = useDashboard();
+  const { role, roleResolved, endUserSupportEnabled, configurationSteps, configurationLoading, isConfigured } = useDashboard();
   const microsoftAdmin = useMicrosoftAdminAccess();
   const requiredSteps = (configurationSteps ?? []).filter((step) => step.required);
   const completedSteps = requiredSteps.filter((step) => step.status === "done").length;
@@ -117,6 +120,9 @@ export function Sidebar() {
     : null;
 
   const renderItem = (item: NavItem) => {
+    if (item.endUserSupport && !endUserSupportEnabled) {
+      return null;
+    }
     if (item.microsoftAdminCapability && (!microsoftAdmin.resolved || !microsoftAdmin.navAllowed)) {
       return null;
     }

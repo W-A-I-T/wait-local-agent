@@ -29,6 +29,7 @@ function DashboardHarness() {
     capabilityResolved,
     clientId,
     clients,
+    endUserSupportEnabled,
     authState,
     isAdmin,
     refresh,
@@ -43,6 +44,7 @@ function DashboardHarness() {
       <output>{roleResolved ? "access resolved" : "access unresolved"}</output>
       <output data-testid="auth-state">{authState ?? "unresolved"}</output>
       <output data-testid="legacy-client-id">{clientId}</output>
+      <output data-testid="end-user-support-enabled">{endUserSupportEnabled ? "enabled" : "disabled"}</output>
       <output data-testid="selected-client-id">{selectedClientId}</output>
       <output data-testid="client-directory">{clients.map((client) => client.client_id).join(",")}</output>
       <output data-testid="capability-resolved">{capabilityResolved ? "capabilities resolved" : "capabilities unresolved"}</output>
@@ -173,6 +175,24 @@ describe("DashboardContext role refresh", () => {
     expect(screen.getByTestId("selected-client-id")).toHaveTextContent("client-a");
     expect(screen.getByTestId("legacy-client-id")).toHaveTextContent("legacy-client");
     expect(window.localStorage.getItem("wait-local-agent-selected-client")).toBe("client-a");
+  });
+
+  it("consumes the end-user support flag from the role response", async () => {
+    mockedApiFetch.mockImplementation((path: string) => {
+      if (path === "/auth/role") {
+        return Promise.resolve({
+          role: "admin",
+          api_auth_required: false,
+          demo_mode: true,
+          end_user_support_enabled: true
+        }) as ReturnType<typeof apiFetch>;
+      }
+      return Promise.resolve(defaultResponse(path)) as ReturnType<typeof apiFetch>;
+    });
+
+    render(<DashboardProvider><DashboardHarness /></DashboardProvider>);
+
+    await waitFor(() => expect(screen.getByTestId("end-user-support-enabled")).toHaveTextContent("enabled"));
   });
 
   it("fails the capability state closed without failing the overall authenticated dashboard refresh", async () => {

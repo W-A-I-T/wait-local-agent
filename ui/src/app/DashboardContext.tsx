@@ -94,6 +94,7 @@ type DashboardContextValue = {
   selectedClientId: string;
   clients: ClientDirectoryEntry[];
   role: AuthRoleResponse["role"];
+  endUserSupportEnabled: boolean;
   authState: AuthState | null;
   capabilityGrants: CapabilityGrantView[];
   capabilityResolved: boolean;
@@ -158,6 +159,7 @@ const DashboardContext = createContext<DashboardContextValue | undefined>(undefi
 export function DashboardProvider({ children }: { children: ReactNode }) {
   const [apiToken, setApiToken] = useState(() => loadStoredApiToken());
   const [role, setRole] = useState<AuthRoleResponse["role"]>("viewer");
+  const [endUserSupportEnabled, setEndUserSupportEnabled] = useState(false);
   const [authState, setAuthState] = useState<AuthState | null>(null);
   const [clientId, setClientId] = useState("");
   const [selectedClientId, setSelectedClientIdState] = useState(() => loadStoredSelectedClientId());
@@ -199,6 +201,7 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
     const roleRequestId = ++roleRequestIdRef.current;
     setLoading(true);
     setRole("viewer");
+    setEndUserSupportEnabled(false);
     setAuthState(null);
     setRoleResolved(false);
     setCapabilityGrants([]);
@@ -239,6 +242,7 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
       }
       const nextAuthState = deriveAuthState(auth, loadStoredApiToken());
       setRole(auth.role);
+      setEndUserSupportEnabled(auth.end_user_support_enabled === true);
       setAuthState(nextAuthState);
       setClientId(auth.client_id ?? "");
       setRoleResolved(true);
@@ -274,6 +278,7 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
         return null;
       }
       setRole("viewer");
+      setEndUserSupportEnabled(false);
       setRoleResolved(false);
       const nextAuthState = hasStoredApiToken() && isUnauthorized(error) ? "invalid-token" : null;
       setAuthState(nextAuthState);
@@ -426,6 +431,7 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
       selectedClientId,
       clients,
       role,
+      endUserSupportEnabled,
       authState,
       capabilityGrants,
       capabilityResolved,
@@ -493,6 +499,7 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
     eventHistory,
     executeApproval,
     eventDeliveries,
+    endUserSupportEnabled,
     haloTickets,
     loading,
     refreshNonce,
