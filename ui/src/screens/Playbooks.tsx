@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useDashboard } from "../app/DashboardContext";
 import { apiFetch } from "../api/client";
+import { Link } from "react-router-dom";
 import { StatusChip } from "../components/StatusChip";
 import type {
   MspPlaybook,
@@ -220,6 +221,9 @@ export function Playbooks() {
         </div>
         <p className="screen-note">
           Review bounded service workflows, publish a tenant copy, preview inputs, and start an approved run.
+        </p>
+        <p className="screen-note automation-cross-link">
+          Workflows run single reviewed actions — <Link to="/workflows">see Run</Link>. Customize tenant copies in <Link to="/templates">My templates</Link>.
         </p>
         {message ? <div className="notice" role="status">{message}</div> : null}
         <div className="table-list">

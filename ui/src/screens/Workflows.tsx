@@ -3,6 +3,7 @@ import { useDashboard } from "../app/DashboardContext";
 import { apiFetch } from "../api/client";
 import { EmptyState } from "../components/EmptyState";
 import { LoadingState } from "../components/LoadingState";
+import { Link } from "react-router-dom";
 import { type WorkflowRun, type WorkflowRunComparison, type WorkflowTemplate } from "../api/types";
 
 export function Workflows() {
@@ -108,6 +109,9 @@ export function Workflows() {
           <h2>Workflows</h2>
           <span>{templates.length} templates</span>
         </div>
+        <p className="screen-note automation-cross-link">
+          Want to customize? <Link to="/templates">→ My templates</Link> · <Link to="/workflow-designer">Designer</Link>
+        </p>
         <form id="workflow-run-form" className="draft-form" onSubmit={runTemplate}>
           <div className="grid">
             <label>

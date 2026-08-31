@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useDashboard } from "../app/DashboardContext";
 import { apiFetch } from "../api/client";
+import { Link } from "react-router-dom";
 import { EmptyState } from "../components/EmptyState";
 import { LoadingState } from "../components/LoadingState";
 import type {
@@ -197,6 +198,7 @@ export function WorkflowDesigner() {
         <p className="screen-note">
           Build a bounded trigger/action/approval graph from reviewed local templates. Saving changes the local design artifact only; it never runs a workflow or calls a provider.
         </p>
+        <p className="screen-note automation-cross-link"><Link to="/workflows">Run your source template from the Run tab</Link></p>
         <div className="grid">
           <label>Local design<select value={selectedId} onChange={(event) => setSelectedId(event.target.value)}>
             <option value="">Choose a local design</option>

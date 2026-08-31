@@ -37,6 +37,7 @@ import { MicrosoftAdminAccess } from "./screens/MicrosoftAdminAccess";
 import { MicrosoftAdminCapabilityGate } from "./components/MicrosoftAdminCapabilityGate";
 import { RoleGate } from "./components/RoleGate";
 import { useDashboard } from "./app/DashboardContext";
+import { AutomationsShell } from "./app/AutomationsShell";
 
 const AzureLighthouse = lazy(() => import("./screens/AzureLighthouse").then(({ AzureLighthouse: screen }) => ({ default: screen })));
 const NotFound = lazy(() => import("./screens/NotFound"));
@@ -95,12 +96,12 @@ export function AppRoutes() {
       />
       <Route path="microsoft-admin/access" element={<MicrosoftAdminAccessRoute />} />
       <Route path="knowledge" element={<Knowledge />} />
-      <Route path="workflows" element={<Workflows />} />
+      <Route path="workflows" element={<AutomationsShell><Workflows /></AutomationsShell>} />
       <Route path="automation/events" element={<Events />} />
       <Route path="automation/schedules" element={<Schedules />} />
-      <Route path="workflow-designer" element={<WorkflowDesigner />} />
-      <Route path="templates" element={<Templates />} />
-      <Route path="playbooks" element={<Playbooks />} />
+      <Route path="workflow-designer" element={<AutomationsShell><WorkflowDesigner /></AutomationsShell>} />
+      <Route path="templates" element={<AutomationsShell><Templates /></AutomationsShell>} />
+      <Route path="playbooks" element={<AutomationsShell><Playbooks /></AutomationsShell>} />
       <Route path="consultant" element={<Consultant />} />
       <Route path="collectors" element={<Collectors />} />
       <Route path="reports" element={<Reports />} />
@@ -119,7 +120,7 @@ export function AppRoutes() {
       <Route path="system/extensions" element={<ExtensionsPacks />} />
       <Route path="integrations/mcp" element={<McpIntegration />} />
       <Route path="integrations/connector-instances" element={<ConnectorInstances />} />
-      <Route path="integrations/smart-actions" element={<SmartActionCatalog />} />
+      <Route path="integrations/smart-actions" element={<AutomationsShell><SmartActionCatalog /></AutomationsShell>} />
       <Route path="smart-actions/runs" element={<SmartActionRuns />} />
       <Route path="operations/reconciliation" element={<SyncReconciliation />} />
       <Route
