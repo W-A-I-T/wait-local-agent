@@ -6,6 +6,7 @@ import { useDashboard } from "../app/DashboardContext";
 import { RoleGate } from "../components/RoleGate";
 import { StatusChip } from "../components/StatusChip";
 import { type LaunchPassportStatus, type PackInfo, type ProviderHealth, type ProviderSettings, type SecretRecord, type SecuritySettings, type UpdateStatus } from "../api/types";
+import { connectorSetupEnvVarNames } from "../lib/connectorSetup";
 
 export function Settings() {
   const { authState, isAdmin, loading, role } = useDashboard();
@@ -414,9 +415,15 @@ export function Settings() {
 
       <section className="panel">
         <div className="panel-heading">
-          <h2>Secrets</h2>
+          <h2>Vault (advanced)</h2>
           <span>{secrets.length} keys</span>
         </div>
+        <p className="screen-note">
+          The vault stores credentials referenced by Connector Instances. Environment-provider settings are read from
+          the vault only when <code>WAIT_SECRETS_BACKEND=fernet</code>, and the vault key must exactly match the
+          <code> WAIT_*</code> variable name. With the default env backend, this form does not configure environment
+          providers; set those values in the server environment (.env) and restart the appliance instead.
+        </p>
         <div className="table-list">
           {secrets.map((secret) => (
             <div className="table-row" key={secret.key}>
@@ -431,8 +438,18 @@ export function Settings() {
             <h3>Add secret</h3>
             <label>
               Secret name
-              <input autoComplete="off" name="secret-name" value={secretName} onChange={(event) => setSecretName(event.target.value)} />
+              <input
+                autoComplete="off"
+                list="connector-secret-names"
+                name="secret-name"
+                value={secretName}
+                onChange={(event) => setSecretName(event.target.value)}
+              />
             </label>
+            <datalist id="connector-secret-names">
+              {connectorSetupEnvVarNames.map((envVar) => <option key={envVar} value={envVar} />)}
+            </datalist>
+            <p className="field-help">For an environment-backed provider, use the exact WAIT_* name shown on Connectors. Other secret names remain allowed for advanced integrations.</p>
             <label>
               Secret value
               <input autoComplete="new-password" name="new-password" type="password" value={secretValue} onChange={(event) => setSecretValue(event.target.value)} />

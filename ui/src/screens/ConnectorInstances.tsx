@@ -49,6 +49,7 @@ const initialConnectForm: ConnectForm = {
 };
 
 const demoSecretStorageNotice = "Secret storage is unavailable in demo mode — credentials can't be saved here. In a real deployment this stores the credential in the local vault.";
+const credentialFieldHelp = "The value entered here is the credential. It is stored encrypted and never displayed again.";
 const noCompaniesNotice = "No companies returned — the provider may not be configured yet; you can enter a company ID manually below.";
 
 const initialMappingForm: MappingForm = {
@@ -374,7 +375,7 @@ export function ConnectorInstances() {
       });
     } catch (requestError) {
       const message = requestError instanceof Error ? requestError.message : "Unable to create the connector instance.";
-      setConnectError(`The credential was stored in the vault but the connector instance could not be created: ${message}. Retry to create it (a new credential will be stored).`);
+      setConnectError(`The credential was stored in the vault but the connector instance could not be created: ${message}. Stored under reference ${credentialRef}; it is unused until an instance references it. Retry to create it (a new credential will be stored).`);
       connectBusyRef.current = false;
       setConnectBusy(false);
       return;
@@ -429,10 +430,10 @@ export function ConnectorInstances() {
         <section className="panel" aria-labelledby="connect-system-heading">
           <div className="panel-heading">
             <div>
-              <h2 id="connect-system-heading">Connect a system</h2>
+              <h2 id="connect-system-heading">Connect a system (credentials are encrypted into the local vault under a generated reference)</h2>
               <span>Administrator setup</span>
             </div>
-            <span>Credential vaulting</span>
+            <span>Per-client instance</span>
           </div>
           <p className="screen-note">Connect a supported PSA or ticketing system. More providers are browse-only for now.</p>
           {connectNotice ? <div className="notice" role="status">{connectNotice}</div> : null}
@@ -485,29 +486,36 @@ export function ConnectorInstances() {
             {connectForm.connectorType === "halopsa" ? (
               <>
                 <label htmlFor="halopsa-client-id">Client ID
-                  <input id="halopsa-client-id" value={connectForm.haloClientId} onChange={(event) => updateConnectForm("haloClientId", event.target.value)} required />
+                  <input id="halopsa-client-id" aria-describedby="halopsa-client-id-help" value={connectForm.haloClientId} onChange={(event) => updateConnectForm("haloClientId", event.target.value)} required />
                 </label>
+                <span id="halopsa-client-id-help" className="field-help">{credentialFieldHelp}</span>
                 <label htmlFor="halopsa-client-secret">Client secret
-                  <input id="halopsa-client-secret" type="password" value={connectForm.clientSecret} onChange={(event) => updateConnectForm("clientSecret", event.target.value)} required />
+                  <input id="halopsa-client-secret" aria-describedby="halopsa-client-secret-help" type="password" value={connectForm.clientSecret} onChange={(event) => updateConnectForm("clientSecret", event.target.value)} required />
                 </label>
+                <span id="halopsa-client-secret-help" className="field-help">{credentialFieldHelp}</span>
                 <label htmlFor="halopsa-tenant">Tenant
-                  <input id="halopsa-tenant" value={connectForm.tenant} onChange={(event) => updateConnectForm("tenant", event.target.value)} required />
+                  <input id="halopsa-tenant" aria-describedby="halopsa-tenant-help" value={connectForm.tenant} onChange={(event) => updateConnectForm("tenant", event.target.value)} required />
                 </label>
+                <span id="halopsa-tenant-help" className="field-help">{credentialFieldHelp}</span>
               </>
             ) : (
               <>
                 <label htmlFor="connectwise-company">Company
-                  <input id="connectwise-company" value={connectForm.company} onChange={(event) => updateConnectForm("company", event.target.value)} required />
+                  <input id="connectwise-company" aria-describedby="connectwise-company-help" value={connectForm.company} onChange={(event) => updateConnectForm("company", event.target.value)} required />
                 </label>
+                <span id="connectwise-company-help" className="field-help">{credentialFieldHelp}</span>
                 <label htmlFor="connectwise-public-key">Public key
-                  <input id="connectwise-public-key" value={connectForm.publicKey} onChange={(event) => updateConnectForm("publicKey", event.target.value)} required />
+                  <input id="connectwise-public-key" aria-describedby="connectwise-public-key-help" value={connectForm.publicKey} onChange={(event) => updateConnectForm("publicKey", event.target.value)} required />
                 </label>
+                <span id="connectwise-public-key-help" className="field-help">{credentialFieldHelp}</span>
                 <label htmlFor="connectwise-private-key">Private key
-                  <input id="connectwise-private-key" type="password" value={connectForm.privateKey} onChange={(event) => updateConnectForm("privateKey", event.target.value)} required />
+                  <input id="connectwise-private-key" aria-describedby="connectwise-private-key-help" type="password" value={connectForm.privateKey} onChange={(event) => updateConnectForm("privateKey", event.target.value)} required />
                 </label>
+                <span id="connectwise-private-key-help" className="field-help">{credentialFieldHelp}</span>
                 <label htmlFor="connectwise-client-id">Client ID
-                  <input id="connectwise-client-id" value={connectForm.connectWiseClientId} onChange={(event) => updateConnectForm("connectWiseClientId", event.target.value)} required />
+                  <input id="connectwise-client-id" aria-describedby="connectwise-client-id-help" value={connectForm.connectWiseClientId} onChange={(event) => updateConnectForm("connectWiseClientId", event.target.value)} required />
                 </label>
+                <span id="connectwise-client-id-help" className="field-help">{credentialFieldHelp}</span>
               </>
             )}
 

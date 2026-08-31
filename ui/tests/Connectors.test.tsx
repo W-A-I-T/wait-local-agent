@@ -74,6 +74,17 @@ describe("Connectors screen", () => {
     ));
   });
 
+  it("explains the exact environment setup and safety gates for a provider", () => {
+    render(<Connectors />);
+
+    fireEvent.click(screen.getByText("How to configure"));
+
+    expect(screen.getByText("WAIT_SYNCRO_BASE_URL")).toBeInTheDocument();
+    expect(screen.getByText("WAIT_SYNCRO_API_TOKEN")).toBeInTheDocument();
+    expect(screen.getByText(/Set these in the server environment \(\.env\)/)).toBeInTheDocument();
+    expect(screen.getByText(/WAIT_ALLOW_HTTP_PROBING/)).toBeInTheDocument();
+  });
+
   it("rejects unsafe Syncro ticket input before making a request", async () => {
     render(<Connectors />);
 
