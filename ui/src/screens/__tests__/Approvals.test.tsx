@@ -138,6 +138,20 @@ describe("Approvals execute button", () => {
     expect(executeButton).toHaveAttribute("title", "Writes are in Safe Mode — see the write-gate indicator");
   });
 
+  it("renders the backend block reason for Power Platform approvals", () => {
+    const reason = "Power Platform deployment is blocked until WAIT_ALLOW_POWER_PLATFORM_DEPLOYMENT=true.";
+    const { executeButton } = renderApproval(approval({
+      action_type: "power_platform.solution_stage",
+      can_execute: false,
+      block_reason: reason
+    }));
+
+    expect(executeButton).toBeDisabled();
+    expect(executeButton).toHaveAttribute("title", reason);
+    expect(screen.getByText(reason)).toBeInTheDocument();
+    expect(screen.queryByText("Executed from its own workflow after approval — no manual execute here.")).not.toBeInTheDocument();
+  });
+
   it("enables approved Microsoft runbooks only for administrators", () => {
     const request = approval({ action_type: "microsoft_admin.powershell_runbook", can_execute: false });
     expect(renderApproval(request, { isAdmin: true }).executeButton).toBeEnabled();

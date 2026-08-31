@@ -52,8 +52,9 @@ afterEach(() => {
 describe("Smart Action catalog", () => {
   it("renders the catalog, filters by text, opens detail, and exposes viewer navigation", async () => {
     const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
-      expect(String(input)).toBe("/smart-actions");
-      return jsonResponse(actions);
+      if (String(input) === "/smart-actions") return jsonResponse(actions);
+      if (String(input) === "/smart-actions/user-offboarding") return jsonResponse(actions[1]);
+      throw new Error(`Unexpected request: ${String(input)}`);
     });
     vi.stubGlobal("fetch", fetchMock);
 
@@ -73,10 +74,10 @@ describe("Smart Action catalog", () => {
     expect(screen.getByText("User offboarding")).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: "User offboarding" }));
-    expect(screen.getByRole("heading", { name: "User offboarding" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "User offboarding" })).toBeInTheDocument();
     expect(screen.getByText(/\"user_id\"/)).toBeInTheDocument();
     expect(screen.getAllByText("Not declared by this manifest")).toHaveLength(2);
-    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock).toHaveBeenCalledWith("/smart-actions/user-offboarding", expect.anything());
   });
 
   it("shows the read-only error state", async () => {

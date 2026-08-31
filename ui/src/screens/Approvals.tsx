@@ -145,7 +145,7 @@ function ApprovalCard({
   const roleCanExecute = !isRunbook || isAdmin;
   const visibleBlockReason = isRunbook ? "" : request.block_reason;
   const executionCompleted = ["succeeded", "verified", "unverified", "submitted"].includes(request.execution_status);
-  const executeHint = !canWrite
+  const executeHint = request.block_reason || (!canWrite
     ? "Requires technician access"
     : !roleCanExecute
       ? "Requires administrator access"
@@ -155,7 +155,7 @@ function ApprovalCard({
           !canExecute &&
           !liveWritesReady
         ? "Writes are in Safe Mode — see the write-gate indicator"
-        : undefined;
+        : undefined);
 
   return (
     <div className="approval-card">

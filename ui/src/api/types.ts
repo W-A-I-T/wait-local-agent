@@ -71,6 +71,13 @@ export type ClientGraph = {
   links: EntityLink[];
 };
 
+export type RmmInventorySyncResult = {
+  devices: number;
+  alerts: number;
+  links: number;
+  errors: string[];
+};
+
 export type SyncCursor = {
   connector_instance_id: string;
   cursor_type: string;
@@ -291,6 +298,7 @@ export type ApprovalRequest = {
   };
   can_execute?: boolean;
   block_reason?: string;
+  output?: Record<string, unknown>;
   workflow_run_id?: string | number | null;
 };
 
@@ -331,6 +339,16 @@ export type EventDelivery = {
   client_id?: string | null;
 };
 
+export type EventDispatchResult = {
+  delivery: EventDelivery;
+  duplicate: boolean;
+  matched_agent_ids: string[];
+  run_ids: number[];
+  matched_playbook_ids: string[];
+  playbook_run_ids: string[];
+  errors: string[];
+};
+
 export type SmartActionRun = {
   id: number;
   action_id: string;
@@ -358,6 +376,14 @@ export type SmartActionManifest = {
   required_role: string;
   access_mode: string;
   approval_expiry_seconds: number;
+};
+
+export type SmartActionInvokeResult = {
+  status: string;
+  approval_id?: number | null;
+  output?: Record<string, unknown>;
+  evidence?: Array<Record<string, unknown>>;
+  error_detail?: string;
 };
 
 export type WorkflowTemplate = {
@@ -438,7 +464,7 @@ export type MspPlaybookSubscription = {
   playbook_id: string;
   event_type: string;
   client_id: string;
-  input_mapping: Record<string, string>;
+  input_mapping: Record<string, unknown>;
   enabled: boolean;
   created_at: string;
   updated_at: string;
@@ -1305,6 +1331,7 @@ export type ScheduledJob = {
 
 export type ScheduledJobRequestBody = {
   template_id?: string;
+  playbook_id?: string;
   report_type?: "qbr" | "automation_opportunity" | "recurring_service_review";
   agent_id?: string;
   entity_id?: string;
@@ -1408,6 +1435,8 @@ export type ProviderSettings = {
   remote_model_enabled?: boolean;
   remote_model_provider?: string;
   remote_model_configured?: boolean;
+  model_input_cost_usd_per_million_tokens?: number;
+  model_output_cost_usd_per_million_tokens?: number;
   vector_backend: string;
   document_parser: string;
   ocr_enabled: boolean;
@@ -1477,6 +1506,188 @@ export type UpdateStatus = {
 export type HaloTicketsResponse = {
   result: HaloReadResult;
   items: HaloTicket[];
+};
+
+export type MicrosoftAdminReadResult = {
+  status: string;
+  message: string;
+  count: number;
+};
+
+export type MicrosoftAdminEvidencePage<T> = {
+  result: MicrosoftAdminReadResult;
+  items: T[];
+  next_cursor: string;
+};
+
+export type MicrosoftAdminServiceHealth = {
+  id: string;
+  service: string;
+  status: string;
+};
+
+export type MicrosoftAdminServiceIssue = {
+  id: string;
+  title: string;
+  service: string;
+  status: string;
+  classification: string;
+  origin: string;
+  impact_description: string;
+  start_date_time: string;
+  end_date_time: string;
+  last_modified_date_time: string;
+  feature: string;
+  feature_group: string;
+};
+
+export type MicrosoftAdminSecureScore = {
+  id: string;
+  created_date_time: string;
+  current_score: number | null;
+  max_score: number | null;
+  enabled_services: string[];
+  licensed_user_count: number | null;
+  active_user_count: number | null;
+  average_comparative_scores: Array<{ basis: string; average_score: number | null }>;
+};
+
+export type MicrosoftAdminSignIn = {
+  id: string;
+  user_display_name: string;
+  user_principal_name: string;
+  created_date_time: string;
+  application: string;
+  conditional_access_status: string;
+  risk_level: string;
+  risk_state: string;
+  error_code: number;
+  failure_reason: string;
+  additional_details: string;
+  device: {
+    display_name: string;
+    operating_system: string;
+    browser: string;
+    is_compliant: boolean | null;
+    is_managed: boolean | null;
+    trust_type: string;
+  };
+  location: {
+    city: string;
+    state: string;
+    country_or_region: string;
+  };
+};
+
+export type MicrosoftAdminConditionalAccessPolicy = {
+  id: string;
+  display_name: string;
+  state: string;
+  created_date_time: string;
+  modified_date_time: string;
+  conditions: {
+    included_users: number;
+    included_groups: number;
+    included_applications: number;
+    included_platforms: string[];
+    client_app_types: string[];
+  };
+  grant_controls: { operator: string; built_in_controls: string[] };
+  session_control_names: string[];
+};
+
+export type MicrosoftAdminRiskyUser = {
+  id: string;
+  user_display_name: string;
+  user_principal_name: string;
+  risk_detail: string;
+  risk_level: string;
+  risk_state: string;
+  risk_last_updated_date_time: string;
+  is_deleted: boolean | null;
+  is_processing: boolean | null;
+};
+
+export type MicrosoftAdminIntuneApp = {
+  id: string;
+  display_name: string;
+  publisher: string;
+  created_date_time: string;
+  last_modified_date_time: string;
+  is_featured: boolean | null;
+  owner: string;
+  developer: string;
+};
+
+export type MicrosoftAdminCompliancePolicy = {
+  id: string;
+  display_name: string;
+  description: string;
+  created_date_time: string;
+  last_modified_date_time: string;
+  version: number | null;
+};
+
+export type MicrosoftAdminAutopilotDevice = {
+  id: string;
+  display_name: string;
+  group_tag: string;
+  manufacturer: string;
+  model: string;
+  enrollment_state: string;
+  last_contacted_date_time: string;
+  azure_ad_device_id: string;
+  managed_device_id: string;
+};
+
+export type MicrosoftAdminSecurityIncident = {
+  id: string;
+  display_name: string;
+  status: string;
+  severity: string;
+  classification: string;
+  determination: string;
+  assigned_to: string;
+  created_date_time: string;
+  last_update_date_time: string;
+  redirect_incident_id: string;
+  custom_tags: string[];
+};
+
+export type MicrosoftAdminSecurityAlert = {
+  id: string;
+  title: string;
+  status: string;
+  severity: string;
+  category: string;
+  service_source: string;
+  detection_source: string;
+  created_date_time: string;
+  last_update_date_time: string;
+  incident_id: string;
+};
+
+export type MicrosoftAdminRemediation = {
+  action_id: string;
+  risk_level: number;
+  approval_required: boolean;
+  description: string;
+};
+
+export type MicrosoftAdminRunbookPlan = {
+  format: string;
+  runbook_id: string;
+  runbook_version: string;
+  title: string;
+  client_id: string;
+  effect: "read" | "write";
+  risk_level: number;
+  approval_required: boolean;
+  parameters: Record<string, boolean | number | string>;
+  script_sha256: string;
+  timeout_seconds: number;
+  credentials_included: boolean;
+  plan_digest: string;
 };
 
 export type AuthRoleResponse = {

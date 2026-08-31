@@ -791,6 +791,7 @@ export function Consultant() {
           <button className="icon-button" type="button" onClick={() => void refresh()} disabled={loading}>
             <RefreshCw size={16} aria-hidden="true" /> Refresh
           </button>
+          <Link className="inline-link" to="/consultant/solution-delivery">Solution delivery</Link>
         </div>
         {message ? <div className="notice danger" role="alert"><AlertTriangle size={16} aria-hidden="true" />{message}</div> : null}
         {playbookNotice ? <div className="notice success" role="status">{playbookNotice} <Link to="/playbooks">Playbooks</Link></div> : null}

@@ -8,6 +8,8 @@ export function Audit() {
   const [events, setEvents] = useState<AuditEvent[]>([]);
   const [loading, setLoading] = useState(true);
   const [clientId, setClientId] = useState("");
+  const [fromDate, setFromDate] = useState("");
+  const [toDate, setToDate] = useState("");
   const [exportStatus, setExportStatus] = useState("");
   const [eventsStatus, setEventsStatus] = useState("");
 
@@ -33,9 +35,7 @@ export function Audit() {
 
   async function exportAuditCsv() {
     try {
-      const payload = await apiFetch<{ count?: number; events?: AuditEvent[] } | string>(
-        `/audit/export?export_format=csv${clientId ? `&client_id=${encodeURIComponent(clientId)}` : ""}`
-      );
+      const payload = await apiFetch<string>(exportPath("csv", clientId, fromDate, toDate));
       const text = typeof payload === "string" ? payload : JSON.stringify(payload, null, 2);
       setExportStatus(`Downloaded ${text.length} bytes`);
       const url = URL.createObjectURL(new Blob([text], { type: "text/csv" }));
@@ -51,7 +51,7 @@ export function Audit() {
 
   async function exportAuditEventsJson() {
     try {
-      const path = `/audit-events/export?format=json${clientId ? `&client_id=${encodeURIComponent(clientId)}` : ""}`;
+      const path = exportPath("json", clientId, fromDate, toDate);
       const payload = await apiFetch<{
         count: number;
         events: AuditEvent[];
@@ -82,6 +82,14 @@ export function Audit() {
             client_id
             <input value={clientId} onChange={(event) => setClientId(event.target.value)} />
           </label>
+          <label>
+            From date
+            <input type="date" value={fromDate} onChange={(event) => setFromDate(event.target.value)} />
+          </label>
+          <label>
+            To date
+            <input type="date" value={toDate} onChange={(event) => setToDate(event.target.value)} />
+          </label>
           <button className="icon-button" type="button" onClick={() => void refresh()}>Refresh</button>
           <button type="button" onClick={() => void exportAuditCsv()}>Export CSV</button>
           <button type="button" onClick={() => void exportAuditEventsJson()}>Export Events JSON</button>
@@ -103,4 +111,12 @@ export function Audit() {
       </section>
     </div>
   );
+}
+
+function exportPath(format: "json" | "csv", clientId = "", fromDate = "", toDate = ""): string {
+  const query = new URLSearchParams({ format });
+  if (clientId) query.set("client_id", clientId);
+  if (fromDate) query.set("from", `${fromDate}T00:00:00Z`);
+  if (toDate) query.set("to", `${toDate}T23:59:59Z`);
+  return `/audit-events/export?${query.toString()}`;
 }

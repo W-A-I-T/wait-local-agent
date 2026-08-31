@@ -1656,16 +1656,134 @@ nav a:hover {
 }
 
 .overview-card {
+  background: #fff;
+  cursor: pointer;
   display: grid;
   gap: 7px;
   border: 1px solid #e4ebe8;
   border-radius: 8px;
   color: #253633;
+  font: inherit;
   padding: 14px;
+  text-align: left;
+  width: 100%;
 }
 
 .overview-card:hover {
   border-color: #1f8261;
+}
+
+.overview-card.selected {
+  border-color: #1f8261;
+  box-shadow: 0 0 0 2px rgba(31, 130, 97, 0.14);
+}
+
+.microsoft-evidence-card em {
+  color: #1f6f55;
+  font-size: 0.82rem;
+  font-style: normal;
+  font-weight: 800;
+}
+
+.microsoft-evidence-panel {
+  border-color: #b8c9c1;
+}
+
+.microsoft-evidence-table-wrap {
+  overflow-x: auto;
+}
+
+.microsoft-evidence-table {
+  border-collapse: collapse;
+  min-width: 840px;
+  width: 100%;
+}
+
+.microsoft-evidence-table th,
+.microsoft-evidence-table td {
+  border-bottom: 1px solid #e4ebe8;
+  padding: 12px;
+  text-align: left;
+  vertical-align: top;
+}
+
+.microsoft-evidence-table th {
+  color: #60706a;
+  font-size: 0.76rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.microsoft-evidence-pagination {
+  align-items: center;
+  display: flex;
+  gap: 12px;
+  justify-content: space-between;
+  margin-top: 16px;
+}
+
+.microsoft-evidence-pagination > div {
+  display: flex;
+  gap: 8px;
+}
+
+.microsoft-evidence-detail-drawer {
+  background: #f7faf8;
+  border: 1px solid #b8c9c1;
+  border-radius: 8px;
+  margin-top: 18px;
+  padding: 14px;
+}
+
+.microsoft-evidence-detail-drawer .panel-heading {
+  margin-bottom: 10px;
+}
+
+.microsoft-evidence-detail-drawer pre,
+.microsoft-runbook-plan pre {
+  background: #1f2d2a;
+  border-radius: 6px;
+  color: #e8f5ef;
+  margin: 0;
+  max-height: 320px;
+  overflow: auto;
+  padding: 12px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.microsoft-runbook-plan {
+  background: #f7faf8;
+  border: 1px solid #b8c9c1;
+  border-radius: 8px;
+  margin: 18px 0;
+  padding: 14px;
+}
+
+.microsoft-runbook-plan-grid {
+  display: grid;
+  gap: 10px;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  margin: 0 0 14px;
+}
+
+.microsoft-runbook-plan-grid > div {
+  background: #fff;
+  border: 1px solid #e4ebe8;
+  border-radius: 6px;
+  padding: 10px;
+}
+
+.microsoft-runbook-plan-grid dt {
+  color: #60706a;
+  font-size: 0.76rem;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.microsoft-runbook-plan-grid dd {
+  margin: 5px 0 0;
+  overflow-wrap: anywhere;
 }
 
 .overview-card svg {
@@ -2118,6 +2236,156 @@ button:disabled {
   font-weight: 800;
 }
 
+.connector-explorer {
+  display: grid;
+  gap: 16px;
+}
+
+.connector-explorer-heading {
+  align-items: flex-start;
+  margin-bottom: 0;
+}
+
+.connector-explorer-heading h2,
+.scalepad-qbr h3,
+.connector-resource-table h3,
+.connector-detail-drawer h4 {
+  margin: 0;
+}
+
+.connector-explorer-heading .screen-note {
+  margin: 7px 0 0;
+}
+
+.connector-explorer-tabs,
+.connector-explorer-picker,
+.connector-resource-params,
+.connector-explorer-posture {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.connector-explorer-picker label,
+.connector-resource-params label {
+  color: #40504b;
+  display: grid;
+  font-size: 0.84rem;
+  font-weight: 800;
+  gap: 6px;
+  min-width: 220px;
+}
+
+.connector-explorer-picker select,
+.connector-resource-params input {
+  background: #ffffff;
+  border: 1px solid #dce5e1;
+  border-radius: 8px;
+  color: #253633;
+  min-height: 38px;
+  padding: 8px 10px;
+}
+
+.connector-explorer-posture {
+  align-items: center;
+  border-top: 1px solid #e4ebe8;
+  color: #60706a;
+  padding-top: 12px;
+}
+
+.connector-explorer-posture span:last-child {
+  overflow-wrap: anywhere;
+}
+
+.connector-resource-table {
+  border-top: 1px solid #e4ebe8;
+  display: grid;
+  gap: 12px;
+  padding-top: 16px;
+}
+
+.connector-resource-table-grid {
+  min-width: 760px;
+}
+
+.connector-row-trigger {
+  background: transparent;
+  border: 0;
+  color: #1f6f55;
+  font: inherit;
+  font-weight: 800;
+  padding: 0;
+  text-align: left;
+}
+
+.connector-row-trigger:hover {
+  text-decoration: underline;
+}
+
+.connector-detail-drawer {
+  background: #f7faf8;
+  border: 1px solid #b8c9c1;
+  border-radius: 8px;
+  display: grid;
+  gap: 10px;
+  padding: 14px;
+}
+
+.connector-detail-drawer .panel-heading {
+  margin-bottom: 0;
+}
+
+.connector-detail-drawer .code-panel {
+  margin: 0;
+  max-height: 360px;
+  overflow: auto;
+}
+
+.scalepad-qbr {
+  display: grid;
+  gap: 16px;
+}
+
+.scalepad-qbr .panel-heading {
+  align-items: flex-start;
+  margin-bottom: 0;
+}
+
+.scalepad-qbr-grid {
+  display: grid;
+  gap: 16px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.scalepad-resource-table {
+  background: #fbfdfb;
+  border: 1px solid #e4ebe8;
+  border-radius: 8px;
+  padding: 14px;
+}
+
+.connector-explorer-setup-anchor {
+  display: block;
+  height: 0;
+}
+
+.connector-explorer .notice {
+  align-items: flex-start;
+  display: grid;
+}
+
+.connector-explorer .notice p,
+.connector-explorer .notice ul {
+  margin: 0;
+}
+
+.connector-explorer-setup {
+  background: #fffdf4;
+  border: 1px solid #ead49b;
+  border-radius: 6px;
+  padding: 10px;
+}
+
 .flag-grid {
   grid-template-columns: repeat(3, minmax(0, 1fr));
 }
@@ -2543,6 +2811,142 @@ button:disabled {
 
 .approvals-panel {
   grid-column: 1 / -1;
+}
+
+.solution-delivery-screen {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.solution-delivery-screen > .panel:first-child,
+.solution-delivery-screen > .solution-gates,
+.solution-delivery-screen > .approvals-panel {
+  grid-column: 1 / -1;
+}
+
+.solution-pipeline {
+  display: grid;
+  gap: 8px;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  list-style: none;
+  margin: 18px 0 0;
+  padding: 0;
+}
+
+.solution-pipeline-step {
+  align-items: center;
+  background: #f7faf8;
+  border: 1px solid #e4ebe8;
+  border-radius: 8px;
+  color: #60706a;
+  display: flex;
+  gap: 7px;
+  min-height: 42px;
+  padding: 9px 10px;
+}
+
+.solution-pipeline-step.active {
+  border-color: #b7cfbf;
+  color: #235d43;
+  font-weight: 800;
+}
+
+.solution-pipeline-step.done {
+  border-color: #1f8261;
+  color: #235d43;
+}
+
+.solution-gate-grid {
+  display: grid;
+  gap: 10px;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.solution-gate {
+  background: #f7faf8;
+  border: 1px solid #dce5e1;
+  border-radius: 8px;
+  display: grid;
+  gap: 8px;
+  padding: 12px;
+}
+
+.solution-gate strong {
+  overflow-wrap: anywhere;
+}
+
+.solution-gate span {
+  color: #60706a;
+  font-size: 0.84rem;
+  font-weight: 800;
+}
+
+.solution-gate.met {
+  background: #eef9f2;
+  border-color: #b6ddca;
+}
+
+.solution-gate.met span {
+  color: #235d43;
+}
+
+.solution-gate.unmet {
+  background: #fff0ed;
+  border-color: #f2c7bc;
+}
+
+.solution-gate.unmet span {
+  color: #8a2f1d;
+}
+
+.delivery-step-panel {
+  min-width: 0;
+}
+
+.delivery-step-panel .panel-heading h2 {
+  align-items: center;
+  display: flex;
+  gap: 7px;
+}
+
+.solution-result {
+  background: #f7faf8;
+  border: 1px solid #e4ebe8;
+  border-radius: 8px;
+  display: grid;
+  gap: 6px;
+  margin-top: 16px;
+  padding: 12px;
+}
+
+.solution-result > span,
+.solution-evidence {
+  color: #60706a;
+  font-size: 0.86rem;
+}
+
+.solution-result details {
+  margin-top: 4px;
+}
+
+.solution-result pre {
+  background: #ffffff;
+  border: 1px solid #e4ebe8;
+  border-radius: 6px;
+  max-height: 220px;
+  overflow: auto;
+  padding: 10px;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.solution-evidence {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 16px;
+}
+
+.solution-approval-card {
+  min-width: 0;
 }
 
 .row-actions {
@@ -3438,6 +3842,7 @@ dd svg {
   .smart-action-filters,
   .smart-action-detail-grid,
   .smart-action-schema-grid,
+  .microsoft-runbook-plan-grid,
   .technician-chat-layout,
   .grid,
   .analytics-filters,
@@ -3448,8 +3853,14 @@ dd svg {
   .payload-grid,
   .connector-row,
   .connector-summary,
+  .connector-explorer-picker,
+  .connector-resource-params,
+  .scalepad-qbr-grid,
   .flag-grid,
   .consultant-detail-grid,
+  .solution-delivery-screen,
+  .solution-pipeline,
+  .solution-gate-grid,
   .founder-summary,
   .table-row,
   .evidence-result,
@@ -3597,7 +4008,8 @@ dd svg {
 
   .connector-row span,
   .connector-summary span,
-  .panel-heading span {
+  .panel-heading span,
+  .connector-explorer-posture span {
     overflow-wrap: anywhere;
   }
 

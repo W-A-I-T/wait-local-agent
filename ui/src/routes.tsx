@@ -7,6 +7,7 @@ import { Backfills } from "./screens/Backfills";
 import { Executions } from "./screens/Executions";
 import { Connectors } from "./screens/Connectors";
 import { Consultant } from "./screens/Consultant";
+import { SolutionDelivery } from "./screens/SolutionDelivery";
 import { Collectors } from "./screens/Collectors";
 import { FounderJourney } from "./surfaces/founder/FounderJourney";
 import { Knowledge } from "./screens/Knowledge";
@@ -104,6 +105,7 @@ export function AppRoutes() {
       <Route path="templates" element={<AutomationsShell><Templates /></AutomationsShell>} />
       <Route path="playbooks" element={<AutomationsShell><Playbooks /></AutomationsShell>} />
       <Route path="consultant" element={<Consultant />} />
+      <Route path="consultant/solution-delivery" element={<SolutionDelivery />} />
       <Route path="collectors" element={<Collectors />} />
       <Route path="reports" element={<Reports />} />
       <Route path="audit" element={<Audit />} />

@@ -22,6 +22,9 @@ describe("ScheduledJobs", () => {
       if (path.endsWith("/agents")) {
         return Promise.resolve(new Response(JSON.stringify([]), { status: 200 }));
       }
+      if (path.endsWith("/msp/playbooks")) {
+        return Promise.resolve(new Response(JSON.stringify([{ id: "ticket-intake-review", name: "Ticket intake review" }]), { status: 200 }));
+      }
       if (path.endsWith("/scheduled-jobs") && init?.method === "POST") {
         return Promise.resolve(new Response(JSON.stringify({
           id: 1,
@@ -94,6 +97,30 @@ describe("ScheduledJobs", () => {
       cron: "0 */6 * * *",
       timezone: "UTC",
       params: { client_id: "acme", period_days: 30, follow_up_after_days: 14 }
+    });
+  });
+
+  it("creates a playbook schedule with the backend-supported target and params", async () => {
+    render(<ScheduledJobs />);
+
+    await screen.findByText("Scheduled Jobs");
+    fireEvent.change(screen.getByLabelText("Schedule type"), { target: { value: "playbook" } });
+    fireEvent.change(screen.getByLabelText("Playbook"), { target: { value: "ticket-intake-review" } });
+    fireEvent.change(screen.getByLabelText("Params JSON"), {
+      target: { value: '{"client_id":"acme","ticket_id":"T-1","input":{"priority":"high"}}' }
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Create schedule" }));
+
+    await waitFor(() => expect(jobs).toHaveBeenCalledWith(
+      "/scheduled-jobs",
+      expect.objectContaining({ method: "POST" })
+    ));
+    const request = jobs.mock.calls.find(([, init]) => init?.method === "POST")?.[1] as RequestInit;
+    expect(JSON.parse(String(request.body))).toEqual({
+      playbook_id: "ticket-intake-review",
+      cron: "0 */6 * * *",
+      timezone: "UTC",
+      params: { client_id: "acme", ticket_id: "T-1", input: { priority: "high" } }
     });
   });
 });

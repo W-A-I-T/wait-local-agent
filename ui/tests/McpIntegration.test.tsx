@@ -25,7 +25,15 @@ describe("MCP integration screen", () => {
     vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL) => {
       const path = String(input);
       if (path === "/mcp") {
-        return new Response(null, { status: 405, headers: { Allow: "POST" } });
+        return json({
+          jsonrpc: "2.0",
+          id: 1,
+          result: {
+            protocolVersion: "2025-11-25",
+            capabilities: { tools: { listChanged: true } },
+            serverInfo: { name: "live-wait", version: "3.0.0", description: "Live MCP server" }
+          }
+        });
       }
       if (path === "/tools") {
         return json([{
@@ -42,20 +50,36 @@ describe("MCP integration screen", () => {
     }));
   });
 
-  it("loads the live catalog from the existing MCP endpoints", async () => {
+  it("loads the live handshake and catalog from the MCP endpoints", async () => {
     render(<McpIntegration />);
 
     expect(await screen.findByRole("heading", { name: "Read ticket" })).toBeInTheDocument();
     expect(screen.getByText("Read a tenant-scoped ticket.")).toBeInTheDocument();
     expect(screen.getByText("2025-11-25")).toBeInTheDocument();
+    expect(screen.getByText("Live MCP server")).toBeInTheDocument();
     expect(screen.getAllByText(/POST \/mcp/).length).toBeGreaterThan(0);
     expect(screen.getByText(/Authorization: Bearer/)).toBeInTheDocument();
 
     await waitFor(() => {
-      expect(fetch).toHaveBeenCalledWith("/mcp", expect.anything());
+      expect(fetch).toHaveBeenCalledWith("/mcp", expect.objectContaining({
+        method: "POST",
+        body: expect.stringContaining('"method":"initialize"')
+      }));
       expect(fetch).toHaveBeenCalledWith("/tools", expect.anything());
     });
-    expect(vi.mocked(fetch).mock.calls.some(([, init]) => init && typeof init === "object" && "method" in init && init.method === "POST")).toBe(false);
+  });
+
+  it("shows an honest static summary when the live handshake is unavailable", async () => {
+    vi.mocked(fetch).mockImplementation((input: RequestInfo | URL) => {
+      if (String(input) === "/mcp") return Promise.resolve(new Response(null, { status: 503 }));
+      if (String(input) === "/tools") return Promise.resolve(json([]));
+      throw new Error(`Unexpected request: ${String(input)}`);
+    });
+
+    render(<McpIntegration />);
+
+    expect(await screen.findByText("Static capability summary (live handshake unavailable).")).toBeInTheDocument();
+    expect(screen.getByText("2025-11-25")).toBeInTheDocument();
   });
 
   it("does not fetch MCP details for a non-admin", () => {
