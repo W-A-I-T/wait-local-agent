@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState, type FormEvent } from "react";
 import { useDashboard } from "../app/DashboardContext";
 import { apiFetch } from "../api/client";
 import { type ConnectorStatus } from "../api/types";
-import { ConnectorBrowsePanel } from "../components/ConnectorBrowsePanel";
+import { ConnectorExplorer } from "../components/ConnectorExplorer";
 import { connectorSetup } from "../lib/connectorSetup";
 
 type HealthState = {
@@ -324,14 +324,7 @@ export function Connectors() {
         </div>
       </section>
 
-      <ConnectorBrowsePanel
-        title="Autotask"
-        healthPath="/connectors/autotask/health"
-        lists={[
-          { label: "Tickets", path: "/connectors/autotask/tickets" },
-          { label: "Companies", path: "/connectors/autotask/companies" }
-        ]}
-      />
+      <ConnectorExplorer connectors={connectors} />
 
       <section className="panel settings-panel">
         <div className="panel-heading">
