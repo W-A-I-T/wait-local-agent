@@ -115,6 +115,7 @@ export function SchemaForm({
       const parsed = JSON.parse(text) as unknown;
       if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
         setJsonError("Settings must be a JSON object.");
+        onJsonValidityChange?.(false);
         return;
       }
       const safeValue = preserveSecretValues(value, parsed as SchemaFormValue, fields);

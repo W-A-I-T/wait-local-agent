@@ -42,6 +42,10 @@
 - The UI implementation will infer a safe field control from the backend's
   descriptive metadata, use `SchemaForm` for labeled fields plus its JSON
   fallback, and preserve the existing request body shape.
+- Recovery validation found and fixed two edge cases in the initial committed
+  implementation: non-object raw JSON now marks the editor invalid before
+  submit, and playbook validation now uses the published entry definition that
+  is actually rendered and executed.
 
 ## Commands Run
 
@@ -53,10 +57,19 @@
   workflow payload schemas and aggregated playbook required inputs above.
 - `cd ui && npm ci --ignore-scripts` installed the existing lockfile without
   changing dependency declarations; audit reported 0 vulnerabilities.
-- `cd ui && npm test -- --run tests/Workflows.test.tsx tests/Playbooks.test.tsx
-  src/components/__tests__/SchemaForm.test.tsx` — 3 files and 17 tests passed.
+- `cd ui && npm test -- --run src/components/__tests__/SchemaForm.test.tsx
+  tests/Workflows.test.tsx tests/Playbooks.test.tsx` — 3 files and 19 tests
+  passed after the recovery fixes.
 - `cd ui && npm run build` — TypeScript and Vite production build passed.
-- `cd ui && npm test -- --run` — 63 files and 332 tests passed, twice.
+- `cd ui && npm test -- --run` — 63 files and 334 tests passed, twice.
+- `cd ui && npm ls --depth=0` — installed versions resolve from the existing
+  lockfile; no dependency declarations or lockfile entries changed.
+- `cd ui && npm run test:e2e -- --list` — the updated production-readiness
+  spec type-checks and lists one test. Full browser execution was not run
+  because `playwright.config.ts` expects an external UI/API environment and
+  this sandbox has no runnable browser server configured.
+- `npm outdated --json` — stopped after it produced no output in the
+  restricted environment; no registry freshness result is claimed.
 - Both validation runs reported only the pre-existing Vite native-config
   warning and large-chunk advisory.
 
@@ -67,10 +80,15 @@
 - `ui/src/screens/Playbooks.tsx` — aggregated required-input controls,
   validation, and raw JSON fallback wiring.
 - `ui/src/components/SchemaForm.tsx` — configurable labels/empty state,
-  two-way JSON synchronization, and raw JSON validity reporting.
+  two-way JSON synchronization, raw JSON validity reporting, and object-only
+  raw fallback validation.
 - `ui/src/lib/structured-inputs.ts` — conservative backend metadata adapter.
 - `ui/tests/Workflows.test.tsx` and `ui/tests/Playbooks.test.tsx` — launcher
   synchronization, request-body, no-field, and required-validation coverage.
+- `ui/src/components/__tests__/SchemaForm.test.tsx` — non-object raw JSON
+  validity regression coverage.
+- `ui/e2e/production-readiness.spec.ts` — updated the QBR smoke flow to fill
+  the structured `period_start` and `period_end` controls.
 - `ai/tasks/wla-beta-p35/implementation.md`, `review.md`, and `status.json` —
   execution records.
 
@@ -78,4 +96,20 @@
 
 - No follow-up implementation is required. The descriptive workflow metadata
   is intentionally adapted conservatively; ambiguous/object values remain
-  available through Raw JSON (advanced).
+  available through Raw JSON (advanced). Published playbook definitions are
+  treated as the source of truth for both displayed and validated inputs.
+
+## Handoff
+
+- The recovery edits remain in the working tree because the sandbox cannot
+  write the linked worktree Git index under `/home/josephp/wait-local-agent`.
+  Existing PR #477 is open at the prior implementation commit; commit and push
+  these validated edits before cross-family review.
+
+## Final verification update
+
+- The CI-regressed QBR selector in `ui/e2e/production-readiness.spec.ts` now
+  fills `Period start` and `Period end`, matching the structured-input UI.
+- No other stale raw-JSON-first selectors remain in that spec.
+- Full UI tests passed twice (63 files, 334 tests each), the production build
+  passed, and the Playwright test list contains the updated smoke test.

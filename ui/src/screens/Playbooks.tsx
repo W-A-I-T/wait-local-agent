@@ -135,8 +135,9 @@ export function Playbooks() {
       setMessage(`${playbook.name}: input must be valid JSON.`);
       return null;
     }
+    const definition = entryBySourceId.get(playbook.id)?.definition ?? playbook;
     const requiredInputs = uniqueValues(
-      playbook.steps.flatMap((step) => step.required_inputs ?? [])
+      definition.steps.flatMap((step) => step.required_inputs ?? [])
     );
     const errors = validateRequiredFields(requiredInputFields(requiredInputs), payload);
     if (Object.keys(errors).length > 0) {
