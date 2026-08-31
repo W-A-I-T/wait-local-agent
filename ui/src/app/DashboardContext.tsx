@@ -558,11 +558,11 @@ function isUnauthorized(error: unknown): boolean {
 }
 
 function deriveAuthState(auth: AuthRoleResponse, storedToken: string): AuthState | null {
-  if (auth.api_auth_required === false) {
-    return "local-open";
-  }
   if (auth.demo_mode === true) {
     return "demo";
+  }
+  if (auth.api_auth_required === false) {
+    return "local-open";
   }
   return storedToken.trim() ? "authenticated" : null;
 }

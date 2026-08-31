@@ -20,7 +20,12 @@ vi.mock("../../components/WaitAttribution", () => ({
 
 const mockedUseDashboard = vi.mocked(useDashboard);
 
-function renderShell(writeHealth: { status: string; message: string }, writeHealthResolved: boolean) {
+function renderShell(
+  writeHealth: { status: string; message: string },
+  writeHealthResolved: boolean,
+  authState: "demo" | null = null,
+  roleResolved = false
+) {
   mockedUseDashboard.mockReturnValue({
     apiToken: "",
     setApiToken: vi.fn(),
@@ -28,8 +33,8 @@ function renderShell(writeHealth: { status: string; message: string }, writeHeal
     clearApiToken: vi.fn(),
     refresh: vi.fn(),
     role: "viewer",
-    authState: null,
-    roleResolved: false,
+    authState,
+    roleResolved,
     selectedClientId: "",
     setSelectedClientId: vi.fn(),
     clients: [],
@@ -69,5 +74,14 @@ describe("AppShell write-gate posture", () => {
     expect(screen.getByText("Writes are blocked until WAIT_ALLOW_HTTP_PROBING=true and WAIT_ALLOW_WRITE_ACTIONS=true.")).toBeInTheDocument();
     expect(screen.getByText("Writes stay disabled until you explicitly enable them.")).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "View connector details" })).toHaveAttribute("href", "/connectors");
+  });
+
+  it("shows the demo-mode badge and existing restriction explanation", () => {
+    renderShell({ status: "blocked", message: "Writes are disabled in demo mode." }, true, "demo", true);
+
+    expect(screen.getByText("Demo mode")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Explain demo mode" }));
+
+    expect(screen.getByText("Demo mode is enabled for this appliance. Some write actions are intentionally unavailable.")).toBeInTheDocument();
   });
 });
