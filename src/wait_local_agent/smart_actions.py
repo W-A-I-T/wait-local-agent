@@ -9184,6 +9184,7 @@ class SmartActionService:
         client_id: str | None = None,
         approval_expiry_seconds: int | None = None,
         require_approval: bool = False,
+        correlation_id: str | None = None,
     ) -> ActionResult:
         if "_approval_completed" in payload:
             raise ValueError("reserved payload field '_approval_completed' is not permitted")
@@ -9249,6 +9250,7 @@ class SmartActionService:
                 actor="",
                 client_id=effective_client_id,
                 trigger_source="invoke",
+                correlation_id=correlation_id,
             )
             return _result_with_run(result, run.id)
 
@@ -9263,6 +9265,7 @@ class SmartActionService:
                     confirm=confirm,
                     client_id=effective_client_id,
                     payload=normalized_payload,
+                    correlation_id=correlation_id,
                 )
             pending_output = cast(dict[str, object], redact_value({**draft.output, "approval_required": True}))
             run, approval = self.store.create_pending_smart_action(
@@ -9294,6 +9297,7 @@ class SmartActionService:
                 actor=actor,
                 client_id=effective_client_id,
                 trigger_source="invoke",
+                correlation_id=correlation_id,
             )
             return _result_with_run(pending_result, run.id or 0)
 
@@ -9306,6 +9310,7 @@ class SmartActionService:
             confirm=confirm,
             client_id=effective_client_id,
             payload=normalized_payload,
+            correlation_id=correlation_id,
         )
 
     def complete_approval(
@@ -9561,6 +9566,7 @@ class SmartActionService:
         confirm: bool,
         client_id: str | None = None,
         payload: dict[str, object] | None = None,
+        correlation_id: str | None = None,
     ) -> ActionResult:
         safe_result = _redact_result(result)
         run = self.store.create_smart_action_run(
@@ -9595,6 +9601,7 @@ class SmartActionService:
             actor=actor,
             client_id=client_id,
             trigger_source="invoke",
+            correlation_id=correlation_id,
         )
         return _result_with_run(safe_result, run.id)
 
@@ -9609,6 +9616,7 @@ class SmartActionService:
         client_id: str | None,
         trigger_source: str,
         step_kind: str = "smart_action.invoke",
+        correlation_id: str | None = None,
     ) -> None:
         """Record the run for observability; never changes the run outcome."""
         step = StepRecord(
@@ -9641,6 +9649,7 @@ class SmartActionService:
             status=result.status,
             trigger_source=trigger_source,
             client_id=client_id,
+            correlation_id=correlation_id,
             metadata={
                 **provider_metadata(self.settings, self.provider),
             },

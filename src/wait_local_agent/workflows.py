@@ -26,6 +26,7 @@ class WorkflowToolExecutor(Protocol):
         *,
         confirm: bool = False,
         client_id: str | None = None,
+        correlation_id: str | None = None,
     ) -> ActionResult:
         """Run one existing smart action inside a workflow boundary."""
 
@@ -488,6 +489,7 @@ def run_workflow_template(
     operator_instructions: str = "",
     template_version: int | None = None,
     input_payload: dict[str, object] | None = None,
+    correlation_id: str | None = None,
 ) -> WorkflowRun:
     template = template_override or get_workflow_template(template_id)
     if template is None:
@@ -527,6 +529,7 @@ def run_workflow_template(
         actor=actor,
         client_id=effective_client_id,
         input_payload=bounded_payload,
+        correlation_id=correlation_id,
     )
     message = _workflow_message(template, ticket, tool_result)
     safe_instructions = redact_text(operator_instructions).strip()
@@ -560,7 +563,13 @@ def run_workflow_template(
         client_id=effective_client_id,
         template_version=template_version,
     )
-    _record_workflow_execution(store, run, actor=actor, trigger_source=trigger_source)
+    _record_workflow_execution(
+        store,
+        run,
+        actor=actor,
+        trigger_source=trigger_source,
+        correlation_id=correlation_id,
+    )
     return run
 
 
@@ -570,6 +579,7 @@ def _record_workflow_execution(
     *,
     actor: str,
     trigger_source: str,
+    correlation_id: str | None = None,
 ) -> None:
     """Record the run for observability; never changes the run outcome."""
     step = StepRecord(
@@ -590,6 +600,7 @@ def _record_workflow_execution(
         status=run.status,
         trigger_source=trigger_source,
         client_id=run.client_id,
+        correlation_id=correlation_id,
         steps=(step,),
     )
 
@@ -635,6 +646,7 @@ def _run_template_tool(
     actor: str,
     client_id: str | None,
     input_payload: dict[str, object],
+    correlation_id: str | None = None,
 ) -> ActionResult | None:
     if template.tool_id is None:
         return None
@@ -658,6 +670,7 @@ def _run_template_tool(
         payload,
         actor or "workflow",
         client_id=client_id,
+        correlation_id=correlation_id,
     )
 
 

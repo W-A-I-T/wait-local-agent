@@ -3,10 +3,12 @@ from __future__ import annotations
 import csv
 import io
 import json
+import logging
 import re
 import shutil
 import sqlite3
 import time
+import uuid
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import asynccontextmanager
 from dataclasses import asdict, replace
@@ -24,8 +26,11 @@ from slowapi.errors import RateLimitExceeded
 from slowapi.extension import _rate_limit_exceeded_handler
 from slowapi.middleware import SlowAPIMiddleware
 from slowapi.util import get_remote_address
+from starlette.datastructures import Headers, MutableHeaders
 from starlette.middleware.trustedhost import TrustedHostMiddleware
+from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
+from wait_local_agent import __version__
 from wait_local_agent.agents import AgentDefinitionError, AgentService
 from wait_local_agent.api.founder import (
     FounderNotConfiguredError,
@@ -104,6 +109,17 @@ from wait_local_agent.consultant import (
 from wait_local_agent.consultant_use_cases import UseCaseCatalogError, list_consultant_use_cases
 from wait_local_agent.copilot_studio import CopilotStudioPlanError, build_copilot_studio_plan
 from wait_local_agent.delivery_plan import DeliveryPlanError, build_consultant_delivery_plan
+from wait_local_agent.diagnostics import (
+    BundleLimitError,
+    build_support_bundle,
+    collect_diagnostics,
+    preview_support_bundle,
+    support_upload_refusal,
+    valid_correlation_id,
+)
+from wait_local_agent.diagnostics import (
+    scrub_text as scrub_diagnostic_text,
+)
 from wait_local_agent.discovery import (
     DiscoveryValidationError,
     build_solution_discovery,
@@ -290,6 +306,39 @@ ViewerAccess = Annotated[AuthContext, Depends(require_role(Role.VIEWER))]
 TechnicianAccess = Annotated[AuthContext, Depends(require_role(Role.TECHNICIAN))]
 AdminAccess = Annotated[AuthContext, Depends(require_role(Role.ADMIN))]
 EndUserAccess = Annotated[AuthContext, Depends(require_end_user)]
+LOGGER = logging.getLogger(__name__)
+CORRELATION_HEADER = "X-Correlation-ID"
+
+
+class CorrelationIdMiddleware:
+    def __init__(self, app: ASGIApp) -> None:
+        self.app = app
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+        supplied = Headers(scope=scope).get(CORRELATION_HEADER)
+        correlation_id = str(supplied) if valid_correlation_id(supplied) else uuid.uuid4().hex
+        scope.setdefault("state", {})["correlation_id"] = correlation_id
+        status_code = 500
+
+        async def send_with_correlation(message: Message) -> None:
+            nonlocal status_code
+            if message["type"] == "http.response.start":
+                status_code = int(message["status"])
+                MutableHeaders(scope=message)[CORRELATION_HEADER] = correlation_id
+            await send(message)
+
+        try:
+            await self.app(scope, receive, send_with_correlation)
+        finally:
+            LOGGER.info(
+                "request completed method=%s status=%d",
+                scope.get("method", ""),
+                status_code,
+                extra={"correlation_id": correlation_id},
+            )
 
 
 class ApprovalRequest(BaseModel):
@@ -899,6 +948,16 @@ class HardeningRunRequest(BaseModel):
     backup_paths: list[str] = Field(default_factory=list)
 
 
+class DiagnosticsBundleRequest(BaseModel):
+    case_id: str | None = Field(default=None, max_length=128)
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class DiagnosticsUploadRequest(DiagnosticsBundleRequest):
+    consent: bool = False
+
+
 class RestoreExerciseRequest(BaseModel):
     backup_id: str
     encrypted: bool = False
@@ -1041,7 +1100,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     app = FastAPI(
         title="WAIT Local Agent",
-        version="1.1.1",
+        version=__version__,
         lifespan=lifespan,
     )
     limiter = Limiter(
@@ -1074,6 +1133,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         allowed_hosts=["127.0.0.1", "localhost", "api", "testserver"],
     )
     app.add_middleware(SlowAPIMiddleware)
+    app.add_middleware(CorrelationIdMiddleware)
+
     configure_pack_routes(
         app,
         active_settings,
@@ -1216,6 +1277,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 "version": status.version,
                 "locked": status.locked,
                 "requires_license": status.requires_license,
+                "signature_status": "not_recorded",
             }
             for status in registry.statuses
         ]
@@ -1223,7 +1285,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @app.get("/packs/status")
     def pack_status(_: ViewerAccess) -> list[dict[str, object]]:
         registry = app.state.pack_registry
-        return [asdict(status) for status in registry.statuses]
+        return [{**asdict(status), "signature_status": "not_recorded"} for status in registry.statuses]
 
     @app.post("/packs/install")
     def pack_install(payload: PackInstallRequest, _: AdminAccess) -> dict[str, object]:
@@ -1795,6 +1857,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     def run_agent(
         agent_id: str,
         payload: AgentRunStartRequest,
+        request: Request,
         context: TechnicianAccess,
     ) -> dict[str, object]:
         scoped_client_id = resolve_client_scope(context, payload.client_id).client_id
@@ -1812,6 +1875,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 actor=context.approver_id or "api",
                 input_payload=payload.input,
                 actor_role=context.role,
+                correlation_id=_request_correlation_id(request),
             )
         except AgentDefinitionError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -1823,6 +1887,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         context: AuthContext,
         scope: ClientScope,
         scoped_client_id: str | None,
+        correlation_id: str | None = None,
     ):
         entity_ids = [item for item in _safe_json_values(backfill.entity_ids_json) if isinstance(item, str)]
         input_payload = _safe_json_object(backfill.input_json)
@@ -1861,6 +1926,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     actor=backfill.actor or context.approver_id or "api",
                     input_payload=input_payload,
                     actor_role=context.role,
+                    correlation_id=correlation_id,
                 )
                 if result.status in {"completed", "pending_approval"}:
                     return result, None
@@ -1996,7 +2062,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return _agent_backfill_view(backfill)
 
     @app.post("/agent-backfills/{backfill_id}/run")
-    def run_agent_backfill(backfill_id: int, context: TechnicianAccess) -> dict[str, object]:
+    def run_agent_backfill(
+        backfill_id: int,
+        request: Request,
+        context: TechnicianAccess,
+    ) -> dict[str, object]:
         scope = _backfill_scope(context, None)
         backfill = store.get_agent_backfill(backfill_id, scope)
         if backfill is None:
@@ -2006,7 +2076,16 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         definition = agent_service.get(backfill.agent_id, backfill.client_id)
         if definition is None:
             raise HTTPException(status_code=404, detail="agent not found")
-        return _agent_backfill_view(_process_backfill(backfill, definition, context, scope, backfill.client_id))
+        return _agent_backfill_view(
+            _process_backfill(
+                backfill,
+                definition,
+                context,
+                scope,
+                backfill.client_id,
+                _request_correlation_id(request),
+            )
+        )
 
     @app.post("/agent-backfills/{backfill_id}/pause")
     def pause_agent_backfill(backfill_id: int, context: TechnicianAccess) -> dict[str, object]:
@@ -2061,7 +2140,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         )
 
     @app.post("/agent-backfills/{backfill_id}/rerun-failed")
-    def rerun_failed_backfill(backfill_id: int, context: TechnicianAccess) -> dict[str, object]:
+    def rerun_failed_backfill(
+        backfill_id: int,
+        request: Request,
+        context: TechnicianAccess,
+    ) -> dict[str, object]:
         scope = _backfill_scope(context, None)
         backfill = store.get_agent_backfill(backfill_id, scope)
         if backfill is None:
@@ -2075,7 +2158,16 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         definition = agent_service.get(reset.agent_id, reset.client_id)
         if definition is None:
             raise HTTPException(status_code=404, detail="agent not found")
-        return _agent_backfill_view(_process_backfill(reset, definition, context, scope, reset.client_id))
+        return _agent_backfill_view(
+            _process_backfill(
+                reset,
+                definition,
+                context,
+                scope,
+                reset.client_id,
+                _request_correlation_id(request),
+            )
+        )
 
     def _definition_for_agent_run(run) -> AgentDefinition | None:
         definition = agent_service.get(run.agent_id, run.client_id)
@@ -2119,7 +2211,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return view
 
     @app.post("/agent-runs/{run_id}/resume")
-    def resume_agent(run_id: int, context: TechnicianAccess, client_id: str | None = None) -> dict[str, object]:
+    def resume_agent(
+        run_id: int,
+        request: Request,
+        context: TechnicianAccess,
+        client_id: str | None = None,
+    ) -> dict[str, object]:
         scope = _resolve_detail_scope(context, client_id)
         run = store.get_agent_run(run_id, scope)
         if run is None:
@@ -2133,13 +2230,19 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 run,
                 approver=context.approver_id or "api",
                 approver_role=context.role,
+                correlation_id=_request_correlation_id(request),
             )
         except (AgentDefinitionError, PermissionError) as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from exc
         return asdict(result)
 
     @app.post("/agent-runs/{run_id}/cancel")
-    def cancel_agent_run(run_id: int, context: TechnicianAccess, client_id: str | None = None) -> dict[str, object]:
+    def cancel_agent_run(
+        run_id: int,
+        request: Request,
+        context: TechnicianAccess,
+        client_id: str | None = None,
+    ) -> dict[str, object]:
         scope = _resolve_detail_scope(context, client_id)
         run = store.get_agent_run(run_id, scope)
         if run is None:
@@ -2153,13 +2256,19 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 run,
                 actor=context.approver_id or "api",
                 approver_role=context.role,
+                correlation_id=_request_correlation_id(request),
             )
         except (AgentDefinitionError, PermissionError) as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from exc
         return asdict(result)
 
     @app.post("/agent-runs/{run_id}/retry")
-    def retry_agent_run(run_id: int, context: TechnicianAccess, client_id: str | None = None) -> dict[str, object]:
+    def retry_agent_run(
+        run_id: int,
+        request: Request,
+        context: TechnicianAccess,
+        client_id: str | None = None,
+    ) -> dict[str, object]:
         scope = _resolve_detail_scope(context, client_id)
         run = store.get_agent_run(run_id, scope)
         if run is None:
@@ -2173,6 +2282,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 run,
                 actor=context.approver_id or "api",
                 actor_role=context.role,
+                correlation_id=_request_correlation_id(request),
             )
         except (AgentDefinitionError, PermissionError) as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from exc
@@ -2279,6 +2389,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     def invoke_smart_action(
         action_id: str,
         payload: SmartActionInvokeRequest,
+        request: Request,
         context: TechnicianAccess,
     ) -> dict[str, object]:
         try:
@@ -2297,6 +2408,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 context.approver_id or "api",
                 confirm=payload.confirm,
                 client_id=scoped_client_id,
+                correlation_id=_request_correlation_id(request),
             )
         except KeyError as exc:
             raise HTTPException(status_code=404, detail="smart action not found") from exc
@@ -2326,6 +2438,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 ticket_id=payload.ticket_id,
                 actor=context.approver_id or "api",
                 client_id=scoped_client_id,
+                correlation_id=_request_correlation_id(request),
             )
         except TechnicianChatParseError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
@@ -2421,6 +2534,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 client_id=session.client_id,
                 session_id=session.id,
                 principal_id=principal_id,
+                correlation_id=_request_correlation_id(request),
             )
         except TechnicianChatParseError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
@@ -3284,6 +3398,67 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @app.get("/hardening/runs")
     def list_hardening_runs(_: ViewerAccess) -> list[dict[str, object]]:
         return [asdict(run) for run in store.list_hardening_runs()]
+
+    @app.get("/diagnostics/summary")
+    def diagnostics_summary(context: AdminAccess) -> dict[str, object]:
+        _require_msp_operator(context)
+        return collect_diagnostics(active_settings, store).to_dict()
+
+    @app.post("/diagnostics/bundle/preview")
+    def diagnostics_bundle_preview(
+        payload: DiagnosticsBundleRequest,
+        context: AdminAccess,
+    ) -> dict[str, object]:
+        _require_msp_operator(context)
+        return preview_support_bundle(
+            active_settings,
+            store,
+            case_id=payload.case_id,
+        ).to_dict()
+
+    @app.post("/diagnostics/bundle")
+    def diagnostics_bundle(
+        payload: DiagnosticsBundleRequest,
+        context: AdminAccess,
+    ) -> FileResponse:
+        _require_msp_operator(context)
+        try:
+            result = build_support_bundle(
+                active_settings,
+                store,
+                case_id=payload.case_id,
+            )
+        except BundleLimitError as exc:
+            raise HTTPException(status_code=507, detail="support bundle exceeded its safety limit") from exc
+        store.add_audit_event(
+            "support.bundle_created",
+            result.sha256[:16],
+            "redacted support bundle created locally",
+        )
+        return FileResponse(
+            result.path,
+            media_type="application/zip",
+            filename=result.path.name,
+            headers={"X-Support-Bundle-SHA256": result.sha256},
+        )
+
+    @app.post("/diagnostics/bundle/upload")
+    def diagnostics_bundle_upload(
+        payload: DiagnosticsUploadRequest,
+        context: AdminAccess,
+    ) -> dict[str, object]:
+        _require_msp_operator(context)
+        reason = support_upload_refusal(active_settings, consent=payload.consent)
+        store.add_audit_event("support.upload_refused", "support-bundle", reason)
+        if not payload.consent:
+            status_code = 400
+        elif active_settings.offline_mode or active_settings.demo_mode:
+            status_code = 403
+        elif not active_settings.support_upload_endpoint:
+            status_code = 409
+        else:
+            status_code = 501
+        raise HTTPException(status_code=status_code, detail=scrub_diagnostic_text(reason))
 
     @app.post("/backup/restore-exercises")
     def create_restore_exercise(
@@ -6154,16 +6329,17 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @app.post("/workflow-templates/gallery/{entry_id}/runs")
     def run_template_gallery_entry(
         entry_id: str,
-        request: WorkflowRunRequest,
+        payload: WorkflowRunRequest,
+        request: Request,
         context: TechnicianAccess,
     ) -> dict[str, object]:
-        scope = resolve_client_scope(context, request.client_id)
+        scope = resolve_client_scope(context, payload.client_id)
         entry = store.get_template_gallery_entry(entry_id, scope)
         if entry is None:
             raise HTTPException(status_code=404, detail="template gallery entry not found")
         if not entry.enabled:
             raise HTTPException(status_code=409, detail="template gallery entry is disabled")
-        ticket = store.get_ticket(request.ticket_id, client_id=scope)
+        ticket = store.get_ticket(payload.ticket_id, client_id=scope)
         if ticket is None or ticket.client_id != entry.client_id:
             raise HTTPException(status_code=404, detail="ticket not found")
         source_template = get_workflow_template(entry.source_template_id)
@@ -6173,7 +6349,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             run = run_workflow_template(
                 store,
                 entry.source_template_id,
-                request.ticket_id,
+                payload.ticket_id,
                 client_id=entry.client_id,
                 actor=context.approver_id or "api",
                 trigger_source="template_gallery",
@@ -6185,7 +6361,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 ),
                 operator_instructions=entry.instructions,
                 template_version=entry.version,
-                input_payload=request.payload,
+                input_payload=payload.payload,
+                correlation_id=_request_correlation_id(request),
             )
         except ValueError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
@@ -6443,23 +6620,25 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @app.post("/workflows/templates/{template_id}/runs")
     def run_workflow(
         template_id: str,
-        request: WorkflowRunRequest,
+        payload: WorkflowRunRequest,
+        request: Request,
         context: TechnicianAccess,
     ) -> dict[str, object]:
-        scope = resolve_client_scope(context, request.client_id)
-        ticket = store.get_ticket(request.ticket_id, client_id=scope)
+        scope = resolve_client_scope(context, payload.client_id)
+        ticket = store.get_ticket(payload.ticket_id, client_id=scope)
         if ticket is None:
             raise HTTPException(status_code=404, detail="ticket not found")
         try:
             run = run_workflow_template(
                 store,
                 template_id,
-                request.ticket_id,
+                payload.ticket_id,
                 client_id=ticket.client_id,
                 actor=context.approver_id or "api",
                 trigger_source="api",
                 tool_executor=smart_action_service,
-                input_payload=request.payload,
+                input_payload=payload.payload,
+                correlation_id=_request_correlation_id(request),
             )
             if run.id is None:
                 raise HTTPException(status_code=409, detail="ticket is quarantined pending client mapping")
@@ -7379,6 +7558,7 @@ def _invoke_technician_chat_message(
     client_id: str | None,
     session_id: str | None = None,
     principal_id: str | None = None,
+    correlation_id: str | None = None,
 ) -> dict[str, object]:
     if session_id is not None:
         store.add_technician_chat_message(
@@ -7490,6 +7670,7 @@ def _invoke_technician_chat_message(
         command.payload,
         actor,
         client_id=client_id,
+        correlation_id=correlation_id,
     )
     _record_technician_chat_assistant(
         store,
@@ -7774,6 +7955,11 @@ def _require_msp_operator(context: AuthContext) -> None:
 
     if not context.demo_mode and not context.is_msp_admin:
         raise HTTPException(status_code=403, detail="msp operator access required")
+
+
+def _request_correlation_id(request: Request) -> str | None:
+    candidate = getattr(request.state, "correlation_id", None)
+    return str(candidate) if valid_correlation_id(candidate) else None
 
 
 def _operator_scope(

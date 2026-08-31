@@ -31,6 +31,8 @@ import { ConnectorInstances } from "./screens/ConnectorInstances";
 import { SyncReconciliation } from "./screens/SyncReconciliation";
 import { Clients } from "./screens/Clients";
 import { M365Actions } from "./screens/M365Actions";
+import { DiagnosticsSupport } from "./screens/DiagnosticsSupport";
+import { TechnicianPath } from "./screens/TechnicianPath";
 
 export function AppRoutes() {
   return (
@@ -57,10 +59,12 @@ export function AppRoutes() {
       <Route path="analytics" element={<Analytics />} />
       <Route path="agents" element={<Agents />} />
       <Route path="technician-chat" element={<TechnicianChat />} />
+      <Route path="technician-path" element={<TechnicianPath />} />
       <Route path="backfills" element={<Backfills />} />
       <Route path="executions" element={<Executions />} />
       <Route path="settings" element={<Settings />} />
       <Route path="system/appliance-health" element={<ApplianceHealth />} />
+      <Route path="system/diagnostics" element={<DiagnosticsSupport />} />
       <Route path="system/extensions" element={<ExtensionsPacks />} />
       <Route path="integrations/mcp" element={<McpIntegration />} />
       <Route path="integrations/connector-instances" element={<ConnectorInstances />} />

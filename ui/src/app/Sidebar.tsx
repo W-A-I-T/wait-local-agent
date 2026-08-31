@@ -20,6 +20,7 @@ import {
   PackageOpen,
   ShieldCheck,
   Sparkles,
+  Stethoscope,
   Users,
   Workflow
 } from "lucide-react";
@@ -52,6 +53,7 @@ const primaryNavigation: NavigationGroup[] = [
       { to: "/tickets", label: "Tickets", icon: ClipboardList },
       { to: "/approvals", label: "Approvals", icon: ClipboardCheck },
       { to: "/technician-chat", label: "Technician Chat", icon: MessageSquare },
+      { to: "/technician-path", label: "Technician Path", icon: ListChecks },
       { to: "/m365-actions", label: "M365 Actions", icon: ShieldCheck }
     ]
   },
@@ -95,6 +97,7 @@ const primaryNavigation: NavigationGroup[] = [
 const advancedNavigation: NavItem[] = [
   { to: "/operations/reconciliation", label: "Sync / Reconciliation", icon: Database, adminOnly: true },
   { to: "/system/appliance-health", label: "Appliance Health", icon: ShieldCheck, adminOnly: true },
+  { to: "/system/diagnostics", label: "Diagnostics & Support", icon: Stethoscope, adminOnly: true },
   { to: "/system/extensions", label: "Extensions / Packs", icon: PackageOpen, adminOnly: true },
   { to: "/integrations/mcp", label: "MCP", icon: Network, adminOnly: true },
   { to: "/workflow-designer", label: "Workflow Designer", icon: Workflow },

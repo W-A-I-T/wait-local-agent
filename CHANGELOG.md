@@ -69,6 +69,14 @@ All notable changes to WAIT Local Agent will be documented in this file.
 
 ### Added
 
+- Added administrator-only appliance diagnostics, deterministic redacted
+  support bundles, local preview/download flows, bounded private rotating logs,
+  validated request correlation IDs, support CLI commands, and the System
+  Diagnostics & Support screen. Automatic support transfer remains disabled.
+- Added a customer-facing licensing panel, a local-audit privacy notice, and a
+  technician onboarding path through tickets, triage, planning, approval, and
+  evidence.
+
 - The Solutions Architect screen can now generate a disabled draft playbook
   from a selected blueprint in one click; review and enable the draft in
   Playbooks.

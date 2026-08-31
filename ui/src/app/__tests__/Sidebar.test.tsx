@@ -12,13 +12,13 @@ const mockedUseDashboard = vi.mocked(useDashboard);
 
 const destinations = [
   ["Overview", "/"], ["Clients", "/clients"],
-  ["Tickets", "/tickets"], ["Approvals", "/approvals"], ["Technician Chat", "/technician-chat"], ["M365 Actions", "/m365-actions"],
+  ["Tickets", "/tickets"], ["Approvals", "/approvals"], ["Technician Chat", "/technician-chat"], ["Technician Path", "/technician-path"], ["M365 Actions", "/m365-actions"],
   ["Playbooks", "/playbooks"], ["Workflows", "/workflows"], ["Agents", "/agents"], ["Smart Actions", "/integrations/smart-actions"], ["Events", "/automation/events"], ["Schedules", "/automation/schedules"],
   ["Solutions Architect", "/consultant"],
   ["Reports", "/reports"], ["Analytics", "/analytics"], ["Audit", "/audit"], ["Collectors", "/collectors"],
   ["Launch Passport", "/founder"],
   ["Connectors", "/connectors"], ["Connector Instances", "/integrations/connector-instances"], ["Knowledge", "/knowledge"], ["Settings", "/settings"],
-  ["Sync / Reconciliation", "/operations/reconciliation"], ["Appliance Health", "/system/appliance-health"], ["Extensions / Packs", "/system/extensions"], ["MCP", "/integrations/mcp"], ["Workflow Designer", "/workflow-designer"], ["Templates", "/templates"], ["Scheduled Jobs", "/scheduled-jobs"], ["Smart Action Runs", "/smart-actions/runs"], ["Executions", "/executions"], ["Backfills", "/backfills"]
+  ["Sync / Reconciliation", "/operations/reconciliation"], ["Appliance Health", "/system/appliance-health"], ["Diagnostics & Support", "/system/diagnostics"], ["Extensions / Packs", "/system/extensions"], ["MCP", "/integrations/mcp"], ["Workflow Designer", "/workflow-designer"], ["Templates", "/templates"], ["Scheduled Jobs", "/scheduled-jobs"], ["Smart Action Runs", "/smart-actions/runs"], ["Executions", "/executions"], ["Backfills", "/backfills"]
 ] as const;
 
 function renderSidebar(role: "admin" | "viewer") {
@@ -59,7 +59,7 @@ describe("Sidebar navigation IA", () => {
     renderSidebar("viewer");
     fireEvent.click(screen.getByText("System / Advanced"));
 
-    for (const label of ["Connector Instances", "Sync / Reconciliation", "Appliance Health", "Extensions / Packs", "MCP"]) {
+    for (const label of ["Connector Instances", "Sync / Reconciliation", "Appliance Health", "Diagnostics & Support", "Extensions / Packs", "MCP"]) {
       expect(screen.queryByRole("link", { name: label })).not.toBeInTheDocument();
     }
 

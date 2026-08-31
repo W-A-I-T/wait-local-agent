@@ -20,6 +20,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from wait_local_agent.client_scope import AllClients
 from wait_local_agent.config import Settings
+from wait_local_agent.diagnostics import valid_correlation_id
 from wait_local_agent.models import (
     MAX_APPROVAL_EXPIRY_SECONDS,
     AgentDefinition,
@@ -478,6 +479,7 @@ class AgentService:
         retry_count: int = 0,
         retry_of_run_id: int | None = None,
         actor_role: Role | None = None,
+        correlation_id: str | None = None,
     ) -> AgentExecutionResult:
         if not definition.enabled:
             raise AgentDefinitionError("agent is disabled")
@@ -512,6 +514,8 @@ class AgentService:
             "retry_count": retry_count,
             "actor_role": actor_role.label() if actor_role is not None else None,
         }
+        if valid_correlation_id(correlation_id):
+            state["correlation_id"] = correlation_id
         if retry_of_run_id is not None:
             state["retry_of_run_id"] = retry_of_run_id
         run = self.store.create_agent_run(
@@ -565,6 +569,7 @@ class AgentService:
         actor: str,
         actor_role: Role | None = None,
         supervisor_context: dict[str, object] | None = None,
+        correlation_id: str | None = None,
     ) -> AgentExecutionResult:
         """Retry a failed or cancelled run with a small persisted attempt cap."""
         if run.status not in {"failed", "cancelled"}:
@@ -587,6 +592,7 @@ class AgentService:
             retry_of_run_id=run.id,
             actor_role=actor_role,
             supervisor_context=supervisor_context,
+            correlation_id=correlation_id,
         )
 
     def resume(
@@ -596,6 +602,7 @@ class AgentService:
         *,
         approver: str,
         approver_role: Role,
+        correlation_id: str | None = None,
     ) -> AgentExecutionResult:
         if run.status != "pending_approval":
             return self._result(run)
@@ -607,6 +614,8 @@ class AgentService:
         if approver == run.actor:
             raise PermissionError("approver cannot approve the requesting actor's run")
         state = _state_object(run.state_json)
+        if valid_correlation_id(correlation_id):
+            state["correlation_id"] = correlation_id
         pending_index = state.get("pending_approval_step")
         steps = _state_steps(state)
         if not isinstance(pending_index, int) or pending_index < 0 or pending_index >= len(steps):
@@ -660,6 +669,7 @@ class AgentService:
         *,
         actor: str,
         approver_role: Role,
+        correlation_id: str | None = None,
     ) -> AgentExecutionResult:
         if run.status == "cancelled":
             return self._result(run)
@@ -667,6 +677,8 @@ class AgentService:
             raise AgentDefinitionError("only queued or approval-paused runs can be cancelled")
         definition = self._definition_for_run(definition, run)
         state = _state_object(run.state_json)
+        if valid_correlation_id(correlation_id):
+            state["correlation_id"] = correlation_id
         pending_index = state.get("pending_approval_step")
         if isinstance(pending_index, int):
             steps = _state_steps(state)
@@ -1088,6 +1100,11 @@ class AgentService:
                     client_id=definition.client_id,
                     approval_expiry_seconds=definition.approval_expiry_seconds,
                     require_approval=approval_policy is not None,
+                    correlation_id=(
+                        str(state["correlation_id"])
+                        if valid_correlation_id(state.get("correlation_id"))
+                        else None
+                    ),
                 )
             except KeyError:
                 action_result = ActionResult(status="failed", error_detail=f"tool {tool_id} is not registered")
@@ -1294,6 +1311,11 @@ class AgentService:
             status=status,
             trigger_source=f"agent:{definition.trigger}",
             client_id=definition.client_id,
+            correlation_id=(
+                str(final_state["correlation_id"])
+                if valid_correlation_id(final_state.get("correlation_id"))
+                else None
+            ),
             metadata=policy_metadata or None,
             steps=recorder_steps,
         )

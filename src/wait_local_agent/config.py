@@ -221,6 +221,10 @@ class Settings:
     model_input_cost_usd_per_million_tokens: float | None = None
     model_output_cost_usd_per_million_tokens: float | None = None
     offline_mode: bool = False
+    log_dir: Path | None = None
+    log_max_bytes: int = 1_048_576
+    log_backup_count: int = 5
+    support_upload_endpoint: str = ""
 
 
 def load_settings() -> Settings:
@@ -257,6 +261,19 @@ def load_settings() -> Settings:
             "WAIT_MODEL_OUTPUT_COST_USD_PER_MILLION_TOKENS"
         ),
         offline_mode=_bool_env("WAIT_OFFLINE_MODE"),
+        log_dir=(
+            Path(log_dir_value)
+            if (log_dir_value := os.getenv("WAIT_LOG_DIR", "").strip())
+            else None
+        ),
+        log_max_bytes=_int_env("WAIT_LOG_MAX_BYTES", 1_048_576),
+        log_backup_count=_int_env("WAIT_LOG_BACKUP_COUNT", 5),
+        support_upload_endpoint=_secret_value(
+            "WAIT_SUPPORT_UPLOAD_ENDPOINT",
+            os.getenv("WAIT_SUPPORT_UPLOAD_ENDPOINT", "").strip(),
+            backend=backend,
+            vault_path=vault_path,
+        ),
         api_token=os.getenv("WAIT_API_TOKEN", ""),
         admin_token=os.getenv("WAIT_ADMIN_TOKEN", ""),
         tech_token=os.getenv("WAIT_TECH_TOKEN", ""),
