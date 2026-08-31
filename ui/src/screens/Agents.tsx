@@ -6,6 +6,16 @@ import { LoadingState } from "../components/LoadingState";
 import { AgentToolPicker } from "../components/AgentToolPicker";
 import type { AgentApprovalRule, AgentDefinition, AgentFailurePolicy, AgentPlan, AgentRevision, AgentRevisionDiff, AgentRunDetail, AgentTool } from "../api/types";
 
+type RevisionSelection = {
+  fromVersion: string;
+  toVersion: string;
+};
+
+type RestoreRequest = {
+  agentId: string;
+  version: number;
+};
+
 const contextOptions = [
   ["ticket", "Ticket details"],
   ["client", "Client identity"],
@@ -20,6 +30,14 @@ const failurePolicyModes: Array<[AgentFailurePolicy["mode"], string]> = [
   ["technician_escalation", "Escalate to technician"],
   ["blocked", "Block for review"]
 ];
+
+function jsonText(value: unknown): string {
+  return JSON.stringify(value, null, 2) ?? String(value);
+}
+
+function renderDiffValue(value: unknown): string {
+  return typeof value === "string" ? value : jsonText(value);
+}
 
 export function Agents() {
   const { canWrite, connectors = [] } = useDashboard();
@@ -46,6 +64,8 @@ export function Agents() {
   const [editingAgentId, setEditingAgentId] = useState<string | null>(null);
   const [revisions, setRevisions] = useState<Record<string, AgentRevision[]>>({});
   const [diffs, setDiffs] = useState<Record<string, AgentRevisionDiff>>({});
+  const [revisionSelections, setRevisionSelections] = useState<Record<string, RevisionSelection>>({});
+  const [confirmingRestore, setConfirmingRestore] = useState<RestoreRequest | null>(null);
 
   const refresh = useCallback(async () => {
     setLoading(true);
@@ -233,15 +253,28 @@ export function Agents() {
     try {
       const rows = await apiFetch<AgentRevision[]>(`/agents/${encodeURIComponent(agent.id)}/revisions`);
       setRevisions((current) => ({ ...current, [agent.id]: rows }));
+      setRevisionSelections((current) => ({
+        ...current,
+        [agent.id]: { fromVersion: "", toVersion: "" }
+      }));
+      setDiffs((current) => {
+        const next = { ...current };
+        delete next[agent.id];
+        return next;
+      });
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "Unable to load agent history.");
     }
   }
 
-  async function compareRevision(agent: AgentDefinition, version: number) {
+  async function compareRevisions(agent: AgentDefinition) {
+    const selection = revisionSelections[agent.id];
+    if (!selection?.fromVersion || !selection.toVersion || selection.fromVersion === selection.toVersion) {
+      return;
+    }
     try {
       const diff = await apiFetch<AgentRevisionDiff>(
-        `/agents/${encodeURIComponent(agent.id)}/revisions/${version}/diff/${agent.version}`
+        `/agents/${encodeURIComponent(agent.id)}/revisions/${encodeURIComponent(selection.fromVersion)}/diff/${encodeURIComponent(selection.toVersion)}`
       );
       setDiffs((current) => ({ ...current, [agent.id]: diff }));
     } catch (error) {
@@ -249,13 +282,24 @@ export function Agents() {
     }
   }
 
-  async function restoreRevision(agent: AgentDefinition, version: number) {
+  function requestRestore(agent: AgentDefinition, version: number) {
+    if (!canWrite) return;
+    setConfirmingRestore({ agentId: agent.id, version });
+  }
+
+  async function confirmRestore(agent: AgentDefinition, version: number) {
+    if (!canWrite) return;
+    const wasEditing = editingAgentId === agent.id;
+    setConfirmingRestore(null);
     try {
       const restored = await apiFetch<AgentDefinition>(
         `/agents/${encodeURIComponent(agent.id)}/revisions/${version}/restore`,
         { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" }
       );
-      setAgents((current) => current.map((item) => item.id === restored.id ? restored : item));
+      await refresh();
+      if (wasEditing) {
+        editAgent(restored);
+      }
       setMessage(`Restored ${agent.name} version ${version} as version ${restored.version}.`);
       await showRevisions(restored);
     } catch (error) {
@@ -396,8 +440,68 @@ export function Agents() {
             <p className="screen-note">Additional approval: {additionalApprovalTools.length ? additionalApprovalTools.join(", ") : "none"}</p>
             <p className="screen-note">Conditional approval: {conditionalApprovalRules.length ? conditionalApprovalRules.join("; ") : "none"}</p>
             <p className="screen-note">Continuation: {agent.result_aware ? "result-aware, bounded" : "reviewed sequence"}</p>
-            <div className="agent-run-row"><input aria-label={`Ticket for ${agent.name}`} value={ticketIds[agent.id] ?? ""} onChange={(event) => setTicketIds((current) => ({ ...current, [agent.id]: event.target.value }))} placeholder="Ticket id" /><button type="button" disabled={!canWrite || !agent.enabled} title={!canWrite ? "Requires technician access" : !agent.enabled ? "Enable this agent before running it" : undefined} onClick={() => void runAgent(agent)}>Run</button><button type="button" disabled={!canWrite} title={!canWrite ? "Requires technician access" : undefined} onClick={() => void setEnabled(agent, !agent.enabled)}>{agent.enabled ? "Disable" : "Enable"}</button><button type="button" disabled={!canWrite} title={!canWrite ? "Requires technician access" : undefined} onClick={() => editAgent(agent)}>Edit</button><button type="button" className="secondary-button" onClick={() => void showRevisions(agent)}>History</button></div>
-            {revisions[agent.id] ? <div className="agent-history" aria-live="polite"><strong>Revision history</strong>{revisions[agent.id].map((revision) => <div className="agent-history-row" key={`${agent.id}-${revision.version}`}><span>Version {revision.version} · {revision.created_at}</span><div className="row-actions">{revision.version !== agent.version ? <><button type="button" className="secondary-button" onClick={() => void compareRevision(agent, revision.version)}>Compare to current</button><button type="button" className="secondary-button" disabled={!canWrite} title={!canWrite ? "Requires technician access" : undefined} onClick={() => void restoreRevision(agent, revision.version)}>Restore</button></> : <span>current</span>}</div></div>)}{diffs[agent.id] ? <div className="agent-diff"><strong>{diffs[agent.id].changed ? "Changes" : "No changes"}</strong>{diffs[agent.id].changes.length ? diffs[agent.id].changes.map((change) => <div key={change.field}><span>{change.field}</span><small>{JSON.stringify(change.before)} → {JSON.stringify(change.after)}</small></div>) : <span>No persisted fields differ.</span>}</div> : null}</div> : null}
+            <div className="agent-run-row"><input aria-label={`Ticket for ${agent.name}`} value={ticketIds[agent.id] ?? ""} onChange={(event) => setTicketIds((current) => ({ ...current, [agent.id]: event.target.value }))} placeholder="Ticket id" /><button type="button" disabled={!canWrite || !agent.enabled} title={!canWrite ? "Requires technician access" : !agent.enabled ? "Enable this agent before running it" : undefined} onClick={() => void runAgent(agent)}>Run</button><button type="button" disabled={!canWrite} title={!canWrite ? "Requires technician access" : undefined} onClick={() => void setEnabled(agent, !agent.enabled)}>{agent.enabled ? "Disable" : "Enable"}</button><button type="button" disabled={!canWrite} title={!canWrite ? "Requires technician access" : undefined} onClick={() => editAgent(agent)}>Edit</button></div>
+            <details className="agent-revisions-drawer">
+              <summary onClick={() => { if (!revisions[agent.id]) void showRevisions(agent); }}>History and recovery</summary>
+              {revisions[agent.id] ? (() => {
+                const selection = revisionSelections[agent.id];
+                const diff = diffs[agent.id];
+                return <div className="event-list" aria-label={`Revisions for ${agent.name}`}>
+                  <strong>Revision history</strong>
+                  <div className="grid revision-selector">
+                    <label>
+                      From revision
+                      <select
+                        aria-label={`From revision for ${agent.name}`}
+                        value={selection?.fromVersion ?? ""}
+                        onChange={(event) => setRevisionSelections((current) => ({
+                          ...current,
+                          [agent.id]: { fromVersion: event.target.value, toVersion: selection?.toVersion ?? "" }
+                        }))}
+                      >
+                        <option value="">Choose a version</option>
+                        {revisions[agent.id].map((revision) => <option key={`from-${revision.version}`} value={revision.version}>Version {revision.version}</option>)}
+                      </select>
+                    </label>
+                    <label>
+                      To revision
+                      <select
+                        aria-label={`To revision for ${agent.name}`}
+                        value={selection?.toVersion ?? ""}
+                        onChange={(event) => setRevisionSelections((current) => ({
+                          ...current,
+                          [agent.id]: { fromVersion: selection?.fromVersion ?? "", toVersion: event.target.value }
+                        }))}
+                      >
+                        <option value="">Choose a version</option>
+                        {revisions[agent.id].map((revision) => <option key={`to-${revision.version}`} value={revision.version}>Version {revision.version}</option>)}
+                      </select>
+                    </label>
+                    <button type="button" disabled={!selection?.fromVersion || !selection.toVersion || selection.fromVersion === selection.toVersion} onClick={() => void compareRevisions(agent)}>Compare revisions</button>
+                  </div>
+                  {revisions[agent.id].map((revision) => <article className="event-row" key={`${agent.id}-${revision.version}`}>
+                    <span>Version {revision.version}</span>
+                    <span>{revision.created_at}</span>
+                    {revision.version !== agent.version ? <button type="button" className="secondary-button" disabled={!canWrite} title={!canWrite ? "Requires technician access" : undefined} onClick={() => requestRestore(agent, revision.version)}>Restore</button> : <span>current</span>}
+                  </article>)}
+                  {confirmingRestore?.agentId === agent.id ? <div className="notice confirm-panel" role="alertdialog" aria-label="Confirm agent restore">
+                    <p>Restore version {confirmingRestore.version} of {agent.name}? This creates a new current version.</p>
+                    <div className="row-actions">
+                      <button type="button" onClick={() => void confirmRestore(agent, confirmingRestore.version)}>Confirm restore</button>
+                      <button type="button" className="icon-button" onClick={() => setConfirmingRestore(null)}>Cancel</button>
+                    </div>
+                  </div> : null}
+                  {diff ? <div className="agent-diff" aria-label={`Revision diff for ${agent.name}`}>
+                    <strong>Changes: v{diff.from_version} → v{diff.to_version}</strong>
+                    {diff.changes.length === 0 ? <p>No changes.</p> : <ul>{diff.changes.map((change) => <li key={change.field}>
+                      <code>{change.field}</code>
+                      <div><span>Before</span><pre>{renderDiffValue(change.before)}</pre></div>
+                      <div><span>After</span><pre>{renderDiffValue(change.after)}</pre></div>
+                    </li>)}</ul>}
+                  </div> : null}
+                </div>;
+              })() : <p className="screen-note">Loading history.</p>}
+            </details>
             {detail ? <div className="agent-run-detail">
               <strong>Run {detail.id}: {detail.status}</strong>
               <span>Revision {detail.revision_version ?? "n/a"}</span>

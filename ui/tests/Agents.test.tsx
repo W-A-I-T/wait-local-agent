@@ -36,10 +36,11 @@ describe("Agents", () => {
   };
 
   beforeEach(() => {
+    let currentAgent = agent;
     vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
       const path = String(input);
       if (path === "/agents" && !init?.method) {
-        return Promise.resolve(new Response(JSON.stringify([agent]), { status: 200 }));
+        return Promise.resolve(new Response(JSON.stringify([currentAgent]), { status: 200 }));
       }
       if (path === "/tools" && !init?.method) {
         return Promise.resolve(new Response(JSON.stringify([
@@ -233,7 +234,8 @@ describe("Agents", () => {
         return Promise.resolve(new Response(JSON.stringify({ run_id: 7 }), { status: 200 }));
       }
       if (path === "/agents/agent-1" && init?.method === "PUT") {
-        return Promise.resolve(new Response(JSON.stringify({ ...agent, version: 3, description: "Updated bounded triage." }), { status: 200 }));
+        currentAgent = { ...currentAgent, version: 3, description: "Updated bounded triage." };
+        return Promise.resolve(new Response(JSON.stringify(currentAgent), { status: 200 }));
       }
       if (path === "/agents/agent-1/revisions" && !init?.method) {
         return Promise.resolve(new Response(JSON.stringify([
@@ -245,7 +247,8 @@ describe("Agents", () => {
         return Promise.resolve(new Response(JSON.stringify({ agent_id: "agent-1", from_version: 1, to_version: 2, changed: false, changes: [], client_id: "acme" }), { status: 200 }));
       }
       if (path === "/agents/agent-1/revisions/1/restore" && init?.method === "POST") {
-        return Promise.resolve(new Response(JSON.stringify({ ...agent, version: 4 }), { status: 200 }));
+        currentAgent = { ...currentAgent, version: 4, description: "Restored bounded triage." };
+        return Promise.resolve(new Response(JSON.stringify(currentAgent), { status: 200 }));
       }
       if (path === "/agent-runs/7") {
         return Promise.resolve(new Response(JSON.stringify({
@@ -604,17 +607,31 @@ describe("Agents", () => {
     expect(String(request?.[1]?.body)).toContain("acme");
   });
 
-  it("loads, compares, and restores agent revisions", async () => {
+  it("loads two selected revisions, renders their diff, and confirms restore with a refresh", async () => {
     render(<MemoryRouter><Agents /></MemoryRouter>);
 
-    expect(await screen.findByRole("button", { name: "History" })).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "History" }));
+    expect(await screen.findByText("History and recovery")).toBeInTheDocument();
+    fireEvent.click(screen.getByText("History and recovery"));
     expect(await screen.findByText("Revision history")).toBeInTheDocument();
-    expect(screen.getByText(/Version 1/)).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "Compare to current" }));
-    expect(await screen.findByText("No changes")).toBeInTheDocument();
+    expect(screen.getAllByText(/Version 1/).length).toBeGreaterThan(0);
+    fireEvent.click(screen.getByRole("button", { name: "Edit" }));
+    fireEvent.change(screen.getByLabelText("Description"), { target: { value: "Unsaved form state." } });
+    fireEvent.change(screen.getByLabelText("From revision for MFA triage"), { target: { value: "1" } });
+    fireEvent.change(screen.getByLabelText("To revision for MFA triage"), { target: { value: "2" } });
+    fireEvent.click(screen.getByRole("button", { name: "Compare revisions" }));
+    expect(await screen.findByText("No changes.")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Restore" }));
+    expect(screen.getByRole("alertdialog", { name: "Confirm agent restore" })).toBeInTheDocument();
+    expect((vi.mocked(fetch) as unknown as { mock: { calls: Array<[RequestInfo | URL, RequestInit?]> } }).mock.calls.some(
+      ([input]) => String(input) === "/agents/agent-1/revisions/1/restore"
+    )).toBe(false);
+    fireEvent.click(screen.getByRole("button", { name: "Confirm restore" }));
     await waitFor(() => expect(screen.getByText("Restored MFA triage version 1 as version 4.")).toBeInTheDocument());
+    expect(screen.getByText("v4 · enabled")).toBeInTheDocument();
+    expect(screen.getByLabelText("Description")).toHaveValue("Restored bounded triage.");
+    expect((vi.mocked(fetch) as unknown as { mock: { calls: Array<[RequestInfo | URL, RequestInit?]> } }).mock.calls.some(
+      ([input]) => String(input) === "/agents"
+    )).toBe(true);
   });
   it("shows loading while agent definitions are being fetched", () => {
     vi.stubGlobal("fetch", vi.fn(() => new Promise<Response>(() => undefined)));
