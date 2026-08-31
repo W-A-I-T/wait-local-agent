@@ -1558,16 +1558,134 @@ nav a:hover {
 }
 
 .overview-card {
+  background: #fff;
+  cursor: pointer;
   display: grid;
   gap: 7px;
   border: 1px solid #e4ebe8;
   border-radius: 8px;
   color: #253633;
+  font: inherit;
   padding: 14px;
+  text-align: left;
+  width: 100%;
 }
 
 .overview-card:hover {
   border-color: #1f8261;
+}
+
+.overview-card.selected {
+  border-color: #1f8261;
+  box-shadow: 0 0 0 2px rgba(31, 130, 97, 0.14);
+}
+
+.microsoft-evidence-card em {
+  color: #1f6f55;
+  font-size: 0.82rem;
+  font-style: normal;
+  font-weight: 800;
+}
+
+.microsoft-evidence-panel {
+  border-color: #b8c9c1;
+}
+
+.microsoft-evidence-table-wrap {
+  overflow-x: auto;
+}
+
+.microsoft-evidence-table {
+  border-collapse: collapse;
+  min-width: 840px;
+  width: 100%;
+}
+
+.microsoft-evidence-table th,
+.microsoft-evidence-table td {
+  border-bottom: 1px solid #e4ebe8;
+  padding: 12px;
+  text-align: left;
+  vertical-align: top;
+}
+
+.microsoft-evidence-table th {
+  color: #60706a;
+  font-size: 0.76rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.microsoft-evidence-pagination {
+  align-items: center;
+  display: flex;
+  gap: 12px;
+  justify-content: space-between;
+  margin-top: 16px;
+}
+
+.microsoft-evidence-pagination > div {
+  display: flex;
+  gap: 8px;
+}
+
+.microsoft-evidence-detail-drawer {
+  background: #f7faf8;
+  border: 1px solid #b8c9c1;
+  border-radius: 8px;
+  margin-top: 18px;
+  padding: 14px;
+}
+
+.microsoft-evidence-detail-drawer .panel-heading {
+  margin-bottom: 10px;
+}
+
+.microsoft-evidence-detail-drawer pre,
+.microsoft-runbook-plan pre {
+  background: #1f2d2a;
+  border-radius: 6px;
+  color: #e8f5ef;
+  margin: 0;
+  max-height: 320px;
+  overflow: auto;
+  padding: 12px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.microsoft-runbook-plan {
+  background: #f7faf8;
+  border: 1px solid #b8c9c1;
+  border-radius: 8px;
+  margin: 18px 0;
+  padding: 14px;
+}
+
+.microsoft-runbook-plan-grid {
+  display: grid;
+  gap: 10px;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  margin: 0 0 14px;
+}
+
+.microsoft-runbook-plan-grid > div {
+  background: #fff;
+  border: 1px solid #e4ebe8;
+  border-radius: 6px;
+  padding: 10px;
+}
+
+.microsoft-runbook-plan-grid dt {
+  color: #60706a;
+  font-size: 0.76rem;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.microsoft-runbook-plan-grid dd {
+  margin: 5px 0 0;
+  overflow-wrap: anywhere;
 }
 
 .overview-card svg {
@@ -3476,6 +3594,7 @@ dd svg {
   .smart-action-filters,
   .smart-action-detail-grid,
   .smart-action-schema-grid,
+  .microsoft-runbook-plan-grid,
   .technician-chat-layout,
   .grid,
   .analytics-filters,
