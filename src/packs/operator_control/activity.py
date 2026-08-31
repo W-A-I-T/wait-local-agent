@@ -43,129 +43,129 @@ def list_activity(
     executions = store.list_execution_runs(scope)
     canonical: dict[tuple[str, int], int] = {}
     items: list[ActivityItem] = []
-    for run in executions:
-        source_id = run.source_run_id
-        run_kind = run.run_kind.strip().lower()
+    for execution in executions:
+        source_id = execution.source_run_id
+        run_kind = execution.run_kind.strip().lower()
         if source_id is not None:
-            canonical[(run_kind, source_id)] = int(run.id) if run.id is not None else 0
+            canonical[(run_kind, source_id)] = int(execution.id) if execution.id is not None else 0
         items.append(
             ActivityItem(
-                activity_id=f"execution:{run.id}",
+                activity_id=f"execution:{execution.id}",
                 kind=run_kind or "execution",
                 source_run_id=source_id,
-                canonical_execution_id=run.id,
+                canonical_execution_id=execution.id,
                 title=_execution_title(run_kind, source_id),
                 entity_id=str(source_id or ""),
-                actor=run.actor,
-                status=run.status,
-                started_at=run.started_at,
-                finished_at=run.finished_at,
-                client_id=run.client_id,
+                actor=execution.actor,
+                status=execution.status,
+                started_at=execution.started_at,
+                finished_at=execution.finished_at,
+                client_id=execution.client_id,
                 detail_path="/executions",
-                trigger_source=run.trigger_source,
+                trigger_source=execution.trigger_source,
             )
         )
 
-    for run in store.list_agent_runs(scope):
-        if run.id is not None and _is_canonical(canonical, "agent", run.id):
+    for agent_run in store.list_agent_runs(scope):
+        if agent_run.id is not None and _is_canonical(canonical, "agent", agent_run.id):
             continue
         items.append(
             ActivityItem(
-                activity_id=f"agent:{run.id}",
+                activity_id=f"agent:{agent_run.id}",
                 kind="agent",
-                source_run_id=run.id,
-                canonical_execution_id=_canonical_id(canonical, "agent", run.id),
-                title=run.agent_id,
-                entity_id=run.entity_id,
-                actor=run.actor,
-                status=str(run.status),
-                started_at=run.started_at,
-                finished_at=run.finished_at,
-                client_id=run.client_id,
+                source_run_id=agent_run.id,
+                canonical_execution_id=_canonical_id(canonical, "agent", agent_run.id),
+                title=agent_run.agent_id,
+                entity_id=agent_run.entity_id,
+                actor=agent_run.actor,
+                status=str(agent_run.status),
+                started_at=agent_run.started_at,
+                finished_at=agent_run.finished_at,
+                client_id=agent_run.client_id,
                 detail_path="/agents",
             )
         )
 
-    for run in store.list_workflow_runs(scope):
-        if run.id is not None and _is_canonical(canonical, "workflow", run.id):
+    for workflow_run in store.list_workflow_runs(scope):
+        if workflow_run.id is not None and _is_canonical(canonical, "workflow", workflow_run.id):
             continue
         items.append(
             ActivityItem(
-                activity_id=f"workflow:{run.id}",
+                activity_id=f"workflow:{workflow_run.id}",
                 kind="workflow",
-                source_run_id=run.id,
-                canonical_execution_id=_canonical_id(canonical, "workflow", run.id),
-                title=run.template_id,
-                entity_id=run.ticket_id,
+                source_run_id=workflow_run.id,
+                canonical_execution_id=_canonical_id(canonical, "workflow", workflow_run.id),
+                title=workflow_run.template_id,
+                entity_id=workflow_run.ticket_id,
                 actor="",
-                status=str(run.status),
-                started_at=run.created_at,
-                finished_at=run.updated_at,
-                client_id=run.client_id,
+                status=str(workflow_run.status),
+                started_at=workflow_run.created_at,
+                finished_at=workflow_run.updated_at,
+                client_id=workflow_run.client_id,
                 detail_path="/workflows",
             )
         )
 
-    for run in store.list_smart_action_runs(scope):
-        if run.id is not None and (
-            _is_canonical(canonical, "smart_action", run.id)
-            or _is_canonical(canonical, "smart-action", run.id)
+    for action_run in store.list_smart_action_runs(scope):
+        if action_run.id is not None and (
+            _is_canonical(canonical, "smart_action", action_run.id)
+            or _is_canonical(canonical, "smart-action", action_run.id)
         ):
             continue
         items.append(
             ActivityItem(
-                activity_id=f"smart-action:{run.id}",
+                activity_id=f"smart-action:{action_run.id}",
                 kind="smart_action",
-                source_run_id=run.id,
+                source_run_id=action_run.id,
                 canonical_execution_id=(
-                    _canonical_id(canonical, "smart_action", run.id)
-                    or _canonical_id(canonical, "smart-action", run.id)
+                    _canonical_id(canonical, "smart_action", action_run.id)
+                    or _canonical_id(canonical, "smart-action", action_run.id)
                 ),
-                title=run.action_id,
+                title=action_run.action_id,
                 entity_id="",
-                actor=run.actor,
-                status=run.status,
-                started_at=run.created_at,
-                finished_at=run.updated_at,
-                client_id=run.client_id,
+                actor=action_run.actor,
+                status=action_run.status,
+                started_at=action_run.created_at,
+                finished_at=action_run.updated_at,
+                client_id=action_run.client_id,
                 detail_path="/smart-actions/runs",
             )
         )
 
-    for run in store.list_collector_runs(scope):
-        if run.id is not None and _is_canonical(canonical, "collector", run.id):
+    for collector_run in store.list_collector_runs(scope):
+        if collector_run.id is not None and _is_canonical(canonical, "collector", collector_run.id):
             continue
         items.append(
             ActivityItem(
-                activity_id=f"collector:{run.id}",
+                activity_id=f"collector:{collector_run.id}",
                 kind="collector",
-                source_run_id=run.id,
-                canonical_execution_id=_canonical_id(canonical, "collector", run.id),
-                title=run.module_id,
-                entity_id=str(run.source_id or ""),
-                actor=run.actor_id or "",
-                status=run.status,
-                started_at=run.started_at,
-                finished_at=run.completed_at,
-                client_id=run.client_id,
+                source_run_id=collector_run.id,
+                canonical_execution_id=_canonical_id(canonical, "collector", collector_run.id),
+                title=collector_run.module_id,
+                entity_id=str(collector_run.source_id or ""),
+                actor=collector_run.actor_id or "",
+                status=collector_run.status,
+                started_at=collector_run.started_at,
+                finished_at=collector_run.completed_at,
+                client_id=collector_run.client_id,
                 detail_path="/collectors",
             )
         )
 
-    for run in store.list_agent_backfills(scope):
+    for backfill in store.list_agent_backfills(scope):
         items.append(
             ActivityItem(
-                activity_id=f"backfill:{run.id}",
+                activity_id=f"backfill:{backfill.id}",
                 kind="backfill",
-                source_run_id=run.id,
+                source_run_id=backfill.id,
                 canonical_execution_id=None,
-                title=run.agent_id,
+                title=backfill.agent_id,
                 entity_id="",
-                actor=run.actor,
-                status=run.status,
-                started_at=run.created_at,
-                finished_at=run.updated_at,
-                client_id=run.client_id,
+                actor=backfill.actor,
+                status=backfill.status,
+                started_at=backfill.created_at,
+                finished_at=backfill.updated_at,
+                client_id=backfill.client_id,
                 detail_path="/backfills",
             )
         )
