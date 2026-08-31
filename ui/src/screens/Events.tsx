@@ -1,9 +1,20 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useState, type FormEvent } from "react";
 import { X } from "lucide-react";
 import { apiFetch } from "../api/client";
 import { useDashboard } from "../app/DashboardContext";
-import type { EventDelivery, EventHistory } from "../api/types";
+import type { EventDelivery, EventDispatchResult, EventHistory } from "../api/types";
 import { StatusChip } from "../components/StatusChip";
+
+const SUPPORTED_EVENT_TYPES = [
+  "ticket.created",
+  "ticket.updated",
+  "ticket.unassigned",
+  "ticket.priority_changed",
+  "ticket.status_changed",
+  "ticket.closed",
+  "time_entry.added",
+  "workflow.completed"
+] as const;
 
 export function Events() {
   const { retryEventDelivery } = useDashboard();
@@ -11,11 +22,18 @@ export function Events() {
   const [history, setHistory] = useState<EventHistory[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [statusMessage, setStatusMessage] = useState("");
   const [selectedDelivery, setSelectedDelivery] = useState<EventDelivery | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
   const [detailError, setDetailError] = useState("");
   const [retryingDeliveryId, setRetryingDeliveryId] = useState<number | null>(null);
   const [retryError, setRetryError] = useState("");
+  const [eventType, setEventType] = useState<(typeof SUPPORTED_EVENT_TYPES)[number]>(SUPPORTED_EVENT_TYPES[0]);
+  const [entityId, setEntityId] = useState("");
+  const [payloadText, setPayloadText] = useState("{}");
+  const [emitBusy, setEmitBusy] = useState(false);
+  const [emitError, setEmitError] = useState("");
+  const [dispatchResult, setDispatchResult] = useState<EventDispatchResult | null>(null);
 
   const loadEvents = useCallback(async () => {
     setLoading(true);
@@ -70,6 +88,46 @@ export function Events() {
     }
   }, []);
 
+  const emitTestEvent = useCallback(async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    const trimmedEntityId = entityId.trim();
+    if (!trimmedEntityId) {
+      setEmitError("Entity ID is required.");
+      return;
+    }
+    let payload: unknown;
+    try {
+      payload = JSON.parse(payloadText);
+    } catch {
+      setEmitError("Payload must be valid JSON.");
+      return;
+    }
+    if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
+      setEmitError("Payload must be a JSON object.");
+      return;
+    }
+    setEmitBusy(true);
+    setEmitError("");
+    setDispatchResult(null);
+    try {
+      const result = await apiFetch<EventDispatchResult>("/automation/events", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Idempotency-Key": `ui-test-${crypto.randomUUID()}`
+        },
+        body: JSON.stringify({ event_type: eventType, entity_type: "ticket", entity_id: trimmedEntityId, payload })
+      });
+      setDispatchResult(result);
+      setStatusMessage(`Test event accepted as delivery ${result.delivery.id}.`);
+      await loadEvents();
+    } catch (requestError) {
+      setEmitError(requestError instanceof Error ? requestError.message : "Unable to emit the test event.");
+    } finally {
+      setEmitBusy(false);
+    }
+  }, [entityId, eventType, loadEvents, payloadText]);
+
   return (
     <div className="screen-stack">
       <section className="panel events-hero">
@@ -89,7 +147,44 @@ export function Events() {
           <button className="secondary-button" type="button" onClick={() => void loadEvents()} disabled={loading}>Try again</button>
         </div>
       ) : null}
+      {statusMessage ? <div className="notice success" role="status">{statusMessage}</div> : null}
       {retryError ? <div className="notice danger" role="alert">{retryError}</div> : null}
+
+      <section className="panel" aria-labelledby="emit-event-heading">
+        <div className="panel-heading">
+          <div>
+            <h2 id="emit-event-heading">Emit test event</h2>
+            <span>Send one supported ticket event through the normal dispatcher</span>
+          </div>
+        </div>
+        <form className="draft-form" onSubmit={(event) => void emitTestEvent(event)}>
+          <label>
+            Event type
+            <select value={eventType} onChange={(event) => setEventType(event.target.value as (typeof SUPPORTED_EVENT_TYPES)[number])}>
+              {SUPPORTED_EVENT_TYPES.map((type) => <option key={type} value={type}>{eventTypeLabel(type)}</option>)}
+            </select>
+          </label>
+          <label>
+            Ticket ID
+            <input value={entityId} onChange={(event) => setEntityId(event.target.value)} placeholder="TCK-1001" />
+          </label>
+          <label>
+            Payload JSON
+            <textarea rows={5} value={payloadText} onChange={(event) => setPayloadText(event.target.value)} />
+          </label>
+          {emitError ? <div className="notice danger" role="alert">{emitError}</div> : null}
+          <button type="submit" disabled={emitBusy}>{emitBusy ? "Emitting…" : "Emit test event"}</button>
+        </form>
+        {dispatchResult ? (
+          <div className="connection-state" role="status">
+            <strong>Dispatch result</strong>
+            <span>Delivery {dispatchResult.delivery.id}: {dispatchResult.delivery.status}</span>
+            <span>{dispatchResult.duplicate ? "Duplicate delivery reused" : "New delivery created"}</span>
+            <span>{dispatchResult.matched_agent_ids.length} agent{dispatchResult.matched_agent_ids.length === 1 ? "" : "s"} matched · {dispatchResult.matched_playbook_ids.length} playbook{dispatchResult.matched_playbook_ids.length === 1 ? "" : "s"} matched</span>
+            {dispatchResult.errors.map((dispatchError) => <span key={dispatchError}>Needs attention: {dispatchError}</span>)}
+          </div>
+        ) : null}
+      </section>
 
       {loading ? (
         <section className="panel" aria-busy="true">
@@ -268,4 +363,8 @@ function formatTarget(delivery: EventDelivery): string {
 
 function formatTimestamp(value?: string | null): string {
   return value || "Not recorded";
+}
+
+function eventTypeLabel(value: string): string {
+  return value.replace(/[._]/g, " ").replace(/\b\w/g, (character) => character.toUpperCase());
 }

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState, type FormEvent, type KeyboardEvent } from "react";
-import { apiFetch } from "../api/client";
-import type { Client, ClientConnectorMapping, ClientDirectoryEntry, ClientGraph, MappingVerifyResult } from "../api/types";
+import { ApiRequestError, apiFetch } from "../api/client";
+import type { Client, ClientConnectorMapping, ClientDirectoryEntry, ClientGraph, MappingVerifyResult, RmmInventorySyncResult } from "../api/types";
 import { useDashboard } from "../app/DashboardContext";
 import { EmptyState } from "../components/EmptyState";
 import { LoadingState } from "../components/LoadingState";
@@ -22,6 +22,12 @@ function isNotFoundError(error: unknown): boolean {
 
 const emptyForm: ClientForm = { client_id: "", name: "", status: "active" };
 
+function groupGraphRefs(refs: ClientGraph["refs"]): ClientGraph["refs"] {
+  return [...refs].sort((left, right) =>
+    left.entity_type.localeCompare(right.entity_type) || left.display_name.localeCompare(right.display_name)
+  );
+}
+
 export function Clients() {
   const { role, roleResolved, refresh, refreshConfiguration = refresh } = useDashboard();
   const canMutate = roleResolved && role === "admin";
@@ -32,6 +38,9 @@ export function Clients() {
   const [clientGraph, setClientGraph] = useState<ClientGraph | null>(null);
   const [graphLoading, setGraphLoading] = useState(false);
   const [graphError, setGraphError] = useState("");
+  const [rmmSyncLoading, setRmmSyncLoading] = useState(false);
+  const [rmmSyncResult, setRmmSyncResult] = useState<RmmInventorySyncResult | null>(null);
+  const [rmmSyncError, setRmmSyncError] = useState("");
   const [mappings, setMappings] = useState<ClientConnectorMapping[]>([]);
   const [loading, setLoading] = useState(true);
   const [detailLoading, setDetailLoading] = useState(false);
@@ -67,6 +76,8 @@ export function Clients() {
     setActiveDetailTab("details");
     setClientGraph(null);
     setGraphError("");
+    setRmmSyncResult(null);
+    setRmmSyncError("");
     setMappings([]);
     setDetailLoading(true);
     setDetailError("");
@@ -134,6 +145,28 @@ export function Clients() {
     const ref = refsById.get(refId);
     return ref ? ref.display_name || ref.external_id : String(refId);
   };
+
+  const syncRmmGraph = useCallback(async () => {
+    if (!selectedClientId) return;
+    setRmmSyncLoading(true);
+    setRmmSyncError("");
+    setRmmSyncResult(null);
+    try {
+      const result = await apiFetch<RmmInventorySyncResult>(
+        `/clients/${encodeURIComponent(selectedClientId)}/graph/sync-rmm`,
+        { method: "POST" }
+      );
+      setRmmSyncResult(result);
+      const graph = await apiFetch<ClientGraph>(`/clients/${encodeURIComponent(selectedClientId)}/graph`);
+      setClientGraph(graph);
+    } catch (requestError) {
+      setRmmSyncError(requestError instanceof ApiRequestError && requestError.status === 409
+        ? "RMM sync is unavailable in the current appliance posture. Approved read access may be disabled or the RMM adapter may be unavailable."
+        : requestError instanceof Error ? requestError.message : "Unable to sync the RMM inventory.");
+    } finally {
+      setRmmSyncLoading(false);
+    }
+  }, [selectedClientId]);
 
   const submitForm = useCallback(async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -243,7 +276,32 @@ export function Clients() {
 
       {loading ? <LoadingState label="Loading Clients…" /> : clients.length === 0 ? <EmptyState title="No clients are visible." why={<><span>The appliance has not returned any clients for this scope.</span><span>For demo evaluation only, with writes disabled, seed a client using <code className="copyable-command">wait-local-agent demo seed --client-id demo</code>. This requires <code>WAIT_DEMO_MODE=true</code> and writes disabled.</span></>} /> : <section className="panel" aria-labelledby="clients-list-heading"><div className="panel-heading"><div><h2 id="clients-list-heading">Client directory</h2><span>{clients.length} client{clients.length === 1 ? "" : "s"}</span></div><span>Select a client for details</span></div><div className="clients-table-wrap"><table className="clients-table"><thead><tr><th scope="col">Name</th><th scope="col">Client ID</th><th scope="col">Status</th></tr></thead><tbody>{clients.map((client) => <tr key={client.client_id}><td><button className="table-link" type="button" onClick={() => void selectClient(client.client_id)}>{client.name}</button></td><td><code>{client.client_id}</code></td><td><StatusChip status={client.status} /></td></tr>)}</tbody></table></div></section>}
 
-      {selectedClientId ? <section className="panel" aria-labelledby="client-detail-heading"><div className="panel-heading"><div><h2 id="client-detail-heading">Client detail</h2><span>{selectedClientId}</span></div>{selectedClient ? <RoleGate role={role} resolved={roleResolved} allowed={["admin"]}><button className="secondary-button" type="button" onClick={beginEdit}>Edit client</button></RoleGate> : null}</div>{selectedClient ? <><div className="tab-list" role="tablist" aria-label="Client detail"><div className="row-actions">{detailTabs.map((tab) => <button key={tab.id} id={`client-detail-tab-${tab.id}`} type="button" role="tab" aria-selected={activeDetailTab === tab.id} aria-controls={`client-detail-panel-${tab.id}`} tabIndex={activeDetailTab === tab.id ? 0 : -1} className={activeDetailTab === tab.id ? "selected" : "secondary-button"} onClick={() => selectDetailTab(tab.id)} onKeyDown={handleDetailTabKeyDown}>{tab.label}</button>)}</div></div>{activeDetailTab === "details" ? <div id="client-detail-panel-details" role="tabpanel" aria-labelledby="client-detail-tab-details"><dl className="mcp-detail-grid"><div><dt>Client ID</dt><dd><code>{selectedClient.client_id}</code></dd></div><div><dt>Name</dt><dd>{selectedClient.name}</dd></div><div><dt>Status</dt><dd><StatusChip status={selectedClient.status} /></dd></div><div><dt>Created</dt><dd>{selectedClient.created_at}</dd></div><div><dt>Updated</dt><dd>{selectedClient.updated_at}</dd></div></dl><h3>Connector mappings</h3>{mappingError ? <div className="notice danger" role="alert">{mappingError}</div> : null}{mappings.length === 0 ? <p className="screen-note">No connector mappings are configured for this client.</p> : <div className="clients-table-wrap"><table className="clients-table"><thead><tr><th scope="col">External company</th><th scope="col">Connector</th><th scope="col">Verification</th></tr></thead><tbody>{mappings.map((mapping) => <tr key={mapping.mapping_id}><td>{mapping.external_company_name || mapping.external_company_id}</td><td><code>{mapping.connector_instance_id}</code></td><td>{mapping.verified === 1 ? <StatusChip status="verified" /> : <RoleGate role={role} resolved={roleResolved} allowed={["admin"]}><button className="secondary-button" type="button" onClick={() => void verifyMapping(mapping.mapping_id)} disabled={verifyingMappingId !== null}>{verifyingMappingId === mapping.mapping_id ? "Verifying…" : "Verify"}</button></RoleGate>}</td></tr>)}</tbody></table></div>}</div> : <div id="client-detail-panel-graph" role="tabpanel" aria-labelledby="client-detail-tab-graph" aria-busy={graphLoading}><h3>Entities</h3>{graphLoading ? <p className="screen-note">Loading operational graph…</p> : graphError ? <div className="notice danger" role="alert">{graphError}</div> : !clientGraph || clientGraph.refs.length === 0 ? <p className="screen-note">No operational-graph entities are linked to this client yet.</p> : <><div className="clients-table-wrap"><table className="clients-table"><thead><tr><th scope="col">Type</th><th scope="col">Name</th><th scope="col">Source</th><th scope="col">External ID</th><th scope="col">Provenance</th></tr></thead><tbody>{clientGraph.refs.map((ref) => <tr key={ref.id}><td><StatusChip status={ref.entity_type} /></td><td>{ref.display_name || ref.external_id}</td><td>{ref.source_system}</td><td><code>{ref.external_id}</code></td><td>{ref.provenance}</td></tr>)}</tbody></table></div><h3>Relationships</h3>{clientGraph.links.length === 0 ? <p className="screen-note">No relationships are linked to these entities.</p> : <div className="clients-table-wrap"><table className="clients-table"><thead><tr><th scope="col">From</th><th scope="col">Relationship</th><th scope="col">To</th><th scope="col">Provenance</th></tr></thead><tbody>{clientGraph.links.map((link) => <tr key={link.id}><td>{entityName(link.from_ref_id)}</td><td>{link.link_type}</td><td>{entityName(link.to_ref_id)}</td><td>{link.provenance}</td></tr>)}</tbody></table></div>}</>}</div>}</> : detailLoading ? <p className="screen-note" aria-busy="true">Loading client details…</p> : detailError ? <div className="notice danger" role="alert">{detailError}</div> : null}</section> : null}
+      {selectedClientId && activeDetailTab === "graph" ? (
+        <section className="panel" aria-labelledby="rmm-sync-heading">
+          <div className="panel-heading">
+            <div>
+              <h2 id="rmm-sync-heading">RMM inventory</h2>
+              <span>Sync devices and alerts into this client graph</span>
+            </div>
+            <RoleGate role={role} resolved={roleResolved} allowed={["admin"]}>
+              <button className="secondary-button" type="button" onClick={() => void syncRmmGraph()} disabled={rmmSyncLoading}>
+                {rmmSyncLoading ? "Syncing…" : "Sync from RMM"}
+              </button>
+            </RoleGate>
+          </div>
+          {rmmSyncError ? <div className="notice danger" role="alert">{rmmSyncError}</div> : null}
+          {rmmSyncResult ? (
+            <div className="connection-state" role="status">
+              <span>{rmmSyncResult.devices} device{rmmSyncResult.devices === 1 ? "" : "s"} synced</span>
+              <span>{rmmSyncResult.alerts} alert{rmmSyncResult.alerts === 1 ? "" : "s"} synced</span>
+              <span>{rmmSyncResult.links} relationship{rmmSyncResult.links === 1 ? "" : "s"} linked</span>
+              {rmmSyncResult.errors.map((syncError) => <span key={syncError}>Needs attention: {syncError}</span>)}
+            </div>
+          ) : null}
+        </section>
+      ) : null}
+
+      {selectedClientId ? <section className="panel" aria-labelledby="client-detail-heading"><div className="panel-heading"><div><h2 id="client-detail-heading">Client detail</h2><span>{selectedClientId}</span></div>{selectedClient ? <RoleGate role={role} resolved={roleResolved} allowed={["admin"]}><button className="secondary-button" type="button" onClick={beginEdit}>Edit client</button></RoleGate> : null}</div>{selectedClient ? <><div className="tab-list" role="tablist" aria-label="Client detail"><div className="row-actions">{detailTabs.map((tab) => <button key={tab.id} id={`client-detail-tab-${tab.id}`} type="button" role="tab" aria-selected={activeDetailTab === tab.id} aria-controls={`client-detail-panel-${tab.id}`} tabIndex={activeDetailTab === tab.id ? 0 : -1} className={activeDetailTab === tab.id ? "selected" : "secondary-button"} onClick={() => selectDetailTab(tab.id)} onKeyDown={handleDetailTabKeyDown}>{tab.label}</button>)}</div></div>{activeDetailTab === "details" ? <div id="client-detail-panel-details" role="tabpanel" aria-labelledby="client-detail-tab-details"><dl className="mcp-detail-grid"><div><dt>Client ID</dt><dd><code>{selectedClient.client_id}</code></dd></div><div><dt>Name</dt><dd>{selectedClient.name}</dd></div><div><dt>Status</dt><dd><StatusChip status={selectedClient.status} /></dd></div><div><dt>Created</dt><dd>{selectedClient.created_at}</dd></div><div><dt>Updated</dt><dd>{selectedClient.updated_at}</dd></div></dl><h3>Connector mappings</h3>{mappingError ? <div className="notice danger" role="alert">{mappingError}</div> : null}{mappings.length === 0 ? <p className="screen-note">No connector mappings are configured for this client.</p> : <div className="clients-table-wrap"><table className="clients-table"><thead><tr><th scope="col">External company</th><th scope="col">Connector</th><th scope="col">Verification</th></tr></thead><tbody>{mappings.map((mapping) => <tr key={mapping.mapping_id}><td>{mapping.external_company_name || mapping.external_company_id}</td><td><code>{mapping.connector_instance_id}</code></td><td>{mapping.verified === 1 ? <StatusChip status="verified" /> : <RoleGate role={role} resolved={roleResolved} allowed={["admin"]}><button className="secondary-button" type="button" onClick={() => void verifyMapping(mapping.mapping_id)} disabled={verifyingMappingId !== null}>{verifyingMappingId === mapping.mapping_id ? "Verifying…" : "Verify"}</button></RoleGate>}</td></tr>)}</tbody></table></div>}</div> : <div id="client-detail-panel-graph" role="tabpanel" aria-labelledby="client-detail-tab-graph" aria-busy={graphLoading}><h3>Entities</h3>{graphLoading ? <p className="screen-note">Loading operational graph…</p> : graphError ? <div className="notice danger" role="alert">{graphError}</div> : !clientGraph || clientGraph.refs.length === 0 ? <p className="screen-note">No operational-graph entities are linked to this client yet.</p> : <><div className="clients-table-wrap"><table className="clients-table"><thead><tr><th scope="col">Type</th><th scope="col">Name</th><th scope="col">Source</th><th scope="col">External ID</th><th scope="col">Provenance</th></tr></thead><tbody>{groupGraphRefs(clientGraph.refs).map((ref) => <tr key={ref.id}><td><StatusChip status={ref.entity_type} /></td><td>{ref.display_name || ref.external_id}</td><td>{ref.source_system}</td><td><code>{ref.external_id}</code></td><td>{ref.provenance}</td></tr>)}</tbody></table></div><h3>Relationships</h3>{clientGraph.links.length === 0 ? <p className="screen-note">No relationships are linked to these entities.</p> : <div className="clients-table-wrap"><table className="clients-table"><thead><tr><th scope="col">From</th><th scope="col">Relationship</th><th scope="col">To</th><th scope="col">Provenance</th></tr></thead><tbody>{clientGraph.links.map((link) => <tr key={link.id}><td>{entityName(link.from_ref_id)}</td><td>{link.link_type}</td><td>{entityName(link.to_ref_id)}</td><td>{link.provenance}</td></tr>)}</tbody></table></div>}</>}</div>}</> : detailLoading ? <p className="screen-note" aria-busy="true">Loading client details…</p> : detailError ? <div className="notice danger" role="alert">{detailError}</div> : null}</section> : null}
     </div>
   );
 }

@@ -20,6 +20,8 @@ export function Knowledge() {
   const [ocr, setOcr] = useState(true);
   const [searchText, setSearchText] = useState("");
   const [searchLimit, setSearchLimit] = useState(3);
+  const [searchBackend, setSearchBackend] = useState("");
+  const [searchClientId, setSearchClientId] = useState("");
   const [statusMessage, setStatusMessage] = useState("");
   const [isLoading, setIsLoading] = useState(false);
 
@@ -71,9 +73,10 @@ export function Knowledge() {
     }
     setIsLoading(true);
     try {
-      const found = await apiFetch<KnowledgeChunk[]>(
-        `/knowledge/search?q=${encodeURIComponent(searchText)}&limit=${searchLimit}`
-      );
+      const params = new URLSearchParams({ q: searchText, limit: String(searchLimit) });
+      if (searchBackend) params.set("backend", searchBackend);
+      if (searchClientId.trim()) params.set("client_id", searchClientId.trim());
+      const found = await apiFetch<KnowledgeChunk[]>(`/knowledge/search?${params.toString()}`);
       setChunks(found);
       setStatusMessage(`${found.length} results found.`);
     } catch (error) {
@@ -157,6 +160,19 @@ export function Knowledge() {
           />
           <button className="icon-button" type="submit">Search</button>
         </form>
+        <details className="technical-details">
+          <summary>Advanced search controls</summary>
+          <div className="grid">
+            <label>
+              Search backend
+              <input value={searchBackend} onChange={(event) => setSearchBackend(event.target.value)} placeholder="sqlite, fts, or qdrant" />
+            </label>
+            <label>
+              Client ID
+              <input value={searchClientId} onChange={(event) => setSearchClientId(event.target.value)} placeholder="Optional client scope" />
+            </label>
+          </div>
+        </details>
         <div className="source-results">
           {chunks.map((chunk) => (
             <article key={chunk.id}>

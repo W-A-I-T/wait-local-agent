@@ -249,6 +249,30 @@ export function Settings() {
             <dt>Demo mode</dt>
             <dd>{security ? (security.demo_mode ? "enabled" : "disabled") : "unknown"}</dd>
           </div>
+          <div>
+            <dt>Model input cost</dt>
+            <dd>{providers?.model_input_cost_usd_per_million_tokens ?? "n/a"} USD per million tokens</dd>
+          </div>
+          <div>
+            <dt>Model output cost</dt>
+            <dd>{providers?.model_output_cost_usd_per_million_tokens ?? "n/a"} USD per million tokens</dd>
+          </div>
+          <div>
+            <dt>Embedding provider</dt>
+            <dd>{providers?.embedding_provider || "n/a"}</dd>
+          </div>
+          <div>
+            <dt>Embedding model</dt>
+            <dd>{providers?.embedding_model || "n/a"}</dd>
+          </div>
+          <div>
+            <dt>Document parser</dt>
+            <dd>{providers?.document_parser || "n/a"}</dd>
+          </div>
+          <div>
+            <dt>OCR</dt>
+            <dd>{providers ? (providers.ocr_enabled ? "enabled" : "disabled") : "unknown"}</dd>
+          </div>
         </div>
       </section>
 
@@ -424,6 +448,7 @@ export function Settings() {
           <code> WAIT_*</code> variable name. With the default env backend, this form does not configure environment
           providers; set those values in the server environment (.env) and restart the appliance instead.
         </p>
+        <p className="screen-note">CLI-only maintenance commands: <code>secrets init</code>, <code>migrate-external-key</code>, and <code>doctor</code>.</p>
         <div className="table-list">
           {secrets.map((secret) => (
             <div className="table-row" key={secret.key}>

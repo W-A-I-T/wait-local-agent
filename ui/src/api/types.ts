@@ -71,6 +71,13 @@ export type ClientGraph = {
   links: EntityLink[];
 };
 
+export type RmmInventorySyncResult = {
+  devices: number;
+  alerts: number;
+  links: number;
+  errors: string[];
+};
+
 export type SyncCursor = {
   connector_instance_id: string;
   cursor_type: string;
@@ -332,6 +339,16 @@ export type EventDelivery = {
   client_id?: string | null;
 };
 
+export type EventDispatchResult = {
+  delivery: EventDelivery;
+  duplicate: boolean;
+  matched_agent_ids: string[];
+  run_ids: number[];
+  matched_playbook_ids: string[];
+  playbook_run_ids: string[];
+  errors: string[];
+};
+
 export type SmartActionRun = {
   id: number;
   action_id: string;
@@ -359,6 +376,14 @@ export type SmartActionManifest = {
   required_role: string;
   access_mode: string;
   approval_expiry_seconds: number;
+};
+
+export type SmartActionInvokeResult = {
+  status: string;
+  approval_id?: number | null;
+  output?: Record<string, unknown>;
+  evidence?: Array<Record<string, unknown>>;
+  error_detail?: string;
 };
 
 export type WorkflowTemplate = {
@@ -1314,6 +1339,8 @@ export type ProviderSettings = {
   remote_model_enabled?: boolean;
   remote_model_provider?: string;
   remote_model_configured?: boolean;
+  model_input_cost_usd_per_million_tokens?: number;
+  model_output_cost_usd_per_million_tokens?: number;
   vector_backend: string;
   document_parser: string;
   ocr_enabled: boolean;
