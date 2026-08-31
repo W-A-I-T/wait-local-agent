@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { Consultant } from "./Consultant";
@@ -64,7 +64,18 @@ describe("Consultant architecture decisions", () => {
           agents: [],
           workflows: [],
         }],
-        "/consultant/use-cases": { use_cases: [] },
+        "/consultant/use-cases": {
+          use_cases: [{
+            id: "use-case-1",
+            title: "Employee identity sync",
+            category: "identity",
+            business_goal: "Keep employee records aligned.",
+            services: ["Microsoft Graph"],
+            agent_roles: ["identity-reader"],
+            outputs: ["employee record"],
+            approval_boundaries: ["No writes"],
+          }],
+        },
         "/consultant/monitoring/agents": { agent_count: 0, total_runs: 0, failed_runs: 0 },
         "/consultant/discovery/sessions": [],
         "/consultant/blueprints/bp-acme/architecture": {
@@ -85,6 +96,13 @@ describe("Consultant architecture decisions", () => {
             inference_started: false,
             execution_started: false,
             deployment_started: false,
+          },
+          supervisor: {
+            mode: "delegated",
+            children: [
+              { id: "identity-reader", kind: "reader", context_policy: "bounded" },
+              { id: "approval-checker", kind: "reviewer", context_policy: "bounded" },
+            ],
           },
           decisions: [{
             id: "decision-1",
@@ -467,5 +485,23 @@ describe("Consultant architecture decisions", () => {
     expect(errorNotice).toHaveTextContent("The appliance couldn't complete the request. Try again shortly.");
     expect(screen.queryByRole("status")).not.toBeInTheDocument();
     expect(screen.queryByRole("link", { name: "Playbooks" })).not.toBeInTheDocument();
+  });
+
+  it("does not present a dead delivery warning or synthetic item statuses", async () => {
+    render(<MemoryRouter><Consultant /></MemoryRouter>);
+
+    const useCaseCard = (await screen.findByText("Employee identity sync")).closest("article");
+    expect(useCaseCard).not.toBeNull();
+    expect(useCaseCard?.querySelector(".status-chip")).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: /Employee onboarding/ }));
+    expect(await screen.findByRole("heading", { name: "Architecture decisions" })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Solution delivery" })).toHaveAttribute("href", "/consultant/solution-delivery");
+    expect(screen.queryByText(/not available in this checkout/)).not.toBeInTheDocument();
+
+    const supervisorChild = screen.getByText("identity-reader").closest(".consultant-component");
+    expect(supervisorChild).not.toBeNull();
+    expect(within(supervisorChild as HTMLElement).queryByText("Needs attention")).not.toBeInTheDocument();
+    expect(supervisorChild?.querySelector(".status-chip")).not.toBeInTheDocument();
   });
 });

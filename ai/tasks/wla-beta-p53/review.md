@@ -2,31 +2,52 @@
 
 ## Changed Files
 
-- List files or directories changed during implementation.
+- `ui/src/screens/Consultant.tsx` — removed one false delivery warning and two
+  fixed `evidence_partial` status chips.
+- `ui/src/screens/Consultant.test.tsx` — added regression coverage for the
+  removed UI and preserved Solution delivery route link.
+- Task artifacts updated: `implementation.md`, `review.md`, and `status.json`.
 
 ## Risk Areas
 
-- List highest-risk logic, integrations, migrations, or assumptions.
+- Low runtime risk: the change removes display-only elements and does not alter
+  API calls, routing, data models, authorization, or write behavior.
+- Both removed chips had no legitimate source field. No fake replacement value
+  was introduced.
+- Existing status derivation for architecture components was not changed.
+
+## Security Review
+
+- No auth, authorization, secrets, input handling, data boundaries, or external
+  side effects changed.
+- The existing tenant-scoped data flow and real `/consultant/solution-delivery`
+  link remain untouched.
 
 ## Version & Compatibility Evidence
 
-- Summarize dependency, SDK, API, framework component, model runtime, or tooling version changes.
-- Confirm the implementation used the latest compatible version or explain why the newest stable version was not compatible.
-- List any remaining compatibility risk, migration risk, or stale-version concern.
-- If the task did not touch versions or integrations, write `No version or API changes`.
+No dependency, version, or API changes.
 
 ## Open Questions
 
-- List unresolved questions for the next reviewer or human.
+None for this task. Human merge authority remains required.
 
 ## Test Results
 
-- Verification has not run yet.
+- `cd ui && npm test -- --run` — pass, 69 files / 378 tests.
+- `cd ui && npm test -- --run` — pass, 69 files / 378 tests.
+- `cd ui && npm run build` — pass, including `tsc -b` and Vite build.
+- `git diff --check` — pass.
+- Build/test output includes existing non-blocking warnings for Vite's native
+  config-loader compatibility and a minified chunk over 500 kB.
 
 ## Diff Summary
 
-- Provide a compact behavior-focused summary.
+The Consultant screen no longer claims the working Solution Delivery surface
+is unavailable and no longer displays synthetic per-item statuses for use cases
+or supervisor children. The real delivery link and genuine architecture
+component status behavior remain intact.
 
 ## Requested Review Focus
 
-- narrow diff review
+- Verify the narrow UI-only diff and the type-backed decision to remove both
+  chips rather than derive statuses that the API does not provide.
