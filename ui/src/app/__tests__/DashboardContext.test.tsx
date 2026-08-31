@@ -69,7 +69,7 @@ describe("DashboardContext role refresh", () => {
 
   it.each([
     ["local-open", { role: "admin", api_auth_required: false, demo_mode: false }, ""],
-    ["demo", { role: "viewer", api_auth_required: true, demo_mode: true }, ""],
+    ["demo", { role: "admin", api_auth_required: false, demo_mode: true }, ""],
     ["authenticated", { role: "viewer", api_auth_required: true, demo_mode: false }, "saved-token"]
   ] as const)("derives the %s auth state from the role response", async (expectedState, response, token) => {
     if (token) {
