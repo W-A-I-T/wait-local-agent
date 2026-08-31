@@ -803,6 +803,7 @@ export type WorkflowRunComparison = {
 export type AgentTool = {
   id: string;
   name: string;
+  title?: string;
   description: string;
   risk_level: string;
   required_role: string;

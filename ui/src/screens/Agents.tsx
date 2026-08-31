@@ -3,6 +3,7 @@ import { useDashboard } from "../app/DashboardContext";
 import { apiFetch } from "../api/client";
 import { EmptyState } from "../components/EmptyState";
 import { LoadingState } from "../components/LoadingState";
+import { AgentToolPicker } from "../components/AgentToolPicker";
 import type { AgentApprovalRule, AgentDefinition, AgentFailurePolicy, AgentPlan, AgentRevision, AgentRevisionDiff, AgentRunDetail, AgentTool } from "../api/types";
 
 const contextOptions = [
@@ -21,7 +22,7 @@ const failurePolicyModes: Array<[AgentFailurePolicy["mode"], string]> = [
 ];
 
 export function Agents() {
-  const { canWrite } = useDashboard();
+  const { canWrite, connectors = [] } = useDashboard();
   const [agents, setAgents] = useState<AgentDefinition[]>([]);
   const [tools, setTools] = useState<AgentTool[]>([]);
   const [loading, setLoading] = useState(true);
@@ -342,23 +343,27 @@ export function Agents() {
           <label>Approval deadline (hours, optional)<input type="number" min="1" max="720" step="1" value={approvalExpiryHours} onChange={(event) => setApprovalExpiryHours(event.target.value)} placeholder="Tool default" /></label>
           <label><input type="checkbox" checked={resultAware} onChange={(event) => setResultAware(event.target.checked)} /> Continue from each approved result using the bounded catalog</label>
           <fieldset className="agent-option-group"><legend>Context sources</legend>{contextOptions.map(([value, label]) => <label key={value}><input type="checkbox" checked={contextSources.includes(value)} onChange={() => setContextSources((current) => toggleValue(current, value))} />{label}</label>)}</fieldset>
-          <fieldset className="agent-option-group"><legend>Enabled tools (maximum 8 steps)</legend>{loading ? <LoadingState label="Loading tool catalog…" /> : tools.length === 0 ? <EmptyState title="No tools are available" why="The local tool catalog returned no tools to include in an agent." /> : tools.map((tool) => {
-            const selected = selectedTools.includes(tool.id);
-            const atLimit = selectedTools.length >= 8;
-            return <label key={tool.id}><input type="checkbox" checked={selected} disabled={!selected && atLimit} onChange={() => {
-              if (!selected && atLimit) {
-                setMessage("An agent can contain at most 8 tools.");
-                return;
-              }
-              setSelectedTools((current) => toggleValue(current, tool.id));
-              if (!selected && !stepPayloads[tool.id]) {
-                setStepPayloads((current) => ({ ...current, [tool.id]: "{}" }));
-              }
-              if (selected) {
-                setApprovalRequiredTools((current) => current.filter((value) => value !== tool.id));
-              }
-            }} />{tool.name}{tool.approval_required ? " · approval" : ""}</label>;
-          })}</fieldset>
+          <fieldset className="agent-option-group">
+            <legend><span>Enabled tools (maximum 8 steps)</span><span aria-live="polite">{selectedTools.length} of 8 tools selected</span></legend>
+            {loading ? <LoadingState label="Loading tool catalog…" /> : tools.length === 0 ? <EmptyState title="No tools are available" why="The local tool catalog returned no tools to include in an agent." /> : (
+              <AgentToolPicker
+                tools={tools}
+                selectedTools={selectedTools}
+                connectors={connectors}
+                onLimitReached={() => setMessage("An agent can contain at most 8 tools.")}
+                onToggle={(tool) => {
+                  const selected = selectedTools.includes(tool.id);
+                  setSelectedTools((current) => toggleValue(current, tool.id));
+                  if (!selected && !stepPayloads[tool.id]) {
+                    setStepPayloads((current) => ({ ...current, [tool.id]: "{}" }));
+                  }
+                  if (selected) {
+                    setApprovalRequiredTools((current) => current.filter((value) => value !== tool.id));
+                  }
+                }}
+              />
+            )}
+          </fieldset>
           <fieldset className="agent-option-group"><legend>Tool inputs (JSON objects)</legend><p className="screen-note">Provide the bounded inputs each selected tool needs. The ticket id is added automatically when a tool supports it; client-scoped tools can use the agent's client mapping.</p>{tools.filter((tool) => selectedTools.includes(tool.id)).map((tool) => <label key={`payload-${tool.id}`}>{tool.name}<textarea aria-label={`${tool.name} input JSON`} rows={4} value={stepPayloads[tool.id] ?? "{}"} onChange={(event) => setStepPayloads((current) => ({ ...current, [tool.id]: event.target.value }))} /></label>)}</fieldset>
           <fieldset className="agent-option-group"><legend>Failure handling</legend><p className="screen-note">Failure policies are deterministic and bounded. Retries are limited to three attempts; fallbacks must be another selected tool. Human-input, technician-escalation, and blocked modes stop the run with an explicit recovery state.</p>{tools.filter((tool) => selectedTools.includes(tool.id)).map((tool) => {
             const draft = failurePolicyDrafts[tool.id] ?? { mode: "stop" as const };

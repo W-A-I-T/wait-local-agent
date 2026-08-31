@@ -4,7 +4,10 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { Agents } from "../src/screens/Agents";
 
 vi.mock("../src/app/DashboardContext", () => ({
-  useDashboard: () => ({ canWrite: true })
+  useDashboard: () => ({
+    canWrite: true,
+    connectors: [{ id: "timezest", name: "TimeZest", status: "not_configured", message: "not configured" }]
+  })
 }));
 
 describe("Agents", () => {
@@ -43,6 +46,7 @@ describe("Agents", () => {
           {
             id: "ticket-triage",
             name: "Ticket Triage",
+            title: "Ticket classification",
             description: "Classify tickets.",
             risk_level: "low",
             required_role: "viewer",
@@ -256,6 +260,36 @@ describe("Agents", () => {
       }
       throw new Error(`Unexpected request: ${path}`);
     }));
+  });
+
+  it("groups tools, shows live selection counts, and warns about missing connectors", async () => {
+    render(<MemoryRouter><Agents /></MemoryRouter>);
+
+    expect(await screen.findByText("Core / ticket intelligence")).toBeInTheDocument();
+    expect(screen.getByText("N-sight")).toBeInTheDocument();
+    expect(screen.getByText("TimeZest")).toBeInTheDocument();
+    expect(screen.getByText("3 tools · 0 selected")).toBeInTheDocument();
+    expect(screen.getByText("connector not configured")).toBeInTheDocument();
+    expect(screen.getAllByText("high").length).toBeGreaterThan(0);
+
+    fireEvent.click(screen.getByRole("checkbox", { name: "Ticket Triage" }));
+    expect(screen.getByText("1 of 8 tools selected")).toBeInTheDocument();
+    expect(screen.getByText("3 tools · 1 selected")).toBeInTheDocument();
+  });
+
+  it("filters tools by name, title, and description and expands matching groups", async () => {
+    render(<MemoryRouter><Agents /></MemoryRouter>);
+
+    const search = await screen.findByRole("searchbox", { name: "Search tools" });
+    fireEvent.change(search, { target: { value: "classification" } });
+    expect(screen.getByRole("checkbox", { name: "Ticket Triage" })).toBeInTheDocument();
+    expect(screen.queryByRole("checkbox", { name: "Assess ticket SLA risk" })).not.toBeInTheDocument();
+    const coreDetails = screen.getByText("Core / ticket intelligence").closest("details");
+    expect(coreDetails?.open).toBe(true);
+
+    fireEvent.change(search, { target: { value: "quarantine" } });
+    expect(screen.getByRole("checkbox", { name: "N-sight antivirus quarantine lookup" })).toBeInTheDocument();
+    expect(screen.queryByRole("checkbox", { name: "Ticket Triage" })).not.toBeInTheDocument();
   });
 
   it("creates an agent with selected context and shows its run context", async () => {
