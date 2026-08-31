@@ -1,0 +1,17 @@
+{
+  "classes": [
+    "admin",
+    "embedded",
+    "exposed",
+    "hidden-by-design"
+  ],
+  "surfaces": {
+    "fastapi_routes": {
+      "GET /packs/automation-discovery/categories": "exposed",
+      "GET /packs/automation-discovery/historical": "exposed",
+      "GET /packs/automation-discovery/mapping-readiness": "exposed",
+      "GET /packs/automation-discovery/status": "exposed",
+      "POST /packs/automation-discovery/time-entries/import": "admin"
+    }
+  }
+}
