@@ -66,7 +66,7 @@ describe("Smart Action catalog", () => {
 
     expect(await screen.findByText("Ticket lookup")).toBeInTheDocument();
     expect(screen.getByText("User offboarding")).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: "Smart Actions" })).toHaveAttribute("href", "/integrations/smart-actions");
+    expect(screen.getByRole("link", { name: "Automations" })).toHaveAttribute("href", "/workflows");
 
     fireEvent.change(screen.getByRole("searchbox", { name: "Search Smart Actions" }), { target: { value: "offboarding" } });
     expect(screen.queryByText("Ticket lookup")).not.toBeInTheDocument();

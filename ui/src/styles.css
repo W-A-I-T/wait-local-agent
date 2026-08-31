@@ -584,6 +584,63 @@ nav a:hover {
   gap: 18px;
 }
 
+.automations-shell {
+  display: grid;
+  gap: 18px;
+}
+
+.automations-header {
+  display: grid;
+  gap: 18px;
+}
+
+.automations-heading h1 {
+  margin-bottom: 2px;
+}
+
+.automations-subtitle {
+  color: #60706a;
+  font-size: 1rem;
+  font-weight: 700;
+}
+
+.automations-tabs {
+  border-bottom: 1px solid #dce5e1;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.automations-tabs a {
+  border-bottom: 3px solid transparent;
+  border-radius: 6px 6px 0 0;
+  color: #60706a;
+  font-weight: 800;
+  padding: 10px 12px 8px;
+}
+
+.automations-tabs a:hover,
+.automations-tabs a:focus-visible {
+  background: #f1f7f4;
+  color: #1f6f55;
+}
+
+.automations-tabs a.active {
+  border-bottom-color: #1f6f55;
+  color: #1f6f55;
+}
+
+.automations-description {
+  color: #60706a;
+  margin: 0;
+}
+
+.automation-cross-link a {
+  color: #1f6f55;
+  font-weight: 800;
+  text-decoration: underline;
+}
+
 .pack-list {
   display: grid;
   gap: 14px;

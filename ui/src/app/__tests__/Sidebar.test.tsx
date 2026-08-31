@@ -18,12 +18,12 @@ const mockedMicrosoftAdminAccess = vi.mocked(useMicrosoftAdminAccess);
 const destinations = [
   ["Overview", "/"], ["Clients", "/clients"],
   ["Tickets", "/tickets"], ["Approvals", "/approvals"], ["Technician Chat", "/technician-chat"], ["Microsoft Admin", "/microsoft-admin"], ["M365 Actions", "/m365-actions"], ["Azure Lighthouse", "/microsoft-admin/azure-lighthouse"],
-  ["Playbooks", "/playbooks"], ["Workflows", "/workflows"], ["Agents", "/agents"], ["Smart Actions", "/integrations/smart-actions"], ["Events", "/automation/events"], ["Schedules", "/automation/schedules"],
+  ["Automations", "/workflows"], ["Agents", "/agents"], ["Events", "/automation/events"], ["Schedules", "/automation/schedules"],
   ["Solutions Architect", "/consultant"],
   ["Reports", "/reports"], ["Analytics", "/analytics"], ["Audit", "/audit"], ["Collectors", "/collectors"],
   ["Launch Passport", "/founder"],
   ["Connectors", "/connectors"], ["Connector Instances", "/integrations/connector-instances"], ["Microsoft Admin Access", "/microsoft-admin/access"], ["Knowledge", "/knowledge"], ["Settings", "/settings"],
-  ["Sync / Reconciliation", "/operations/reconciliation"], ["Appliance Health", "/system/appliance-health"], ["Extensions / Packs", "/system/extensions"], ["MCP", "/integrations/mcp"], ["Workflow Designer", "/workflow-designer"], ["Templates", "/templates"], ["Scheduled Jobs", "/scheduled-jobs"], ["Smart Action Runs", "/smart-actions/runs"], ["Executions", "/executions"], ["Backfills", "/backfills"]
+  ["Sync / Reconciliation", "/operations/reconciliation"], ["Appliance Health", "/system/appliance-health"], ["Extensions / Packs", "/system/extensions"], ["MCP", "/integrations/mcp"], ["Scheduled Jobs", "/scheduled-jobs"], ["Smart Action Runs", "/smart-actions/runs"], ["Executions", "/executions"], ["Backfills", "/backfills"]
 ] as const;
 
 const groupedDestinations = {
@@ -31,10 +31,10 @@ const groupedDestinations = {
     ["Tickets", "/tickets"], ["Technician Chat", "/technician-chat"], ["Microsoft Admin", "/microsoft-admin"]
   ],
   Control: [
-    ["Connectors", "/connectors"], ["Workflows", "/workflows"], ["Approvals", "/approvals"], ["Executions", "/executions"], ["Audit", "/audit"], ["Reports", "/reports"]
+    ["Connectors", "/connectors"], ["Automations", "/workflows"], ["Approvals", "/approvals"], ["Executions", "/executions"], ["Audit", "/audit"], ["Reports", "/reports"]
   ],
   Workspace: [
-    ["Knowledge", "/knowledge"], ["Schedules", "/automation/schedules"], ["Workflow Designer", "/workflow-designer"], ["Agents", "/agents"]
+    ["Knowledge", "/knowledge"], ["Schedules", "/automation/schedules"], ["Agents", "/agents"]
   ],
   Solutions: [
     ["M365 Actions", "/m365-actions"], ["Azure Lighthouse", "/microsoft-admin/azure-lighthouse"], ["Solutions Architect", "/consultant"]
@@ -42,8 +42,8 @@ const groupedDestinations = {
 } as const;
 
 const advancedDestinations = [
-  ["Playbooks", "/playbooks"], ["Smart Actions", "/integrations/smart-actions"], ["Events", "/automation/events"], ["Analytics", "/analytics"], ["Collectors", "/collectors"], ["Launch Passport", "/founder"],
-  ["Connector Instances", "/integrations/connector-instances"], ["Microsoft Admin Access", "/microsoft-admin/access"], ["Settings", "/settings"], ["Sync / Reconciliation", "/operations/reconciliation"], ["Appliance Health", "/system/appliance-health"], ["Extensions / Packs", "/system/extensions"], ["MCP", "/integrations/mcp"], ["Templates", "/templates"], ["Scheduled Jobs", "/scheduled-jobs"], ["Smart Action Runs", "/smart-actions/runs"], ["Backfills", "/backfills"]
+  ["Events", "/automation/events"], ["Analytics", "/analytics"], ["Collectors", "/collectors"], ["Launch Passport", "/founder"],
+  ["Connector Instances", "/integrations/connector-instances"], ["Microsoft Admin Access", "/microsoft-admin/access"], ["Settings", "/settings"], ["Sync / Reconciliation", "/operations/reconciliation"], ["Appliance Health", "/system/appliance-health"], ["Extensions / Packs", "/system/extensions"], ["MCP", "/integrations/mcp"], ["Scheduled Jobs", "/scheduled-jobs"], ["Smart Action Runs", "/smart-actions/runs"], ["Backfills", "/backfills"]
 ] as const;
 
 function renderSidebar(role: "admin" | "viewer", microsoftAdminAllowed = true, microsoftAdminNavAllowed = microsoftAdminAllowed) {
@@ -156,8 +156,18 @@ describe("Sidebar navigation IA", () => {
       expect(screen.queryByRole("link", { name: label })).not.toBeInTheDocument();
     }
 
-    for (const label of ["Workflow Designer", "Templates", "Scheduled Jobs", "Smart Action Runs", "Executions", "Backfills"]) {
+    for (const label of ["Scheduled Jobs", "Smart Action Runs", "Executions", "Backfills"]) {
       expect(screen.getByRole("link", { name: label })).toBeInTheDocument();
+    }
+  });
+
+  it("keeps the automation surfaces reachable only through the hub", () => {
+    renderSidebar("admin");
+    fireEvent.click(screen.getByText("System / Advanced"));
+
+    expect(screen.getByRole("link", { name: "Automations" })).toHaveAttribute("href", "/workflows");
+    for (const label of ["Workflow Designer", "Playbooks", "Smart Actions", "Templates"]) {
+      expect(screen.queryByRole("link", { name: label })).not.toBeInTheDocument();
     }
   });
 });
