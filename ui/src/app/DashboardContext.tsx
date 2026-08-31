@@ -151,6 +151,12 @@ export function executeEndpointFor(actionType: string): string | null {
   if (actionType.startsWith("m365.")) {
     return "/connectors/m365/approval-requests/{id}/execute";
   }
+  if (actionType === "power_platform.solution_stage") {
+    return "/consultant/solutions/deployment-approvals/{id}/execute";
+  }
+  if (actionType === "power_platform.solution_rollback") {
+    return "/consultant/solutions/rollback-approvals/{id}/execute";
+  }
   return null;
 }
 

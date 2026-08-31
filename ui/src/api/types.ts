@@ -291,6 +291,7 @@ export type ApprovalRequest = {
   };
   can_execute?: boolean;
   block_reason?: string;
+  output?: Record<string, unknown>;
   workflow_run_id?: string | number | null;
 };
 
