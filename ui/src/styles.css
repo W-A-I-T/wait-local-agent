@@ -488,6 +488,40 @@ nav a:hover {
   user-select: all;
 }
 
+.write-gate-status {
+  position: relative;
+}
+
+.status-pill-button {
+  cursor: pointer;
+}
+
+.status-pill.neutral {
+  background: #eef2f0;
+  border-color: #d2dbd7;
+  color: #43534d;
+}
+
+.status-pill.warning {
+  background: #fff8e6;
+  border-color: #ead49b;
+  color: #634c0f;
+}
+
+.write-gate-popover strong {
+  color: #253633;
+  display: block;
+  margin-bottom: 8px;
+}
+
+.write-gate-popover a {
+  color: #1f6f55;
+  display: inline-block;
+  font-weight: 800;
+  margin-top: 10px;
+  text-decoration: underline;
+}
+
 .screen-stack {
   display: grid;
   gap: 18px;

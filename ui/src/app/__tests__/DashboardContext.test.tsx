@@ -1,6 +1,6 @@
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { DashboardProvider, useDashboard } from "../DashboardContext";
+import { DashboardProvider, getWriteHealthPosture, useDashboard } from "../DashboardContext";
 import { apiFetch } from "../../api/client";
 
 vi.mock("../../api/client", () => ({
@@ -239,6 +239,25 @@ describe("DashboardContext role refresh", () => {
     await waitFor(() => expect(mockedApiFetch.mock.calls.filter(([path]) => path === "/auth/role")).toHaveLength(3));
     await act(async () => {});
     expect(screen.getByTestId("refresh-nonce")).toHaveTextContent("3");
+  });
+});
+
+describe("write health posture mapping", () => {
+  it("keeps the initial unresolved state quiet", () => {
+    expect(getWriteHealthPosture("blocked", false)).toEqual({
+      label: "Checking write status…",
+      tone: "neutral",
+      icon: "info"
+    });
+  });
+
+  it.each([
+    ["blocked", "Safe Mode · writes disabled", "neutral", "info"],
+    ["not_configured", "No PSA write path configured", "neutral", "info"],
+    ["failed", "Write path error", "warning", "warning"],
+    ["ready", "Live writes ready", "success", "success"]
+  ] as const)("maps %s to its honest posture", (status, label, tone, icon) => {
+    expect(getWriteHealthPosture(status, true)).toEqual({ label, tone, icon });
   });
 });
 

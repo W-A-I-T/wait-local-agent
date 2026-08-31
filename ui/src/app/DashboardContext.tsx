@@ -35,6 +35,39 @@ const defaultWriteHealth: HaloReadResult = {
   message: "Loading HaloPSA write health.",
   count: 0
 };
+const failedWriteHealth: HaloReadResult = {
+  status: "failed",
+  message: "Unable to verify HaloPSA write health.",
+  count: 0
+};
+
+export type WriteHealthPosture = {
+  label: string;
+  tone: "neutral" | "warning" | "success";
+  icon: "info" | "warning" | "success";
+};
+
+export function getWriteHealthPosture(
+  status: string | null | undefined,
+  resolved: boolean
+): WriteHealthPosture {
+  if (!resolved) {
+    return { label: "Checking write status…", tone: "neutral", icon: "info" };
+  }
+  if (status === "ready") {
+    return { label: "Live writes ready", tone: "success", icon: "success" };
+  }
+  if (status === "not_configured") {
+    return { label: "No PSA write path configured", tone: "neutral", icon: "info" };
+  }
+  if (status === "failed") {
+    return { label: "Write path error", tone: "warning", icon: "warning" };
+  }
+  if (status === "blocked") {
+    return { label: "Safe Mode · writes disabled", tone: "neutral", icon: "info" };
+  }
+  return { label: "Write path error", tone: "warning", icon: "warning" };
+}
 
 export type CapabilityGrantView = {
   capability_key: string;
@@ -69,6 +102,7 @@ type DashboardContextValue = {
   haloConnector?: ConnectorStatus;
   huduConnector?: ConnectorStatus;
   writeHealth: HaloReadResult;
+  writeHealthResolved: boolean;
   liveWritesReady: boolean;
   haloTickets: HaloTicket[];
   approvalRequests: ApprovalRequest[];
@@ -134,6 +168,7 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
   const [capabilityError, setCapabilityError] = useState("");
   const [connectors, setConnectors] = useState<ConnectorStatus[]>([]);
   const [writeHealth, setWriteHealth] = useState<HaloReadResult>(defaultWriteHealth);
+  const [writeHealthResolved, setWriteHealthResolved] = useState(false);
   const [haloTickets, setHaloTickets] = useState<HaloTicket[]>([]);
   const [approvalRequests, setApprovalRequests] = useState<ApprovalRequest[]>([]);
   const [eventDeliveries, setEventDeliveries] = useState<EventDelivery[]>([]);
@@ -169,6 +204,7 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
     setCapabilityGrants([]);
     setCapabilityResolved(false);
     setCapabilityError("");
+    setWriteHealthResolved(false);
     try {
       const auth = await apiFetch<AuthRoleResponse>("/auth/role");
       if (roleRequestId !== roleRequestIdRef.current) {
@@ -190,7 +226,7 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
         .filter((result): result is PromiseRejectedResult => result.status === "rejected")
         .map((result) => result.reason instanceof Error ? result.reason.message : "Dashboard data unavailable.");
       const connectorRows = settledValue(results[0] as PromiseSettledResult<ConnectorStatus[]>, []);
-      const writeState = settledValue(results[1] as PromiseSettledResult<HaloReadResult>, defaultWriteHealth);
+      const writeState = settledValue(results[1] as PromiseSettledResult<HaloReadResult>, failedWriteHealth);
       const ticketResponse = settledValue(results[2] as PromiseSettledResult<HaloTicketsResponse>, {
         result: { status: "blocked", message: "Tickets unavailable.", count: 0 },
         items: []
@@ -220,6 +256,7 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
       setCapabilityResolved(true);
       setConnectors(asArray(connectorRows));
       setWriteHealth(writeState);
+      setWriteHealthResolved(true);
       setHaloTickets(asArray(ticketResponse.items));
       setApprovalRequests(asArray(settledValue(results[3] as PromiseSettledResult<ApprovalRequest[]>, [])));
       setEventDeliveries(asArray(settledValue(results[4] as PromiseSettledResult<EventDelivery[]>, [])));
@@ -397,6 +434,7 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
       haloConnector,
       huduConnector,
       writeHealth,
+      writeHealthResolved,
       liveWritesReady: writeHealth.status === "ready",
       haloTickets,
       approvalRequests,
@@ -472,7 +510,8 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
     statusMessage,
     updateApproval,
     workflowRuns,
-    writeHealth
+    writeHealth,
+    writeHealthResolved
   ]);
 
   return <DashboardContext.Provider value={value}>{children}</DashboardContext.Provider>;
