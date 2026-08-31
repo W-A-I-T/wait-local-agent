@@ -290,7 +290,7 @@ function SchemaField({ field, value, error, idPrefix, onChange }: SchemaFieldPro
           type="password"
           autoComplete="off"
           placeholder="Saved credential reference"
-          value=""
+          value={typeof value === "string" ? value : ""}
           required={field.required}
           aria-required={field.required || undefined}
           onChange={(event) => onChange(event.target.value === "" ? undefined : event.target.value)}
