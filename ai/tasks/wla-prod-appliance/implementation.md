@@ -47,3 +47,4 @@
   CI or a host with the required dependency cache and Docker daemon.
 - Claude remains the required final cross-family review gate for this task.
 - Fixed static UI mount assertions to tolerate Starlette's normalized empty root path.
+- Classified `GET /healthz` as `exposed` in the surface manifest.

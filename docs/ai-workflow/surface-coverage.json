@@ -131,6 +131,7 @@
       "GET /founder/vault": "exposed",
       "GET /hardening/runs": "exposed",
       "GET /health": "exposed",
+      "GET /healthz": "exposed",
       "GET /ingestion/quarantined": "admin",
       "GET /ingestion/sync-cursors": "admin",
       "GET /ingestion/unmapped": "admin",
