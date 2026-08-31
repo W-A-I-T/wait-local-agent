@@ -29,6 +29,7 @@ function DashboardHarness() {
     capabilityResolved,
     clientId,
     clients,
+    authState,
     isAdmin,
     refresh,
     roleResolved,
@@ -40,6 +41,7 @@ function DashboardHarness() {
       <button type="button" onClick={() => void refresh()}>Refresh credentials</button>
       <button type="button" onClick={() => setSelectedClientId("client-a")}>Select client A</button>
       <output>{roleResolved ? "access resolved" : "access unresolved"}</output>
+      <output data-testid="auth-state">{authState ?? "unresolved"}</output>
       <output data-testid="legacy-client-id">{clientId}</output>
       <output data-testid="selected-client-id">{selectedClientId}</output>
       <output data-testid="client-directory">{clients.map((client) => client.client_id).join(",")}</output>
@@ -61,6 +63,40 @@ describe("DashboardContext role refresh", () => {
       }
       return Promise.resolve(defaultResponse(path)) as ReturnType<typeof apiFetch>;
     });
+  });
+
+  it.each([
+    ["local-open", { role: "admin", api_auth_required: false, demo_mode: false }, ""],
+    ["demo", { role: "viewer", api_auth_required: true, demo_mode: true }, ""],
+    ["authenticated", { role: "viewer", api_auth_required: true, demo_mode: false }, "saved-token"]
+  ] as const)("derives the %s auth state from the role response", async (expectedState, response, token) => {
+    if (token) {
+      window.localStorage.setItem("wait-local-agent-api-token", token);
+    }
+    mockedApiFetch.mockImplementation((path: string) => {
+      if (path === "/auth/role") {
+        return Promise.resolve(response) as ReturnType<typeof apiFetch>;
+      }
+      return Promise.resolve(defaultResponse(path)) as ReturnType<typeof apiFetch>;
+    });
+
+    render(<DashboardProvider><DashboardHarness /></DashboardProvider>);
+
+    await waitFor(() => expect(screen.getByTestId("auth-state")).toHaveTextContent(expectedState));
+  });
+
+  it("derives invalid-token only when a saved token receives a 401", async () => {
+    window.localStorage.setItem("wait-local-agent-api-token", "saved-token");
+    mockedApiFetch.mockImplementation((path: string) => {
+      if (path === "/auth/role") {
+        return Promise.reject({ status: 401 }) as ReturnType<typeof apiFetch>;
+      }
+      return Promise.resolve(defaultResponse(path)) as ReturnType<typeof apiFetch>;
+    });
+
+    render(<DashboardProvider><DashboardHarness /></DashboardProvider>);
+
+    await waitFor(() => expect(screen.getByTestId("auth-state")).toHaveTextContent("invalid-token"));
   });
 
   it("ignores an older admin role response after a newer viewer refresh begins", async () => {

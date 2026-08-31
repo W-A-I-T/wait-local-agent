@@ -8,8 +8,8 @@ import { StatusChip } from "../components/StatusChip";
 import { type LaunchPassportStatus, type PackInfo, type ProviderHealth, type ProviderSettings, type SecretRecord, type SecuritySettings, type UpdateStatus } from "../api/types";
 
 export function Settings() {
-  const { isAdmin, loading, role } = useDashboard();
-  const accessRole = role ?? (isAdmin ? "admin" : "viewer");
+  const { authState, isAdmin, loading, role } = useDashboard();
+  const accessRole = authState === "local-open" ? "admin" : role ?? (isAdmin ? "admin" : "viewer");
   const canViewLaunchPassport = !loading && accessRole === "admin";
   const [providers, setProviders] = useState<ProviderSettings | null>(null);
   const [providerHealth, setProviderHealth] = useState<ProviderHealth | null>(null);
@@ -64,12 +64,16 @@ export function Settings() {
       setStatusMessage("Settings loaded.");
     } catch (error) {
       if (error instanceof ApiRequestError && error.status === 403) {
-        setStatusMessage("Insufficient role for admin settings.");
+        setStatusMessage(
+          authState === "invalid-token"
+            ? "Token rejected. Clear Token and save a valid token to continue."
+            : `Administrator role required for admin settings. Current role: ${accessRole}.`
+        );
         return;
       }
       setStatusMessage(error instanceof Error ? error.message : "Unable to load settings.");
     }
-  }, [canViewLaunchPassport]);
+  }, [accessRole, authState, canViewLaunchPassport]);
 
   useEffect(() => {
     void refresh();
@@ -181,7 +185,7 @@ export function Settings() {
       <section className="panel settings-panel">
         <div className="panel-heading">
           <h2>Admin Settings</h2>
-          <span>{isAdmin ? "admin mode" : "viewer mode"}</span>
+          <span>{authState === "local-open" ? "local mode · full access" : isAdmin ? "admin mode" : "viewer mode"}</span>
         </div>
         <div className="row-actions">
           <Link className="icon-button" to="/?onboarding=1">Launch onboarding</Link>
@@ -189,12 +193,24 @@ export function Settings() {
         </div>
 
         {statusMessage ? <div className="notice">{statusMessage}</div> : null}
-        {!isAdmin ? <div className="notice danger">Administrator role required for write controls.</div> : null}
+        {!isAdmin ? (
+          <div className="notice danger">
+            {authState === "invalid-token"
+              ? "Token rejected. Clear Token resets it before you save another token."
+              : `Administrator role required for write controls. Current role: ${accessRole}.`}
+          </div>
+        ) : null}
 
         <div className="table-list settings-list">
           <div>
             <dt>Write health</dt>
-            <dd>{security?.api_token_configured ? "API token saved" : "No API token"}</dd>
+            <dd>
+              {security?.api_token_configured
+                ? "API token saved"
+                : authState === "local-open"
+                  ? "Not required in local mode"
+                  : "No API token configured"}
+            </dd>
           </div>
           <div>
             <dt>Update check</dt>

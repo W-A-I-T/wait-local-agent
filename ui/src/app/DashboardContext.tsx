@@ -41,6 +41,13 @@ export type CapabilityGrantView = {
   client_id: string | null;
 };
 
+export type AuthState = "local-open" | "demo" | "authenticated" | "invalid-token";
+
+type AuthRefreshResult = {
+  authState: AuthState | null;
+  role: AuthRoleResponse["role"] | null;
+};
+
 type EffectiveCapabilityResponse = {
   principal_id: string | null;
   supported_capabilities: string[];
@@ -54,6 +61,7 @@ type DashboardContextValue = {
   selectedClientId: string;
   clients: ClientDirectoryEntry[];
   role: AuthRoleResponse["role"];
+  authState: AuthState | null;
   capabilityGrants: CapabilityGrantView[];
   capabilityResolved: boolean;
   capabilityError: string;
@@ -82,7 +90,7 @@ type DashboardContextValue = {
   configurationSteps: ReadinessStep[];
   setApiToken: (token: string) => void;
   setSelectedClientId: (clientId: string) => void;
-  refresh: () => Promise<void>;
+  refresh: () => Promise<AuthRefreshResult | null>;
   refreshConfiguration: () => Promise<void>;
   saveApiToken: () => Promise<void>;
   clearApiToken: () => Promise<void>;
@@ -116,6 +124,7 @@ const DashboardContext = createContext<DashboardContextValue | undefined>(undefi
 export function DashboardProvider({ children }: { children: ReactNode }) {
   const [apiToken, setApiToken] = useState(() => loadStoredApiToken());
   const [role, setRole] = useState<AuthRoleResponse["role"]>("viewer");
+  const [authState, setAuthState] = useState<AuthState | null>(null);
   const [clientId, setClientId] = useState("");
   const [selectedClientId, setSelectedClientIdState] = useState(() => loadStoredSelectedClientId());
   const [clients, setClients] = useState<ClientDirectoryEntry[]>([]);
@@ -150,11 +159,12 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
     persistSelectedClientId(normalized);
   }, []);
 
-  const refresh = useCallback(async () => {
+  const refresh = useCallback(async (): Promise<AuthRefreshResult | null> => {
     setRefreshNonce((nonce) => nonce + 1);
     const roleRequestId = ++roleRequestIdRef.current;
     setLoading(true);
     setRole("viewer");
+    setAuthState(null);
     setRoleResolved(false);
     setCapabilityGrants([]);
     setCapabilityResolved(false);
@@ -162,7 +172,7 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
     try {
       const auth = await apiFetch<AuthRoleResponse>("/auth/role");
       if (roleRequestId !== roleRequestIdRef.current) {
-        return;
+        return null;
       }
       const results = await Promise.allSettled([
         apiFetch<ConnectorStatus[]>("/connectors"),
@@ -189,9 +199,11 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
       const capabilityResult = results[8] as PromiseSettledResult<EffectiveCapabilityResponse>;
 
       if (roleRequestId !== roleRequestIdRef.current) {
-        return;
+        return null;
       }
+      const nextAuthState = deriveAuthState(auth, loadStoredApiToken());
       setRole(auth.role);
+      setAuthState(nextAuthState);
       setClientId(auth.client_id ?? "");
       setRoleResolved(true);
       if (capabilityResult.status === "fulfilled") {
@@ -219,16 +231,20 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
       if (!selectedTicketIdRef.current && ticketResponse.items[0]) {
         setSelectedTicketId(ticketResponse.items[0].id);
       }
+      return { authState: nextAuthState, role: auth.role };
     } catch (error) {
       if (roleRequestId !== roleRequestIdRef.current) {
-        return;
+        return null;
       }
       setRole("viewer");
       setRoleResolved(false);
+      const nextAuthState = hasStoredApiToken() && isUnauthorized(error) ? "invalid-token" : null;
+      setAuthState(nextAuthState);
       setCapabilityGrants([]);
       setCapabilityResolved(false);
       setCapabilityError("");
       setStatusMessage(error instanceof Error ? error.message : "Unable to refresh dashboard.");
+      return { authState: nextAuthState, role: null };
     } finally {
       if (roleRequestId === roleRequestIdRef.current) {
         setLoading(false);
@@ -242,8 +258,16 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
 
   const saveApiToken = useCallback(async () => {
     persistApiToken(apiToken);
+    const result = await refresh();
+    if (result?.authState === "invalid-token") {
+      setStatusMessage("Token rejected. Clear Token resets it.");
+      return;
+    }
+    if (result?.role) {
+      setStatusMessage(`API token saved. Access resolved as ${result.role}.`);
+      return;
+    }
     setStatusMessage("API token saved for dashboard requests.");
-    await refresh();
   }, [apiToken, refresh]);
 
   const clearApiToken = useCallback(async () => {
@@ -365,6 +389,7 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
       selectedClientId,
       clients,
       role,
+      authState,
       capabilityGrants,
       capabilityResolved,
       capabilityError,
@@ -386,8 +411,8 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
       roleResolved,
       busyId,
       selectedTicketId,
-      canWrite: roleResolved && role !== "viewer",
-      isAdmin: roleResolved && role === "admin",
+      canWrite: roleResolved && (authState === "local-open" || role !== "viewer"),
+      isAdmin: roleResolved && (authState === "local-open" || role === "admin"),
       isConfigured: configuration.isConfigured,
       configurationLoading: configuration.loading,
       configurationSteps: configuration.steps,
@@ -412,6 +437,7 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
     };
   }, [
     apiToken,
+    authState,
     clientId,
     clients,
     approvalRequests,
@@ -466,6 +492,27 @@ function settledValue<T>(result: PromiseSettledResult<T>, fallback: T): T {
 
 function asArray<T>(value: T[] | unknown): T[] {
   return Array.isArray(value) ? value : [];
+}
+
+function hasStoredApiToken(): boolean {
+  return loadStoredApiToken().trim().length > 0;
+}
+
+function isUnauthorized(error: unknown): boolean {
+  return typeof error === "object"
+    && error !== null
+    && "status" in error
+    && error.status === 401;
+}
+
+function deriveAuthState(auth: AuthRoleResponse, storedToken: string): AuthState | null {
+  if (auth.api_auth_required === false) {
+    return "local-open";
+  }
+  if (auth.demo_mode === true) {
+    return "demo";
+  }
+  return storedToken.trim() ? "authenticated" : null;
 }
 
 export { defaultFieldText };
