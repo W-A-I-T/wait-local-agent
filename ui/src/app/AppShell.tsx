@@ -2,8 +2,9 @@
 // Additional terms: ../../../ADDITIONAL_TERMS.md
 
 import { useState } from "react";
-import { AlertTriangle, CheckCircle2, Info, KeyRound, RefreshCw, XCircle } from "lucide-react";
-import { useDashboard, type AuthState } from "./DashboardContext";
+import { AlertTriangle, CheckCircle2, Info, KeyRound, RefreshCw } from "lucide-react";
+import { Link } from "react-router-dom";
+import { getWriteHealthPosture, useDashboard, type AuthState } from "./DashboardContext";
 import { Sidebar } from "./Sidebar";
 import { AppRoutes } from "../routes";
 import { WaitAttribution } from "../components/WaitAttribution";
@@ -22,7 +23,7 @@ export function AppShell() {
     setSelectedClientId,
     clients,
     writeHealth,
-    liveWritesReady,
+    writeHealthResolved,
     statusMessage,
     refreshErrors
   } = useDashboard();
@@ -88,14 +89,7 @@ export function AppShell() {
               Clear Token
             </button>
             <AuthStatus authState={authState} role={role} roleResolved={roleResolved} />
-            <div className={`status-pill ${liveWritesReady ? "" : "danger"}`}>
-              {liveWritesReady ? (
-                <CheckCircle2 size={18} aria-hidden="true" />
-              ) : (
-                <XCircle size={18} aria-hidden="true" />
-              )}
-              {writeHealth.status}
-            </div>
+            <WriteGateStatus writeHealth={writeHealth} resolved={writeHealthResolved} />
           </div>
         </header>
 
@@ -111,6 +105,47 @@ export function AppShell() {
         <WaitAttribution />
       </section>
     </main>
+  );
+}
+
+export function WriteGateStatus({
+  writeHealth,
+  resolved
+}: {
+  writeHealth: { status: string; message: string };
+  resolved: boolean;
+}) {
+  const [open, setOpen] = useState(false);
+  const posture = getWriteHealthPosture(writeHealth.status, resolved);
+  const Icon = posture.icon === "success"
+    ? CheckCircle2
+    : posture.icon === "warning"
+      ? AlertTriangle
+      : Info;
+  const explanation = writeHealth.status === "ready"
+    ? "Live writes are available because you explicitly enabled the safety gates."
+    : "Writes stay disabled until you explicitly enable them.";
+
+  return (
+    <div className="write-gate-status">
+      <button
+        className={`status-pill status-pill-button ${posture.tone}`}
+        type="button"
+        aria-expanded={open}
+        onClick={() => setOpen((current) => !current)}
+      >
+        <Icon size={18} aria-hidden="true" />
+        {posture.label}
+      </button>
+      {open ? (
+        <div className="auth-help-popover write-gate-popover" role="note">
+          <strong>PSA write gate (HaloPSA)</strong>
+          <p>{writeHealth.message}</p>
+          <p>{explanation}</p>
+          <Link to="/connectors">View connector details</Link>
+        </div>
+      ) : null}
+    </div>
   );
 }
 
