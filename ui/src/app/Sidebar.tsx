@@ -78,7 +78,8 @@ const primaryNavigation: NavigationGroup[] = [
     items: [
       { to: "/m365-actions", label: "M365 Actions", icon: ShieldCheck },
       { to: "/microsoft-admin/azure-lighthouse", label: "Azure Lighthouse", icon: ShieldCheck, microsoftAdminCapability: true },
-      { to: "/consultant", label: "Solutions Architect", icon: Compass }
+      { to: "/consultant", label: "Solutions Architect", icon: Compass },
+      { to: "/consultant/solution-delivery", label: "Solution delivery", icon: PackageOpen }
     ]
   }
 ];

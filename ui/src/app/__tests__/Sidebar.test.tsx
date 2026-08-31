@@ -20,6 +20,7 @@ const destinations = [
   ["Tickets", "/tickets"], ["Approvals", "/approvals"], ["Technician Chat", "/technician-chat"], ["Microsoft Admin", "/microsoft-admin"], ["M365 Actions", "/m365-actions"], ["Azure Lighthouse", "/microsoft-admin/azure-lighthouse"],
   ["Automations", "/workflows"], ["Agents", "/agents"], ["Activity", "/executions"],
   ["Solutions Architect", "/consultant"],
+  ["Solution delivery", "/consultant/solution-delivery"],
   ["Reports", "/reports"], ["Analytics", "/analytics"], ["Audit", "/audit"], ["Collectors", "/collectors"],
   ["Launch Passport", "/founder"],
   ["Connectors", "/connectors"], ["Connector Instances", "/integrations/connector-instances"], ["Microsoft Admin Access", "/microsoft-admin/access"], ["Knowledge", "/knowledge"], ["Settings", "/settings"],
@@ -37,7 +38,7 @@ const groupedDestinations = {
     ["Knowledge", "/knowledge"], ["Agents", "/agents"]
   ],
   Solutions: [
-    ["M365 Actions", "/m365-actions"], ["Azure Lighthouse", "/microsoft-admin/azure-lighthouse"], ["Solutions Architect", "/consultant"]
+    ["M365 Actions", "/m365-actions"], ["Azure Lighthouse", "/microsoft-admin/azure-lighthouse"], ["Solutions Architect", "/consultant"], ["Solution delivery", "/consultant/solution-delivery"]
   ]
 } as const;
 
