@@ -185,8 +185,10 @@ def activity_to_dict(item: ActivityItem) -> dict[str, object]:
 
 
 def _execution_title(run_kind: str, source_run_id: int | None) -> str:
-    normalized = run_kind or "execution"
-    return f"{normalized.replace('_', ' ').title()} {source_run_id}" if source_run_id is not None else normalized.replace("_", " ").title()
+    normalized = (run_kind or "execution").replace("_", " ").title()
+    if source_run_id is None:
+        return normalized
+    return f"{normalized} {source_run_id}"
 
 
 def _is_canonical(canonical: dict[tuple[str, int], int], kind: str, source_run_id: int) -> bool:
