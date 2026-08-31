@@ -136,6 +136,15 @@ const diagnostic = {
   source_statuses: { managed_devices: "ready" }
 };
 
+const remediations = [
+  {
+    action_id: "m365-managed-device-sync",
+    risk_level: 2,
+    approval_required: true,
+    description: "Trigger an Intune managed-device synchronization through the core approval flow."
+  }
+];
+
 describe("Microsoft Administrator workspace", () => {
   let failDashboard = false;
   let failDiagnostic = false;
@@ -162,6 +171,23 @@ describe("Microsoft Administrator workspace", () => {
           executable: "C:/Program Files/PowerShell/7/pwsh.exe"
         }), { status: 200 }));
       }
+      if (path === "/packs/microsoft-admin/remediations") {
+        return Promise.resolve(new Response(JSON.stringify(remediations), { status: 200 }));
+      }
+      if (path === "/packs/microsoft-admin/identity/risky-users?page_size=25") {
+        return Promise.resolve(new Response(JSON.stringify({
+          result: { status: "ready", message: "ok", count: 1 },
+          items: [{ id: "risky-1", user_display_name: "Adele Vance", user_principal_name: "adele@example.test", risk_level: "high", risk_state: "atRisk", risk_last_updated_date_time: "2026-08-25T17:00:00Z" }],
+          next_cursor: ""
+        }), { status: 200 }));
+      }
+      if (path === "/packs/microsoft-admin/security/incidents?page_size=25") {
+        return Promise.resolve(new Response(JSON.stringify({
+          result: { status: "ready", message: "ok", count: 1 },
+          items: [{ id: "incident-1", display_name: "Suspicious sign-in", severity: "high", status: "active", assigned_to: "analyst@example.test", created_date_time: "2026-08-25T16:00:00Z" }],
+          next_cursor: ""
+        }), { status: 200 }));
+      }
       if (path === "/packs/microsoft-admin/diagnostics/access") {
         if (failDiagnostic) {
           return Promise.resolve(new Response(JSON.stringify({ detail: "Diagnostic unavailable" }), { status: 500 }));
@@ -172,6 +198,23 @@ describe("Microsoft Administrator workspace", () => {
         return Promise.resolve(new Response(JSON.stringify({
           approval: { id: 42, action_type: "microsoft_admin.powershell_runbook", status: "pending" },
           plan: { plan_digest: "sha256:plan", runbook_id: "windows.service_restart" }
+        }), { status: 200 }));
+      }
+      if (path === "/packs/microsoft-admin/runbooks/plan") {
+        return Promise.resolve(new Response(JSON.stringify({
+          format: "wait.microsoft-admin.runbook-plan.v1",
+          runbook_id: "windows.service_restart",
+          runbook_version: "1.0.0",
+          title: "Restart an allowlisted Windows service",
+          client_id: "acme",
+          effect: "write",
+          risk_level: 3,
+          approval_required: true,
+          parameters: { service_name: "BITS", wait_seconds: 7 },
+          script_sha256: "sha256:restart",
+          timeout_seconds: 45,
+          credentials_included: false,
+          plan_digest: "sha256:plan"
         }), { status: 200 }));
       }
       throw new Error(`Unexpected request: ${path} ${init?.method ?? "GET"}`);
@@ -208,13 +251,27 @@ describe("Microsoft Administrator workspace", () => {
 
     expect(await screen.findByRole("status")).toHaveTextContent("Evidence completeness: 86%");
     expect(screen.getAllByText("Managed device LAPTOP-001 is not compliant.").length).toBeGreaterThan(0);
-    expect(screen.getByText(/m365-managed-device-sync/)).toBeInTheDocument();
+    expect(screen.getAllByText(/m365-managed-device-sync/).length).toBeGreaterThan(0);
     const diagnosticCall = vi.mocked(fetch).mock.calls.find(([input]) => String(input) === "/packs/microsoft-admin/diagnostics/access");
     expect(diagnosticCall?.[1]).toMatchObject({ method: "POST" });
     expect(JSON.parse(String(diagnosticCall?.[1]?.body))).toEqual({
       user_identity: "adele@example.test",
       device_name: "LAPTOP-001"
     });
+  });
+
+  it("opens risky-user and Defender incident drill-downs from summary cards", async () => {
+    render(<MemoryRouter><MicrosoftAdmin /></MemoryRouter>);
+    await screen.findByText("62.5%");
+
+    fireEvent.click(screen.getByRole("button", { name: /Risky users/ }));
+    expect(await screen.findByRole("heading", { name: "Risky users" })).toBeInTheDocument();
+    expect(await screen.findByText("Adele Vance")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Show details for Adele Vance" })).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: /Defender incidents/ }));
+    expect(await screen.findByRole("heading", { name: "Defender incidents" })).toBeInTheDocument();
+    expect(await screen.findByText("Suspicious sign-in")).toBeInTheDocument();
   });
 
   it("creates a tenant-scoped runbook approval draft without executing PowerShell", async () => {
@@ -227,7 +284,17 @@ describe("Microsoft Administrator workspace", () => {
     fireEvent.change(screen.getByLabelText("Maximum wait for Running."), {
       target: { value: "7", valueAsNumber: 7 }
     });
-    fireEvent.click(screen.getByRole("button", { name: "Create approval draft" }));
+    fireEvent.click(screen.getByRole("button", { name: "Preview runbook plan" }));
+
+    expect(await screen.findByRole("heading", { name: "Runbook dry-run preview" })).toBeInTheDocument();
+    const planCall = vi.mocked(fetch).mock.calls.find(([input]) => String(input) === "/packs/microsoft-admin/runbooks/plan");
+    expect(JSON.parse(String(planCall?.[1]?.body))).toEqual({
+      runbook_id: "windows.service_restart",
+      parameters: { service_name: "BITS", wait_seconds: 7 },
+      client_id: "acme"
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "Confirm and create approval draft" }));
 
     const success = await screen.findByRole("status");
     expect(success).toHaveTextContent("Draft created as approval #42. No PowerShell has executed.");
@@ -243,7 +310,7 @@ describe("Microsoft Administrator workspace", () => {
   it("blocks drafts without a selected client and hides the form from viewers", async () => {
     dashboardContext.selectedClientId = "";
     const { unmount } = render(<MemoryRouter><MicrosoftAdmin /></MemoryRouter>);
-    const draftButton = await screen.findByRole("button", { name: "Create approval draft" });
+    const draftButton = await screen.findByRole("button", { name: "Preview runbook plan" });
     expect(draftButton).toBeDisabled();
     expect(screen.getByRole("alert")).toHaveTextContent("Select a client from the top bar");
     unmount();

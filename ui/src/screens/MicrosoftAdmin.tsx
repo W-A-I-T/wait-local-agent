@@ -1,7 +1,13 @@
 import { useCallback, useEffect, useMemo, useState, type FormEvent } from "react";
 import { Link } from "react-router-dom";
 import { apiFetch } from "../api/client";
+import type {
+  MicrosoftAdminEvidencePage,
+  MicrosoftAdminRemediation,
+  MicrosoftAdminRunbookPlan
+} from "../api/types";
 import { useDashboard } from "../app/DashboardContext";
+import { PaginatedEvidenceTable, type EvidenceColumn } from "../components/PaginatedEvidenceTable";
 import { RoleGate } from "../components/RoleGate";
 
 type MicrosoftAdminSummary = {
@@ -102,6 +108,29 @@ type RunbookDraftResponse = {
   };
 };
 
+type EvidenceRow = Record<string, unknown>;
+type EvidenceSurfaceKey =
+  | "risky-users"
+  | "sign-ins"
+  | "conditional-access"
+  | "defender-incidents"
+  | "defender-alerts"
+  | "secure-score"
+  | "intune-apps"
+  | "compliance-policies"
+  | "autopilot"
+  | "service-health"
+  | "service-issues";
+
+type EvidenceSurface = {
+  key: EvidenceSurfaceKey;
+  title: string;
+  description: string;
+  path: string;
+  pageSize?: number | null;
+  columns: EvidenceColumn<EvidenceRow>[];
+};
+
 type Notice = { kind: "success" | "danger"; message: string } | null;
 type ParameterValue = boolean | number | string;
 
@@ -109,52 +138,221 @@ const metricDefinitions: Array<{
   label: string;
   value: (summary: MicrosoftAdminSummary) => string | number;
   detail: (summary: MicrosoftAdminSummary) => string;
+  surface: EvidenceSurfaceKey;
 }> = [
   {
-    label: "Microsoft services",
-    value: (summary) => summary.non_operational_services,
-    detail: (summary) => `${summary.open_service_issues} active service issues`
+    label: "Risky users",
+    value: (summary) => summary.risky_users,
+    detail: () => "Review users with identity risk",
+    surface: "risky-users"
   },
   {
-    label: "Secure Score",
-    value: (summary) => summary.secure_score_percent === null ? "Unavailable" : `${summary.secure_score_percent}%`,
-    detail: () => "Posture context, not compliance evidence"
+    label: "Sign-ins",
+    value: (summary) => summary.risky_sign_ins,
+    detail: (summary) => `${summary.failed_sign_ins} recent failed sign-ins`,
+    surface: "sign-ins"
   },
   {
-    label: "Identity attention",
-    value: (summary) => summary.risky_users + summary.risky_sign_ins,
-    detail: (summary) => `${summary.failed_sign_ins} recent failed sign-ins`
-  },
-  {
-    label: "Endpoint attention",
-    value: (summary) => summary.noncompliant_devices,
-    detail: (summary) => `${summary.unencrypted_devices} unencrypted · ${summary.stale_devices} stale`
-  },
-  {
-    label: "Managed devices",
-    value: (summary) => summary.managed_devices,
-    detail: (summary) => `${summary.autopilot_devices} Autopilot identities`
-  },
-  {
-    label: "Intune configuration",
-    value: (summary) => summary.intune_apps,
-    detail: (summary) => `${summary.compliance_policies} compliance policies`
+    label: "Conditional Access",
+    value: (summary) => summary.conditional_access_policies,
+    detail: (summary) => `${summary.conditional_access_disabled} disabled · ${summary.conditional_access_report_only} report-only`,
+    surface: "conditional-access"
   },
   {
     label: "Defender incidents",
     value: (summary) => summary.active_defender_incidents,
-    detail: (summary) => `${summary.high_severity_incidents} high severity`
+    detail: (summary) => `${summary.high_severity_incidents} high severity`,
+    surface: "defender-incidents"
   },
   {
     label: "Defender alerts",
     value: (summary) => summary.active_defender_alerts,
-    detail: (summary) => `${summary.conditional_access_policies} Conditional Access policies`
+    detail: () => "Review active security detections",
+    surface: "defender-alerts"
+  },
+  {
+    label: "Secure Score",
+    value: (summary) => summary.secure_score_percent === null ? "Unavailable" : `${summary.secure_score_percent}%`,
+    detail: () => "Posture context, not compliance evidence",
+    surface: "secure-score"
+  },
+  {
+    label: "Intune apps",
+    value: (summary) => summary.intune_apps,
+    detail: () => "Review published application inventory",
+    surface: "intune-apps"
+  },
+  {
+    label: "Compliance policies",
+    value: (summary) => summary.compliance_policies,
+    detail: () => "Review endpoint compliance configuration",
+    surface: "compliance-policies"
+  },
+  {
+    label: "Autopilot devices",
+    value: (summary) => summary.autopilot_devices,
+    detail: () => "Review enrollment identities",
+    surface: "autopilot"
+  },
+  {
+    label: "Service health",
+    value: (summary) => summary.non_operational_services,
+    detail: () => "Non-operational Microsoft services",
+    surface: "service-health"
+  },
+  {
+    label: "Service issues",
+    value: (summary) => summary.open_service_issues,
+    detail: () => "Open Microsoft service issues",
+    surface: "service-issues"
+  }
+];
+
+const evidenceSurfaces: EvidenceSurface[] = [
+  {
+    key: "risky-users",
+    title: "Risky users",
+    description: "Identity protection users returned by the current tenant scope.",
+    path: "/packs/microsoft-admin/identity/risky-users",
+    columns: [
+      { key: "user", label: "User", render: (row) => <strong>{textValue(row, "user_display_name") || textValue(row, "user_principal_name")}</strong> },
+      { key: "risk_level", label: "Risk level", render: (row) => humanize(textValue(row, "risk_level")) },
+      { key: "risk_state", label: "State", render: (row) => humanize(textValue(row, "risk_state")) },
+      { key: "updated", label: "Last updated", render: (row) => formatDate(textValue(row, "risk_last_updated_date_time")) }
+    ]
+  },
+  {
+    key: "sign-ins",
+    title: "Sign-ins",
+    description: "Recent Entra sign-in evidence, including failure and device context.",
+    path: "/packs/microsoft-admin/identity/sign-ins",
+    columns: [
+      { key: "user", label: "User", render: (row) => <strong>{textValue(row, "user_display_name") || textValue(row, "user_principal_name")}</strong> },
+      { key: "created", label: "Time", render: (row) => formatDate(textValue(row, "created_date_time")) },
+      { key: "application", label: "Application" },
+      { key: "result", label: "Result", render: (row) => numberValue(row, "error_code") ? "Failed" : "Succeeded" },
+      { key: "risk", label: "Risk", render: (row) => humanize(textValue(row, "risk_level")) }
+    ]
+  },
+  {
+    key: "conditional-access",
+    title: "Conditional Access policies",
+    description: "Configured policy states and bounded condition summaries.",
+    path: "/packs/microsoft-admin/identity/conditional-access",
+    columns: [
+      { key: "display_name", label: "Policy" },
+      { key: "state", label: "State", render: (row) => humanize(textValue(row, "state")) },
+      { key: "conditions", label: "Conditions", render: (row) => conditionSummary(row) },
+      { key: "controls", label: "Grant controls", render: (row) => nestedStrings(row, "grant_controls", "built_in_controls") }
+    ]
+  },
+  {
+    key: "defender-incidents",
+    title: "Defender incidents",
+    description: "Active and historical incidents returned by Microsoft Defender.",
+    path: "/packs/microsoft-admin/security/incidents",
+    columns: [
+      { key: "display_name", label: "Incident" },
+      { key: "severity", label: "Severity", render: (row) => humanize(textValue(row, "severity")) },
+      { key: "status", label: "Status", render: (row) => humanize(textValue(row, "status")) },
+      { key: "assigned_to", label: "Assigned to" },
+      { key: "created", label: "Created", render: (row) => formatDate(textValue(row, "created_date_time")) }
+    ]
+  },
+  {
+    key: "defender-alerts",
+    title: "Defender alerts",
+    description: "Security detections and their current status from Microsoft Defender.",
+    path: "/packs/microsoft-admin/security/alerts",
+    columns: [
+      { key: "title", label: "Alert" },
+      { key: "severity", label: "Severity", render: (row) => humanize(textValue(row, "severity")) },
+      { key: "status", label: "Status", render: (row) => humanize(textValue(row, "status")) },
+      { key: "source", label: "Source", render: (row) => textValue(row, "service_source") || textValue(row, "detection_source") },
+      { key: "created", label: "Created", render: (row) => formatDate(textValue(row, "created_date_time")) }
+    ]
+  },
+  {
+    key: "secure-score",
+    title: "Secure Score",
+    description: "The latest score record and its tenant comparison context.",
+    path: "/packs/microsoft-admin/security/secure-score",
+    pageSize: null,
+    columns: [
+      { key: "created", label: "As of", render: (row) => formatDate(textValue(row, "created_date_time")) },
+      { key: "score", label: "Current / maximum", render: (row) => `${displayValue(row["current_score"])} / ${displayValue(row["max_score"])}` },
+      { key: "users", label: "Active / licensed", render: (row) => `${displayValue(row["active_user_count"])} / ${displayValue(row["licensed_user_count"])}` },
+      { key: "services", label: "Enabled services", render: (row) => arrayValue(row, "enabled_services") }
+    ]
+  },
+  {
+    key: "intune-apps",
+    title: "Intune apps",
+    description: "Published application inventory returned by Intune.",
+    path: "/packs/microsoft-admin/endpoint/apps",
+    columns: [
+      { key: "display_name", label: "Application" },
+      { key: "publisher", label: "Publisher" },
+      { key: "developer", label: "Developer" },
+      { key: "modified", label: "Last modified", render: (row) => formatDate(textValue(row, "last_modified_date_time")) }
+    ]
+  },
+  {
+    key: "compliance-policies",
+    title: "Compliance policies",
+    description: "Endpoint compliance policy definitions returned by Intune.",
+    path: "/packs/microsoft-admin/endpoint/compliance-policies",
+    columns: [
+      { key: "display_name", label: "Policy" },
+      { key: "version", label: "Version" },
+      { key: "modified", label: "Last modified", render: (row) => formatDate(textValue(row, "last_modified_date_time")) },
+      { key: "description", label: "Description" }
+    ]
+  },
+  {
+    key: "autopilot",
+    title: "Autopilot devices",
+    description: "Windows Autopilot device identities and enrollment state.",
+    path: "/packs/microsoft-admin/endpoint/autopilot",
+    columns: [
+      { key: "display_name", label: "Device" },
+      { key: "hardware", label: "Hardware", render: (row) => [textValue(row, "manufacturer"), textValue(row, "model")].filter(Boolean).join(" ") },
+      { key: "enrollment_state", label: "Enrollment", render: (row) => humanize(textValue(row, "enrollment_state")) },
+      { key: "group_tag", label: "Group tag" },
+      { key: "last_contacted", label: "Last contacted", render: (row) => formatDate(textValue(row, "last_contacted_date_time")) }
+    ]
+  },
+  {
+    key: "service-health",
+    title: "Service health",
+    description: "Microsoft service health statuses for the current tenant.",
+    path: "/packs/microsoft-admin/service-health",
+    columns: [
+      { key: "service", label: "Service" },
+      { key: "status", label: "Status", render: (row) => humanize(textValue(row, "status")) },
+      { key: "id", label: "Record" }
+    ]
+  },
+  {
+    key: "service-issues",
+    title: "Service issues",
+    description: "Microsoft service incidents and their latest known impact.",
+    path: "/packs/microsoft-admin/service-issues",
+    columns: [
+      { key: "title", label: "Issue" },
+      { key: "service", label: "Service" },
+      { key: "status", label: "Status", render: (row) => humanize(textValue(row, "status")) },
+      { key: "impact", label: "Impact", render: (row) => textValue(row, "impact_description") },
+      { key: "modified", label: "Last modified", render: (row) => formatDate(textValue(row, "last_modified_date_time")) }
+    ]
   }
 ];
 
 export function MicrosoftAdmin() {
   const { role, roleResolved, selectedClientId } = useDashboard();
   const [dashboard, setDashboard] = useState<MicrosoftAdminDashboard | null>(null);
+  const [remediations, setRemediations] = useState<MicrosoftAdminRemediation[]>([]);
+  const [remediationError, setRemediationError] = useState("");
   const [runbooks, setRunbooks] = useState<MicrosoftAdminRunbook[]>([]);
   const [runtime, setRuntime] = useState<RunbookRuntimeStatus | null>(null);
   const [loading, setLoading] = useState(true);
@@ -168,6 +366,8 @@ export function MicrosoftAdmin() {
   const [runbookParameters, setRunbookParameters] = useState<Record<string, ParameterValue>>({});
   const [draftBusy, setDraftBusy] = useState(false);
   const [draftNotice, setDraftNotice] = useState<Notice>(null);
+  const [runbookPlan, setRunbookPlan] = useState<MicrosoftAdminRunbookPlan | null>(null);
+  const [selectedSurfaceKey, setSelectedSurfaceKey] = useState<EvidenceSurfaceKey | null>(null);
 
   const refresh = useCallback(async () => {
     setLoading(true);
@@ -175,7 +375,8 @@ export function MicrosoftAdmin() {
     const results = await Promise.allSettled([
       apiFetch<MicrosoftAdminDashboard>("/packs/microsoft-admin/dashboard"),
       apiFetch<MicrosoftAdminRunbook[]>("/packs/microsoft-admin/runbooks"),
-      apiFetch<RunbookRuntimeStatus>("/packs/microsoft-admin/runbooks/status")
+      apiFetch<RunbookRuntimeStatus>("/packs/microsoft-admin/runbooks/status"),
+      apiFetch<MicrosoftAdminRemediation[]>("/packs/microsoft-admin/remediations")
     ]);
     const failures: string[] = [];
     if (results[0].status === "fulfilled") {
@@ -193,6 +394,14 @@ export function MicrosoftAdmin() {
     } else {
       failures.push(friendlyError(results[2].reason, "PowerShell runtime status is unavailable."));
     }
+    if (results[3].status === "fulfilled") {
+      setRemediations(results[3].value);
+      setRemediationError("");
+    } else {
+      const message = friendlyError(results[3].reason, "The remediation catalog is unavailable.");
+      setRemediationError(message);
+      failures.push(message);
+    }
     setLoadError(failures.join(" "));
     setLoading(false);
   }, []);
@@ -206,6 +415,36 @@ export function MicrosoftAdmin() {
     [runbooks, selectedRunbookId]
   );
 
+  const selectedSurface = useMemo(
+    () => evidenceSurfaces.find((surface) => surface.key === selectedSurfaceKey) ?? null,
+    [selectedSurfaceKey]
+  );
+
+  const loadEvidencePage = useCallback(
+    (path: string, cursor: string | null, pageSize: number | null = 25) => {
+      const query = new URLSearchParams();
+      if (pageSize !== null) query.set("page_size", String(pageSize));
+      if (cursor) query.set("cursor", cursor);
+      const queryString = query.toString();
+      return apiFetch<MicrosoftAdminEvidencePage<EvidenceRow>>(queryString ? `${path}?${queryString}` : path);
+    },
+  []);
+
+  const selectedSurfaceLoader = useMemo(
+    () => selectedSurface ? (cursor: string | null) => loadEvidencePage(
+      selectedSurface.path,
+      cursor,
+      selectedSurface.pageSize === undefined ? 25 : selectedSurface.pageSize
+    ) : null,
+    [loadEvidencePage, selectedSurface]
+  );
+
+  useEffect(() => {
+    if (runbookPlan && runbookPlan.client_id !== selectedClientId) {
+      setRunbookPlan(null);
+    }
+  }, [runbookPlan, selectedClientId]);
+
   useEffect(() => {
     if (!selectedRunbook) {
       setSelectedRunbookId("");
@@ -214,6 +453,8 @@ export function MicrosoftAdmin() {
     }
     setSelectedRunbookId(selectedRunbook.runbook_id);
     setRunbookParameters(parameterDefaults(selectedRunbook));
+    setRunbookPlan(null);
+    setDraftNotice(null);
   }, [selectedRunbook?.runbook_id]);
 
   async function submitDiagnostic(event: FormEvent<HTMLFormElement>) {
@@ -247,6 +488,22 @@ export function MicrosoftAdmin() {
     setDraftBusy(true);
     setDraftNotice(null);
     try {
+      if (!runbookPlan) {
+        const plan = await apiFetch<MicrosoftAdminRunbookPlan>(
+          "/packs/microsoft-admin/runbooks/plan",
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              runbook_id: selectedRunbook.runbook_id,
+              parameters: runbookParameters,
+              client_id: selectedClientId
+            })
+          }
+        );
+        setRunbookPlan(plan);
+        return;
+      }
       const response = await apiFetch<RunbookDraftResponse>(
         "/packs/microsoft-admin/runbooks/drafts",
         {
@@ -274,7 +531,14 @@ export function MicrosoftAdmin() {
     const runbook = runbooks.find((item) => item.runbook_id === runbookId);
     setSelectedRunbookId(runbookId);
     setRunbookParameters(runbook ? parameterDefaults(runbook) : {});
+    setRunbookPlan(null);
     setDraftNotice(null);
+  }
+
+  function changeRunbookParameter(name: string, value: ParameterValue) {
+    setRunbookPlan(null);
+    setDraftNotice(null);
+    setRunbookParameters((current) => ({ ...current, [name]: value }));
   }
 
   return (
@@ -306,13 +570,32 @@ export function MicrosoftAdmin() {
         <>
           <section className="overview-cards" aria-label="Microsoft administration posture">
             {metricDefinitions.map((metric) => (
-              <article className="overview-card" key={metric.label}>
+              <button
+                className={`overview-card microsoft-evidence-card${selectedSurfaceKey === metric.surface ? " selected" : ""}`}
+                key={metric.label}
+                type="button"
+                aria-expanded={selectedSurfaceKey === metric.surface}
+                onClick={() => setSelectedSurfaceKey(metric.surface)}
+              >
                 <span>{metric.label}</span>
                 <strong>{metric.value(dashboard.summary)}</strong>
                 <small>{metric.detail(dashboard.summary)}</small>
-              </article>
+                <em>Open evidence</em>
+              </button>
             ))}
           </section>
+
+          {selectedSurface && selectedSurfaceLoader ? (
+            <PaginatedEvidenceTable
+              key={selectedSurface.key}
+              title={selectedSurface.title}
+              description={selectedSurface.description}
+              columns={selectedSurface.columns}
+              loadPage={selectedSurfaceLoader}
+              onClose={() => setSelectedSurfaceKey(null)}
+              rowKey={(row, index) => textValue(row, "id") || `${selectedSurface.key}-${index}`}
+            />
+          ) : null}
 
           <section className="panel" aria-labelledby="microsoft-recommendations-heading">
             <div className="panel-heading">
@@ -345,6 +628,34 @@ export function MicrosoftAdmin() {
                 ))}
               </div>
             </details>
+          </section>
+
+          <section className="panel" aria-labelledby="microsoft-remediations-heading">
+            <div className="panel-heading">
+              <div>
+                <h3 id="microsoft-remediations-heading">Recommended remediations</h3>
+                <span>Review the governed action catalog before creating any approval.</span>
+              </div>
+            </div>
+            {remediationError ? <div className="notice danger" role="alert">{remediationError}</div> : null}
+            {!remediationError && remediations.length === 0 ? (
+              <p className="screen-note">No remediation actions are available for this pack.</p>
+            ) : null}
+            {remediations.length ? (
+              <div className="event-list">
+                {remediations.map((remediation) => (
+                  <article className="event-row" key={remediation.action_id}>
+                    <div>
+                      <strong>{remediation.description}</strong>
+                      <small><code>{remediation.action_id}</code> · Risk level {remediation.risk_level} · {remediation.approval_required ? "Approval required" : "No approval required"}</small>
+                    </div>
+                    <Link className="secondary-button" to={`/integrations/smart-actions#${encodeURIComponent(remediation.action_id)}`}>
+                      Open action catalog entry
+                    </Link>
+                  </article>
+                ))}
+              </div>
+            ) : null}
           </section>
         </>
       ) : null}
@@ -455,9 +766,32 @@ export function MicrosoftAdmin() {
                   parameter={parameter}
                   value={runbookParameters[parameter.name] ?? parameter.default}
                   disabled={draftBusy}
-                  onChange={(value) => setRunbookParameters((current) => ({ ...current, [parameter.name]: value }))}
+                  onChange={(value) => changeRunbookParameter(parameter.name, value)}
                 />
               ))}
+              {runbookPlan ? (
+                <section className="microsoft-runbook-plan" aria-labelledby="microsoft-runbook-plan-heading">
+                  <div className="panel-heading">
+                    <div>
+                      <h4 id="microsoft-runbook-plan-heading">Runbook dry-run preview</h4>
+                      <span>Review the server-validated plan before creating an approval draft.</span>
+                    </div>
+                    <span className="status-pill">Preview only</span>
+                  </div>
+                  <dl className="microsoft-runbook-plan-grid">
+                    <div><dt>Runbook</dt><dd>{runbookPlan.title}</dd></div>
+                    <div><dt>Tenant</dt><dd><code>{runbookPlan.client_id}</code></dd></div>
+                    <div><dt>Effect</dt><dd>{humanize(runbookPlan.effect)}</dd></div>
+                    <div><dt>Risk level</dt><dd>{runbookPlan.risk_level}</dd></div>
+                    <div><dt>Approval</dt><dd>{runbookPlan.approval_required ? "Required" : "Not required"}</dd></div>
+                    <div><dt>Plan digest</dt><dd><code>{runbookPlan.plan_digest}</code></dd></div>
+                  </dl>
+                  <details className="technical-details">
+                    <summary>Show validated parameters</summary>
+                    <pre>{formatJson(runbookPlan.parameters)}</pre>
+                  </details>
+                </section>
+              ) : null}
               {draftNotice ? (
                 draftNotice.kind === "success" ? (
                   <div className="notice success" role="status">
@@ -466,8 +800,13 @@ export function MicrosoftAdmin() {
                 ) : <div className="notice danger" role="alert">{draftNotice.message}</div>
               ) : null}
               <button type="submit" disabled={draftBusy || !selectedClientId}>
-                {draftBusy ? "Creating draft…" : "Create approval draft"}
+                {draftBusy ? (runbookPlan ? "Creating draft…" : "Previewing plan…") : (runbookPlan ? "Confirm and create approval draft" : "Preview runbook plan")}
               </button>
+              {runbookPlan ? (
+                <button type="button" className="secondary-button" disabled={draftBusy} onClick={() => setRunbookPlan(null)}>
+                  Change parameters
+                </button>
+              ) : null}
             </form>
           ) : <p className="screen-note">No fixed runbooks are available.</p>}
         </section>
@@ -539,6 +878,49 @@ function parameterDefaults(runbook: MicrosoftAdminRunbook): Record<string, Param
 
 function friendlyError(error: unknown, fallback: string): string {
   return error instanceof Error && error.message ? error.message : fallback;
+}
+
+function textValue(row: EvidenceRow, key: string): string {
+  const value = row[key];
+  return typeof value === "string" ? value : "";
+}
+
+function numberValue(row: EvidenceRow, key: string): number {
+  const value = row[key];
+  return typeof value === "number" && Number.isFinite(value) ? value : 0;
+}
+
+function arrayValue(row: EvidenceRow, key: string): string {
+  const value = row[key];
+  return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string").join(", ") || "None recorded" : "None recorded";
+}
+
+function nestedStrings(row: EvidenceRow, parentKey: string, childKey: string): string {
+  const parent = row[parentKey];
+  if (!parent || typeof parent !== "object" || Array.isArray(parent)) return "None recorded";
+  return arrayValue(parent as EvidenceRow, childKey);
+}
+
+function conditionSummary(row: EvidenceRow): string {
+  const conditions = row.conditions;
+  if (!conditions || typeof conditions !== "object" || Array.isArray(conditions)) return "None recorded";
+  const values = conditions as EvidenceRow;
+  return `${numberValue(values, "included_users")} users · ${numberValue(values, "included_groups")} groups · ${numberValue(values, "included_applications")} apps`;
+}
+
+function displayValue(value: unknown): string {
+  if (value === null || value === undefined || value === "") return "Not recorded";
+  if (typeof value === "boolean") return value ? "Yes" : "No";
+  if (typeof value === "string" || typeof value === "number") return String(value);
+  return formatJson(value);
+}
+
+function formatJson(value: unknown): string {
+  try {
+    return JSON.stringify(value, null, 2) ?? "Not recorded";
+  } catch {
+    return "Unable to render this value.";
+  }
 }
 
 function humanize(value: string): string {
