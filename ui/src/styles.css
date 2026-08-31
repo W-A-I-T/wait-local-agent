@@ -3118,7 +3118,7 @@ dd svg {
   font-size: .82rem;
 }
 
-.agent-history {
+.agent-revisions-drawer {
   display: grid;
   gap: .55rem;
   border-top: 1px solid var(--border);
@@ -3126,30 +3126,70 @@ dd svg {
   font-size: .82rem;
 }
 
-.agent-history-row {
-  display: flex;
+.agent-revisions-drawer summary {
+  color: #246647;
+  cursor: pointer;
+  font-weight: 800;
+}
+
+.agent-revisions-drawer .revision-selector {
+  align-items: end;
+}
+
+.agent-revisions-drawer .revision-selector > button {
+  align-self: end;
+}
+
+.agent-revisions-drawer .event-row {
   align-items: center;
-  justify-content: space-between;
-  gap: .75rem;
-  color: var(--muted);
 }
 
 .agent-diff {
+  background: #f7fbf9;
+  border: 1px solid #cfe0d8;
+  border-radius: 8px;
   display: grid;
-  gap: .45rem;
-  border: 1px solid var(--border);
-  border-radius: .55rem;
-  padding: .65rem;
+  gap: 10px;
+  padding: 12px;
 }
 
-.agent-diff > div {
+.agent-diff ul {
   display: grid;
-  gap: .2rem;
+  gap: 12px;
+  list-style: none;
+  margin: 0;
+  padding: 0;
 }
 
-.agent-diff small {
+.agent-diff li {
+  border-top: 1px solid #dce5e1;
+  display: grid;
+  gap: 6px;
+  padding-top: 10px;
+}
+
+.agent-diff li > div {
+  display: grid;
+  gap: 4px;
+}
+
+.agent-diff li span {
+  color: #60706a;
+  font-size: .78rem;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.agent-diff pre {
+  background: #fff;
+  border: 1px solid #e4ebe8;
+  border-radius: 6px;
+  margin: 0;
+  max-height: 180px;
+  overflow: auto;
+  padding: 8px;
+  white-space: pre-wrap;
   overflow-wrap: anywhere;
-  color: var(--muted);
 }
 
 @media (max-width: 760px) {
@@ -3200,7 +3240,7 @@ dd svg {
     grid-template-columns: 1fr;
   }
 
-  .agent-history-row {
+  .agent-revisions-drawer .event-row {
     align-items: flex-start;
     flex-direction: column;
   }

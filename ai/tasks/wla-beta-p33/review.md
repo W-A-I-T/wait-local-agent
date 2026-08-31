@@ -2,31 +2,50 @@
 
 ## Changed Files
 
-- List files or directories changed during implementation.
+- `ui/src/screens/Agents.tsx` — revision drawer state, exact API calls, diff
+  rendering, restore confirmation, and post-restore refresh/form hydration.
+- `ui/src/styles.css` — drawer, selector, confirmation, and structured diff
+  presentation.
+- `ui/tests/Agents.test.tsx` — fixture-backed two-version diff, exact route,
+  confirmation, and refresh/form assertions.
+- Task artifacts updated in `ai/tasks/wla-beta-p33/`.
 
 ## Risk Areas
 
-- List highest-risk logic, integrations, migrations, or assumptions.
+- Restore is a mutating technician action; the UI keeps it write-gated and
+  requires an explicit confirmation before POSTing.
+- Revision selections are reset whenever history is loaded or reloaded so a
+  diff cannot silently refer to an earlier list/current version.
+- A successful restore is followed by fresh definition/tool and revision
+  requests; form hydration is limited to the agent that was actively edited.
 
 ## Version & Compatibility Evidence
 
-- Summarize dependency, SDK, API, framework component, model runtime, or tooling version changes.
-- Confirm the implementation used the latest compatible version or explain why the newest stable version was not compatible.
-- List any remaining compatibility risk, migration risk, or stale-version concern.
-- If the task did not touch versions or integrations, write `No version or API changes`.
+No version or API changes. The UI uses the repository's existing locked React,
+TypeScript, Vite, Vitest, and Testing Library versions; `npm ci` validated the
+committed `ui/package-lock.json`. The backend routes/models were read directly
+from the current checkout and no dependency or server contract was modified.
 
 ## Open Questions
 
-- List unresolved questions for the next reviewer or human.
+- None.
 
 ## Test Results
 
-- Verification has not run yet.
+- `cd ui && npm test -- --run` — passed twice (63 test files, 323 tests each).
+- `cd ui && npm run build` — passed.
+- `git diff --check` — passed.
+- Existing non-failing warnings: Vite native config-loader warning and the
+  existing large chunk advisory.
 
 ## Diff Summary
 
-- Provide a compact behavior-focused summary.
+- Agents now has the Playbooks-style History and recovery drawer. Operators can
+  choose any two listed versions, inspect field-level before/after values, and
+  confirm a restore. Restore success refreshes the list/history and keeps an
+  active edit form aligned with the restored definition.
 
 ## Requested Review Focus
 
-- narrow diff review
+- narrow diff review, exact revision route usage, restore confirmation, and
+  post-restore state synchronization.
