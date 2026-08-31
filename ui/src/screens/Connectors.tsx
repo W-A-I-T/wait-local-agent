@@ -3,6 +3,7 @@ import { useDashboard } from "../app/DashboardContext";
 import { apiFetch } from "../api/client";
 import { type ConnectorStatus } from "../api/types";
 import { ConnectorBrowsePanel } from "../components/ConnectorBrowsePanel";
+import { connectorSetup } from "../lib/connectorSetup";
 
 type HealthState = {
   status: string;
@@ -230,6 +231,7 @@ export function Connectors() {
   ];
 
   function renderConnector(status: ConnectorStatus) {
+    const setup = connectorSetup[status.id as keyof typeof connectorSetup];
     return (
       <article className="connector-row" key={status.id}>
         <div>
@@ -237,6 +239,32 @@ export function Connectors() {
           <span>{status.message}</span>
         </div>
         <em>{status.status}</em>
+        {setup ? (
+          <details className="connector-setup">
+            <summary>How to configure</summary>
+            <div className="connector-setup-content">
+              <p>{setup.docsNote}</p>
+              {setup.tier === "instance" ? (
+                <p>
+                  <a className="inline-link" href="/integrations/connector-instances">
+                    Or connect per-client from Connector Instances
+                  </a>
+                </p>
+              ) : null}
+              <p>For appliance-wide setup, use these exact environment variable names:</p>
+              <ul className="connector-setup-env-vars">
+                {setup.envVars.map((envVar) => <li key={envVar}><code>{envVar}</code></li>)}
+              </ul>
+              <p>
+                Set these in the server environment (.env) and restart the appliance. The Vault only feeds these when
+                <code> WAIT_SECRETS_BACKEND=fernet</code> — then the vault key is the exact variable name.
+              </p>
+              <p>
+                Reads and writes stay gated by <code>WAIT_ALLOW_HTTP_PROBING</code> / <code>WAIT_ALLOW_WRITE_ACTIONS</code>.
+              </p>
+            </div>
+          </details>
+        ) : null}
       </article>
     );
   }

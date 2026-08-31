@@ -2491,6 +2491,43 @@ dd svg {
   cursor: pointer;
 }
 
+.connector-row > .connector-setup {
+  grid-column: 1 / -1;
+}
+
+.connector-setup summary {
+  color: #246647;
+  cursor: pointer;
+  font-weight: 700;
+}
+
+.connector-setup-content {
+  display: grid;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.connector-setup-content p {
+  margin: 0;
+}
+
+.connector-setup-env-vars {
+  display: grid;
+  gap: 5px;
+  margin: 0;
+  padding-left: 20px;
+}
+
+.connector-setup-env-vars code {
+  user-select: all;
+}
+
+.inline-link {
+  color: #1f6f55;
+  font-weight: 700;
+  text-decoration: underline;
+}
+
 .technical-details ul {
   margin: 6px 0 0;
   padding-left: 18px;

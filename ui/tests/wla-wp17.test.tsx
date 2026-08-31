@@ -63,6 +63,11 @@ describe("wla-wp17 Launch Passport UI", () => {
     expect(screen.getByLabelText("Secret name")).toHaveAttribute("name", "secret-name");
     expect(screen.getByLabelText("Secret value")).toHaveAttribute("autocomplete", "new-password");
     expect(screen.getByLabelText("Secret value")).toHaveAttribute("name", "new-password");
+    expect(screen.getByRole("heading", { name: "Vault (advanced)" })).toBeInTheDocument();
+    expect(screen.getByText(/The vault stores credentials referenced by Connector Instances/)).toBeInTheDocument();
+    expect(screen.getByText(/default env backend, this form does not configure environment providers/)).toBeInTheDocument();
+    expect(screen.getByLabelText("Secret name")).toHaveAttribute("list", "connector-secret-names");
+    expect(document.querySelector('#connector-secret-names option[value="WAIT_HALOPSA_BASE_URL"]')).toBeInTheDocument();
     expect(screen.getByText(/ready to use on its own/i)).toBeInTheDocument();
     expect(screen.getByText("local mode · full access")).toBeInTheDocument();
     expect(screen.getByText("Not required in local mode")).toBeInTheDocument();
