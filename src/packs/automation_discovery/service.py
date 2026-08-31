@@ -11,9 +11,10 @@ from __future__ import annotations
 import re
 import sqlite3
 from collections import Counter, defaultdict
+from collections.abc import Iterable
 from dataclasses import asdict, dataclass
 from datetime import UTC, datetime, timedelta
-from typing import Any, Iterable
+from typing import Any
 
 from wait_local_agent.client_scope import BoundClients
 from wait_local_agent.migrations import Migration, MigrationRunner
@@ -450,7 +451,11 @@ def _dynamic_opportunities(
                     1 for ticket in members if ticket.status.strip().lower() in {"resolved", "closed"}
                 ),
                 "source_counts": dict(sorted(Counter(ticket.source_system or "local" for ticket in members).items())),
-                "priority_counts": dict(sorted(Counter(ticket.priority.strip().lower() or "unknown" for ticket in members).items())),
+                "priority_counts": dict(
+                    sorted(
+                        Counter(ticket.priority.strip().lower() or "unknown" for ticket in members).items()
+                    )
+                ),
                 "measured_labor_available": bool(measured_ids),
                 "measured_labor_minutes": sum(labor_by_ticket.get(ticket.id, 0) for ticket in members),
                 "measured_labor_ticket_count": len(measured_ids),
@@ -553,13 +558,21 @@ def _connector_family(connector_type: str) -> str:
     normalized = connector_type.strip().lower()
     if any(token in normalized for token in ("connectwise", "autotask", "halopsa", "servicenow", "syncro")):
         return "psa"
-    if any(token in normalized for token in ("rmm", "ninja", "datto", "ncentral", "n-central", "nsight", "n-sight", "kaseya", "screenconnect", "automate", "asio")):
+    rmm_tokens = (
+        "rmm", "ninja", "datto", "ncentral", "n-central", "nsight", "n-sight",
+        "kaseya", "screenconnect", "automate", "asio",
+    )
+    if any(token in normalized for token in rmm_tokens):
         return "rmm"
-    if any(token in normalized for token in ("itglue", "it-glue", "hudu", "confluence", "sharepoint", "notion", "lexful")):
+    documentation_tokens = (
+        "itglue", "it-glue", "hudu", "confluence", "sharepoint", "notion", "lexful",
+    )
+    if any(token in normalized for token in documentation_tokens):
         return "documentation"
     if any(token in normalized for token in ("m365", "microsoft", "entra", "intune", "exchange")):
         return "m365"
-    if any(token in normalized for token in ("huntress", "threatlocker", "defender", "sentinel", "crowdstrike", "sophos")):
+    security_tokens = ("huntress", "threatlocker", "defender", "sentinel", "crowdstrike", "sophos")
+    if any(token in normalized for token in security_tokens):
         return "security"
     return "other"
 

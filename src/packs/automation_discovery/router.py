@@ -120,11 +120,17 @@ def create_router() -> APIRouter:
         normalized: list[HistoricalTimeEntry] = []
         for item in payload.entries:
             if item.ticket_id not in valid_ticket_ids:
-                raise HTTPException(status_code=400, detail=f"ticket is not in the selected client scope: {item.ticket_id}")
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"ticket is not in the selected client scope: {item.ticket_id}",
+                )
             if item.connector_instance_id not in permitted_connector_ids:
                 raise HTTPException(
                     status_code=400,
-                    detail=f"connector is not verified or client-bound for the selected client: {item.connector_instance_id}",
+                    detail=(
+                        "connector is not verified or client-bound for the selected client: "
+                        f"{item.connector_instance_id}"
+                    ),
                 )
             normalized.append(
                 HistoricalTimeEntry(
