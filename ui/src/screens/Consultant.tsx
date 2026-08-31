@@ -861,14 +861,14 @@ export function Consultant() {
       <section className="panel">
         <div className="panel-heading">
           <div>
-            <h2>Employee onboarding walkthrough</h2>
-            <p className="screen-note">Run the canonical bounded local fixture through discovery, architecture, supervisor execution, evaluation, governance, delivery, and audit.</p>
+            <h2>Blueprint walkthrough</h2>
+            <p className="screen-note">Run the selected blueprint through discovery, architecture, supervisor execution, evaluation, governance, delivery, and audit.</p>
           </div>
           {employeeOnboardingDemo ? <StatusChip status="completed" /> : null}
         </div>
         <div className="notice">
           <strong>Local fixture only.</strong>{" "}
-          No Microsoft, PSA, RMM, documentation, Teams, live-provider, or deployment call is started. The walkthrough generates only local review manifests and a non-deployable package. It requires an existing tenant-scoped ticket and never seeds one. You can start without a ticket in Solution discovery or blueprints.
+          No external connector or deployment call is started. The walkthrough generates only local review manifests and a non-deployable package. It requires an existing tenant-scoped ticket and never seeds one. You can start without a ticket in Solution discovery or blueprints.
         </div>
         <div className="grid">
           <label>
@@ -881,7 +881,7 @@ export function Consultant() {
           </label>
         </div>
         <button type="button" onClick={() => void runEmployeeOnboardingDemo()} disabled={!canWrite || employeeOnboardingLoading || !selected}>
-          {employeeOnboardingLoading ? "Running local walkthrough…" : "Run local onboarding walkthrough"}
+          {employeeOnboardingLoading ? "Running blueprint walkthrough…" : "Run blueprint walkthrough"}
         </button>
         {!selected ? <p className="screen-note">Select a saved blueprint above before running the walkthrough.</p> : null}
         {!canWrite ? <p className="screen-note">Technician access is required to run the local fixture.</p> : null}

@@ -8,8 +8,10 @@ existing ``AgentService`` with ``ticket-triage`` as a bounded local stand-in.
 
 from __future__ import annotations
 
+import hashlib
+import re
 from collections.abc import Mapping
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from typing import Any, cast
 
 from wait_local_agent.agents import AgentService
@@ -42,15 +44,30 @@ CANONICAL_EMPLOYEE_ONBOARDING_REQUEST = (
     "require approval. The manager must be notified. Everything must be auditable."
 )
 
-_FIXTURE_CHILDREN: tuple[tuple[str, str, tuple[str, ...]], ...] = (
-    ("identity-agent", "identity", ()),
-    ("licensing-agent", "licensing", ("identity-agent",)),
-    ("intune-agent", "intune", ("licensing-agent",)),
-    ("psa-agent", "psa", ()),
-    ("rmm-agent", "rmm", ("intune-agent",)),
-    ("documentation-agent", "documentation", ()),
-    ("communications-agent", "communications", ("documentation-agent",)),
+_SYSTEM_CATEGORY_RULES: tuple[tuple[str, tuple[str, ...]], ...] = (
+    (
+        "identity",
+        ("entra", "active directory", "identity", "directory", "okta", "auth", "sso", "m365", "microsoft 365"),
+    ),
+    ("licensing", ("license", "licensing", "subscription")),
+    ("endpoint", ("intune", "ninjaone", "jamf", "endpoint", "device", "workstation")),
+    ("psa", ("connectwise", "halopsa", "halo psa", "syncro", "servicenow", "autotask", "psa", "ticket")),
+    (
+        "documentation",
+        ("hudu", "it glue", "sharepoint", "confluence", "notion", "documentation", "knowledge", "wiki"),
+    ),
+    ("communications", ("teams", "slack", "email", "communication", "messaging", "notification")),
+    ("data", ("dataverse", "database", "postgres", "mysql", "sql", "data warehouse")),
 )
+
+
+@dataclass(frozen=True)
+class _FixtureChildSpec:
+    key: str
+    role: str
+    category: str
+    systems: tuple[str, ...]
+    dependencies: tuple[str, ...]
 
 
 class EmployeeOnboardingDemoError(ValueError):
@@ -118,12 +135,16 @@ def run_employee_onboarding_demo(
         workflow_templates=list_workflow_templates(),
     )
 
-    fixture_definitions = _create_fixture_definitions(agent_service, client_id)
+    fixture_definitions, fixture_specs = _create_fixture_definitions(
+        agent_service,
+        client_id,
+        persisted_blueprint,
+    )
     child_ids = [definition.id for definition in fixture_definitions]
     supervisor = execute_supervisor_delegation(
         client_id=client_id,
         entity_id=entity_id,
-        task="Coordinate the bounded employee-onboarding review and stop for human approval.",
+        task=(f"Coordinate the bounded {persisted_blueprint.solution_name} review and stop for human approval."),
         child_agent_ids=child_ids,
         definitions=fixture_definitions,
         agent_service=agent_service,
@@ -182,7 +203,7 @@ def run_employee_onboarding_demo(
         "format_version": 1,
         "client_id": client_id,
         "entity_id": entity_id,
-        "request": CANONICAL_EMPLOYEE_ONBOARDING_REQUEST,
+        "request": _blueprint_request(persisted_blueprint),
         "mode": "local_fixture",
         "stages": {
             "discovery": discovery,
@@ -216,12 +237,12 @@ def run_employee_onboarding_demo(
         "fixture_child_agents": [
             {
                 "id": definition.id,
-                "role": role,
-                "target_tools": _target_tools(persisted_blueprint, role),
+                "role": spec.role,
+                "target_tools": _target_tools(persisted_blueprint, spec.role, spec.systems),
                 "local_fixture_tools": list(definition.enabled_tools),
                 "depends_on": list(definition.depends_on_agent_ids),
             }
-            for definition, (_, role, _) in zip(fixture_definitions, _FIXTURE_CHILDREN, strict=True)
+            for definition, spec in zip(fixture_definitions, fixture_specs, strict=True)
         ],
         "boundaries": {
             "live_provider_execution": False,
@@ -245,16 +266,22 @@ def run_employee_onboarding_demo(
     }
 
 
-def _create_fixture_definitions(agent_service: AgentService, client_id: str) -> list[AgentDefinition]:
+def _create_fixture_definitions(
+    agent_service: AgentService,
+    client_id: str,
+    blueprint: SolutionBlueprint,
+) -> tuple[list[AgentDefinition], tuple[_FixtureChildSpec, ...]]:
     definitions: list[AgentDefinition] = []
-    ids_by_role: dict[str, str] = {}
-    for definition_name, role, dependency_roles in _FIXTURE_CHILDREN:
-        dependencies = [ids_by_role[item] for item in dependency_roles]
+    ids_by_key: dict[str, str] = {}
+    specs = _derive_fixture_children(blueprint)
+    for spec in specs:
+        dependencies = [ids_by_key[item] for item in spec.dependencies]
+        systems = ", ".join(spec.systems)
         definition = agent_service.create(
-            name=f"Employee onboarding {role} fixture",
+            name=f"Blueprint {spec.role} fixture",
             description=(
-                f"Local fixture for the {role} onboarding specialist; target provider actions "
-                "remain review-only."
+                f"Local fixture for the {spec.role} specialist covering {systems}; "
+                "target provider actions remain review-only."
             ),
             enabled=True,
             trigger="manual",
@@ -269,15 +296,138 @@ def _create_fixture_definitions(agent_service: AgentService, client_id: str) -> 
             context_sources=["ticket"],
         )
         definitions.append(definition)
-        ids_by_role[definition_name] = definition.id
-    return definitions
+        ids_by_key[spec.key] = definition.id
+    return definitions, specs
 
 
-def _target_tools(blueprint: SolutionBlueprint, role: str) -> list[str]:
+def _derive_fixture_children(blueprint: SolutionBlueprint) -> tuple[_FixtureChildSpec, ...]:
+    """Build bounded child roles from the selected blueprint's declared services.
+
+    Systems are grouped by capability so all declared systems remain represented
+    without exceeding the supervisor's eight-child limit. If a blueprint omits
+    systems, declared agent names are used as service labels before falling back
+    to the solution name; valid blueprints always have at least one of these.
+    """
+
+    grouped: dict[str, list[str]] = {}
+    source_systems = list(blueprint.systems)
+    if not source_systems:
+        source_systems = [agent.name for agent in blueprint.agents]
+    if not source_systems:
+        source_systems = [blueprint.solution_name]
+    for system in source_systems:
+        category = _system_category(system)
+        grouped.setdefault(category, []).append(system)
+
+    specs: list[_FixtureChildSpec] = []
+    keys_by_category: dict[str, str] = {}
+    for category, systems in grouped.items():
+        key = f"{category}-{len(specs) + 1}"
+        role = f"{category}-{_service_slug(systems)}"
+        dependencies = _fixture_dependencies(category, specs, keys_by_category)
+        specs.append(
+            _FixtureChildSpec(
+                key=key,
+                role=role,
+                category=category,
+                systems=tuple(systems),
+                dependencies=dependencies,
+            )
+        )
+        keys_by_category[category] = key
+    return tuple(specs)
+
+
+def _system_category(system: str) -> str:
+    normalized = system.casefold()
+    for category, markers in _SYSTEM_CATEGORY_RULES:
+        if any(marker in normalized for marker in markers):
+            return category
+    return "service"
+
+
+def _service_slug(systems: list[str]) -> str:
+    source = "-".join(_slugify(system) for system in systems)
+    if len(source) <= 54:
+        return source or "service"
+    digest = hashlib.sha256("|".join(systems).encode("utf-8")).hexdigest()[:8]
+    return f"{source[:45].rstrip('-')}-{digest}"
+
+
+def _slugify(value: str) -> str:
+    slug = re.sub(r"[^a-z0-9]+", "-", value.casefold()).strip("-")
+    return slug[:32] or "service"
+
+
+def _fixture_dependencies(
+    category: str,
+    specs: list[_FixtureChildSpec],
+    keys_by_category: dict[str, str],
+) -> tuple[str, ...]:
+    if category == "licensing":
+        return (keys_by_category["identity"],) if "identity" in keys_by_category else ()
+    if category in {"endpoint", "rmm"}:
+        for prerequisite in ("rmm", "endpoint", "licensing", "identity"):
+            if prerequisite in keys_by_category:
+                return (keys_by_category[prerequisite],)
+        return ()
+    if category == "communications" and "documentation" in keys_by_category:
+        return (keys_by_category["documentation"],)
+    if category == "service" and specs:
+        return (specs[-1].key,)
+    return ()
+
+
+def _blueprint_request(blueprint: SolutionBlueprint) -> str:
+    """Compose a bounded request from blueprint evidence.
+
+    The canonical onboarding request is retained only for the impossible case
+    where parsing yields no usable blueprint content, and is intentionally
+    explicit here so a future schema change cannot silently restore hardcoding.
+    """
+
+    sections: list[str] = []
+    if blueprint.solution_name.strip():
+        sections.append(f"Solution: {blueprint.solution_name.strip()}")
+    goal = _format_mapping(blueprint.business_goal)
+    if goal:
+        sections.append(f"Business goal: {goal}")
+    if blueprint.systems:
+        sections.append(f"Systems/services: {', '.join(blueprint.systems)}")
+    if blueprint.users:
+        sections.append(f"Users: {', '.join(blueprint.users)}")
+    discovery = _format_mapping(blueprint.discovery)
+    if discovery:
+        sections.append(f"Discovery evidence: {discovery}")
+    if not sections:
+        return CANONICAL_EMPLOYEE_ONBOARDING_REQUEST
+    request = "Review and design the selected blueprint. " + ". ".join(sections) + "."
+    return request[:2_000]
+
+
+def _format_mapping(values: Mapping[str, object]) -> str:
+    return "; ".join(
+        f"{key.replace('_', ' ')}={_format_value(values[key])}" for key in sorted(values) if _format_value(values[key])
+    )
+
+
+def _format_value(value: object) -> str:
+    if isinstance(value, (list, tuple)):
+        return ", ".join(str(item) for item in value)
+    if isinstance(value, Mapping):
+        return "; ".join(f"{key}={value[key]}" for key in sorted(value))
+    return str(value)
+
+
+def _target_tools(blueprint: SolutionBlueprint, role: str, systems: tuple[str, ...]) -> list[str]:
+    category = role.split("-", 1)[0]
+    tokens = {token for system in systems for token in re.findall(r"[a-z0-9]+", system.casefold()) if len(token) >= 3}
     return [
         tool
         for agent in blueprint.agents
-        if role in agent.id or role in agent.name.casefold()
+        if category in agent.id
+        or category in agent.name.casefold()
+        or tokens.intersection(set(re.findall(r"[a-z0-9]+", f"{agent.id} {agent.name} {agent.purpose}".casefold())))
         for tool in agent.tools
     ]
 
