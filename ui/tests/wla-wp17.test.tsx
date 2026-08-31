@@ -4,7 +4,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { Settings } from "../src/screens/Settings";
 import { FounderJourney, uploadProgressLabel } from "../src/surfaces/founder/FounderJourney";
 
-const dashboardState = vi.hoisted(() => ({ loading: false, role: "admin" as "admin" | "viewer" }));
+const dashboardState = vi.hoisted(() => ({ loading: false, role: "admin" as "admin" | "viewer", authState: "local-open" as "local-open" | "authenticated" | null }));
 const founderProjectorState = vi.hoisted(() => ({ returnNullLaunchPassport: false }));
 
 vi.mock("../src/api/founder", async (importOriginal) => {
@@ -20,13 +20,15 @@ vi.mock("../src/app/DashboardContext", () => ({
   useDashboard: () => ({
     isAdmin: dashboardState.role === "admin",
     loading: dashboardState.loading,
-    role: dashboardState.role
+    role: dashboardState.role,
+    authState: dashboardState.authState
   })
 }));
 
 afterEach(() => {
   dashboardState.loading = false;
   dashboardState.role = "admin";
+  dashboardState.authState = "local-open";
   founderProjectorState.returnNullLaunchPassport = false;
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
@@ -62,6 +64,8 @@ describe("wla-wp17 Launch Passport UI", () => {
     expect(screen.getByLabelText("Secret value")).toHaveAttribute("autocomplete", "new-password");
     expect(screen.getByLabelText("Secret value")).toHaveAttribute("name", "new-password");
     expect(screen.getByText(/ready to use on its own/i)).toBeInTheDocument();
+    expect(screen.getByText("local mode · full access")).toBeInTheDocument();
+    expect(screen.getByText("Not required in local mode")).toBeInTheDocument();
     expect(screen.queryByText(/temporarily unavailable/i)).not.toBeInTheDocument();
   });
 
@@ -117,6 +121,7 @@ describe("wla-wp17 Launch Passport UI", () => {
 
   it("does not request the admin-only project status for a viewer", async () => {
     dashboardState.role = "viewer";
+    dashboardState.authState = "authenticated";
     const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
       const path = String(input);
       if (path === "/settings/providers") return jsonResponse({ local_model_provider: "local", vector_backend: "local" });

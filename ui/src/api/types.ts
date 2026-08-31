@@ -1387,6 +1387,8 @@ export type AuthRoleResponse = {
   client_id?: string | null;
   api_auth_required: boolean;
   demo_mode: boolean;
+  is_msp_admin?: boolean;
+  principal_id?: string | null;
 };
 
 export type FounderUploadPreview = {
