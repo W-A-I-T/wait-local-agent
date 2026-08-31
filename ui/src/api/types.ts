@@ -842,6 +842,60 @@ export type PowerAppsArtifact = {
   package_status: string;
 };
 
+export type ConsultantCopilotStudioPlan = {
+  format: string;
+  format_version: number;
+  client_id: string;
+  target: string;
+  copilot: { name: string; business_goal: string };
+  topics: Array<{ id: string; name: string; trigger_phrases: string[] }>;
+  knowledge_sources: string[];
+  actions: Array<{
+    id: string;
+    connector_id: string;
+    method: string;
+    approval_required: boolean;
+  }>;
+  requires_approval: boolean;
+  credentials_included: boolean;
+  generation_status: string;
+  provider_verification: string;
+  execution_started: boolean;
+  deployment_started: boolean;
+  open_items: string[];
+};
+
+export type ConsultantConnectorArtifact = {
+  format: string;
+  format_version: number;
+  connector_id: string;
+  display_name: string;
+  api_version: string;
+  host: string;
+  base_path: string;
+  authentication: Array<{
+    name: string;
+    type: string;
+    in: string | null;
+    authorization_url_present: boolean;
+  }>;
+  actions: Array<{
+    id: string;
+    method: string;
+    path: string;
+    summary: string;
+    parameters: Array<{ name: string; in: string; required: boolean; type: unknown }>;
+    response_statuses: string[];
+  }>;
+  credentials_included: boolean;
+  deployment_started: boolean;
+};
+
+export type ConsultantConnectorValidationResult = {
+  valid: boolean;
+  connector: ConsultantConnectorArtifact;
+};
+
 export type ConsultantDiscoveryResult = {
   format: string;
   format_version: number;

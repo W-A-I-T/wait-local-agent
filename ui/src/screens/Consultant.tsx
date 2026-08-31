@@ -11,6 +11,9 @@ import type {
   ConsultantArchitectureComponent,
   ConsultantBlueprint,
   ConsultantBlueprintPromotionResult,
+  ConsultantConnectorArtifact,
+  ConsultantConnectorValidationResult,
+  ConsultantCopilotStudioPlan,
   ConsultantDiscoveryResult,
   ConsultantDiscoverySession,
   ConsultantDeliveryPlan,
@@ -72,7 +75,9 @@ type ConsultantSection =
   | "deliveryPlan"
   | "supervisor"
   | "useCases"
-  | "monitoring";
+  | "monitoring"
+  | "copilotStudio"
+  | "connector";
 type SectionLoadStatus = "loading" | "ready" | "empty" | "gated" | "error";
 type SectionLoadState = { status: SectionLoadStatus; detail?: string };
 type SectionLoadStates = Record<ConsultantSection, SectionLoadState>;
@@ -88,6 +93,8 @@ const SECTION_DETAILS: Record<ConsultantSection, { label: string; pack: string; 
   supervisor: { label: "supervisor delegation", pack: "Microsoft Admin", retryLabel: "supervisor delegation" },
   useCases: { label: "Solutions Architect use cases", pack: "Microsoft Admin", retryLabel: "use cases" },
   monitoring: { label: "agent monitoring", pack: "Microsoft Admin", retryLabel: "monitoring" },
+  copilotStudio: { label: "Copilot Studio planner", pack: "Microsoft Admin", retryLabel: "Copilot Studio plan" },
+  connector: { label: "custom connector", pack: "Microsoft Admin", retryLabel: "connector validation" },
 };
 
 const INITIAL_SECTION_STATES: SectionLoadStates = {
@@ -101,7 +108,33 @@ const INITIAL_SECTION_STATES: SectionLoadStates = {
   supervisor: { status: "empty" },
   useCases: { status: "loading" },
   monitoring: { status: "loading" },
+  copilotStudio: { status: "empty" },
+  connector: { status: "empty" },
 };
+
+type CopilotTopicDraft = { name: string; triggerPhrases: string[]; triggerInput: string };
+type CopilotActionDraft = { id: string; connectorId: string; method: string; approvalRequired: boolean };
+
+const MAX_COPILOT_TOPICS = 32;
+const MAX_COPILOT_TRIGGERS = 16;
+const MAX_COPILOT_KNOWLEDGE_SOURCES = 32;
+const MAX_COPILOT_ACTIONS = 32;
+const MAX_CONNECTOR_DEFINITION_BYTES = 1_000_000;
+const DEFAULT_CONNECTOR_DEFINITION = JSON.stringify({
+  swagger: "2.0",
+  info: { title: "Customer API", version: "1.0" },
+  host: "api.example.com",
+  schemes: ["https"],
+  paths: {
+    "/customers": {
+      get: {
+        operationId: "list_customers",
+        summary: "List customers",
+        responses: { "200": { description: "Customers" } },
+      },
+    },
+  },
+}, null, 2);
 
 function sectionStateForError(error: unknown): SectionLoadState {
   if (error instanceof ApiRequestError && error.status === 403) {
@@ -174,6 +207,21 @@ export function Consultant() {
   const [powerAppsEntities, setPowerAppsEntities] = useState(DEFAULT_POWER_APPS_ENTITIES);
   const [powerAppsScreens, setPowerAppsScreens] = useState(DEFAULT_POWER_APPS_SCREENS);
   const [powerAppsActions, setPowerAppsActions] = useState(DEFAULT_POWER_APPS_ACTIONS);
+  const [copilotName, setCopilotName] = useState("Support assistant");
+  const [copilotBusinessGoal, setCopilotBusinessGoal] = useState("Help operators answer bounded customer support questions.");
+  const [copilotTopics, setCopilotTopics] = useState<CopilotTopicDraft[]>([
+    { name: "Ticket status", triggerPhrases: ["check my ticket"], triggerInput: "" },
+  ]);
+  const [copilotKnowledgeSources, setCopilotKnowledgeSources] = useState<string[]>([]);
+  const [copilotActions, setCopilotActions] = useState<CopilotActionDraft[]>([]);
+  const [copilotPlan, setCopilotPlan] = useState<ConsultantCopilotStudioPlan | null>(null);
+  const [copilotLoading, setCopilotLoading] = useState(false);
+  const [connectorId, setConnectorId] = useState("customer-api");
+  const [connectorDefinition, setConnectorDefinition] = useState(DEFAULT_CONNECTOR_DEFINITION);
+  const [connectorArtifact, setConnectorArtifact] = useState<ConsultantConnectorArtifact | null>(null);
+  const [connectorErrors, setConnectorErrors] = useState<string[]>([]);
+  const [connectorAction, setConnectorAction] = useState<"validate" | "generate" | null>(null);
+  const [connectorLastAction, setConnectorLastAction] = useState<"validate" | "generate">("validate");
   const [flowLoading, setFlowLoading] = useState(false);
   const [discoveryGoal, setDiscoveryGoal] = useState("");
   const [discoveryClientId, setDiscoveryClientId] = useState("");
@@ -306,6 +354,11 @@ export function Consultant() {
     setGovernanceResult(null);
     setEvaluationResult(null);
     setDeliveryResult(null);
+    setCopilotPlan(null);
+    setSectionState("copilotStudio", { status: "empty" });
+    setConnectorArtifact(null);
+    setConnectorErrors([]);
+    setSectionState("connector", { status: "empty" });
     setSupervisorTask("");
     setSupervisorPlan(null);
     setSupervisorRun(null);
@@ -851,6 +904,169 @@ export function Consultant() {
     } finally {
       setPowerAppsLoading(false);
     }
+  }
+
+  function updateCopilotTopic(index: number, update: Partial<CopilotTopicDraft>) {
+    setCopilotTopics((current) => current.map((topic, topicIndex) => topicIndex === index ? { ...topic, ...update } : topic));
+  }
+
+  function addCopilotTopic() {
+    if (copilotTopics.length < MAX_COPILOT_TOPICS) {
+      setCopilotTopics((current) => [...current, { name: "", triggerPhrases: [], triggerInput: "" }]);
+    }
+  }
+
+  function removeCopilotTopic(index: number) {
+    setCopilotTopics((current) => current.filter((_, topicIndex) => topicIndex !== index));
+  }
+
+  function addCopilotTrigger(index: number) {
+    const phrase = copilotTopics[index]?.triggerInput.trim();
+    if (!phrase || copilotTopics[index].triggerPhrases.length >= MAX_COPILOT_TRIGGERS) return;
+    if (copilotTopics[index].triggerPhrases.includes(phrase)) {
+      updateCopilotTopic(index, { triggerInput: "" });
+      return;
+    }
+    updateCopilotTopic(index, {
+      triggerPhrases: [...copilotTopics[index].triggerPhrases, phrase],
+      triggerInput: "",
+    });
+  }
+
+  function addCopilotAction() {
+    if (copilotActions.length < MAX_COPILOT_ACTIONS) {
+      setCopilotActions((current) => [...current, { id: "", connectorId: "", method: "GET", approvalRequired: false }]);
+    }
+  }
+
+  function updateCopilotAction(index: number, update: Partial<CopilotActionDraft>) {
+    setCopilotActions((current) => current.map((action, actionIndex) => actionIndex === index ? { ...action, ...update } : action));
+  }
+
+  function removeCopilotAction(index: number) {
+    setCopilotActions((current) => current.filter((_, actionIndex) => actionIndex !== index));
+  }
+
+  async function buildCopilotStudioPlan(event?: FormEvent<HTMLFormElement>) {
+    event?.preventDefault();
+    const clientId = currentClientId();
+    const copilotNameValue = copilotName.trim();
+    const businessGoal = copilotBusinessGoal.trim();
+    if (!clientId || !copilotNameValue || !businessGoal) {
+      setSectionState("copilotStudio", { status: "error", detail: "A tenant scope, agent name, and description are required." });
+      return;
+    }
+    if (copilotTopics.some((topic) => !topic.name.trim())) {
+      setSectionState("copilotStudio", { status: "error", detail: "Each topic needs a name before the plan can be created." });
+      return;
+    }
+    if (copilotActions.some((action) => !action.id.trim() || !action.connectorId.trim())) {
+      setSectionState("copilotStudio", { status: "error", detail: "Each action needs an ID and connector ID before the plan can be created." });
+      return;
+    }
+    const topicIds = uniqueCopilotIdentifiers(copilotTopics.map((topic) => topic.name), "topic");
+    const actionIds = uniqueCopilotIdentifiers(copilotActions.map((action) => action.id), "action");
+    const connectorIds = uniqueCopilotIdentifiers(copilotActions.map((action) => action.connectorId), "connector");
+    const body = {
+      client_id: clientId,
+      copilot_name: copilotNameValue,
+      business_goal: businessGoal,
+      topics: copilotTopics.map((topic, index) => ({
+        id: topicIds[index],
+        name: topic.name.trim(),
+        trigger_phrases: topic.triggerPhrases,
+      })),
+      knowledge_sources: copilotKnowledgeSources.map((source) => source.trim()).filter(Boolean),
+      actions: copilotActions.map((action, index) => ({
+        id: actionIds[index],
+        connector_id: connectorIds[index],
+        method: action.method,
+        approval_required: action.method === "GET" ? action.approvalRequired : true,
+      })),
+    };
+    setCopilotLoading(true);
+    setCopilotPlan(null);
+    setSectionState("copilotStudio", { status: "loading" });
+    try {
+      const result = await apiFetch<ConsultantCopilotStudioPlan>("/consultant/copilot-studio/plan", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      setCopilotPlan(result);
+      setSectionState("copilotStudio", { status: "ready" });
+    } catch (error) {
+      setSectionState("copilotStudio", sectionStateForError(error));
+    } finally {
+      setCopilotLoading(false);
+    }
+  }
+
+  async function runConnectorAction(action: "validate" | "generate") {
+    setConnectorLastAction(action);
+    const client = connectorId.trim();
+    if (!client) {
+      setConnectorErrors(["A connector ID is required."]);
+      setSectionState("connector", { status: "error", detail: "Provide a connector ID and try again." });
+      return;
+    }
+    if (utf8ByteLength(connectorDefinition) > MAX_CONNECTOR_DEFINITION_BYTES) {
+      setConnectorErrors(["The OpenAPI definition exceeds the 1 MB connector import limit."]);
+      setSectionState("connector", { status: "error", detail: "The OpenAPI definition is too large." });
+      return;
+    }
+    let definition: Record<string, unknown>;
+    try {
+      const parsed: unknown = JSON.parse(connectorDefinition);
+      if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+        throw new Error("The OpenAPI definition must be a JSON object.");
+      }
+      definition = parsed as Record<string, unknown>;
+    } catch (error) {
+      setConnectorErrors([error instanceof Error ? error.message : "The OpenAPI definition must be valid JSON."]);
+      setSectionState("connector", { status: "error", detail: "Correct the definition and try again." });
+      return;
+    }
+    setConnectorAction(action);
+    setConnectorErrors([]);
+    setConnectorArtifact(null);
+    setSectionState("connector", { status: "loading" });
+    try {
+      if (action === "validate") {
+        const result = await apiFetch<ConsultantConnectorValidationResult>("/consultant/connectors/openapi/validate", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ connector_id: client, definition }),
+        });
+        setConnectorArtifact(result.connector);
+      } else {
+        const result = await apiFetch<ConsultantConnectorArtifact>("/consultant/connectors/openapi/generate", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ connector_id: client, definition }),
+        });
+        setConnectorArtifact(result);
+      }
+      setSectionState("connector", { status: "ready" });
+    } catch (error) {
+      setConnectorErrors([error instanceof ApiRequestError ? apiRequestReason(error) : error instanceof Error ? error.message : "The connector could not be prepared."]);
+      setSectionState("connector", sectionStateForError(error));
+    } finally {
+      setConnectorAction(null);
+    }
+  }
+
+  function downloadConnectorArtifact() {
+    if (!connectorArtifact) return;
+    const blob = new Blob([JSON.stringify(connectorArtifact, null, 2)], { type: "application/json" });
+    const url = window.URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `${connectorArtifact.connector_id}-connector.json`;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    window.URL.revokeObjectURL(url);
   }
 
   async function runEmployeeOnboardingDemo() {
@@ -1541,6 +1757,264 @@ export function Consultant() {
           </div>
         </section>
       ) : null}
+
+      <section className="panel" aria-labelledby="copilot-studio-heading">
+        <div className="panel-heading">
+          <div>
+            <h2 id="copilot-studio-heading">Copilot Studio planner</h2>
+            <p className="screen-note">Shape a bounded Copilot Studio handoff from explicit topics, knowledge sources, and connector actions.</p>
+          </div>
+          {copilotPlan ? <StatusChip status="review_only" /> : null}
+        </div>
+        <div className="notice">
+          <strong>Review-only planning.</strong> This records a proposed artifact; it does not provision Copilot Studio, acquire credentials, execute actions, or publish a channel.
+        </div>
+        <form className="draft-form" onSubmit={(event) => void buildCopilotStudioPlan(event)}>
+          <div className="grid">
+            <label>
+              Agent name
+              <input maxLength={240} value={copilotName} onChange={(event) => setCopilotName(event.target.value)} />
+            </label>
+            <label>
+              Agent description
+              <input maxLength={500} value={copilotBusinessGoal} onChange={(event) => setCopilotBusinessGoal(event.target.value)} />
+            </label>
+          </div>
+
+          <div className="consultant-builder-group">
+            <div className="builder-group-heading">
+              <div>
+                <h3>Topics</h3>
+                <p className="screen-note">Up to {MAX_COPILOT_TOPICS}; each topic supports up to {MAX_COPILOT_TRIGGERS} trigger phrases.</p>
+              </div>
+              <button type="button" className="secondary-button" onClick={addCopilotTopic} disabled={!canWrite || copilotTopics.length >= MAX_COPILOT_TOPICS}>Add topic</button>
+            </div>
+            <div className="consultant-builder-list">
+              {copilotTopics.map((topic, index) => (
+                <div className="consultant-builder-row" key={`topic-${index}`}>
+                  <label>
+                    Topic {index + 1} name
+                    <input maxLength={240} aria-label={`Topic ${index + 1} name`} value={topic.name} onChange={(event) => updateCopilotTopic(index, { name: event.target.value })} />
+                  </label>
+                  <div className="chip-editor">
+                    <label htmlFor={`topic-trigger-${index}`}>Trigger phrases</label>
+                    <div className="chip-list" aria-label={`Topic ${index + 1} trigger phrases`}>
+                      {topic.triggerPhrases.map((phrase) => (
+                        <span className="input-chip" key={phrase}>
+                          {phrase}
+                          <button type="button" aria-label={`Remove trigger phrase ${phrase}`} onClick={() => updateCopilotTopic(index, { triggerPhrases: topic.triggerPhrases.filter((item) => item !== phrase) })}>×</button>
+                        </span>
+                      ))}
+                    </div>
+                    <div className="chip-input-row">
+                      <input id={`topic-trigger-${index}`} maxLength={240} aria-label={`New trigger phrase for topic ${index + 1}`} value={topic.triggerInput} onChange={(event) => updateCopilotTopic(index, { triggerInput: event.target.value })} onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); addCopilotTrigger(index); } }} placeholder="Type a phrase" />
+                      <button type="button" className="secondary-button" onClick={() => addCopilotTrigger(index)} disabled={!canWrite || !topic.triggerInput.trim() || topic.triggerPhrases.length >= MAX_COPILOT_TRIGGERS}>Add phrase</button>
+                    </div>
+                  </div>
+                  <button type="button" className="secondary-button builder-remove" onClick={() => removeCopilotTopic(index)} disabled={!canWrite}>Remove topic</button>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          <div className="consultant-builder-group">
+            <div className="builder-group-heading">
+              <div>
+                <h3>Knowledge sources</h3>
+                <p className="screen-note">Knowledge sources are recorded as names only; grounding is proposed in the artifact-generation proposal.</p>
+              </div>
+              <button type="button" className="secondary-button" onClick={() => setCopilotKnowledgeSources((current) => [...current, ""])} disabled={!canWrite || copilotKnowledgeSources.length >= MAX_COPILOT_KNOWLEDGE_SOURCES}>Add source</button>
+            </div>
+            <div className="consultant-builder-list">
+              {copilotKnowledgeSources.map((source, index) => (
+                <div className="chip-input-row" key={`knowledge-${index}`}>
+                  <input maxLength={240} aria-label={`Knowledge source ${index + 1}`} value={source} onChange={(event) => setCopilotKnowledgeSources((current) => current.map((item, itemIndex) => itemIndex === index ? event.target.value : item))} placeholder="Source name" />
+                  <button type="button" className="secondary-button" onClick={() => setCopilotKnowledgeSources((current) => current.filter((_, itemIndex) => itemIndex !== index))} disabled={!canWrite}>Remove</button>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          <div className="consultant-builder-group">
+            <div className="builder-group-heading">
+              <div>
+                <h3>Connector actions</h3>
+                <p className="screen-note">Write methods are always marked as approval-required by the accepted planner contract.</p>
+              </div>
+              <button type="button" className="secondary-button" onClick={addCopilotAction} disabled={!canWrite || copilotActions.length >= MAX_COPILOT_ACTIONS}>Add action</button>
+            </div>
+            <div className="consultant-builder-list">
+              {copilotActions.map((action, index) => (
+                <div className="consultant-builder-row" key={`action-${index}`}>
+                  <label>
+                    Action ID
+                    <input maxLength={64} aria-label={`Action ${index + 1} ID`} value={action.id} onChange={(event) => updateCopilotAction(index, { id: event.target.value })} placeholder="lookup_customer" />
+                  </label>
+                  <label>
+                    Connector ID
+                    <input maxLength={64} aria-label={`Action ${index + 1} connector ID`} value={action.connectorId} onChange={(event) => updateCopilotAction(index, { connectorId: event.target.value })} placeholder="customer_api" />
+                  </label>
+                  <label>
+                    Method
+                    <select aria-label={`Action ${index + 1} method`} value={action.method} onChange={(event) => updateCopilotAction(index, { method: event.target.value, approvalRequired: event.target.value === "GET" ? action.approvalRequired : true })}>
+                      {['GET', 'POST', 'PUT', 'PATCH', 'DELETE'].map((method) => <option key={method} value={method}>{method}</option>)}
+                    </select>
+                  </label>
+                  <label className="checkbox-label">
+                    <input type="checkbox" checked={action.approvalRequired || action.method !== "GET"} disabled={action.method !== "GET"} onChange={(event) => updateCopilotAction(index, { approvalRequired: event.target.checked })} />
+                    Approval required
+                  </label>
+                  <button type="button" className="secondary-button builder-remove" onClick={() => removeCopilotAction(index)} disabled={!canWrite}>Remove action</button>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          <button type="submit" disabled={!canWrite || copilotLoading}>
+            {copilotLoading ? "Building plan…" : "Build Copilot Studio plan"}
+          </button>
+          {!canWrite ? <p className="screen-note">Technician access is required to build a planner artifact.</p> : null}
+        </form>
+        {sectionStates.copilotStudio.status === "loading" ? <p className="screen-note" aria-busy="true">Building the Copilot Studio plan…</p> : null}
+        <SectionLoadNotice section="copilotStudio" state={sectionStates.copilotStudio} onRetry={() => void buildCopilotStudioPlan()} />
+        {sectionStates.copilotStudio.status === "empty" && !copilotPlan ? <p className="screen-note">No Copilot Studio plan has been generated yet.</p> : null}
+        {copilotPlan ? <CopilotStudioPlanView plan={copilotPlan} /> : null}
+      </section>
+
+      <section className="panel" aria-labelledby="custom-connector-heading">
+        <div className="panel-heading">
+          <div>
+            <h2 id="custom-connector-heading">Custom connector</h2>
+            <p className="screen-note">Validate or prepare a metadata-only Power Platform custom connector from an OpenAPI 2.0 definition.</p>
+          </div>
+          {connectorArtifact ? <StatusChip status="review_only" /> : null}
+        </div>
+        <div className="notice">
+          <strong>Credential-free review artifact.</strong> Definitions must use HTTPS. The pasted OpenAPI JSON is limited to 1 MB; WAIT does not call the described API, invoke PAC, or deploy a connector.
+        </div>
+        <div className="draft-form">
+          <label>
+            Connector ID
+            <input maxLength={64} value={connectorId} onChange={(event) => setConnectorId(event.target.value)} placeholder="customer-api" />
+          </label>
+          <label>
+            OpenAPI 2.0 definition (JSON)
+            <textarea rows={16} aria-describedby="connector-definition-help" value={connectorDefinition} onChange={(event) => setConnectorDefinition(event.target.value)} />
+          </label>
+          <p id="connector-definition-help" className="screen-note">{utf8ByteLength(connectorDefinition).toLocaleString()} / 1,000,000 bytes</p>
+          <div className="row-actions">
+            <button type="button" onClick={() => void runConnectorAction("validate")} disabled={!canWrite || connectorAction !== null}>
+              {connectorAction === "validate" ? "Validating…" : "Validate definition"}
+            </button>
+            <button type="button" className="secondary-button" onClick={() => void runConnectorAction("generate")} disabled={!canWrite || connectorAction !== null}>
+              {connectorAction === "generate" ? "Generating…" : "Generate metadata"}
+            </button>
+          </div>
+          {!canWrite ? <p className="screen-note">Technician access is required to validate or generate a connector artifact.</p> : null}
+        </div>
+        {sectionStates.connector.status === "loading" ? <p className="screen-note" aria-busy="true">{connectorAction === "generate" ? "Generating connector metadata…" : "Validating connector definition…"}</p> : null}
+        {sectionStates.connector.status === "gated" ? <SectionLoadNotice section="connector" state={sectionStates.connector} onRetry={() => void runConnectorAction(connectorLastAction)} /> : null}
+        {sectionStates.connector.status === "error" && connectorErrors.length > 0 ? (
+          <div className="notice danger" role="alert">
+            <strong>Connector validation needs attention.</strong>
+            <ul className="connector-error-list">{connectorErrors.map((error, index) => <li key={`${error}-${index}`}>{error}</li>)}</ul>
+            <button type="button" onClick={() => void runConnectorAction(connectorLastAction)}>Retry {connectorLastAction}</button>
+          </div>
+        ) : null}
+        {sectionStates.connector.status === "error" && connectorErrors.length === 0 ? <SectionLoadNotice section="connector" state={sectionStates.connector} onRetry={() => void runConnectorAction(connectorLastAction)} /> : null}
+        {sectionStates.connector.status === "empty" && !connectorArtifact ? <p className="screen-note">Validate a definition to inspect its connector metadata.</p> : null}
+        {connectorArtifact ? <ConnectorArtifactView artifact={connectorArtifact} onDownload={downloadConnectorArtifact} /> : null}
+      </section>
+    </div>
+  );
+}
+
+function CopilotStudioPlanView({ plan }: { plan: ConsultantCopilotStudioPlan }) {
+  return (
+    <div className="consultant-artifact" aria-label="Copilot Studio plan result">
+      <div className="notice success consultant-review-only" role="status">
+        <strong>Copilot Studio plan is review-only.</strong> The result declares the following boundaries exactly:
+        <div className="artifact-flags">
+          <code>generation_status: {plan.generation_status}</code>
+          <code>execution_started: {String(plan.execution_started)}</code>
+          <code>deployment_started: {String(plan.deployment_started)}</code>
+        </div>
+      </div>
+      <div className="flag-grid">
+        <span><strong>{plan.copilot.name}</strong><br />Agent name</span>
+        <span><strong>{plan.topics.length}</strong><br />Topics</span>
+        <span><strong>{plan.actions.length}</strong><br />Connector actions</span>
+      </div>
+      <p><strong>Description:</strong> {plan.copilot.business_goal}</p>
+      <div className="grid consultant-artifact-grid">
+        <div>
+          <h3>Topics</h3>
+          {plan.topics.length ? (
+            <div className="table-scroll">
+              <table className="consultant-artifact-table">
+                <thead><tr><th scope="col">Topic</th><th scope="col">Trigger phrases</th></tr></thead>
+                <tbody>{plan.topics.map((topic) => <tr key={topic.id}><th scope="row">{topic.name}<code>{topic.id}</code></th><td>{topic.trigger_phrases.length ? topic.trigger_phrases.join(", ") : "None recorded"}</td></tr>)}</tbody>
+              </table>
+            </div>
+          ) : <p className="screen-note">No topics recorded.</p>}
+        </div>
+        <div>
+          <h3>Knowledge sources</h3>
+          {plan.knowledge_sources.length ? <ul>{plan.knowledge_sources.map((source) => <li key={source}>{source}</li>)}</ul> : <p className="screen-note">No knowledge sources recorded.</p>}
+        </div>
+      </div>
+      <div className="panel-subsection">
+        <h3>Connector actions</h3>
+        {plan.actions.length ? (
+          <div className="table-scroll">
+            <table className="consultant-artifact-table">
+              <thead><tr><th scope="col">Action</th><th scope="col">Connector</th><th scope="col">Method</th><th scope="col">Approval</th></tr></thead>
+              <tbody>{plan.actions.map((action) => <tr key={action.id}><th scope="row">{action.id}</th><td>{action.connector_id}</td><td>{action.method}</td><td>{action.approval_required ? "Required" : "Not required"}</td></tr>)}</tbody>
+            </table>
+          </div>
+        ) : <p className="screen-note">No connector actions recorded.</p>}
+      </div>
+      <div className="consultant-open-items">
+        <h3>Open items</h3>
+        <ul>{plan.open_items.map((item) => <li key={item}><input type="checkbox" disabled aria-label={`Open item: ${item}`} />{item}</li>)}</ul>
+      </div>
+    </div>
+  );
+}
+
+function ConnectorArtifactView({ artifact, onDownload }: { artifact: ConsultantConnectorArtifact; onDownload: () => void }) {
+  return (
+    <div className="consultant-artifact" aria-label="Custom connector metadata result">
+      <div className="notice success consultant-review-only" role="status">
+        <strong>Connector metadata is ready for review.</strong> Credentials are not included and deployment has not started.
+      </div>
+      <div className="flag-grid">
+        <span><strong>{artifact.host}</strong><br />Host</span>
+        <span><strong>{artifact.actions.length}</strong><br />Operations</span>
+        <span><strong>{artifact.authentication.length}</strong><br />Security definitions</span>
+      </div>
+      <dl className="consultant-detail-grid">
+        <div><dt>Connector ID</dt><dd>{artifact.connector_id}</dd></div>
+        <div><dt>Display name</dt><dd>{artifact.display_name}</dd></div>
+        <div><dt>API version</dt><dd>{artifact.api_version}</dd></div>
+        <div><dt>Base path</dt><dd>{artifact.base_path}</dd></div>
+      </dl>
+      <div className="grid consultant-artifact-grid">
+        <div>
+          <h3>Operations</h3>
+          <div className="table-scroll">
+            <table className="consultant-artifact-table">
+              <thead><tr><th scope="col">Operation</th><th scope="col">Method</th><th scope="col">Path</th><th scope="col">Responses</th></tr></thead>
+              <tbody>{artifact.actions.map((action) => <tr key={action.id}><th scope="row">{action.id}<span>{action.summary}</span></th><td>{action.method}</td><td><code>{action.path}</code></td><td>{action.response_statuses.join(", ")}</td></tr>)}</tbody>
+            </table>
+          </div>
+        </div>
+        <div>
+          <h3>Security definitions</h3>
+          {artifact.authentication.length ? <ul>{artifact.authentication.map((definition) => <li key={definition.name}><strong>{definition.name}</strong> · {definition.type}{definition.in ? ` · ${definition.in}` : ""}</li>)}</ul> : <p className="screen-note">None recorded.</p>}
+        </div>
+      </div>
+      <button type="button" onClick={onDownload}>Download connector JSON</button>
     </div>
   );
 }
@@ -1774,6 +2248,32 @@ function humanizeDecisionTarget(value: unknown): string {
 
 function splitList(value: string): string[] {
   return value.split(",").map((item) => item.trim()).filter(Boolean);
+}
+
+function copilotIdentifier(value: string, prefix: string, index: number): string {
+  const normalized = value.trim().toLowerCase().replace(/[^a-z0-9_.:-]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 64);
+  const identifier = /^[a-z]/.test(normalized) ? normalized : `${prefix}-${normalized}`;
+  return (identifier || `${prefix}-${index + 1}`).slice(0, 64);
+}
+
+function uniqueCopilotIdentifiers(values: string[], prefix: string): string[] {
+  const used = new Set<string>();
+  return values.map((value, index) => {
+    const base = copilotIdentifier(value, prefix, index);
+    let candidate = base;
+    let suffix = 2;
+    while (used.has(candidate)) {
+      const suffixText = `-${suffix}`;
+      candidate = `${base.slice(0, 64 - suffixText.length)}${suffixText}`;
+      suffix += 1;
+    }
+    used.add(candidate);
+    return candidate;
+  });
+}
+
+function utf8ByteLength(value: string): number {
+  return new TextEncoder().encode(value).byteLength;
 }
 
 function resolveClientId(

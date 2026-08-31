@@ -26,6 +26,7 @@ describe("Consultant architecture decisions", () => {
   let governanceStatus: number | null = null;
   let evaluationStatus: number | null = null;
   let deliveryStatus: number | null = null;
+  let connectorStatus: number | null = null;
   let rejectPlaybookGeneration = false;
   let holdPlaybookGeneration = false;
   let resolvePlaybookGeneration: (() => void) | null = null;
@@ -42,6 +43,7 @@ describe("Consultant architecture decisions", () => {
     governanceStatus = null;
     evaluationStatus = null;
     deliveryStatus = null;
+    connectorStatus = null;
     dashboard.authState = "authenticated";
     rejectPlaybookGeneration = false;
     holdPlaybookGeneration = false;
@@ -185,6 +187,61 @@ describe("Consultant architecture decisions", () => {
           execution_started: dashboard.authState === "demo",
           execution_mode: dashboard.authState === "demo" ? "controlled" : "observation",
           cases: [{ id: "architecture-review", checks: { functional: true }, passed: true }],
+        }), { status: 200 }));
+      }
+      if (path === "/consultant/copilot-studio/plan") {
+        return Promise.resolve(new Response(JSON.stringify({
+          format: "wait-local-agent.copilot-studio-plan",
+          format_version: 1,
+          client_id: "acme",
+          target: "microsoft_copilot_studio",
+          copilot: { name: "Support assistant", business_goal: "Help operators answer customer questions." },
+          topics: [{ id: "ticket-status", name: "Ticket status", trigger_phrases: ["check my ticket"] }],
+          knowledge_sources: ["Support handbook"],
+          actions: [{ id: "lookup_ticket", connector_id: "customer-api", method: "POST", approval_required: true }],
+          requires_approval: true,
+          credentials_included: false,
+          generation_status: "review_only",
+          provider_verification: "not_run",
+          execution_started: false,
+          deployment_started: false,
+          open_items: ["Operator verification remains required."],
+        }), { status: 200 }));
+      }
+      if (path === "/consultant/connectors/openapi/validate") {
+        if (connectorStatus !== null) {
+          return Promise.resolve(new Response(JSON.stringify({ detail: "definition must use OpenAPI 2.0 (swagger=2.0)" }), { status: connectorStatus }));
+        }
+        return Promise.resolve(new Response(JSON.stringify({
+          valid: true,
+          connector: {
+            format: "wait-local-agent.power-platform.custom-connector",
+            format_version: 1,
+            connector_id: "customer-api",
+            display_name: "Customer API",
+            api_version: "1.0",
+            host: "api.example.com",
+            base_path: "/",
+            authentication: [{ name: "oauth", type: "oauth2", in: null, authorization_url_present: true }],
+            actions: [{ id: "list_customers", method: "GET", path: "/customers", summary: "List customers", parameters: [], response_statuses: ["200"] }],
+            credentials_included: false,
+            deployment_started: false,
+          },
+        }), { status: 200 }));
+      }
+      if (path === "/consultant/connectors/openapi/generate") {
+        return Promise.resolve(new Response(JSON.stringify({
+          format: "wait-local-agent.power-platform.custom-connector",
+          format_version: 1,
+          connector_id: "customer-api",
+          display_name: "Customer API",
+          api_version: "1.0",
+          host: "api.example.com",
+          base_path: "/",
+          authentication: [{ name: "oauth", type: "oauth2", in: null, authorization_url_present: true }],
+          actions: [{ id: "list_customers", method: "GET", path: "/customers", summary: "List customers", parameters: [], response_statuses: ["200"] }],
+          credentials_included: false,
+          deployment_started: false,
         }), { status: 200 }));
       }
       if (path === "/consultant/delivery-plan") {
@@ -454,5 +511,89 @@ describe("Consultant architecture decisions", () => {
     expect(errorNotice).toHaveTextContent("The appliance couldn't complete the request. Try again shortly.");
     expect(screen.queryByRole("status")).not.toBeInTheDocument();
     expect(screen.queryByRole("link", { name: "Playbooks" })).not.toBeInTheDocument();
+  });
+
+  it("builds the Copilot Studio request shape and renders review-only boundaries", async () => {
+    render(<MemoryRouter><Consultant /></MemoryRouter>);
+
+    const addSource = await screen.findByRole("button", { name: "Add source" });
+    fireEvent.click(addSource);
+    fireEvent.change(screen.getByRole("textbox", { name: "Knowledge source 1" }), { target: { value: "Support handbook" } });
+    fireEvent.click(screen.getByRole("button", { name: "Add action" }));
+    fireEvent.change(screen.getByRole("textbox", { name: "Action 1 ID" }), { target: { value: "lookup_ticket" } });
+    fireEvent.change(screen.getByRole("textbox", { name: "Action 1 connector ID" }), { target: { value: "customer-api" } });
+    fireEvent.change(screen.getByRole("combobox", { name: "Action 1 method" }), { target: { value: "POST" } });
+    fireEvent.click(screen.getByRole("button", { name: "Build Copilot Studio plan" }));
+
+    expect(await screen.findByText("generation_status: review_only")).toBeInTheDocument();
+    expect(screen.getByText("execution_started: false")).toBeInTheDocument();
+    expect(screen.getByText("deployment_started: false")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Open items" })).toBeInTheDocument();
+    const call = vi.mocked(fetch).mock.calls.find(([input]) => String(input) === "/consultant/copilot-studio/plan");
+    const body = JSON.parse(String(call?.[1]?.body));
+    expect(body).toEqual({
+      client_id: "acme",
+      copilot_name: "Support assistant",
+      business_goal: "Help operators answer bounded customer support questions.",
+      topics: [{ id: "ticket-status", name: "Ticket status", trigger_phrases: ["check my ticket"] }],
+      knowledge_sources: ["Support handbook"],
+      actions: [{ id: "lookup_ticket", connector_id: "customer-api", method: "POST", approval_required: true }],
+    });
+    expect(Object.keys(body.topics[0])).toEqual(["id", "name", "trigger_phrases"]);
+  });
+
+  it("enforces Copilot topic and trigger phrase limits in the editor", async () => {
+    render(<MemoryRouter><Consultant /></MemoryRouter>);
+
+    const addTopic = await screen.findByRole("button", { name: "Add topic" });
+    for (let index = 0; index < 31; index += 1) fireEvent.click(addTopic);
+    expect(addTopic).toBeDisabled();
+
+    const triggerInput = screen.getByRole("textbox", { name: "New trigger phrase for topic 1" });
+    const addPhrase = screen.getAllByRole("button", { name: "Add phrase" })[0];
+    for (let index = 0; index < 14; index += 1) {
+      fireEvent.change(triggerInput, { target: { value: `phrase-${index}` } });
+      fireEvent.click(addPhrase);
+    }
+    fireEvent.change(triggerInput, { target: { value: "phrase-14" } });
+    expect(addPhrase).not.toBeDisabled();
+    fireEvent.click(addPhrase);
+    expect(addPhrase).toBeDisabled();
+  });
+
+  it("renders connector validation errors as line items and metadata on success", async () => {
+    connectorStatus = 422;
+    render(<MemoryRouter><Consultant /></MemoryRouter>);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Validate definition" }));
+    const error = await screen.findByRole("alert");
+    expect(error).toHaveTextContent("definition must use OpenAPI 2.0");
+    expect(error.querySelectorAll("li")).toHaveLength(1);
+    expect(screen.getByRole("button", { name: "Retry validate" })).toBeInTheDocument();
+
+    connectorStatus = null;
+    fireEvent.click(screen.getByRole("button", { name: "Retry validate" }));
+    expect(await screen.findByText("api.example.com")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Operations" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Security definitions" })).toBeInTheDocument();
+  });
+
+  it("generates connector metadata and downloads the response JSON", async () => {
+    const createObjectURL = vi.fn<(blob: Blob) => string>(() => "blob:connector");
+    const revokeObjectURL = vi.fn();
+    Object.defineProperty(window.URL, "createObjectURL", { configurable: true, value: createObjectURL });
+    Object.defineProperty(window.URL, "revokeObjectURL", { configurable: true, value: revokeObjectURL });
+    const anchorClick = vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => undefined);
+    render(<MemoryRouter><Consultant /></MemoryRouter>);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Generate metadata" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Download connector JSON" }));
+
+    expect(createObjectURL).toHaveBeenCalledWith(expect.any(Blob));
+    expect(revokeObjectURL).toHaveBeenCalledWith("blob:connector");
+    expect(anchorClick).toHaveBeenCalled();
+    const downloaded = createObjectURL.mock.calls[0][0] as Blob;
+    expect(JSON.parse(await downloaded.text())).toMatchObject({ connector_id: "customer-api", host: "api.example.com" });
+    anchorClick.mockRestore();
   });
 });
