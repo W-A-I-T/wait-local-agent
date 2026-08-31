@@ -3,19 +3,21 @@ import { useDashboard } from "../app/DashboardContext";
 import { apiFetch } from "../api/client";
 import { EmptyState } from "../components/EmptyState";
 import { LoadingState } from "../components/LoadingState";
-import type { AgentDefinition, ScheduledJob, ScheduledJobRequestBody, WorkflowTemplate } from "../api/types";
+import type { AgentDefinition, MspPlaybook, ScheduledJob, ScheduledJobRequestBody, WorkflowTemplate } from "../api/types";
 
 export function ScheduledJobs() {
   const { canWrite } = useDashboard();
   const [jobs, setJobs] = useState<ScheduledJob[]>([]);
   const [templates, setTemplates] = useState<WorkflowTemplate[]>([]);
   const [agents, setAgents] = useState<AgentDefinition[]>([]);
+  const [playbooks, setPlaybooks] = useState<MspPlaybook[]>([]);
   const [loading, setLoading] = useState(true);
   const hasLoadedRef = useRef(false);
-  const [scheduleKind, setScheduleKind] = useState<"workflow" | "agent" | "report">("workflow");
+  const [scheduleKind, setScheduleKind] = useState<"workflow" | "playbook" | "agent" | "report">("workflow");
   const [templateId, setTemplateId] = useState("");
   const [reportType, setReportType] = useState<"qbr" | "automation_opportunity" | "recurring_service_review">("qbr");
   const [agentId, setAgentId] = useState("");
+  const [playbookId, setPlaybookId] = useState("");
   const [entityId, setEntityId] = useState("HALO-1");
   const [cron, setCron] = useState("0 */6 * * *");
   const [timezone, setTimezone] = useState("UTC");
@@ -27,14 +29,16 @@ export function ScheduledJobs() {
   const refresh = useCallback(async () => {
     if (!hasLoadedRef.current) setLoading(true);
     try {
-      const [jobsResponse, templatesResponse, agentsResponse] = await Promise.all([
+      const [jobsResponse, templatesResponse, agentsResponse, playbooksResponse] = await Promise.all([
         apiFetch<ScheduledJob[]>("/scheduled-jobs"),
         apiFetch<WorkflowTemplate[]>("/workflows/templates"),
-        apiFetch<AgentDefinition[]>("/agents")
+        apiFetch<AgentDefinition[]>("/agents"),
+        apiFetch<MspPlaybook[]>("/msp/playbooks")
       ]);
       setJobs(jobsResponse);
       setTemplates(templatesResponse);
       setAgents(agentsResponse);
+      setPlaybooks(playbooksResponse);
       if (!templateId && templatesResponse[0]) {
         setTemplateId(templatesResponse[0].id);
       }
@@ -56,7 +60,7 @@ export function ScheduledJobs() {
 
   async function createJob(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if ((!templateId && scheduleKind === "workflow") || (!agentId && scheduleKind === "agent") || !cron) {
+    if ((!templateId && scheduleKind === "workflow") || (!playbookId && scheduleKind === "playbook") || (!agentId && scheduleKind === "agent") || !cron) {
       setMessage("A target and cron expression are required.");
       return;
     }
@@ -74,7 +78,9 @@ export function ScheduledJobs() {
     }
 
     try {
-      const body: ScheduledJobRequestBody = scheduleKind === "agent"
+      const body: ScheduledJobRequestBody = scheduleKind === "playbook"
+        ? { playbook_id: playbookId, cron, timezone: timezone.trim(), params }
+        : scheduleKind === "agent"
         ? { agent_id: agentId, entity_id: entityId.trim(), cron, timezone: timezone.trim(), params }
         : scheduleKind === "report"
           ? { report_type: reportType, cron, timezone: timezone.trim(), params }
@@ -123,8 +129,9 @@ export function ScheduledJobs() {
           <div className="grid">
             <label>
               Schedule type
-              <select value={scheduleKind} onChange={(event) => setScheduleKind(event.target.value as "workflow" | "agent" | "report")}>
+              <select value={scheduleKind} onChange={(event) => setScheduleKind(event.target.value as "workflow" | "playbook" | "agent" | "report")}>
                 <option value="workflow">Workflow template</option>
+                <option value="playbook">MSP playbook</option>
                 <option value="agent">Agent definition</option>
                 <option value="report">Client report</option>
               </select>
@@ -137,6 +144,14 @@ export function ScheduledJobs() {
                   {templates.map((template) => (
                     <option key={template.id} value={template.id}>{template.name}</option>
                   ))}
+                </select>
+              </label>
+            ) : scheduleKind === "playbook" ? (
+              <label>
+                Playbook
+                <select value={playbookId} onChange={(event) => setPlaybookId(event.target.value)}>
+                  <option value="">Choose playbook</option>
+                  {playbooks.map((playbook) => <option key={playbook.id} value={playbook.id}>{playbook.name}</option>)}
                 </select>
               </label>
             ) : scheduleKind === "report" ? (
@@ -172,6 +187,7 @@ export function ScheduledJobs() {
                 ) : null}
               </>
             )}
+            {scheduleKind === "playbook" ? <span className="field-help">Params must include a client_id and may include ticket_id and input.</span> : null}
             <label>
               Cron
               <input value={cron} onChange={(event) => setCron(event.target.value)} />
@@ -199,7 +215,7 @@ export function ScheduledJobs() {
           {jobs.map((job) => (
             <article className="table-row" key={job.id}>
               <div>
-                <strong>{job.job_kind === "agent" ? `Agent ${job.agent_id}` : job.job_kind === "report" ? `Report ${job.template_id}` : job.template_id}</strong>
+                <strong>{jobTargetLabel(job)}</strong>
                 <span>{job.cron} ({job.timezone})</span>
               </div>
               <span>{job.paused ? "paused" : "running"}</span>
@@ -225,7 +241,7 @@ export function ScheduledJobs() {
         {selectedJob ? (
           <>
             <div className="event-row">
-              <span>{selectedJob.job_kind === "agent" ? `Agent ${selectedJob.agent_id}` : selectedJob.job_kind === "report" ? `Report ${selectedJob.template_id}` : selectedJob.template_id}</span>
+              <span>{jobTargetLabel(selectedJob)}</span>
               <em>{selectedJob.client_id || "global"}</em>
               <span>{selectedJob.next_run_at || "next run unknown"}</span>
             </div>
@@ -235,4 +251,11 @@ export function ScheduledJobs() {
       </section>
     </div>
   );
+}
+
+function jobTargetLabel(job: ScheduledJob): string {
+  if (job.job_kind === "agent") return `Agent ${job.agent_id}`;
+  if (job.job_kind === "report") return `Report ${job.template_id}`;
+  if (job.job_kind === "playbook") return `Playbook ${job.playbook_id ?? job.template_id}`;
+  return `Workflow ${job.template_id}`;
 }

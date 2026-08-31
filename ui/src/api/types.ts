@@ -438,7 +438,7 @@ export type MspPlaybookSubscription = {
   playbook_id: string;
   event_type: string;
   client_id: string;
-  input_mapping: Record<string, string>;
+  input_mapping: Record<string, unknown>;
   enabled: boolean;
   created_at: string;
   updated_at: string;
@@ -1209,6 +1209,7 @@ export type ScheduledJob = {
 
 export type ScheduledJobRequestBody = {
   template_id?: string;
+  playbook_id?: string;
   report_type?: "qbr" | "automation_opportunity" | "recurring_service_review";
   agent_id?: string;
   entity_id?: string;
