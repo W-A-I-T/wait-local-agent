@@ -5,6 +5,8 @@ import { FormEvent, type CSSProperties, useState } from "react";
 import { AlertTriangle, CheckCircle2, KeyRound, LifeBuoy, Search, ShieldCheck } from "lucide-react";
 import { apiFetch, ApiRequestError } from "../api/client";
 import type { EndUserBranding, EndUserMessage, EndUserTicket } from "../api/types";
+import { EmptyState } from "../components/EmptyState";
+import { LoadingState } from "../components/LoadingState";
 import { WaitAttribution } from "../components/WaitAttribution";
 
 const tokenStorageKey = "wait-local-agent-end-user-token";
@@ -209,12 +211,12 @@ export function EndUserSupport() {
 
         <section className="panel">
           <div className="panel-heading"><h2>Check a request</h2><Search size={20} aria-hidden="true" /></div>
-          <form className="draft-form" onSubmit={(event) => void lookupTicket(event)}>
+          <form id="end-user-lookup-form" className="draft-form" onSubmit={(event) => void lookupTicket(event)}>
             <label>Request number<input required value={lookupId} onChange={(event) => setLookupId(event.target.value)} placeholder="EUS-..." /></label>
             <button type="submit" disabled={busy !== null || !token.trim()}>{busy === "lookup" ? "Checking…" : "Check status"}</button>
           </form>
-          {ticket ? <div className="end-user-ticket" aria-live="polite"><strong>{ticket.ticket_id}</strong><span>{ticket.subject}</span><p>{ticket.body}</p><span>Status: {ticket.status}</span><span>Priority: {ticket.priority}</span><button type="button" disabled={busy !== null || ticket.status === "escalated"} onClick={() => void escalateTicket()}>{busy === "escalate" ? "Escalating…" : ticket.status === "escalated" ? "Already escalated" : "Ask for technician attention"}</button></div> : <p className="screen-note">Your request details will appear here after a successful lookup.</p>}
-          {ticket ? <div className="end-user-messages"><strong>Conversation</strong>{messages.length ? messages.map((item) => <p key={item.id}><strong>{item.role === "support" ? "Support" : "You"}</strong><span>{item.body}</span></p>) : <span>No follow-up messages yet.</span>}<form className="draft-form" onSubmit={(event) => void sendMessage(event)}><label>Send a follow-up<textarea required maxLength={10000} rows={3} value={replyBody} onChange={(event) => setReplyBody(event.target.value)} placeholder="Add information for your support team" /></label><button type="submit" disabled={busy !== null || !replyBody.trim()}>{busy === "message" ? "Sending…" : "Send message"}</button></form></div> : null}
+          {busy === "lookup" ? <LoadingState label="Loading request details…" /> : ticket ? <div className="end-user-ticket" aria-live="polite"><strong>{ticket.ticket_id}</strong><span>{ticket.subject}</span><p>{ticket.body}</p><span>Status: {ticket.status}</span><span>Priority: {ticket.priority}</span><button type="button" disabled={busy !== null || ticket.status === "escalated"} onClick={() => void escalateTicket()}>{busy === "escalate" ? "Escalating…" : ticket.status === "escalated" ? "Already escalated" : "Ask for technician attention"}</button></div> : <EmptyState title="No request selected" why={<><span>Your request details will appear here after a successful lookup.</span><span>Look up an existing request to see its status and conversation.</span></>} action={{ label: "Check a request", to: "#end-user-lookup-form" }} />}
+          {ticket ? <div className="end-user-messages"><strong>Conversation</strong>{messages.length ? messages.map((item) => <p key={item.id}><strong>{item.role === "support" ? "Support" : "You"}</strong><span>{item.body}</span></p>) : <EmptyState title="No follow-up messages yet" why="Replies from your support team will appear here." />}<form className="draft-form" onSubmit={(event) => void sendMessage(event)}><label>Send a follow-up<textarea required maxLength={10000} rows={3} value={replyBody} onChange={(event) => setReplyBody(event.target.value)} placeholder="Add information for your support team" /></label><button type="submit" disabled={busy !== null || !replyBody.trim()}>{busy === "message" ? "Sending…" : "Send message"}</button></form></div> : null}
         </section>
       </div>
       <WaitAttribution />

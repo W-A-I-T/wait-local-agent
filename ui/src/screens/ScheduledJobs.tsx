@@ -1,6 +1,8 @@
-import { FormEvent, useCallback, useEffect, useState } from "react";
+import { FormEvent, useCallback, useEffect, useRef, useState } from "react";
 import { useDashboard } from "../app/DashboardContext";
 import { apiFetch } from "../api/client";
+import { EmptyState } from "../components/EmptyState";
+import { LoadingState } from "../components/LoadingState";
 import type { AgentDefinition, ScheduledJob, ScheduledJobRequestBody, WorkflowTemplate } from "../api/types";
 
 export function ScheduledJobs() {
@@ -8,6 +10,8 @@ export function ScheduledJobs() {
   const [jobs, setJobs] = useState<ScheduledJob[]>([]);
   const [templates, setTemplates] = useState<WorkflowTemplate[]>([]);
   const [agents, setAgents] = useState<AgentDefinition[]>([]);
+  const [loading, setLoading] = useState(true);
+  const hasLoadedRef = useRef(false);
   const [scheduleKind, setScheduleKind] = useState<"workflow" | "agent" | "report">("workflow");
   const [templateId, setTemplateId] = useState("");
   const [reportType, setReportType] = useState<"qbr" | "automation_opportunity" | "recurring_service_review">("qbr");
@@ -21,6 +25,7 @@ export function ScheduledJobs() {
   const selectedAgent = agents.find((agent) => agent.id === agentId);
 
   const refresh = useCallback(async () => {
+    if (!hasLoadedRef.current) setLoading(true);
     try {
       const [jobsResponse, templatesResponse, agentsResponse] = await Promise.all([
         apiFetch<ScheduledJob[]>("/scheduled-jobs"),
@@ -39,6 +44,9 @@ export function ScheduledJobs() {
       }
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "Unable to load scheduled jobs.");
+    } finally {
+      hasLoadedRef.current = true;
+      setLoading(false);
     }
   }, [agentId, templateId]);
 
@@ -111,7 +119,7 @@ export function ScheduledJobs() {
           <h2>Scheduled Jobs</h2>
           <span>{jobs.length} configured</span>
         </div>
-        <form className="draft-form" onSubmit={createJob}>
+        <form id="scheduled-job-form" className="draft-form" onSubmit={createJob}>
           <div className="grid">
             <label>
               Schedule type
@@ -142,7 +150,7 @@ export function ScheduledJobs() {
               </label>
             ) : (
               <>
-                <label>
+                {agents.filter((agent) => agent.trigger === "scheduled" && agent.enabled).length === 0 ? <EmptyState title="No scheduled agents available" why="Agents exist, but none are scheduled and enabled. Enable an agent with a scheduled trigger before creating an agent schedule." /> : <label>
                   Agent
                   <select value={agentId} onChange={(event) => setAgentId(event.target.value)}>
                     <option value="">Choose scheduled agent</option>
@@ -150,7 +158,7 @@ export function ScheduledJobs() {
                       <option key={agent.id} value={agent.id}>{agent.name}</option>
                     ))}
                   </select>
-                </label>
+                </label>}
                 <label>
                   Entity ID
                   <input value={entityId} onChange={(event) => setEntityId(event.target.value)} />
@@ -183,12 +191,11 @@ export function ScheduledJobs() {
               {scheduleKind === "report" ? <span>Include a client_id and either period_days (1–366) or period_start/period_end ISO dates.</span> : null}
             </label>
           </div>
-          <button type="submit" disabled={!canWrite}>Create schedule</button>
+          <button type="submit" disabled={!canWrite} title={!canWrite ? "Requires technician access" : undefined}>Create schedule</button>
         </form>
 
         {message ? <div className="notice">{message}</div> : null}
-        {jobs.length === 0 ? <p>No scheduled jobs yet.</p> : null}
-        <div className="table-list">
+        {loading ? <LoadingState label="Loading scheduled jobs…" /> : jobs.length === 0 ? <EmptyState title="No scheduled jobs yet" why="Scheduled jobs appear after you create a workflow, agent, or report schedule above." action={{ label: "Create a schedule above", to: "#scheduled-job-form" }} /> : <div className="table-list">
           {jobs.map((job) => (
             <article className="table-row" key={job.id}>
               <div>
@@ -198,16 +205,16 @@ export function ScheduledJobs() {
               <span>{job.paused ? "paused" : "running"}</span>
               <div>
                 <button className="icon-button" type="button" onClick={() => setSelectedJob(job)}>Details</button>
-                <button className="icon-button" type="button" disabled={!canWrite} onClick={() => void controlJob(job.paused ? "resume" : "pause", job.id)}>
+                <button className="icon-button" type="button" disabled={!canWrite} title={!canWrite ? "Requires technician access" : undefined} onClick={() => void controlJob(job.paused ? "resume" : "pause", job.id)}>
                   {job.paused ? "Resume" : "Pause"}
                 </button>
-                <button className="icon-button" type="button" disabled={!canWrite} onClick={() => void controlJob("delete", job.id)}>
+                <button className="icon-button" type="button" disabled={!canWrite} title={!canWrite ? "Requires technician access" : undefined} onClick={() => void controlJob("delete", job.id)}>
                   Delete
                 </button>
               </div>
             </article>
           ))}
-        </div>
+        </div>}
       </section>
 
       <section className="panel settings-panel">

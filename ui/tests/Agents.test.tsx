@@ -582,4 +582,16 @@ describe("Agents", () => {
     fireEvent.click(screen.getByRole("button", { name: "Restore" }));
     await waitFor(() => expect(screen.getByText("Restored MFA triage version 1 as version 4.")).toBeInTheDocument());
   });
+  it("shows loading while agent definitions are being fetched", () => {
+    vi.stubGlobal("fetch", vi.fn(() => new Promise<Response>(() => undefined)));
+    render(<MemoryRouter><Agents /></MemoryRouter>);
+    expect(screen.getByText("Loading agent definitions…")).toBeInTheDocument();
+  });
+
+  it("explains an empty agent catalog and points to the setup form", async () => {
+    vi.stubGlobal("fetch", vi.fn(() => Promise.resolve(new Response(JSON.stringify([]), { status: 200 }))));
+    render(<MemoryRouter><Agents /></MemoryRouter>);
+    expect(await screen.findByRole("heading", { name: "No agent definitions yet" })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Create your first agent below" })).toHaveAttribute("href", "/#agent-form");
+  });
 });

@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useMemo, useState, type FormEvent } from "react";
 import { apiFetch } from "../api/client";
 import { useDashboard } from "../app/DashboardContext";
+import { EmptyState } from "../components/EmptyState";
+import { LoadingState } from "../components/LoadingState";
 import { MICROSOFT_ADMIN_CAPABILITY } from "../hooks/useMicrosoftAdminAccess";
 
 type PrincipalSummary = {
@@ -171,7 +173,7 @@ export function MicrosoftAdminAccess() {
 
       <section className="panel" aria-labelledby="capability-grant-heading">
         <h3 id="capability-grant-heading">Grant access</h3>
-        <form onSubmit={(event) => void submitGrant(event)}>
+        {loading ? <LoadingState label="Loading principals and clients…" /> : principals.length === 0 ? <EmptyState title="No principals are available" why="Principals come from configured technician tokens or database principals. A fresh install has none, so configure a technician access identity before granting Microsoft Admin access." /> : <form onSubmit={(event) => void submitGrant(event)}>
           <label htmlFor="capability-principal">Principal</label>
           <select
             id="capability-principal"
@@ -199,7 +201,7 @@ export function MicrosoftAdminAccess() {
             Global Microsoft Admin access (MSP admin principals only)
           </label>
 
-          {!globalScope ? (
+          {!globalScope && eligibleClients.length === 0 ? <EmptyState title="No eligible clients are available" why="The selected principal has no client role that matches a configured client. Add the client role or choose another principal." /> : !globalScope ? (
             <>
               <label htmlFor="capability-client">Client</label>
               <select
@@ -221,7 +223,7 @@ export function MicrosoftAdminAccess() {
           >
             {busy ? "Saving…" : "Grant Microsoft Admin"}
           </button>
-        </form>
+        </form>}
       </section>
 
       <section className="panel" aria-labelledby="active-capability-grants-heading">
@@ -231,7 +233,7 @@ export function MicrosoftAdminAccess() {
             <span>{activeGrants.length} active Microsoft Admin grant(s)</span>
           </div>
         </div>
-        {activeGrants.length ? (
+        {loading ? <LoadingState label="Loading active grants…" /> : activeGrants.length ? (
           <div className="event-list">
             {activeGrants.map((grant) => (
               <article className="event-row" key={`${grant.principal_id}:${grant.client_id ?? "global"}`}>

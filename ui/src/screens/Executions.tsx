@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useState } from "react";
 import { apiFetch } from "../api/client";
 import { buildApiHeaders } from "../api/headers";
+import { EmptyState } from "../components/EmptyState";
+import { LoadingState } from "../components/LoadingState";
 import type { ExecutionDetail, ExecutionRun } from "../api/types";
 import { apiUrl } from "../lib/config";
 
@@ -11,11 +13,14 @@ function displayValue(value: unknown): string {
 export function Executions() {
   const [executions, setExecutions] = useState<ExecutionRun[]>([]);
   const [selected, setSelected] = useState<ExecutionDetail | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [detailLoading, setDetailLoading] = useState(false);
   const [kind, setKind] = useState("");
   const [status, setStatus] = useState("");
   const [message, setMessage] = useState("");
 
   const refresh = useCallback(async () => {
+    setLoading(true);
     try {
       const query = new URLSearchParams();
       if (kind) query.set("kind", kind);
@@ -25,6 +30,8 @@ export function Executions() {
       setMessage("");
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "Unable to load execution history.");
+    } finally {
+      setLoading(false);
     }
   }, [kind, status]);
 
@@ -33,10 +40,13 @@ export function Executions() {
   }, [refresh]);
 
   async function showDetail(execution: ExecutionRun) {
+    setDetailLoading(true);
     try {
       setSelected(await apiFetch<ExecutionDetail>(`/executions/${execution.id}`));
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "Unable to load execution detail.");
+    } finally {
+      setDetailLoading(false);
     }
   }
 
@@ -71,15 +81,14 @@ export function Executions() {
       </section>
 
       <section className="table-list">
-        {executions.length === 0 ? <p className="panel">No execution history in this scope.</p> : null}
-        {executions.map((execution) => <button className="table-row" type="button" key={execution.id} onClick={() => void showDetail(execution)}>
+        {loading ? <LoadingState label="Loading execution history…" /> : executions.length === 0 ? <EmptyState title="No execution history" why="Completed, failed, and cancelled runs appear here after an execution starts." /> : executions.map((execution) => <button className="table-row" type="button" key={execution.id} onClick={() => void showDetail(execution)}>
           <div><strong>Run #{execution.id}</strong><span>{execution.run_kind} · {execution.trigger_source}</span></div>
           <div><strong>{execution.status}</strong><span>{execution.actor} · {execution.client_id || "unbound"}</span></div>
           <em>{execution.started_at}</em>
         </button>)}
       </section>
 
-      {selected ? <section className="panel">
+      {detailLoading ? <LoadingState label="Loading execution details…" /> : selected ? <section className="panel">
         <div className="panel-heading"><h2>Run #{selected.id}</h2><span>{selected.status}</span></div>
         <p className="screen-note">{selected.run_kind} · trigger {selected.trigger_source} · actor {selected.actor}</p>
         {Object.keys(selected.metadata ?? {}).length ? <p className="screen-note">Provider metadata: {displayValue(selected.metadata)}</p> : null}

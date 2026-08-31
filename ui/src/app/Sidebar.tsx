@@ -23,7 +23,7 @@ import {
   Users,
   Workflow
 } from "lucide-react";
-import { NavLink } from "react-router-dom";
+import { Link, NavLink } from "react-router-dom";
 import { useDashboard } from "./DashboardContext";
 import { RoleGate } from "../components/RoleGate";
 import { useMicrosoftAdminAccess } from "../hooks/useMicrosoftAdminAccess";
@@ -121,8 +121,13 @@ function SidebarLink({ item }: { item: NavItem }) {
 }
 
 export function Sidebar() {
-  const { role, roleResolved } = useDashboard();
+  const { role, roleResolved, configurationSteps, configurationLoading, isConfigured } = useDashboard();
   const microsoftAdmin = useMicrosoftAdminAccess();
+  const requiredSteps = (configurationSteps ?? []).filter((step) => step.required);
+  const completedSteps = requiredSteps.filter((step) => step.status === "done").length;
+  const setupIndicator = requiredSteps.length > 0 && (configurationLoading || !isConfigured)
+    ? <Link className="sidebar-setup-indicator" to="/?onboarding=1">{configurationLoading ? "Setup: checking…" : `Setup: ${completedSteps} of ${requiredSteps.length}`}</Link>
+    : null;
 
   const renderItem = (item: NavItem) => {
     if (item.microsoftAdminCapability && (!microsoftAdmin.resolved || !microsoftAdmin.navAllowed)) {
@@ -144,6 +149,7 @@ export function Sidebar() {
         </div>
       </div>
       <nav aria-label="Primary navigation">
+        {setupIndicator}
         {primaryNavigation.map((group, index) => (
           <section key={group.label ?? `primary-${index}`} aria-label={group.label ?? "Overview and clients"}>
             {group.label ? <span className="sidebar-section-label">{group.label}</span> : null}

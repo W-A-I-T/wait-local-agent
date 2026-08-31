@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useDashboard } from "../app/DashboardContext";
 import { apiFetch } from "../api/client";
+import { EmptyState } from "../components/EmptyState";
+import { LoadingState } from "../components/LoadingState";
 import type {
   TemplateGalleryEntry,
   WorkflowDesign,
@@ -39,6 +41,7 @@ export function WorkflowDesigner() {
   const { canWrite } = useDashboard();
   const [templates, setTemplates] = useState<WorkflowTemplate[]>([]);
   const [entries, setEntries] = useState<TemplateGalleryEntry[]>([]);
+  const [loading, setLoading] = useState(true);
   const [selectedId, setSelectedId] = useState("");
   const [sourceTemplateId, setSourceTemplateId] = useState("");
   const [design, setDesign] = useState<WorkflowDesign | null>(null);
@@ -54,6 +57,7 @@ export function WorkflowDesigner() {
   const selectedNode = design?.nodes.find((node) => node.id === selectedNodeId);
 
   const refresh = useCallback(async () => {
+    setLoading(true);
     try {
       const [templateRows, galleryRows] = await Promise.all([
         apiFetch<WorkflowTemplate[]>("/workflows/templates"),
@@ -65,6 +69,8 @@ export function WorkflowDesigner() {
       setSelectedId((current) => current || galleryRows[0]?.id || "");
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "Unable to load workflow designs.");
+    } finally {
+      setLoading(false);
     }
   }, []);
 
@@ -202,14 +208,14 @@ export function WorkflowDesigner() {
           </select></label>
         </div>
         <div className="designer-actions">
-          <button type="button" disabled={!canWrite || !sourceTemplateId} onClick={() => void createDesign()}>Create design</button>
-          <button type="button" disabled={!canWrite || !selectedEntry || !design} onClick={() => void saveDesign()}>Save design</button>
+          <button type="button" disabled={!canWrite || !sourceTemplateId} title={!canWrite ? "Requires technician access" : !sourceTemplateId ? "Choose a reviewed template first" : undefined} onClick={() => void createDesign()}>Create design</button>
+          <button type="button" disabled={!canWrite || !selectedEntry || !design} title={!canWrite ? "Requires technician access" : !selectedEntry || !design ? "Choose a local design first" : undefined} onClick={() => void saveDesign()}>Save design</button>
           {selectedTemplate ? <span className="status-pill">Source: {selectedTemplate.name}</span> : null}
         </div>
         {message ? <div className="notice" role="status">{message}</div> : null}
       </section>
 
-      {!design ? <section className="panel empty-state"><h3>No design selected</h3><p>Create a local design from a reviewed template to begin.</p></section> : (
+      {loading ? <LoadingState label="Loading workflow designs…" /> : !design ? <EmptyState title="No design selected" why="Create a local design from a reviewed template to begin." /> : (
         <>
           <section className="panel">
             <div className="panel-heading"><h2>Workflow canvas</h2><span>Trigger → bounded steps → end</span></div>
@@ -241,7 +247,7 @@ export function WorkflowDesigner() {
                 <label>Node label<input aria-label="Node label" value={selectedNode.label} onChange={(event) => updateNode(selectedNode.id, { label: event.target.value })} /></label>
                 <label>Tool id (optional)<input value={selectedNode.tool_id ?? ""} onChange={(event) => updateNode(selectedNode.id, { tool_id: event.target.value || null })} /></label>
                 <p className="screen-note">Type: {selectedNode.type}. Node configuration stays bounded JSON and is validated by the server.</p>
-                <button type="button" disabled={!canWrite || selectedNode.type === "trigger" || selectedNode.type === "end"} onClick={removeSelectedNode}>Remove node</button>
+                <button type="button" disabled={!canWrite || selectedNode.type === "trigger" || selectedNode.type === "end"} title={!canWrite ? "Requires technician access" : selectedNode.type === "trigger" || selectedNode.type === "end" ? "Trigger and end nodes are required" : undefined} onClick={removeSelectedNode}>Remove node</button>
               </> : <p>Select a node on the canvas to edit it.</p>}
             </div>
             <div className="panel">
@@ -250,7 +256,7 @@ export function WorkflowDesigner() {
                 {NODE_TYPES.map((type) => <option key={type} value={type}>{type}</option>)}
               </select></label>
               <label>New node label<input aria-label="New node label" value={newNodeLabel} onChange={(event) => setNewNodeLabel(event.target.value)} placeholder="Validate manager" /></label>
-              <button type="button" disabled={!canWrite || !newNodeLabel.trim() || design.nodes.length >= 32} onClick={addNode}>Add node</button>
+              <button type="button" disabled={!canWrite || !newNodeLabel.trim() || design.nodes.length >= 32} title={!canWrite ? "Requires technician access" : !newNodeLabel.trim() ? "Provide a node label first" : design.nodes.length >= 32 ? "A design can contain at most 32 nodes" : undefined} onClick={addNode}>Add node</button>
             </div>
             <div className="panel">
               <div className="panel-heading"><h2>Connect nodes</h2><span>acyclic graph</span></div>
@@ -260,7 +266,7 @@ export function WorkflowDesigner() {
               <label>To<select value={connectTo} onChange={(event) => setConnectTo(event.target.value)}>
                 <option value="">Choose destination</option>{nodeOptions.map((node) => <option key={`to-${node.id}`} value={node.id}>{node.label}</option>)}
               </select></label>
-              <button type="button" disabled={!canWrite || !connectFrom || !connectTo} onClick={connectNodes}>Add connection</button>
+              <button type="button" disabled={!canWrite || !connectFrom || !connectTo} title={!canWrite ? "Requires technician access" : !connectFrom || !connectTo ? "Choose a source and destination node" : undefined} onClick={connectNodes}>Add connection</button>
             </div>
           </section>
         </>

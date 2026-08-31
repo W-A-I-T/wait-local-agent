@@ -121,6 +121,33 @@ describe("Sidebar navigation IA", () => {
     expect(screen.queryByRole("link", { name: "Microsoft Admin Access" })).not.toBeInTheDocument();
   });
 
+  it("keeps incomplete setup reachable after the overview wizard is dismissed", () => {
+    mockedUseDashboard.mockReturnValue({
+      role: "admin",
+      roleResolved: true,
+      isConfigured: false,
+      configurationLoading: false,
+      configurationSteps: [
+        { id: "admin", label: "Administrator account", status: "done", required: true },
+        { id: "client", label: "Client created", status: "done", required: true },
+        { id: "connector", label: "Operational connector configured", status: "todo", required: true },
+        { id: "mapping", label: "Client mapping verified", status: "todo", required: true }
+      ]
+    } as never);
+    mockedMicrosoftAdminAccess.mockReturnValue({
+      allowed: true,
+      navAllowed: true,
+      resolved: true,
+      grants: [],
+      error: "",
+      refresh: vi.fn()
+    });
+
+    render(<MemoryRouter><Sidebar /></MemoryRouter>);
+
+    expect(screen.getByRole("link", { name: "Setup: 2 of 4" })).toHaveAttribute("href", "/?onboarding=1");
+  });
+
   it("keeps advanced admin links gated for viewers", () => {
     renderSidebar("viewer");
     fireEvent.click(screen.getByText("System / Advanced"));

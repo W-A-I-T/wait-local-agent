@@ -2,6 +2,8 @@ import { useState } from "react";
 import { AlertTriangle, CheckCircle2, FileJson, PlayCircle, Save, Workflow, XCircle } from "lucide-react";
 import { executeEndpointFor, useDashboard } from "../app/DashboardContext";
 import { apiFetch } from "../api/client";
+import { EmptyState } from "../components/EmptyState";
+import { LoadingState } from "../components/LoadingState";
 import type { ApprovalRequest } from "../api/types";
 import { fieldsToText, formatPayload, parseFields } from "../lib/fields";
 
@@ -23,7 +25,8 @@ export function Approvals() {
     executeApproval,
     savePayloadFields,
     workflowFor,
-    refresh
+    refresh,
+    loading
   } = useDashboard();
   const [draftPayloadFields, setDraftPayloadFields] = useState<Record<number, string>>({});
   const [runbookBusyId, setRunbookBusyId] = useState<number | null>(null);
@@ -77,7 +80,7 @@ export function Approvals() {
         <span>{pendingApprovals.length} pending</span>
       </div>
       <div className="stack-list">
-        {approvalRequests.map((request) => (
+        {loading ? <LoadingState label="Loading approval requests…" /> : approvalRequests.map((request) => (
           <ApprovalCard
             busy={busyId === request.id || runbookBusyId === request.id}
             canWrite={canWrite}
@@ -93,7 +96,7 @@ export function Approvals() {
             setDraftPayloadFields={setDraftPayloadFields}
           />
         ))}
-        {approvalRequests.length === 0 ? <p>No approval requests yet.</p> : null}
+        {!loading && approvalRequests.length === 0 ? <EmptyState title="No approval requests yet." why="Approval requests appear here when a governed action needs review." /> : null}
       </div>
     </section>
   );

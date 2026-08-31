@@ -59,6 +59,32 @@ describe("Approvals execute button", () => {
     vi.unstubAllGlobals();
   });
 
+  it("distinguishes a pending approval fetch from an empty queue", () => {
+    const dashboard = {
+      approvalRequests: [],
+      pendingApprovals: [],
+      canWrite: false,
+      isAdmin: false,
+      busyId: null,
+      updateApproval: vi.fn(),
+      executeApproval: vi.fn(),
+      savePayloadFields: vi.fn(),
+      workflowFor: () => undefined,
+      refresh: vi.fn(),
+      loading: true
+    };
+    mockedUseDashboard.mockReturnValue(dashboard as never);
+    const view = render(<Approvals />);
+
+    expect(screen.getByText("Loading approval requests…")).toBeInTheDocument();
+
+    mockedUseDashboard.mockReturnValue({ ...dashboard, loading: false } as never);
+    view.rerender(<Approvals />);
+
+    expect(screen.getByText("No approval requests yet.")).toBeInTheDocument();
+    expect(screen.getByText("Approval requests appear here when a governed action needs review.")).toBeInTheDocument();
+  });
+
   it.each(["m365.user.disable", "teams.message.send"])(
     "enables %s when approved and executable even if Halo writes are not ready",
     (actionType) => {
