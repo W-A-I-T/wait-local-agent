@@ -1,4 +1,4 @@
-import { useState, type ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import type { CollectorConfigField, CollectorConfigFieldOption } from "../api/types";
 import { humanizeName } from "../lib/fields";
 
@@ -10,6 +10,10 @@ type SchemaFormProps = {
   onChange: (next: SchemaFormValue) => void;
   errors?: Record<string, string>;
   idPrefix?: string;
+  emptyMessage?: ReactNode;
+  advancedLabel?: string;
+  jsonLabel?: string;
+  onJsonValidityChange?: (valid: boolean) => void;
 };
 
 export function fieldLabel(field: CollectorConfigField): string {
@@ -65,10 +69,27 @@ export function validateRequiredFields(
   return errors;
 }
 
-export function SchemaForm({ fields, value, onChange, errors = {}, idPrefix = "schema" }: SchemaFormProps) {
+export function SchemaForm({
+  fields,
+  value,
+  onChange,
+  errors = {},
+  idPrefix = "schema",
+  emptyMessage = "This collector does not describe any settings. You can run it as-is, or open Advanced (JSON) if you know it accepts options.",
+  advancedLabel = "Advanced (JSON)",
+  jsonLabel = "Settings JSON",
+  onJsonValidityChange
+}: SchemaFormProps) {
   const [advanced, setAdvanced] = useState(false);
   const [jsonText, setJsonText] = useState("");
   const [jsonError, setJsonError] = useState("");
+  const serializedValue = JSON.stringify(withoutSecretValues(value, fields), null, 2);
+
+  useEffect(() => {
+    if (advanced) {
+      setJsonText(serializedValue);
+    }
+  }, [advanced, serializedValue]);
 
   function setField(name: string, next: unknown) {
     const updated = { ...value };
@@ -78,11 +99,13 @@ export function SchemaForm({ fields, value, onChange, errors = {}, idPrefix = "s
       updated[name] = next;
     }
     onChange(updated);
+    onJsonValidityChange?.(true);
   }
 
   function openAdvanced() {
     setJsonText(JSON.stringify(withoutSecretValues(value, fields), null, 2));
     setJsonError("");
+    onJsonValidityChange?.(true);
     setAdvanced(true);
   }
 
@@ -98,22 +121,30 @@ export function SchemaForm({ fields, value, onChange, errors = {}, idPrefix = "s
       setJsonError("");
       setJsonText(JSON.stringify(safeValue, null, 2));
       onChange(safeValue);
+      onJsonValidityChange?.(true);
     } catch {
       setJsonError("That JSON is not complete yet — keep editing or switch back to the form.");
+      onJsonValidityChange?.(false);
     }
+  }
+
+  function closeAdvanced() {
+    setAdvanced(false);
+    setJsonError("");
+    onJsonValidityChange?.(true);
   }
 
   return (
     <div className="schema-form">
       <div className="schema-form-toolbar">
-        <button type="button" className="icon-button" onClick={() => (advanced ? setAdvanced(false) : openAdvanced())}>
-          {advanced ? "Back to form" : "Advanced (JSON)"}
+        <button type="button" className="icon-button" onClick={() => (advanced ? closeAdvanced() : openAdvanced())}>
+          {advanced ? "Back to form" : advancedLabel}
         </button>
       </div>
 
       {advanced ? (
         <div className="schema-field">
-          <label htmlFor={`${idPrefix}-json`}>Settings JSON</label>
+          <label htmlFor={`${idPrefix}-json`}>{jsonLabel}</label>
           <textarea
             id={`${idPrefix}-json`}
             rows={10}
@@ -123,10 +154,7 @@ export function SchemaForm({ fields, value, onChange, errors = {}, idPrefix = "s
           {jsonError ? <span className="field-error">{jsonError}</span> : null}
         </div>
       ) : fields.length === 0 ? (
-        <p className="screen-note">
-          This collector does not describe any settings. You can run it as-is, or open Advanced (JSON)
-          if you know it accepts options.
-        </p>
+        <p className="screen-note">{emptyMessage}</p>
       ) : (
         fields.map((field) => (
           <SchemaField

@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { useDashboard } from "../app/DashboardContext";
 import { ApiRequestError, apiFetch } from "../api/client";
 import { Link } from "react-router-dom";
+import { SchemaForm, validateRequiredFields, type SchemaFormValue } from "../components/SchemaForm";
 import { StatusChip } from "../components/StatusChip";
 import type {
   MspPlaybook,
@@ -10,6 +11,7 @@ import type {
   MspPlaybookRevisionDiff,
   MspPlaybookSubscription
 } from "../api/types";
+import { requiredInputFields } from "../lib/structured-inputs";
 
 type JsonResult = Record<string, unknown>;
 
@@ -80,7 +82,9 @@ export function Playbooks() {
   const [previews, setPreviews] = useState<Record<string, JsonResult>>({});
   const [runs, setRuns] = useState<Record<string, JsonResult>>({});
   const [ticketIds, setTicketIds] = useState<Record<string, string>>({});
-  const [payloads, setPayloads] = useState<Record<string, string>>({});
+  const [payloads, setPayloads] = useState<Record<string, SchemaFormValue>>({});
+  const [payloadErrors, setPayloadErrors] = useState<Record<string, Record<string, string>>>({});
+  const [payloadJsonValidity, setPayloadJsonValidity] = useState<Record<string, boolean>>({});
   const [drafts, setDrafts] = useState<Record<string, PlaybookDraft>>({});
   const [editingEntryId, setEditingEntryId] = useState<string | null>(null);
   const [editErrors, setEditErrors] = useState<Record<string, string>>({});
@@ -126,18 +130,21 @@ export function Playbooks() {
   }
 
   function requestBody(playbook: MspPlaybook): Record<string, unknown> | null {
-    const rawPayload = payloads[playbook.id]?.trim() || "{}";
-    let payload: unknown;
-    try {
-      payload = JSON.parse(rawPayload);
-    } catch {
+    const payload = payloads[playbook.id] ?? {};
+    if (payloadJsonValidity[playbook.id] === false) {
       setMessage(`${playbook.name}: input must be valid JSON.`);
       return null;
     }
-    if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
-      setMessage(`${playbook.name}: input must be a JSON object.`);
+    const requiredInputs = uniqueValues(
+      playbook.steps.flatMap((step) => step.required_inputs ?? [])
+    );
+    const errors = validateRequiredFields(requiredInputFields(requiredInputs), payload);
+    if (Object.keys(errors).length > 0) {
+      setPayloadErrors((current) => ({ ...current, [playbook.id]: errors }));
+      setMessage(`${playbook.name}: complete the required input fields before continuing.`);
       return null;
     }
+    setPayloadErrors((current) => ({ ...current, [playbook.id]: {} }));
     return {
       ticket_id: ticketIds[playbook.id]?.trim() || selectedTicketId || undefined,
       client_id: clientId || undefined,
@@ -493,15 +500,21 @@ export function Playbooks() {
                       placeholder={selectedTicketId || "TCK-1001"}
                     />
                   </label>
-                  <label>
-                    Input JSON
-                    <textarea
-                      aria-label={`Input JSON for ${playbook.name}`}
-                      rows={2}
-                      value={payloads[playbook.id] ?? "{}"}
-                      onChange={(event) => setPayloads((current) => ({ ...current, [playbook.id]: event.target.value }))}
-                    />
-                  </label>
+                  <SchemaForm
+                    key={`playbook-inputs-${playbook.id}`}
+                    fields={requiredInputFields(requiredInputs)}
+                    value={payloads[playbook.id] ?? {}}
+                    onChange={(next) => {
+                      setPayloads((current) => ({ ...current, [playbook.id]: next }));
+                      setPayloadErrors((current) => ({ ...current, [playbook.id]: {} }));
+                    }}
+                    errors={payloadErrors[playbook.id]}
+                    idPrefix={`playbook-${playbook.id}`}
+                    emptyMessage="No additional fields required."
+                    advancedLabel="Raw JSON (advanced)"
+                    jsonLabel="Raw JSON"
+                    onJsonValidityChange={(valid) => setPayloadJsonValidity((current) => ({ ...current, [playbook.id]: valid }))}
+                  />
                 </div>
                 {previewResult ? <pre className="technical-details">Preview: {jsonText(previewResult)}</pre> : null}
                 {runResult ? <pre className="technical-details">Run: {jsonText(runResult)}</pre> : null}

@@ -62,6 +62,59 @@ describe("Playbooks", () => {
     expect(await screen.findByText("Started Ticket Intake Review.")).toBeInTheDocument();
   });
 
+  it("renders required playbook inputs and keeps form and raw JSON in sync", async () => {
+    const fetchMock = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      const path = String(input);
+      if (path === "/msp/playbooks") {
+        return Promise.resolve(new Response(JSON.stringify([{
+          id: "software-inventory-review",
+          name: "Software Inventory Review",
+          version: 1,
+          trigger: "schedule.daily",
+          description: "Review software.",
+          risk_level: "low",
+          steps: [{ id: "inventory", name: "Inventory", kind: "workflow", description: "Read software.", required_inputs: ["device_id"] }],
+          output_evidence: ["workflow_run_ids"]
+        }]), { status: 200 }));
+      }
+      if (path === "/msp/playbook-entries") {
+        return Promise.resolve(new Response(JSON.stringify([]), { status: 200 }));
+      }
+      if (path === "/msp/playbook-subscriptions") {
+        return Promise.resolve(new Response(JSON.stringify([]), { status: 200 }));
+      }
+      if (path === "/msp/playbooks/software-inventory-review/preview" && init?.method === "POST") {
+        return Promise.resolve(new Response(JSON.stringify({ execution_started: false, approval_required: false, steps: [] }), { status: 200 }));
+      }
+      throw new Error(`Unexpected request: ${path}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(<MemoryRouter><Playbooks /></MemoryRouter>);
+
+    const deviceId = await screen.findByLabelText("Device id");
+    fireEvent.click(screen.getByRole("button", { name: "Preview" }));
+    expect(await screen.findByText("Device id is required.")).toBeInTheDocument();
+    expect(fetchMock.mock.calls.some(([input]) => String(input).endsWith("/preview"))).toBe(false);
+
+    fireEvent.change(deviceId, { target: { value: "device-1" } });
+    fireEvent.click(screen.getByRole("button", { name: "Raw JSON (advanced)" }));
+    const raw = screen.getByLabelText("Raw JSON");
+    expect((raw as HTMLTextAreaElement).value).toContain('"device_id": "device-1"');
+    fireEvent.change(raw, { target: { value: '{"device_id":"device-2"}' } });
+    fireEvent.click(screen.getByRole("button", { name: "Back to form" }));
+    expect(screen.getByLabelText("Device id")).toHaveValue("device-2");
+
+    fireEvent.click(screen.getByRole("button", { name: "Preview" }));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
+      "/msp/playbooks/software-inventory-review/preview",
+      expect.objectContaining({
+        method: "POST",
+        body: JSON.stringify({ ticket_id: undefined, client_id: "acme", payload: { device_id: "device-2" } })
+      })
+    ));
+  });
+
   it("edits a published entry with only the backend-supported patch fields", async () => {
     const entry = {
       id: "entry-qbr",
