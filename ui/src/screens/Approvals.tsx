@@ -17,6 +17,7 @@ export function Approvals() {
     approvalRequests,
     pendingApprovals,
     canWrite,
+    liveWritesReady,
     isAdmin,
     busyId,
     updateApproval,
@@ -81,6 +82,7 @@ export function Approvals() {
           <ApprovalCard
             busy={busyId === request.id || runbookBusyId === request.id}
             canWrite={canWrite}
+            liveWritesReady={liveWritesReady}
             isAdmin={isAdmin}
             draftPayloadFields={draftPayloadFields}
             executionNotice={executionNotices[request.id]}
@@ -103,6 +105,7 @@ type ApprovalCardProps = {
   request: ApprovalRequest;
   busy: boolean;
   canWrite: boolean;
+  liveWritesReady: boolean;
   isAdmin: boolean;
   draftPayloadFields: Record<number, string>;
   executionNotice?: ExecutionNotice;
@@ -117,6 +120,7 @@ function ApprovalCard({
   request,
   busy,
   canWrite,
+  liveWritesReady,
   isAdmin,
   draftPayloadFields,
   executionNotice,
@@ -137,6 +141,18 @@ function ApprovalCard({
   const hasExecuteEndpoint = isRunbook || executeEndpointFor(request.action_type) !== null;
   const roleCanExecute = !isRunbook || isAdmin;
   const visibleBlockReason = isRunbook ? "" : request.block_reason;
+  const executionCompleted = ["succeeded", "verified", "unverified", "submitted"].includes(request.execution_status);
+  const executeHint = !canWrite
+    ? "Requires technician access"
+    : !roleCanExecute
+      ? "Requires administrator access"
+      : request.action_type.startsWith("halopsa.") &&
+          request.status === "approved" &&
+          !executionCompleted &&
+          !canExecute &&
+          !liveWritesReady
+        ? "Writes are in Safe Mode — see the write-gate indicator"
+        : undefined;
 
   return (
     <div className="approval-card">
@@ -196,45 +212,52 @@ function ApprovalCard({
       {isRunbook && !isAdmin ? (
         <p className="screen-note">PowerShell runbook execution requires administrator access.</p>
       ) : null}
-      {canWrite ? (
-        <div className="row-actions">
-          {!isRunbook ? (
+      <div className="row-actions">
+        {canWrite ? (
+          <>
+            {!isRunbook ? (
+              <button
+                className="icon-button"
+                disabled={busy || request.status !== "pending"}
+                type="button"
+                onClick={() => void savePayloadFields(request, parseFields(payloadText))}
+              >
+                <Save size={16} aria-hidden="true" />
+                Save Fields
+              </button>
+            ) : null}
             <button
-              className="icon-button"
               disabled={busy || request.status !== "pending"}
               type="button"
-              onClick={() => void savePayloadFields(request, parseFields(payloadText))}
+              onClick={() => void updateApproval(request.id, "approved")}
             >
-              <Save size={16} aria-hidden="true" />
-              Save Fields
+              <CheckCircle2 size={16} aria-hidden="true" />
+              Approve
             </button>
-          ) : null}
+            <button
+              disabled={busy || request.status !== "pending"}
+              type="button"
+              onClick={() => void updateApproval(request.id, "rejected")}
+            >
+              <XCircle size={16} aria-hidden="true" />
+              Reject
+            </button>
+          </>
+        ) : null}
+        {hasExecuteEndpoint ? (
           <button
-            disabled={busy || request.status !== "pending"}
-            type="button"
-            onClick={() => void updateApproval(request.id, "approved")}
-          >
-            <CheckCircle2 size={16} aria-hidden="true" />
-            Approve
-          </button>
-          <button
-            disabled={busy || request.status !== "pending"}
-            type="button"
-            onClick={() => void updateApproval(request.id, "rejected")}
-          >
-            <XCircle size={16} aria-hidden="true" />
-            Reject
-          </button>
-          <button
-            disabled={busy || !canExecute || !hasExecuteEndpoint || !roleCanExecute}
+            disabled={busy || !canWrite || !canExecute || !hasExecuteEndpoint || !roleCanExecute}
+            title={executeHint}
             type="button"
             onClick={() => void executeRequest(request)}
           >
             <PlayCircle size={16} aria-hidden="true" />
             Execute
           </button>
-        </div>
-      ) : null}
+        ) : (
+          <p className="screen-note">Executed from its own workflow after approval — no manual execute here.</p>
+        )}
+      </div>
     </div>
   );
 }
