@@ -1,4 +1,4 @@
-import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
+import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useDashboard } from "../app/DashboardContext";
 import { apiFetch } from "../api/client";
 import {
@@ -11,11 +11,15 @@ import {
   type CollectorValidationResult
 } from "../api/types";
 import { SchemaForm, defaultsForFields, validateRequiredFields, type SchemaFormValue } from "../components/SchemaForm";
+import { EmptyState } from "../components/EmptyState";
+import { LoadingState } from "../components/LoadingState";
 import { ScopeChip, StatusChip } from "../components/StatusChip";
 
 export function Collectors() {
   const { canWrite } = useDashboard();
   const [modules, setModules] = useState<CollectorModule[]>([]);
+  const [loading, setLoading] = useState(true);
+  const hasLoadedRef = useRef(false);
   const [selectedModule, setSelectedModule] = useState("");
   const [config, setConfig] = useState<SchemaFormValue>({});
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
@@ -36,6 +40,7 @@ export function Collectors() {
   const runResult = useMemo(() => parseRunResult(runDetail), [runDetail]);
 
   const load = useCallback(async () => {
+    if (!hasLoadedRef.current) setLoading(true);
     try {
       const [moduleRows, runRows] = await Promise.all([
         apiFetch<CollectorModule[]>("/collectors/modules"),
@@ -49,6 +54,9 @@ export function Collectors() {
       }
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "Unable to load collector screens.");
+    } finally {
+      hasLoadedRef.current = true;
+      setLoading(false);
     }
   }, [selectedModule]);
 
@@ -192,7 +200,7 @@ export function Collectors() {
           Collectors gather read-only information about this appliance. Pick one, check its settings,
           preview what it will find, then run it.
         </p>
-        <form className="draft-form" noValidate onSubmit={validateModule}>
+        {loading ? <LoadingState label="Loading collector catalog…" /> : modules.length === 0 ? <EmptyState title="No collectors are available" why="The local collector catalog returned no modules for this appliance." /> : <form id="collector-form" className="draft-form" noValidate onSubmit={validateModule}>
           <label>
             Collector
             <select value={selectedModule} onChange={(event) => selectModule(event.target.value)}>
@@ -221,11 +229,11 @@ export function Collectors() {
             <button type="button" className="icon-button" onClick={() => void previewModule()}>
               Preview
             </button>
-            <button type="button" className="icon-button" disabled={!canWrite} onClick={requestRun}>
+            <button type="button" className="icon-button" disabled={!canWrite} title={!canWrite ? "Requires technician access" : undefined} onClick={requestRun}>
               Run now
             </button>
           </div>
-        </form>
+        </form>}
 
         {confirmingRun && activeModule ? (
           <div className="notice confirm-panel" role="alertdialog" aria-label="Confirm collector run">
@@ -277,13 +285,7 @@ export function Collectors() {
           <h2>Collector runs</h2>
           <span>{runs.length}</span>
         </div>
-        {runs.length === 0 ? (
-          <p className="screen-note">
-            No runs yet. Choose a collector above, check its settings, and preview what it will gather
-            before running it for real.
-          </p>
-        ) : null}
-        <div className="table-list">
+        {loading ? <LoadingState label="Loading collector runs…" /> : runs.length === 0 ? <EmptyState title="No runs yet" why="Collector runs appear after you check and start a collector above." action={{ label: "Choose a collector above", to: "#collector-form" }} /> : <div className="table-list">
           {runs.map((run) => (
             <article className="table-row" key={run.id}>
               <div>
@@ -299,7 +301,7 @@ export function Collectors() {
               </button>
             </article>
           ))}
-        </div>
+        </div>}
       </section>
 
       <section className="panel settings-panel">

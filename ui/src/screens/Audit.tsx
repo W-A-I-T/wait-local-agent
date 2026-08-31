@@ -1,14 +1,18 @@
 import { useCallback, useEffect, useState } from "react";
 import { apiFetch } from "../api/client";
 import type { AuditEvent } from "../api/types";
+import { EmptyState } from "../components/EmptyState";
+import { LoadingState } from "../components/LoadingState";
 
 export function Audit() {
   const [events, setEvents] = useState<AuditEvent[]>([]);
+  const [loading, setLoading] = useState(true);
   const [clientId, setClientId] = useState("");
   const [exportStatus, setExportStatus] = useState("");
   const [eventsStatus, setEventsStatus] = useState("");
 
   const refresh = useCallback(async () => {
+    setLoading(true);
     try {
       const query = new URLSearchParams();
       if (clientId) {
@@ -18,6 +22,8 @@ export function Audit() {
       setEvents(await apiFetch<AuditEvent[]>(path));
     } catch (error) {
       setEventsStatus(error instanceof Error ? error.message : "Unable to load audit." );
+    } finally {
+      setLoading(false);
     }
   }, [clientId]);
 
@@ -84,8 +90,7 @@ export function Audit() {
         {eventsStatus ? <div className="notice">{eventsStatus}</div> : null}
         {exportStatus ? <div className="notice">{exportStatus}</div> : null}
 
-        {events.length === 0 ? <p>No audit events yet.</p> : null}
-        <div className="event-list">
+        {loading ? <LoadingState label="Loading audit events…" /> : events.length === 0 ? <EmptyState title="No audit events yet" why="Audit events appear after the appliance records an operator or automation action." /> : <div className="event-list">
           {events.map((event) => (
             <div className="event-row" key={event.id}>
               <span>{event.event_type}</span>
@@ -94,7 +99,7 @@ export function Audit() {
               <p>{event.message || event.detail || ""}</p>
             </div>
           ))}
-        </div>
+        </div>}
       </section>
     </div>
   );

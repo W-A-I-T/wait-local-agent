@@ -41,6 +41,19 @@ describe("M365Actions", () => {
     expect(screen.getAllByRole("link", { name: "Go to Approvals" })).toHaveLength(3);
   });
 
+  it("shows an access-loading state before deciding whether forms are allowed", () => {
+    dashboard.roleResolved = false;
+    const view = renderScreen();
+
+    expect(screen.getByText("Checking administrator access…")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Create approval draft" })).not.toBeInTheDocument();
+
+    dashboard.roleResolved = true;
+    view.rerender(<MemoryRouter><M365Actions /></MemoryRouter>);
+
+    expect(screen.getAllByRole("button", { name: "Create approval draft" })).toHaveLength(3);
+  });
+
   it("blocks drafts without a client and rejects short vault names without a password input", () => {
     dashboard.selectedClientId = "";
     const view = renderScreen();

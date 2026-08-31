@@ -41,9 +41,9 @@ const activeGrant = {
   updated_at: "2026-08-28T00:00:00Z"
 };
 
-function installApi(grants = [activeGrant]) {
+function installApi(grants = [activeGrant], principalRows = principals) {
   mockedApiFetch.mockImplementation(async (path, init) => {
-    if (path === "/packs/microsoft-admin/access/principals") return principals as never;
+    if (path === "/packs/microsoft-admin/access/principals") return principalRows as never;
     if (String(path).startsWith("/packs/microsoft-admin/access/grants?")) return grants as never;
     if (path === "/packs/microsoft-admin/access/grants" && init?.method === "POST") {
       return activeGrant as never;
@@ -126,5 +126,16 @@ describe("MicrosoftAdminAccess", () => {
     render(<MicrosoftAdminAccess />);
 
     expect(await screen.findByRole("alert")).toHaveTextContent("access data unavailable");
+  });
+
+  it("explains a fresh install with no principals instead of showing dead selects", async () => {
+    installApi([], []);
+    render(<MicrosoftAdminAccess />);
+
+    expect(await screen.findByRole("heading", { name: "No principals are available" })).toBeInTheDocument();
+    expect(screen.getByText(/configured technician tokens or database principals/)).toBeInTheDocument();
+    expect(screen.getByText(/A fresh install has none/)).toBeInTheDocument();
+    expect(screen.queryByLabelText("Principal")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Client")).not.toBeInTheDocument();
   });
 });

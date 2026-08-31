@@ -2,6 +2,8 @@ import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "re
 import { Send } from "lucide-react";
 import { ApiRequestError, apiFetch } from "../api/client";
 import { defaultFieldText, useDashboard } from "../app/DashboardContext";
+import { EmptyState } from "../components/EmptyState";
+import { LoadingState } from "../components/LoadingState";
 import { parseFields } from "../lib/fields";
 import type {
   EndUserMessage,
@@ -306,7 +308,7 @@ export function Tickets() {
         <div className="panel-heading"><div><p className="eyebrow">Operations</p><h2>Tickets</h2></div><span>{tickets.length} visible</span></div>
         <p className="screen-note">Review tickets from every connected provider in the selected client scope.</p>
         {listError ? <div className="notice danger" role="alert">{listError}</div> : null}
-        {listLoading ? <p className="screen-note" aria-busy="true">Loading tickets…</p> : tickets.length === 0 ? <div className="empty-state"><h3>No tickets are visible.</h3><p>There are no tickets in the current client scope.</p></div> : (
+        {listLoading ? <LoadingState label="Loading tickets…" /> : tickets.length === 0 ? <EmptyState title="No tickets are visible." why={<><span>There are no tickets in the current client scope.</span><span>For demo evaluation only, with writes disabled, seed a client and sample data using <code className="copyable-command">wait-local-agent demo seed --client-id demo</code>. This requires <code>WAIT_DEMO_MODE=true</code> and writes disabled.</span></>} /> : (
           <div className="clients-table-wrap"><table className="clients-table"><thead><tr><th scope="col">Ticket</th><th scope="col">Client</th><th scope="col">Status</th><th scope="col">Priority</th><th scope="col">Source</th><th scope="col">External ID</th></tr></thead><tbody>
             {tickets.map((ticket) => <tr key={ticket.id} className={ticket.id === selectedTicketId ? "selected" : undefined}><td><button className="table-link" type="button" onClick={() => selectTicket(ticket.id)}>{displayValue(ticket.summary || ticket.subject, "Untitled ticket")}</button><div className="screen-note">{ticket.id}</div></td><td>{clientNames.get(ticket.client_id ?? "") || displayValue(ticket.client_id, "Current scope")}</td><td>{displayValue(ticket.status, "Unknown")}</td><td>{displayValue(ticket.priority, "Unprioritized")}</td><td>{displayValue(ticket.source_system, "Local")}</td><td><code>{displayValue(ticket.external_id, "—")}</code></td></tr>)}
           </tbody></table></div>

@@ -89,6 +89,7 @@ describe("Templates", () => {
     render(<MemoryRouter><Templates /></MemoryRouter>);
 
     expect(await screen.findByRole("heading", { name: "Template Gallery" })).toBeInTheDocument();
+    expect(await screen.findByText("Acme triage")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Import template" })).toBeDisabled();
     const name = screen.getByLabelText("Name");
     fireEvent.change(name, { target: { value: "Acme triage updated" } });
@@ -107,6 +108,27 @@ describe("Templates", () => {
     })).toBeInTheDocument();
     expect(screen.getByText("No changes.")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Export" }));
-    expect(await screen.findByText("Exported Acme triage.")).toBeInTheDocument();
+    expect(await screen.findByText("Exported Acme triage updated.")).toBeInTheDocument();
+  });
+
+  it("shows loading before resolving an empty gallery", () => {
+    vi.stubGlobal("fetch", vi.fn(() => new Promise<Response>(() => undefined)));
+
+    render(<MemoryRouter><Templates /></MemoryRouter>);
+
+    expect(screen.getByText("Loading local templates…")).toBeInTheDocument();
+  });
+
+  it("explains an empty local gallery after loading", async () => {
+    vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL) => {
+      const path = String(input);
+      const payload = path === "/workflows/templates" ? [] : [];
+      return Promise.resolve(new Response(JSON.stringify(payload), { status: 200 }));
+    }));
+
+    render(<MemoryRouter><Templates /></MemoryRouter>);
+
+    expect(await screen.findByRole("heading", { name: "No local templates yet" })).toBeInTheDocument();
+    expect(screen.getByText("Create a tenant-scoped copy from a reviewed template above to begin.")).toBeInTheDocument();
   });
 });

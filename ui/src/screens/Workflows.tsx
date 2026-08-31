@@ -1,6 +1,8 @@
 import { FormEvent, useCallback, useEffect, useState } from "react";
 import { useDashboard } from "../app/DashboardContext";
 import { apiFetch } from "../api/client";
+import { EmptyState } from "../components/EmptyState";
+import { LoadingState } from "../components/LoadingState";
 import { type WorkflowRun, type WorkflowRunComparison, type WorkflowTemplate } from "../api/types";
 
 export function Workflows() {
@@ -106,7 +108,7 @@ export function Workflows() {
           <h2>Workflows</h2>
           <span>{templates.length} templates</span>
         </div>
-        <form className="draft-form" onSubmit={runTemplate}>
+        <form id="workflow-run-form" className="draft-form" onSubmit={runTemplate}>
           <div className="grid">
             <label>
               Template
@@ -148,8 +150,7 @@ export function Workflows() {
         {message ? <div className="notice">{message}</div> : null}
 
         <div className="table-list">
-          {templates.length === 0 ? <p>No templates available.</p> : null}
-          {templates.map((template) => (
+          {runsLoading ? <LoadingState label="Loading workflow templates…" /> : templates.length === 0 ? <EmptyState title="No workflow templates available" why="Reviewed templates must be available before a workflow can start." /> : templates.map((template) => (
             <article className="table-row" key={template.id}>
               <div>
                 <strong>{template.name}</strong>
@@ -167,8 +168,7 @@ export function Workflows() {
           <h2>Recent workflow runs</h2>
           <span>{runsLoading ? "loading" : runs.length}</span>
         </div>
-        {runs.length === 0 ? <p>No runs yet.</p> : null}
-        <div className="event-list">
+        {runsLoading ? <LoadingState label="Loading workflow runs…" /> : runs.length === 0 ? <EmptyState title="No runs yet" why="Runs appear after you start a workflow above." action={{ label: "Start a workflow above", to: "#workflow-run-form" }} /> : <div className="event-list">
           {runs.map((run) => (
             <article className="event-row" key={run.id}>
               <span>{run.template_id || run.id}</span>
@@ -177,7 +177,7 @@ export function Workflows() {
               <p>{run.message || `Ticket ${run.ticket_id || "n/a"}`}</p>
             </article>
           ))}
-        </div>
+        </div>}
       </section>
 
       <section className="panel settings-panel">

@@ -2,6 +2,7 @@ import { useState, type FormEvent } from "react";
 import { Link } from "react-router-dom";
 import { apiFetch } from "../api/client";
 import { useDashboard } from "../app/DashboardContext";
+import { LoadingState } from "../components/LoadingState";
 import { RoleGate } from "../components/RoleGate";
 
 type M365DraftApprovalView = {
@@ -130,7 +131,7 @@ export function M365Actions() {
         <p className="screen-note">Create Microsoft 365 action drafts queued for approval. These forms never execute a change here.</p>
       </section>
 
-      <RoleGate
+      {!roleResolved ? <LoadingState label="Checking administrator access…" /> : <RoleGate
         role={role}
         resolved={roleResolved}
         allowed={["admin"]}
@@ -174,7 +175,7 @@ export function M365Actions() {
             <button type="submit" disabled={!hasClient || rebootBusy}>{rebootBusy ? "Creating draft…" : "Create approval draft"}</button>
           </form>
         </section>
-      </RoleGate>
+      </RoleGate>}
     </div>
   );
 }
