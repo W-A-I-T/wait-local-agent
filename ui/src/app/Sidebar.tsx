@@ -80,6 +80,7 @@ const primaryNavigation: NavigationGroup[] = [
     label: "Solutions",
     items: [
       { to: "/m365-actions", label: "M365 Actions", icon: ShieldCheck },
+      { to: "/microsoft-admin/azure-lighthouse", label: "Azure Lighthouse", icon: ShieldCheck, microsoftAdminCapability: true },
       { to: "/consultant", label: "Solutions Architect", icon: Compass }
     ]
   }
@@ -124,7 +125,7 @@ export function Sidebar() {
   const microsoftAdmin = useMicrosoftAdminAccess();
 
   const renderItem = (item: NavItem) => {
-    if (item.microsoftAdminCapability && (!microsoftAdmin.resolved || !microsoftAdmin.allowed)) {
+    if (item.microsoftAdminCapability && (!microsoftAdmin.resolved || !microsoftAdmin.navAllowed)) {
       return null;
     }
     const link = <SidebarLink key={item.to} item={item} />;

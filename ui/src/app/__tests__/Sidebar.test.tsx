@@ -17,7 +17,7 @@ const mockedMicrosoftAdminAccess = vi.mocked(useMicrosoftAdminAccess);
 
 const destinations = [
   ["Overview", "/"], ["Clients", "/clients"],
-  ["Tickets", "/tickets"], ["Approvals", "/approvals"], ["Technician Chat", "/technician-chat"], ["Microsoft Admin", "/microsoft-admin"], ["M365 Actions", "/m365-actions"],
+  ["Tickets", "/tickets"], ["Approvals", "/approvals"], ["Technician Chat", "/technician-chat"], ["Microsoft Admin", "/microsoft-admin"], ["M365 Actions", "/m365-actions"], ["Azure Lighthouse", "/microsoft-admin/azure-lighthouse"],
   ["Playbooks", "/playbooks"], ["Workflows", "/workflows"], ["Agents", "/agents"], ["Smart Actions", "/integrations/smart-actions"], ["Events", "/automation/events"], ["Schedules", "/automation/schedules"],
   ["Solutions Architect", "/consultant"],
   ["Reports", "/reports"], ["Analytics", "/analytics"], ["Audit", "/audit"], ["Collectors", "/collectors"],
@@ -37,7 +37,7 @@ const groupedDestinations = {
     ["Knowledge", "/knowledge"], ["Schedules", "/automation/schedules"], ["Workflow Designer", "/workflow-designer"], ["Agents", "/agents"]
   ],
   Solutions: [
-    ["M365 Actions", "/m365-actions"], ["Solutions Architect", "/consultant"]
+    ["M365 Actions", "/m365-actions"], ["Azure Lighthouse", "/microsoft-admin/azure-lighthouse"], ["Solutions Architect", "/consultant"]
   ]
 } as const;
 
@@ -46,10 +46,11 @@ const advancedDestinations = [
   ["Connector Instances", "/integrations/connector-instances"], ["Microsoft Admin Access", "/microsoft-admin/access"], ["Settings", "/settings"], ["Sync / Reconciliation", "/operations/reconciliation"], ["Appliance Health", "/system/appliance-health"], ["Extensions / Packs", "/system/extensions"], ["MCP", "/integrations/mcp"], ["Templates", "/templates"], ["Scheduled Jobs", "/scheduled-jobs"], ["Smart Action Runs", "/smart-actions/runs"], ["Backfills", "/backfills"]
 ] as const;
 
-function renderSidebar(role: "admin" | "viewer", microsoftAdminAllowed = true) {
+function renderSidebar(role: "admin" | "viewer", microsoftAdminAllowed = true, microsoftAdminNavAllowed = microsoftAdminAllowed) {
   mockedUseDashboard.mockReturnValue({ role, roleResolved: true } as never);
   mockedMicrosoftAdminAccess.mockReturnValue({
     allowed: microsoftAdminAllowed,
+    navAllowed: microsoftAdminNavAllowed,
     resolved: true,
     grants: [],
     error: "",
@@ -104,6 +105,13 @@ describe("Sidebar navigation IA", () => {
     renderSidebar("viewer", false);
 
     expect(screen.queryByRole("link", { name: "Microsoft Admin" })).not.toBeInTheDocument();
+  });
+
+  it("shows the Microsoft Admin pack navigation for a client grant when All clients is selected", () => {
+    renderSidebar("viewer", false, true);
+
+    expect(screen.getByRole("link", { name: "Microsoft Admin" })).toHaveAttribute("href", "/microsoft-admin");
+    expect(screen.getByRole("link", { name: "Azure Lighthouse" })).toHaveAttribute("href", "/microsoft-admin/azure-lighthouse");
   });
 
   it("shows Microsoft Admin to a granted viewer but keeps access management admin-only", () => {

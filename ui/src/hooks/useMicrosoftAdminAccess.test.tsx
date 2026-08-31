@@ -38,6 +38,25 @@ describe("useMicrosoftAdminAccess", () => {
     dashboard("beta", [{ capability_key: "microsoft_admin", client_id: "alpha" }]);
     rerender();
     expect(result.current.allowed).toBe(false);
+    expect(result.current.navAllowed).toBe(true);
+  });
+
+  it("exposes client-scoped grants for navigation across All clients without widening route access", () => {
+    dashboard("", [{ capability_key: "microsoft_admin", client_id: "alpha" }]);
+
+    const { result } = renderHook(() => useMicrosoftAdminAccess());
+
+    expect(result.current.allowed).toBe(false);
+    expect(result.current.navAllowed).toBe(true);
+  });
+
+  it("keeps Microsoft Admin navigation hidden for All clients when no grants exist", () => {
+    dashboard("");
+
+    const { result } = renderHook(() => useMicrosoftAdminAccess());
+
+    expect(result.current.allowed).toBe(false);
+    expect(result.current.navAllowed).toBe(false);
   });
 
   it("accepts an explicit global grant", () => {
@@ -47,6 +66,7 @@ describe("useMicrosoftAdminAccess", () => {
 
     expect(result.current.resolved).toBe(true);
     expect(result.current.allowed).toBe(true);
+    expect(result.current.navAllowed).toBe(true);
   });
 
   it("fails closed when effective access cannot be read", () => {
@@ -55,6 +75,7 @@ describe("useMicrosoftAdminAccess", () => {
     const { result } = renderHook(() => useMicrosoftAdminAccess());
 
     expect(result.current.allowed).toBe(false);
+    expect(result.current.navAllowed).toBe(false);
     expect(result.current.grants).toEqual([]);
     expect(result.current.error).toBe("denied");
   });
@@ -67,6 +88,7 @@ describe("useMicrosoftAdminAccess", () => {
     const { result, rerender } = renderHook(() => useMicrosoftAdminAccess());
     expect(result.current.resolved).toBe(false);
     expect(result.current.allowed).toBe(false);
+    expect(result.current.navAllowed).toBe(false);
 
     dashboard("alpha", [{ capability_key: "microsoft_admin", client_id: "alpha" }], {
       resolved: true,
@@ -75,6 +97,7 @@ describe("useMicrosoftAdminAccess", () => {
     rerender();
     expect(result.current.resolved).toBe(false);
     expect(result.current.allowed).toBe(false);
+    expect(result.current.navAllowed).toBe(false);
   });
 
   it("delegates explicit refresh to the authenticated dashboard session", async () => {
@@ -90,5 +113,6 @@ describe("useMicrosoftAdminAccess", () => {
     dashboard("alpha", [{ capability_key: "microsoft_admin", client_id: "alpha" }]);
     rerender();
     expect(result.current.allowed).toBe(true);
+    expect(result.current.navAllowed).toBe(true);
   });
 });
