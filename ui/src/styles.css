@@ -1565,6 +1565,35 @@ nav a:hover {
   gap: 4px;
 }
 
+.supervisor-controls {
+  display: grid;
+  gap: 12px;
+  margin-top: 14px;
+}
+
+.supervisor-result {
+  background: #fbfdfc;
+  border: 1px solid #dce5e1;
+  border-radius: 10px;
+  display: grid;
+  gap: 12px;
+  margin-top: 14px;
+  padding: 12px;
+}
+
+.supervisor-result .panel-heading {
+  margin-bottom: 0;
+}
+
+.supervisor-plan-list {
+  display: grid;
+  gap: 8px;
+}
+
+.supervisor-plan-list a {
+  font-weight: 800;
+}
+
 .workflow-graph {
   border-top: 1px solid #e8efec;
   display: grid;

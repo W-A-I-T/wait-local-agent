@@ -19,6 +19,8 @@ import type {
   ConsultantEvaluationResult,
   ConsultantGovernanceResult,
   ConsultantMonitoring,
+  ConsultantSupervisorPlan,
+  ConsultantSupervisorRun,
   ConsultantUseCase,
   MspPlaybookEntry,
   PowerAppsArtifact,
@@ -68,6 +70,7 @@ type ConsultantSection =
   | "governance"
   | "evaluations"
   | "deliveryPlan"
+  | "supervisor"
   | "useCases"
   | "monitoring";
 type SectionLoadStatus = "loading" | "ready" | "empty" | "gated" | "error";
@@ -82,6 +85,7 @@ const SECTION_DETAILS: Record<ConsultantSection, { label: string; pack: string; 
   governance: { label: "governance review", pack: "Microsoft Admin", retryLabel: "governance review" },
   evaluations: { label: "agent evaluation", pack: "Microsoft Admin", retryLabel: "evaluation" },
   deliveryPlan: { label: "delivery plan", pack: "Microsoft Admin", retryLabel: "delivery plan" },
+  supervisor: { label: "supervisor delegation", pack: "Microsoft Admin", retryLabel: "supervisor delegation" },
   useCases: { label: "Solutions Architect use cases", pack: "Microsoft Admin", retryLabel: "use cases" },
   monitoring: { label: "agent monitoring", pack: "Microsoft Admin", retryLabel: "monitoring" },
 };
@@ -94,6 +98,7 @@ const INITIAL_SECTION_STATES: SectionLoadStates = {
   governance: { status: "empty" },
   evaluations: { status: "empty" },
   deliveryPlan: { status: "empty" },
+  supervisor: { status: "empty" },
   useCases: { status: "loading" },
   monitoring: { status: "loading" },
 };
@@ -206,6 +211,13 @@ export function Consultant() {
   const [evaluationEntityId, setEvaluationEntityId] = useState("TCK-1001");
   const [deliveryTargets, setDeliveryTargets] = useState("Teams, Power Automate, Power Apps, Dataverse");
   const [deliveryResult, setDeliveryResult] = useState<ConsultantDeliveryPlan | null>(null);
+  const [supervisorTask, setSupervisorTask] = useState("");
+  const [supervisorEntityId, setSupervisorEntityId] = useState("TCK-1001");
+  const [supervisorMaxRetries, setSupervisorMaxRetries] = useState("0");
+  const [supervisorPlan, setSupervisorPlan] = useState<ConsultantSupervisorPlan | null>(null);
+  const [supervisorRun, setSupervisorRun] = useState<ConsultantSupervisorRun | null>(null);
+  const [supervisorCompletedRunIds, setSupervisorCompletedRunIds] = useState<number[]>([]);
+  const [supervisorAction, setSupervisorAction] = useState<"plan" | "run" | "cancel" | "retry" | null>(null);
   const [message, setMessage] = useState("");
   const [loading, setLoading] = useState(false);
   const [sectionStates, setSectionStates] = useState<SectionLoadStates>(INITIAL_SECTION_STATES);
@@ -294,10 +306,16 @@ export function Consultant() {
     setGovernanceResult(null);
     setEvaluationResult(null);
     setDeliveryResult(null);
+    setSupervisorTask("");
+    setSupervisorPlan(null);
+    setSupervisorRun(null);
+    setSupervisorCompletedRunIds([]);
+    setSupervisorAction(null);
     setSectionState("environment", { status: "empty" });
     setSectionState("governance", { status: "empty" });
     setSectionState("evaluations", { status: "empty" });
     setSectionState("deliveryPlan", { status: "empty" });
+    setSectionState("supervisor", { status: "empty" });
     setMessage("");
     setPlaybookNotice("");
     void apiFetch<ConsultantBlueprint>(
@@ -313,6 +331,7 @@ export function Consultant() {
         `/consultant/blueprints/${encodeURIComponent(blueprintId)}/architecture`
       );
       setArchitecture(result);
+      setSupervisorTask(result.solution.name);
       setWorkflowDrafts(Object.fromEntries(
         result.components
           .filter((component) => component.kind === "workflow")
@@ -323,6 +342,93 @@ export function Consultant() {
       ));
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "Unable to build the architecture view.");
+    }
+  }
+
+  function supervisorRequestValues(requireEntityId = false) {
+    const clientId = currentClientId();
+    const task = supervisorTask.trim();
+    const entityId = supervisorEntityId.trim();
+    const childAgentIds = architecture?.supervisor?.children.map((child) => child.id) ?? [];
+    const rawMaxRetries = supervisorMaxRetries.trim();
+    const maxRetries = Number(rawMaxRetries);
+    if (!clientId || !task || (requireEntityId && !entityId) || childAgentIds.length === 0) {
+      setSectionState("supervisor", { status: "error", detail: requireEntityId
+        ? "A tenant scope, delegation task, existing ticket ID, and at least one child agent are required."
+        : "A tenant scope, delegation task, and at least one child agent are required." });
+      return null;
+    }
+    if (!rawMaxRetries || !Number.isInteger(maxRetries) || maxRetries < 0 || maxRetries > 3) {
+      setSectionState("supervisor", { status: "error", detail: "Maximum retries per child must be a whole number from 0 through 3." });
+      return null;
+    }
+    return { clientId, task, entityId, childAgentIds, maxRetries };
+  }
+
+  async function planSupervisorDelegation() {
+    const values = supervisorRequestValues();
+    if (!values) return;
+    setSupervisorAction("plan");
+    setSectionState("supervisor", { status: "loading" });
+    setSupervisorPlan(null);
+    setSupervisorRun(null);
+    setSupervisorCompletedRunIds([]);
+    try {
+      const result = await apiFetch<ConsultantSupervisorPlan>("/consultant/supervisor/plan", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          client_id: values.clientId,
+          task: values.task,
+          child_agent_ids: values.childAgentIds,
+          max_retries: values.maxRetries,
+        }),
+      });
+      setSupervisorPlan(result);
+      setSectionState("supervisor", { status: "ready" });
+    } catch (error) {
+      setSectionState("supervisor", sectionStateForError(error));
+    } finally {
+      setSupervisorAction(null);
+    }
+  }
+
+  async function runSupervisorDelegation(action: "run" | "cancel" | "retry" = "run") {
+    const values = supervisorRequestValues(true);
+    if (!values) return;
+    if (!supervisorPlan) {
+      setSectionState("supervisor", { status: "error", detail: "Plan the delegation before running it." });
+      return;
+    }
+    const pendingRunId = supervisorRun?.resumption.pending_run_id;
+    if (action === "cancel" && pendingRunId == null) {
+      setSectionState("supervisor", { status: "error", detail: "There is no approval-paused child run to cancel." });
+      return;
+    }
+    setSupervisorAction(action);
+    setSectionState("supervisor", { status: "loading" });
+    try {
+      const result = await apiFetch<ConsultantSupervisorRun>("/consultant/supervisor/run", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          client_id: values.clientId,
+          entity_id: values.entityId,
+          task: values.task,
+          child_agent_ids: values.childAgentIds,
+          input: { ticket_id: values.entityId },
+          completed_run_ids: supervisorCompletedRunIds,
+          max_retries: values.maxRetries,
+          ...(action === "cancel" ? { cancel_run_id: pendingRunId } : {}),
+        }),
+      });
+      setSupervisorRun(result);
+      setSupervisorCompletedRunIds(result.resumption.completed_run_ids);
+      setSectionState("supervisor", { status: "ready" });
+    } catch (error) {
+      setSectionState("supervisor", sectionStateForError(error));
+    } finally {
+      setSupervisorAction(null);
     }
   }
 
@@ -1215,18 +1321,55 @@ export function Consultant() {
           {architecture.supervisor && architecture.supervisor.children.length > 1 ? (
             <div className="panel-subsection">
               <h3>Supervisor delegation</h3>
-              <p className="screen-note">Child agents receive bounded tenant-scoped tasks and structured results only.</p>
-              <div className="consultant-component-list">
-                {architecture.supervisor.children.map((child) => (
-                  <div className="consultant-component" key={child.id}>
-                    <div>
-                      <strong>{child.id}</strong>
-                      <span>{child.kind} · {child.context_policy ?? "bounded structured context"}</span>
-                    </div>
-                    <StatusChip status="evidence_partial" />
-                  </div>
-                ))}
+              <p className="screen-note">Children run through the approval-gated agent engine against the selected ticket — nothing bypasses review.</p>
+              <div className="notice">
+                The delegation is tenant-scoped and one layer deep. Plan it first to verify the dependency order and each child&apos;s tools; running requires an existing ticket ID.
               </div>
+              <div className="supervisor-controls">
+                <label>
+                  Delegation task
+                  <textarea rows={2} value={supervisorTask} onChange={(event) => setSupervisorTask(event.target.value)} placeholder="Describe the bounded work for the child agents" />
+                </label>
+                <div className="grid">
+                  <label>
+                    Existing ticket or entity ID
+                    <input value={supervisorEntityId} onChange={(event) => setSupervisorEntityId(event.target.value)} placeholder="TCK-1001" />
+                  </label>
+                  <label>
+                    Max retries per child
+                    <input type="number" min="0" max="3" step="1" value={supervisorMaxRetries} onChange={(event) => setSupervisorMaxRetries(event.target.value)} />
+                  </label>
+                </div>
+                <div className="row-actions">
+                  <button type="button" onClick={() => void planSupervisorDelegation()} disabled={!canWrite || supervisorAction !== null}>
+                    {supervisorAction === "plan" ? "Planning delegation…" : "Plan delegation"}
+                  </button>
+                  <button type="button" onClick={() => void runSupervisorDelegation()} disabled={!canWrite || supervisorAction !== null || !supervisorPlan}>
+                    {supervisorAction === "run" ? "Running delegation…" : supervisorRun?.status === "pending_approval" ? "Continue delegation" : "Run delegation"}
+                  </button>
+                  {supervisorRun?.resumption.pending_run_id != null ? (
+                    <button type="button" className="secondary-button" onClick={() => void runSupervisorDelegation("cancel")} disabled={!canWrite || supervisorAction !== null}>
+                      {supervisorAction === "cancel" ? "Cancelling child…" : `Cancel pending child #${supervisorRun.resumption.pending_run_id}`}
+                    </button>
+                  ) : null}
+                  {supervisorRun?.status === "failed" ? (
+                    <button type="button" className="secondary-button" onClick={() => void runSupervisorDelegation("retry")} disabled={!canWrite || supervisorAction !== null}>
+                      {supervisorAction === "retry" ? "Retrying delegation…" : "Retry failed children"}
+                    </button>
+                  ) : null}
+                </div>
+                {!canWrite ? <p className="screen-note">Technician access is required to plan or run a delegation.</p> : null}
+              </div>
+              {sectionStates.supervisor.status === "loading" ? <p className="screen-note" aria-busy="true">Updating supervisor delegation…</p> : null}
+              <SectionLoadNotice
+                section="supervisor"
+                state={sectionStates.supervisor}
+                onRetry={() => void (supervisorPlan
+                  ? runSupervisorDelegation(supervisorRun?.status === "failed" ? "retry" : "run")
+                  : planSupervisorDelegation())}
+              />
+              {supervisorPlan ? <SupervisorPlanView plan={supervisorPlan} /> : null}
+              {supervisorRun ? <SupervisorRunView run={supervisorRun} /> : null}
             </div>
           ) : null}
           {architecture.decisions?.length ? <ArchitectureDecisions architecture={architecture} /> : null}
@@ -1399,6 +1542,69 @@ export function Consultant() {
           </div>
         </section>
       ) : null}
+    </div>
+  );
+}
+
+function SupervisorPlanView({ plan }: { plan: ConsultantSupervisorPlan }) {
+  const childrenById = new Map(plan.supervisor.children.map((child) => [child.id, child]));
+  return (
+    <div className="supervisor-result" aria-label="Supervisor delegation plan">
+      <div className="panel-heading">
+        <div>
+          <h4>Delegation plan ready</h4>
+          <p className="screen-note">Dependency order is verified before any child run starts. Supervisor depth: {plan.supervisor.max_depth}; recursion: {plan.supervisor.recursion}.</p>
+        </div>
+        <StatusChip status={plan.execution_started ? "running" : "available"} />
+      </div>
+      <div className="supervisor-plan-list">
+        {plan.assignments.map((assignment) => {
+          const child = childrenById.get(assignment.child_agent_id);
+          return (
+            <article className="consultant-component" key={`${assignment.sequence}:${assignment.child_agent_id}`}>
+              <div>
+                <strong>{assignment.sequence}. {child?.name ?? assignment.child_agent_id}</strong>
+                <span>Agent {assignment.child_agent_id} · tools: {child?.tool_ids.join(", ") || "none recorded"}</span>
+                <span>Depends on: {child?.depends_on_agent_ids.join(", ") || "none"}</span>
+              </div>
+              <StatusChip status={child?.enabled === false ? "failed" : "available"} hint={child?.context_policy} />
+            </article>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+function SupervisorRunView({ run }: { run: ConsultantSupervisorRun }) {
+  return (
+    <div className="supervisor-result" aria-label="Supervisor delegation results">
+      <div className="panel-heading">
+        <div>
+          <h4>Delegation {run.status}</h4>
+          <p className="screen-note">
+            {run.execution_started ? "Child execution was recorded by the agent engine." : "No child execution was recorded."}{" "}
+            {run.approval_requests_created ? "At least one child is waiting for approval." : "No approval request was created."}
+          </p>
+        </div>
+        <StatusChip status={run.status} />
+      </div>
+      <div className="supervisor-plan-list">
+        {run.children.map((child) => (
+          <article className="consultant-component" key={`${child.agent_id}:${child.sequence}`}>
+            <div>
+              <strong>{child.sequence}. {child.agent_id}</strong>
+              <span>Run {child.run_id != null ? `#${child.run_id}` : "not created"} · attempt {child.attempt ?? 1}{child.retry_count ? ` · ${child.retry_count} ${child.retry_count === 1 ? "retry" : "retries"}` : ""}</span>
+              {child.error_detail ? <span>{child.error_detail}</span> : null}
+              {child.approval_id != null ? <span>Approval request #{child.approval_id} is required before this child can continue.</span> : null}
+              {child.run_id != null ? <Link to="/executions">Follow up in Activity</Link> : null}
+            </div>
+            <StatusChip status={child.status} />
+          </article>
+        ))}
+      </div>
+      {run.resumption.pending_run_id != null ? <p className="screen-note">Approval-paused child run #{run.resumption.pending_run_id} must be approved or cancelled before later children are delegated.</p> : null}
+      {run.cancellation.applied ? <p className="screen-note">The requested child run was cancelled; later children were not delegated.</p> : null}
     </div>
   );
 }

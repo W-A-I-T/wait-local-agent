@@ -545,10 +545,97 @@ export type ConsultantArchitecture = {
   };
   supervisor?: {
     mode: string;
-    children: Array<{ id: string; kind: string; purpose?: string; context_policy?: string }>;
+    children: Array<{ id: string; kind: string; purpose?: string; tool_ids?: string[]; context_policy?: string; depends_on_agent_ids?: string[] }>;
     context_policy?: string;
     execution_started?: boolean;
   };
+};
+
+export type ConsultantSupervisorPlan = {
+  format: string;
+  format_version: number;
+  client_id: string;
+  supervisor: {
+    id: string;
+    mode: string;
+    max_depth: number;
+    recursion: string;
+    task: string;
+    children: Array<{
+      id: string;
+      name: string;
+      enabled: boolean;
+      tool_ids: string[];
+      depends_on_agent_ids: string[];
+      context_policy: string;
+      result_contract: Record<string, string>;
+    }>;
+    selection: string;
+  };
+  assignments: Array<{
+    sequence: number;
+    child_agent_id: string;
+    input_contract: Record<string, string>;
+  }>;
+  context_policy: string;
+  retry_policy: {
+    max_retries_per_child: number;
+    retryable_statuses: string[];
+    attempts_are_lineage_bound: boolean;
+  };
+  cancellation_policy: {
+    supported: boolean;
+    target: string;
+    stops_before_next_child: boolean;
+  };
+  delegation_started: boolean;
+  execution_started: boolean;
+  approval_requests_created: boolean;
+  cross_tenant_context: boolean;
+};
+
+export type ConsultantSupervisorRun = {
+  format: string;
+  format_version: number;
+  client_id: string;
+  entity_id: string;
+  status: string;
+  supervisor: {
+    id: string;
+    mode: string;
+    max_depth: number;
+    recursion: string;
+    task: string;
+    ordered_child_agent_ids: string[];
+    lineage_contract: string;
+  };
+  children: Array<{
+    agent_id: string;
+    run_id?: number;
+    sequence: number;
+    status: string;
+    current_step?: number | null;
+    final_result?: Record<string, unknown>;
+    approval_id?: number | null;
+    error_detail?: string;
+    resumed?: boolean;
+    attempt?: number;
+    retry_of_run_id?: number | null;
+    attempts?: Array<Record<string, unknown>>;
+    retry_count?: number;
+    lineage?: Record<string, unknown>;
+  }>;
+  resumption: {
+    completed_run_ids: number[];
+    pending_run_id: number | null;
+    next_child_agent_id: string | null;
+  };
+  delegation_started: boolean;
+  execution_started: boolean;
+  approval_requests_created: boolean;
+  retry_policy: { max_retries_per_child: number; retryable_statuses: string[] };
+  cancellation: { requested_run_id: number | null; applied: boolean };
+  cross_tenant_context: boolean;
 };
 
 export type ConsultantEnvironmentSystem = {
