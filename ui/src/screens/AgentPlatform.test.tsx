@@ -56,7 +56,14 @@ function responseFor(path: string): unknown {
 describe("AgentPlatform", () => {
   beforeEach(() => {
     mockedApiFetch.mockReset();
-    mockedUseDashboard.mockReturnValue({ canWrite: true, role: "admin" } as ReturnType<typeof useDashboard>);
+    mockedUseDashboard.mockReturnValue({
+      canWrite: true,
+      role: "admin",
+      clients: [{ client_id: "acme", name: "Acme Support", status: "active" }],
+      selectedClientId: "acme",
+      liveWritesReady: false,
+      writeHealthResolved: true
+    } as ReturnType<typeof useDashboard>);
     mockedApiFetch.mockImplementation(async (path: string) => responseFor(path) as never);
   });
 
@@ -64,10 +71,17 @@ describe("AgentPlatform", () => {
     render(<AgentPlatform />);
 
     expect(await screen.findByRole("heading", { name: "Agent Platform" })).toBeInTheDocument();
+    expect(screen.getByText(/Client scope: Acme Support \(acme\)/)).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Durable memory" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "No durable memory is available" })).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("tab", { name: "Skills" }));
     expect(await screen.findByRole("heading", { name: "Versioned skills" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "No governed skills are available" })).toBeInTheDocument();
+    const triageAction = screen.getByRole("checkbox", { name: /Ticket triage/ });
+    expect(triageAction).not.toBeChecked();
+    fireEvent.click(triageAction);
+    expect(triageAction).toBeChecked();
 
     fireEvent.click(screen.getByRole("tab", { name: "Iterations" }));
     expect(await screen.findByRole("heading", { name: "Step iteration" })).toBeInTheDocument();
@@ -85,9 +99,11 @@ describe("AgentPlatform", () => {
 
     fireEvent.click(screen.getByRole("tab", { name: "Technicians" }));
     expect(await screen.findByRole("heading", { name: "Technician intelligence" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "No technician profiles are available" })).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("tab", { name: "Attachments" }));
     expect(await screen.findByRole("heading", { name: "Ticket image context" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "No ticket images are loaded" })).toBeInTheDocument();
   });
 
   it("disables mutation controls for read-only operators", async () => {
@@ -97,5 +113,39 @@ describe("AgentPlatform", () => {
     expect(await screen.findByRole("button", { name: "Store revision" })).toBeDisabled();
     fireEvent.click(screen.getByRole("tab", { name: "Technicians" }));
     expect(await screen.findByRole("button", { name: "Save profile" })).toBeDisabled();
+  });
+
+  it("explains status failures instead of presenting a ready platform", async () => {
+    mockedApiFetch.mockImplementation(async (path: string) => {
+      if (path === "/packs/agent-platform/status") throw new Error("status unavailable");
+      return responseFor(path) as never;
+    });
+
+    render(<AgentPlatform />);
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("status unavailable");
+    expect(screen.queryByRole("heading", { name: "Agent Platform" })).not.toBeInTheDocument();
+  });
+
+  it("requires an explicit client scope and reports invalid memory input", async () => {
+    mockedUseDashboard.mockReturnValue({
+      canWrite: true,
+      role: "admin",
+      clients: [],
+      selectedClientId: "",
+      liveWritesReady: false,
+      writeHealthResolved: true
+    } as ReturnType<typeof useDashboard>);
+
+    render(<AgentPlatform />);
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("Choose a client");
+    fireEvent.change(screen.getByLabelText("Key"), { target: { value: "support-policy" } });
+    fireEvent.change(screen.getByLabelText("Provenance"), { target: { value: "operator note" } });
+    fireEvent.change(screen.getByLabelText("JSON value"), { target: { value: "not-json" } });
+    fireEvent.click(screen.getByRole("button", { name: "Store revision" }));
+
+    expect(await screen.findByRole("status")).toHaveTextContent("Memory value must be valid JSON");
+    expect(mockedApiFetch).not.toHaveBeenCalledWith("/packs/agent-platform/memories", expect.anything());
   });
 });

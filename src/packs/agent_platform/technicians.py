@@ -201,7 +201,8 @@ class TechnicianService:
                     actor,
                 ),
             )
-            assert cursor.lastrowid is not None
+            if cursor.lastrowid is None:
+                raise RuntimeError("technician workload insert did not return an ID")
             workload_id = int(cursor.lastrowid)
         self.store.add_audit_event(
             "technician_workload.recorded",

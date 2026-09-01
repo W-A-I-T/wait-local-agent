@@ -520,7 +520,8 @@ class AttachmentService:
                     created_at,
                 ),
             )
-            assert cursor.lastrowid is not None
+            if cursor.lastrowid is None:
+                raise RuntimeError("attachment analysis insert did not return an ID")
             analysis_id = int(cursor.lastrowid)
         return AttachmentAnalysis(
             id=analysis_id,

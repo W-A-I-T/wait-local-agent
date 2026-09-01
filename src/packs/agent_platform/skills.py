@@ -387,7 +387,8 @@ class SkillService:
                     created_at,
                 ),
             )
-            assert cursor.lastrowid is not None
+            if cursor.lastrowid is None:
+                raise RuntimeError("skill test insert did not return an ID")
             run_id = int(cursor.lastrowid)
         self.store.add_audit_event(
             "agent_skill.tested",
