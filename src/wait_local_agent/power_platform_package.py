@@ -88,6 +88,10 @@ def build_power_platform_package(
     component_paths: set[str] = set()
     root_components: list[dict[str, object]] = []
     unsupported: list[dict[str, object]] = []
+    design_only: list[dict[str, object]] = []
+    emitted_component_classes = {"publisher", "solution_manifest"}
+    import_complete_component_classes = {"publisher", "solution_manifest"}
+    artifact_component_classes: set[str] = set()
 
     _add_file(
         files,
@@ -117,12 +121,41 @@ def build_power_platform_package(
     for artifact_index, artifact in enumerate(normalized_artifacts, start=1):
         artifact_format = str(artifact.get("format", ""))
         if artifact_format == "wait-local-agent.power-apps-artifact":
-            _emit_power_apps_artifact(artifact, files, component_paths, root_components, unsupported, tenant)
+            _emit_power_apps_artifact(
+                artifact,
+                files,
+                component_paths,
+                root_components,
+                unsupported,
+                tenant,
+                emitted_component_classes,
+                import_complete_component_classes,
+                artifact_component_classes,
+            )
         elif artifact_format == "wait-local-agent.power-automate-flow-plan":
-            _emit_flow_artifact(artifact, files, component_paths, root_components, tenant)
+            _emit_flow_artifact(
+                artifact,
+                files,
+                component_paths,
+                root_components,
+                tenant,
+                emitted_component_classes,
+                artifact_component_classes,
+                design_only,
+            )
         elif artifact_format == "wait-local-agent.power-platform.custom-connector":
-            _emit_connector_artifact(artifact, files, component_paths, root_components, tenant)
+            _emit_connector_artifact(
+                artifact,
+                files,
+                component_paths,
+                root_components,
+                tenant,
+                emitted_component_classes,
+                import_complete_component_classes,
+                artifact_component_classes,
+            )
         else:
+            artifact_component_classes.add("unsupported")
             unsupported.append(
                 {
                     "id": str(_component_id(tenant, f"unsupported:{artifact_index}:{artifact_format}")),
@@ -162,6 +195,9 @@ def build_power_platform_package(
     if unsupported:
         unsupported.sort(key=lambda item: str(item["id"]))
         _add_file(files, "unsupported/components.json", _canonical_json_bytes({"components": unsupported}).decode())
+    if design_only:
+        design_only.sort(key=lambda item: str(item["id"]))
+        _add_file(files, "design_only/components.json", _canonical_json_bytes({"components": design_only}).decode())
 
     if len(files) > MAX_PACKAGE_FILES:
         raise PowerPlatformPackageError(f"package may contain at most {MAX_PACKAGE_FILES} files")
@@ -187,10 +223,17 @@ def build_power_platform_package(
         "output_directory": output,
         "files": file_views,
         "file_count": len(file_views),
-        "deployable": True,
-        "package_status": "deployable_source",
+        "deployable": bool(artifact_component_classes & import_complete_component_classes)
+        if normalized_artifacts
+        else bool(import_complete_component_classes),
+        "package_status": (
+            "deployable_source"
+            if emitted_component_classes <= import_complete_component_classes
+            else "partial_source"
+        ),
         "credentials_included": False,
         "unsupported_components": unsupported,
+        "design_only_components": design_only,
         "pac": {
             "minimum_cli_version": PAC_YAML_MINIMUM_VERSION,
             "format": "yaml_source_control",
@@ -230,8 +273,18 @@ def validate_power_platform_package(
     tenant = _text(package.get("client_id"), "package.client_id", 128)
     if client_id is not None and tenant != _text(client_id, "client_id", 128):
         raise PowerPlatformPackageError("package is outside the requested tenant")
-    if package.get("deployable") is not True or package.get("package_status") != "deployable_source":
-        raise PowerPlatformPackageError("package must be marked deployable_source")
+    if package.get("package_status") not in {
+        "deployable_source",
+        "partial_source",
+    }:
+        raise PowerPlatformPackageError(
+            "package_status must be deployable_source or partial_source"
+        )
+    if package.get("deployable") is not True:
+        raise PowerPlatformPackageError(
+            "package contains no component that will import, so it cannot be deployed; "
+            "it contains only design-only or unsupported components"
+        )
     if package.get("credentials_included") is not False:
         raise PowerPlatformPackageError("package must not contain credentials")
     if package.get("execution_started") is not False or package.get("deployment_started") is not False:
@@ -252,6 +305,10 @@ def validate_power_platform_package(
     if not isinstance(unsupported_components, list) or len(unsupported_components) > MAX_INPUT_ARTIFACTS:
         raise PowerPlatformPackageError("package.unsupported_components is outside the bounded limit")
     _validate_value(unsupported_components, tenant, "package.unsupported_components")
+    design_only_components = package.get("design_only_components")
+    if not isinstance(design_only_components, list) or len(design_only_components) > MAX_INPUT_ARTIFACTS:
+        raise PowerPlatformPackageError("package.design_only_components is outside the bounded limit")
+    _validate_value(design_only_components, tenant, "package.design_only_components")
     files = package.get("files")
     if not isinstance(files, list) or not 1 <= len(files) <= MAX_PACKAGE_FILES:
         raise PowerPlatformPackageError(f"package.files must contain 1-{MAX_PACKAGE_FILES} items")
@@ -446,6 +503,9 @@ def _emit_power_apps_artifact(
     root_components: list[dict[str, object]],
     unsupported: list[dict[str, object]],
     tenant: str,
+    emitted_component_classes: set[str],
+    import_complete_component_classes: set[str],
+    artifact_component_classes: set[str],
 ) -> None:
     dataverse = artifact.get("dataverse")
     if not isinstance(dataverse, Mapping) or not isinstance(dataverse.get("tables"), list):
@@ -466,6 +526,9 @@ def _emit_power_apps_artifact(
             raise PowerPlatformPackageError("Power Apps artifact tables must contain objects")
         logical = _identifier(table.get("logical_name"), "Dataverse table logical_name")
         base = f"entities/{logical}"
+        emitted_component_classes.add("entity")
+        import_complete_component_classes.add("entity")
+        artifact_component_classes.add("entity")
         component_paths.add(base)
         root_components.append({"type": "Entity", "schema_name": logical, "id": str(_component_id(tenant, base))})
         attributes: list[object] = []
@@ -473,6 +536,9 @@ def _emit_power_apps_artifact(
             if not isinstance(field, Mapping):
                 raise PowerPlatformPackageError("Dataverse table columns must contain objects")
             field_name = _identifier(field.get("logical_name"), f"{logical}.column.logical_name")
+            emitted_component_classes.add("attribute")
+            import_complete_component_classes.add("attribute")
+            artifact_component_classes.add("attribute")
             attributes.append(
                 {
                     "LogicalName": field_name,
@@ -510,6 +576,9 @@ def _emit_flow_artifact(
     component_paths: set[str],
     root_components: list[dict[str, object]],
     tenant: str,
+    emitted_component_classes: set[str],
+    artifact_component_classes: set[str],
+    design_only: list[dict[str, object]],
 ) -> None:
     flow_id = _identifier(artifact.get("workflow_id"), "workflow_id")
     name = _text(artifact.get("workflow_name", flow_id), "workflow_name", MAX_TEXT_LENGTH)
@@ -532,9 +601,22 @@ def _emit_flow_artifact(
         raise PowerPlatformPackageError("Power Automate flow artifact requires_approval must be boolean")
     approval_required = bool(declared) or any(step["ApprovalRequired"] is True for step in steps)
     base = f"modernflows/{flow_id}"
+    emitted_component_classes.add("modern_flow")
+    artifact_component_classes.add("modern_flow")
     component_paths.add(base)
     component_id = _component_id(tenant, base)
     root_components.append({"type": "ModernFlow", "schema_name": flow_id, "id": str(component_id)})
+    design_only.append(
+        {
+            "id": str(component_id),
+            "path": base,
+            "format": str(artifact.get("format")),
+            "reason": (
+                "the emitted flow source has no Logic Apps clientdata definition "
+                "or connectionReferences"
+            ),
+        }
+    )
     metadata = {
         "ModernFlow": {
             "Name": name,
@@ -591,9 +673,15 @@ def _emit_connector_artifact(
     component_paths: set[str],
     root_components: list[dict[str, object]],
     tenant: str,
+    emitted_component_classes: set[str],
+    import_complete_component_classes: set[str],
+    artifact_component_classes: set[str],
 ) -> None:
     connector_id = _identifier(artifact.get("connector_id"), "connector_id")
     base = f"connectors/{connector_id}"
+    emitted_component_classes.add("custom_connector")
+    import_complete_component_classes.add("custom_connector")
+    artifact_component_classes.add("custom_connector")
     component_paths.add(base)
     component_id = _component_id(tenant, base)
     root_components.append({"type": "Connector", "schema_name": connector_id, "id": str(component_id)})
