@@ -201,6 +201,45 @@ describe("AgentPlatform", () => {
     expect(mockedApiFetch).not.toHaveBeenCalledWith("/packs/agent-platform/technicians");
   });
 
+  it("reloads scoped records when the selected client changes", async () => {
+    let memoryRows: unknown[] = [{
+      id: "memory-a",
+      key: "client-a-fact",
+      value: { owner: "client-a" },
+      summary: "Client A only",
+      provenance: "browser test",
+      version: 1,
+      scope_type: "client",
+      pinned: false
+    }];
+    mockedApiFetch.mockImplementation(async (path: string) => {
+      if (path === "/packs/agent-platform/memories") return memoryRows as never;
+      return responseFor(path) as never;
+    });
+
+    const view = render(<AgentPlatform />);
+    expect(await screen.findByRole("heading", { name: "client-a-fact" })).toBeInTheDocument();
+
+    memoryRows = [];
+    mockedUseDashboard.mockReturnValue({
+      canWrite: true,
+      role: "admin",
+      clients: [
+        { client_id: "acme", name: "Acme Support", status: "active" },
+        { client_id: "client-b", name: "Client B", status: "active" }
+      ],
+      selectedClientId: "client-b",
+      liveWritesReady: false,
+      writeHealthResolved: true
+    } as unknown as ReturnType<typeof useDashboard>);
+    view.rerender(<AgentPlatform />);
+
+    await waitFor(() => {
+      expect(screen.queryByRole("heading", { name: "client-a-fact" })).not.toBeInTheDocument();
+      expect(screen.getByRole("heading", { name: "No durable memory is available" })).toBeInTheDocument();
+    });
+  });
+
   it("reports invalid memory input without sending a failed save", async () => {
     render(<AgentPlatform />);
 

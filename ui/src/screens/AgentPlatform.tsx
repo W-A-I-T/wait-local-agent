@@ -738,11 +738,11 @@ export function AgentPlatform() {
       </section>
       {selectedClientId ? (
         <>
-          {tab === "memory" ? <MemoryPanel canWrite={canWrite} /> : null}
-          {tab === "skills" ? <SkillsPanel canWrite={canWrite} /> : null}
-          {tab === "iterations" ? <IterationsPanel canWrite={canWrite} /> : null}
-          {tab === "technicians" ? <TechniciansPanel canWrite={canWrite} isAdmin={role === "admin"} /> : null}
-          {tab === "attachments" ? <AttachmentsPanel canWrite={canWrite} maxBytes={status?.attachment_max_bytes} /> : null}
+          {tab === "memory" ? <MemoryPanel key={selectedClientId} canWrite={canWrite} /> : null}
+          {tab === "skills" ? <SkillsPanel key={selectedClientId} canWrite={canWrite} /> : null}
+          {tab === "iterations" ? <IterationsPanel key={selectedClientId} canWrite={canWrite} /> : null}
+          {tab === "technicians" ? <TechniciansPanel key={selectedClientId} canWrite={canWrite} isAdmin={role === "admin"} /> : null}
+          {tab === "attachments" ? <AttachmentsPanel key={selectedClientId} canWrite={canWrite} maxBytes={status?.attachment_max_bytes} /> : null}
         </>
       ) : (
         <EmptyState
