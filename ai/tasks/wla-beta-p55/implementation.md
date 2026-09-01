@@ -23,11 +23,12 @@
   registry access and was stopped.
 - Focused Vitest acceptance set — 5 files, 33 tests passed.
 - `npm test -- --run` — 71 files, 397 tests passed; run twice.
+- Fresh sequential post-fix reruns — 71 files, 397 tests passed on both runs.
 - `npm run build` — passed (`tsc -b` and Vite production build).
 - `git diff --check` — passed.
 - `npx playwright test e2e/production-readiness.spec.ts --list` — passed;
   the targeted browser run was not executed because the configured local UI
-  service at `127.0.0.1:5173` was unavailable.
+  service at `127.0.0.1:5173` refused the connection.
 
 ## Files Touched
 
@@ -41,5 +42,10 @@
   client in the shared top-bar selector before using Playbooks, and to assert
   that Preview is enabled before clicking it. This keeps the e2e flow aligned
   with the intentional scoped-write gate without changing application code.
+- Replaced the label-based client lookup with
+  `page.locator("#app-client-selector")` after CI exposed a strict-mode
+  collision with unrelated `aria-label` values. The selector id is unique in
+  the application DOM, so this keeps the e2e fix stable without changing
+  application behavior.
 - Human review/merge remains the next action; no PR was created by this
   execution.
