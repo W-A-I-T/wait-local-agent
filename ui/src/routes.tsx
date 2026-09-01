@@ -57,6 +57,25 @@ function RouteLoading() {
   );
 }
 
+function MicrosoftAdminAccessRoute() {
+  const { role, roleResolved } = useDashboard();
+  return (
+    <RoleGate
+      role={role}
+      resolved={roleResolved}
+      allowed={["admin"]}
+      fallback={(
+        <section className="panel" role="alert">
+          <h2>Administrator access required</h2>
+          <p className="screen-note">Only administrators can assign Microsoft Admin capability grants.</p>
+        </section>
+      )}
+    >
+      <MicrosoftAdminAccess />
+    </RoleGate>
+  );
+}
+
 function MspAdminRoute({ children, description }: { children: ReactNode; description: string }) {
   const { role, roleResolved, isMspAdmin } = useDashboard();
   return (
