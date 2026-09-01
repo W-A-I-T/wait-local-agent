@@ -55,6 +55,10 @@ All notable changes to WAIT Local Agent will be documented in this file.
 
 ### Fixed
 
+- Power Platform deployment and rollback approvals now reject re-execution
+  after any terminal execution status, preserving the original promotion
+  evidence.
+
 - Packaged `flow.yml` now records the real trigger and action sequence instead
   of an empty trigger and empty step list; package digests for flow-bearing
   solutions change accordingly.
