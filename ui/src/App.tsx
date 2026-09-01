@@ -1,6 +1,7 @@
 import { AppShell } from "./app/AppShell";
 import { DashboardProvider, useDashboard } from "./app/DashboardContext";
 import { EndUserSupport } from "./screens/EndUserSupport";
+import { Login } from "./screens/Login";
 import { useEffect, useRef } from "react";
 import { useLocation } from "react-router-dom";
 
@@ -18,7 +19,7 @@ export function App() {
 
 function DashboardRouteRefresh() {
   const location = useLocation();
-  const { refreshConfiguration } = useDashboard();
+  const { authState, loading, refreshConfiguration } = useDashboard();
   const previousLocationKey = useRef(location.key);
 
   useEffect(() => {
@@ -43,5 +44,8 @@ function DashboardRouteRefresh() {
     };
   }, [refreshConfiguration]);
 
+  if (!loading && (authState === null || authState === "invalid-token")) {
+    return <Login />;
+  }
   return <AppShell />;
 }

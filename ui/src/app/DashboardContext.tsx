@@ -15,6 +15,7 @@ import type {
   EventHistory,
   HaloReadResult,
   HaloTicket,
+  AuthSessionResponse,
   HaloTicketsResponse,
   ReadinessStep,
   WorkflowRun
@@ -90,6 +91,9 @@ type EffectiveCapabilityResponse = {
 type DashboardContextValue = {
   actionTypes: string[];
   apiToken: string;
+  principalId: string | null;
+  authMethod: string;
+  expiresAt: string | null;
   clientId: string;
   selectedClientId: string;
   clients: ClientDirectoryEntry[];
@@ -114,6 +118,7 @@ type DashboardContextValue = {
   workflowRuns: WorkflowRun[];
   refreshErrors: string[];
   statusMessage: string;
+  setStatusMessage: (message: string) => void;
   loading: boolean;
   refreshNonce: number;
   roleResolved: boolean;
@@ -130,6 +135,7 @@ type DashboardContextValue = {
   refreshConfiguration: () => Promise<void>;
   saveApiToken: () => Promise<void>;
   clearApiToken: () => Promise<void>;
+  logout: () => Promise<void>;
   selectTicket: (ticketId: string) => void;
   createDraft: (ticketId: string, actionType: string, fields: Record<string, string>) => Promise<void>;
   updateApproval: (requestId: number, status: "approved" | "rejected") => Promise<void>;
@@ -169,6 +175,9 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
   const [isMspAdmin, setIsMspAdmin] = useState(false);
   const [endUserSupportEnabled, setEndUserSupportEnabled] = useState(false);
   const [authState, setAuthState] = useState<AuthState | null>(null);
+  const [principalId, setPrincipalId] = useState<string | null>(null);
+  const [authMethod, setAuthMethod] = useState("bearer");
+  const [expiresAt, setExpiresAt] = useState<string | null>(null);
   const [clientId, setClientId] = useState("");
   const [selectedClientId, setSelectedClientIdState] = useState(() => loadStoredSelectedClientId());
   const [clients, setClients] = useState<ClientDirectoryEntry[]>([]);
@@ -212,13 +221,29 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
     setIsMspAdmin(false);
     setEndUserSupportEnabled(false);
     setAuthState(null);
+    setPrincipalId(null);
+    setAuthMethod("bearer");
+    setExpiresAt(null);
     setRoleResolved(false);
     setCapabilityGrants([]);
     setCapabilityResolved(false);
     setCapabilityError("");
     setWriteHealthResolved(false);
     try {
-      const auth = await apiFetch<AuthRoleResponse>("/auth/role");
+      let auth: AuthRoleResponse;
+      let session: AuthSessionResponse | null = null;
+      try {
+        session = await apiFetch<AuthSessionResponse>("/auth/session");
+      } catch {
+        // Older appliances and transient probe failures retain bearer fallback.
+      }
+      if (session?.authenticated === true && session.auth_method && session.auth_method !== "bearer") {
+        persistApiToken("");
+        setApiToken("");
+        auth = session;
+      } else {
+        auth = await apiFetch<AuthRoleResponse>("/auth/role");
+      }
       if (roleRequestId !== roleRequestIdRef.current) {
         return null;
       }
@@ -254,6 +279,9 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
       setIsMspAdmin(auth.is_msp_admin === true);
       setEndUserSupportEnabled(auth.end_user_support_enabled === true);
       setAuthState(nextAuthState);
+      setPrincipalId(auth.principal_id ?? null);
+      setAuthMethod(auth.auth_method ?? (auth.demo_mode ? "demo" : "bearer"));
+      setExpiresAt(auth.expires_at ?? null);
       setClientId(auth.client_id ?? "");
       setRoleResolved(true);
       if (capabilityResult.status === "fulfilled") {
@@ -291,6 +319,9 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
       setIsMspAdmin(false);
       setEndUserSupportEnabled(false);
       setRoleResolved(false);
+      setPrincipalId(null);
+      setAuthMethod("bearer");
+      setExpiresAt(null);
       const nextAuthState = hasStoredApiToken() && isUnauthorized(error) ? "invalid-token" : null;
       setAuthState(nextAuthState);
       setCapabilityGrants([]);
@@ -313,7 +344,7 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
     persistApiToken(apiToken);
     const result = await refresh();
     if (result?.authState === "invalid-token") {
-      setStatusMessage("Token rejected. Clear Token resets it.");
+      setStatusMessage("Access credential rejected. Return to sign in and try again.");
       return;
     }
     if (result?.role) {
@@ -327,6 +358,19 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
     setApiToken("");
     persistApiToken("");
     setStatusMessage("API token cleared.");
+    await refresh();
+  }, [refresh]);
+
+  const logout = useCallback(async () => {
+    try {
+      await apiFetch<{ authenticated: boolean }>("/auth/logout", { method: "POST" });
+    } catch (error) {
+      setStatusMessage(error instanceof Error ? error.message : "Sign out failed.");
+      return;
+    }
+    setApiToken("");
+    persistApiToken("");
+    setStatusMessage("Signed out.");
     await refresh();
   }, [refresh]);
 
@@ -438,6 +482,9 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
     return {
       actionTypes,
       apiToken,
+      principalId: (authState && roleResolved) ? principalId : null,
+      authMethod,
+      expiresAt,
       clientId,
       selectedClientId,
       clients,
@@ -462,6 +509,7 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
       workflowRuns,
       refreshErrors,
       statusMessage,
+      setStatusMessage,
       loading,
       refreshNonce,
       roleResolved,
@@ -478,6 +526,7 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
       refreshConfiguration: configuration.refresh,
       saveApiToken,
       clearApiToken,
+      logout,
       selectTicket,
       createDraft,
       updateApproval,
@@ -493,6 +542,9 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
     };
   }, [
     apiToken,
+    authMethod,
+    expiresAt,
+    principalId,
     authState,
     clientId,
     clients,
@@ -502,6 +554,7 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
     capabilityGrants,
     capabilityResolved,
     clearApiToken,
+    logout,
     configuration.isConfigured,
     configuration.loading,
     configuration.steps,
@@ -566,6 +619,9 @@ function isUnauthorized(error: unknown): boolean {
 function deriveAuthState(auth: AuthRoleResponse, storedToken: string): AuthState | null {
   if (auth.demo_mode === true) {
     return "demo";
+  }
+  if (auth.auth_method && auth.auth_method !== "bearer") {
+    return "authenticated";
   }
   if (auth.api_auth_required === false) {
     return "local-open";

@@ -32,6 +32,7 @@ import { Schedules } from "./screens/Schedules";
 import { ConnectorInstances } from "./screens/ConnectorInstances";
 import { SyncReconciliation } from "./screens/SyncReconciliation";
 import { Clients } from "./screens/Clients";
+import { Login } from "./screens/Login";
 import { M365Actions } from "./screens/M365Actions";
 import { MicrosoftAdmin } from "./screens/MicrosoftAdmin";
 import { MicrosoftAdminAccess } from "./screens/MicrosoftAdminAccess";
@@ -95,6 +96,7 @@ function PrincipalsAdminRoute() {
 export function AppRoutes() {
   return (
     <Routes>
+      <Route path="login" element={<Login />} />
       <Route index element={<Overview />} />
       <Route path="clients" element={<Clients />} />
       <Route path="connectors" element={<Connectors />} />
