@@ -1747,11 +1747,59 @@ export type MicrosoftAdminRunbookPlan = {
 export type AuthRoleResponse = {
   role: "admin" | "technician" | "viewer";
   client_id?: string | null;
+  client_ids?: string[];
   api_auth_required: boolean;
   demo_mode: boolean;
   end_user_support_enabled: boolean;
   is_msp_admin?: boolean;
   principal_id?: string | null;
+  auth_method?: string;
+  expires_at?: string | null;
+};
+
+export type AuthSessionResponse = AuthRoleResponse & {
+  authenticated: boolean;
+};
+
+export type PrincipalClientRole = "end_user" | "viewer" | "technician" | "admin";
+
+export type PrincipalCredential = {
+  credential_hash_prefix: string;
+  active: boolean;
+  created_at: string;
+};
+
+export type PrincipalAdminView = {
+  principal_id: string;
+  kind: "customer" | "staff";
+  display_name: string;
+  active: boolean;
+  created_at: string;
+  client_roles: Array<[string, PrincipalClientRole]>;
+  global_roles: string[];
+  credential_count: number;
+  credentials: PrincipalCredential[];
+  identities: PrincipalIdentity[];
+};
+
+export type PrincipalIdentity = {
+  issuer: string;
+  subject: string;
+  subject_kind: "oid" | "email";
+  created_at: string;
+  last_login_at: string | null;
+};
+
+export type OidcConfig = {
+  enabled: boolean;
+  tenant_id: string;
+  client_id: string;
+  public_base_url: string;
+  auto_provision_enabled: boolean;
+  auto_provision_tenant_id: string;
+  auto_provision_client_id: string;
+  auto_provision_role: "viewer";
+  client_secret_configured: boolean;
 };
 
 export type FounderUploadPreview = {

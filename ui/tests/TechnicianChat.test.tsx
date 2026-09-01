@@ -3,7 +3,12 @@ import { MemoryRouter } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { TechnicianChat } from "../src/screens/TechnicianChat";
 
-const dashboard = vi.hoisted(() => ({ canWrite: true }));
+const dashboard = vi.hoisted(() => ({
+  canWrite: true,
+  selectedClientId: "acme",
+  setSelectedClientId: vi.fn(),
+  clients: [{ client_id: "acme", name: "Acme Support", status: "active" }]
+}));
 
 vi.mock("../src/app/DashboardContext", () => ({
   useDashboard: () => dashboard
@@ -67,7 +72,7 @@ describe("TechnicianChat", () => {
     expect(await screen.findByRole("heading", { name: "Technician Chat" })).toBeInTheDocument();
     expect(await screen.findByText("communication delivery is not configured")).toBeInTheDocument();
     expect(await screen.findByRole("button", { name: /TCS-1/ })).toBeInTheDocument();
-    fireEvent.change(screen.getByLabelText("Client id (optional for a scoped technician token)"), { target: { value: "acme" } });
+    expect(screen.getByLabelText("Client ID (required)")).toHaveValue("acme");
     fireEvent.click(screen.getByRole("button", { name: "New chat session" }));
     expect(await screen.findByText("Session TCS-2 started.")).toBeInTheDocument();
 
@@ -89,7 +94,7 @@ describe("TechnicianChat", () => {
     render(<MemoryRouter><TechnicianChat /></MemoryRouter>);
 
     await screen.findByRole("heading", { name: "Technician Chat" });
-    fireEvent.change(screen.getByLabelText("Client id (optional for a scoped technician token)"), { target: { value: "acme" } });
+    expect(screen.getByLabelText("Client ID (required)")).toHaveValue("acme");
     fireEvent.change(screen.getByLabelText("Notification channel"), { target: { value: "teams" } });
     fireEvent.change(screen.getByLabelText("Recipient or channel"), { target: { value: "support-ops" } });
     fireEvent.change(screen.getByLabelText("Notification message"), { target: { value: "TCK-1001 needs review" } });

@@ -6,6 +6,7 @@ import { Agents } from "../src/screens/Agents";
 vi.mock("../src/app/DashboardContext", () => ({
   useDashboard: () => ({
     canWrite: true,
+    selectedClientId: "acme",
     connectors: [{ id: "timezest", name: "TimeZest", status: "not_configured", message: "not configured" }]
   })
 }));

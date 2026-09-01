@@ -34,6 +34,9 @@ function configureApiFetch(summary?: PollSummary) {
     if (path === "/connector-instances") {
       return Promise.resolve([instance]) as ReturnType<typeof apiFetch>;
     }
+    if (path === "/ingestion/sync-cursors") {
+      return Promise.resolve([]) as ReturnType<typeof apiFetch>;
+    }
     if (path === "/client-connector-mappings?connector_instance_id=ci-halo-1") {
       return Promise.resolve([]) as ReturnType<typeof apiFetch>;
     }
@@ -100,6 +103,7 @@ describe("ConnectorInstances sync action", () => {
     mockedApiFetch.mockImplementation((path, init) => {
       if (path === "/clients") return Promise.resolve([]) as ReturnType<typeof apiFetch>;
       if (path === "/connector-instances") return Promise.resolve([instance]) as ReturnType<typeof apiFetch>;
+      if (path === "/ingestion/sync-cursors") return Promise.resolve([]) as ReturnType<typeof apiFetch>;
       if (path === "/client-connector-mappings?connector_instance_id=ci-halo-1") return Promise.resolve([]) as ReturnType<typeof apiFetch>;
       if (path === "/connectors/instances/ci-halo-1/sync" && init?.method === "POST") return Promise.reject(conflict) as ReturnType<typeof apiFetch>;
       throw new Error(`Unexpected request: ${path}`);
@@ -123,6 +127,7 @@ describe("ConnectorInstances company mappings", () => {
     mockedApiFetch.mockImplementation((path) => {
       if (path === "/clients") return Promise.resolve([]) as ReturnType<typeof apiFetch>;
       if (path === "/connector-instances") return Promise.resolve([instance]) as ReturnType<typeof apiFetch>;
+      if (path === "/ingestion/sync-cursors") return Promise.resolve([]) as ReturnType<typeof apiFetch>;
       if (path === "/client-connector-mappings?connector_instance_id=ci-halo-1") return Promise.resolve([]) as ReturnType<typeof apiFetch>;
       if (path === "/connectors/halopsa/clients?page=1&page_size=50") {
         return Promise.resolve({ result: { status: "not_configured", message: "Halo is not configured", count: 0 }, items: [] }) as ReturnType<typeof apiFetch>;
@@ -147,6 +152,7 @@ describe("ConnectorInstances company mappings", () => {
     mockedApiFetch.mockImplementation((path) => {
       if (path === "/clients") return Promise.resolve([]) as ReturnType<typeof apiFetch>;
       if (path === "/connector-instances") return Promise.resolve([instance, secondInstance]) as ReturnType<typeof apiFetch>;
+      if (path === "/ingestion/sync-cursors") return Promise.resolve([]) as ReturnType<typeof apiFetch>;
       if (path === "/client-connector-mappings?connector_instance_id=ci-halo-1" || path === "/client-connector-mappings?connector_instance_id=ci-halo-2") {
         return Promise.resolve([]) as ReturnType<typeof apiFetch>;
       }
@@ -181,6 +187,7 @@ describe("ConnectorInstances company mappings", () => {
     mockedApiFetch.mockImplementation((path, init) => {
       if (path === "/clients") return Promise.resolve([{ client_id: "acme", name: "Acme", status: "active" }]) as ReturnType<typeof apiFetch>;
       if (path === "/connector-instances") return Promise.resolve([instance]) as ReturnType<typeof apiFetch>;
+      if (path === "/ingestion/sync-cursors") return Promise.resolve([]) as ReturnType<typeof apiFetch>;
       if (path === "/client-connector-mappings?connector_instance_id=ci-halo-1") {
         mappingListCalls += 1;
         return Promise.resolve(mappingListCalls === 1 ? [] : [mapping]) as ReturnType<typeof apiFetch>;
@@ -228,6 +235,7 @@ describe("ConnectorInstances company mappings", () => {
     mockedApiFetch.mockImplementation((path, init) => {
       if (path === "/clients") return Promise.resolve([]) as ReturnType<typeof apiFetch>;
       if (path === "/connector-instances") return Promise.resolve([instance]) as ReturnType<typeof apiFetch>;
+      if (path === "/ingestion/sync-cursors") return Promise.resolve([]) as ReturnType<typeof apiFetch>;
       if (path === "/client-connector-mappings?connector_instance_id=ci-halo-1") {
         mappingListCalls += 1;
         return Promise.resolve(mappingListCalls === 1 ? [unverified] : [verified]) as ReturnType<typeof apiFetch>;
@@ -250,6 +258,7 @@ describe("ConnectorInstances company mappings", () => {
     mockedApiFetch.mockImplementation((path) => {
       if (path === "/clients") return Promise.resolve([]) as ReturnType<typeof apiFetch>;
       if (path === "/connector-instances") return Promise.resolve([connectWiseInstance]) as ReturnType<typeof apiFetch>;
+      if (path === "/ingestion/sync-cursors") return Promise.resolve([]) as ReturnType<typeof apiFetch>;
       if (path === "/client-connector-mappings?connector_instance_id=ci-connectwise-1") return Promise.resolve([]) as ReturnType<typeof apiFetch>;
       if (path === "/connectors/connectwise/companies?page=1&page_size=50") {
         return Promise.resolve({ result: { status: "success", message: "ok", count: 1 }, items: [{ id: "cw-company-42", name: "Acme ConnectWise" }] }) as ReturnType<typeof apiFetch>;
@@ -267,6 +276,7 @@ describe("ConnectorInstances company mappings", () => {
     mockedApiFetch.mockImplementation((path) => {
       if (path === "/clients") return Promise.resolve([]) as ReturnType<typeof apiFetch>;
       if (path === "/connector-instances") return Promise.resolve([{ ...instance, connector_type: "autotask", display_name: "Acme Autotask" }]) as ReturnType<typeof apiFetch>;
+      if (path === "/ingestion/sync-cursors") return Promise.resolve([]) as ReturnType<typeof apiFetch>;
       if (path === "/client-connector-mappings?connector_instance_id=ci-halo-1") return Promise.resolve([]) as ReturnType<typeof apiFetch>;
       throw new Error(`Unexpected request: ${path}`);
     });
@@ -287,6 +297,7 @@ describe("ConnectorInstances connect flow", () => {
         ]) as ReturnType<typeof apiFetch>;
       }
       if (path === "/connector-instances") return Promise.resolve([]) as ReturnType<typeof apiFetch>;
+      if (path === "/ingestion/sync-cursors") return Promise.resolve([]) as ReturnType<typeof apiFetch>;
       if (path === "/client-connector-mappings") return Promise.resolve([]) as ReturnType<typeof apiFetch>;
       throw new Error(`Unexpected request: ${path}`);
     });
@@ -391,6 +402,7 @@ describe("ConnectorInstances connect flow", () => {
     mockedApiFetch.mockImplementation((path, init) => {
       if (path === "/clients") return Promise.resolve([]) as ReturnType<typeof apiFetch>;
       if (path === "/connector-instances") return Promise.resolve([]) as ReturnType<typeof apiFetch>;
+      if (path === "/ingestion/sync-cursors") return Promise.resolve([]) as ReturnType<typeof apiFetch>;
       if (path === "/secrets" && init?.method === "POST") {
         return Promise.reject(Object.assign(new Error("forbidden"), { status: 403 })) as ReturnType<typeof apiFetch>;
       }
@@ -417,6 +429,7 @@ describe("ConnectorInstances connect flow", () => {
       if (path === "/clients") return Promise.resolve([]) as ReturnType<typeof apiFetch>;
       if (path === "/connector-instances" && init?.method === "POST") return Promise.reject(instanceError) as ReturnType<typeof apiFetch>;
       if (path === "/connector-instances") return Promise.resolve([]) as ReturnType<typeof apiFetch>;
+      if (path === "/ingestion/sync-cursors") return Promise.resolve([]) as ReturnType<typeof apiFetch>;
       if (path === "/secrets" && init?.method === "POST") return Promise.resolve(undefined) as ReturnType<typeof apiFetch>;
       throw new Error(`Unexpected request: ${path}`);
     });

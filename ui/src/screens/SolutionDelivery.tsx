@@ -3,6 +3,7 @@ import { AlertTriangle, CheckCircle2, Circle, FileJson, PackageOpen, PlayCircle,
 import { Link } from "react-router-dom";
 import { executeEndpointFor, useDashboard } from "../app/DashboardContext";
 import { apiFetch } from "../api/client";
+import { ClientIdSelect } from "../components/ClientIdSelect";
 import type { ApprovalRequest } from "../api/types";
 
 type JsonRecord = Record<string, unknown>;
@@ -106,6 +107,7 @@ export function SolutionDelivery() {
   const {
     approvalRequests,
     canWrite,
+    clients = [],
     clientId: scopedClientId,
     executeApproval,
     isAdmin,
@@ -381,7 +383,7 @@ export function SolutionDelivery() {
         <div className="panel-heading"><div><h2><PackageOpen size={18} aria-hidden="true" /> 1. Package</h2><p className="screen-note">Create deterministic, credential-free YAML source in memory.</p></div></div>
         <form className="draft-form" onSubmit={(event) => void buildPackage(event)}>
           <div className="grid">
-            <TextField label="Client workspace ID" value={packageForm.clientId} onChange={(value) => setPackageForm((current) => ({ ...current, clientId: value }))} />
+            <ClientIdSelect label="Client workspace ID" value={packageForm.clientId} onChange={(value) => setPackageForm((current) => ({ ...current, clientId: value }))} clients={clients} required id="package-client-id" />
             <TextField label="Solution name" value={packageForm.solutionName} onChange={(value) => setPackageForm((current) => ({ ...current, solutionName: value }))} />
             <TextField label="Publisher name" value={packageForm.publisherName} onChange={(value) => setPackageForm((current) => ({ ...current, publisherName: value }))} />
             <TextField label="Publisher prefix" value={packageForm.publisherPrefix} onChange={(value) => setPackageForm((current) => ({ ...current, publisherPrefix: value }))} />
@@ -416,7 +418,7 @@ export function SolutionDelivery() {
         <div className="panel-heading"><div><h2><PlayCircle size={18} aria-hidden="true" /> 4. Deployment approvals</h2><p className="screen-note">Request one approval per ordered build, DEV, TEST, or PROD stage.</p></div></div>
         <form className="draft-form" onSubmit={(event) => void requestDeploymentApproval(event)}>
           <div className="grid">
-            <TextField label="Deployment client workspace ID" value={deploymentForm.clientId} onChange={(value) => setDeploymentForm((current) => ({ ...current, clientId: value }))} />
+            <ClientIdSelect label="Deployment client workspace ID" value={deploymentForm.clientId} onChange={(value) => setDeploymentForm((current) => ({ ...current, clientId: value }))} clients={clients} required id="deployment-client-id" />
             <TextField label="Deployment solution name" value={deploymentForm.solutionName} onChange={(value) => setDeploymentForm((current) => ({ ...current, solutionName: value }))} />
             <TextField label="Deployment publisher name" value={deploymentForm.publisherName} onChange={(value) => setDeploymentForm((current) => ({ ...current, publisherName: value }))} />
             <TextField label="Deployment publisher prefix" value={deploymentForm.publisherPrefix} onChange={(value) => setDeploymentForm((current) => ({ ...current, publisherPrefix: value }))} />
@@ -434,7 +436,7 @@ export function SolutionDelivery() {
         <div className="panel-heading"><div><h2><RotateCcw size={18} aria-hidden="true" /> 5. Rollback approval</h2><p className="screen-note">Choose the prior ZIP explicitly; WAIT never selects a rollback artifact automatically.</p></div></div>
         <form className="draft-form" onSubmit={(event) => void requestRollbackApproval(event)}>
           <div className="grid">
-            <TextField label="Rollback client workspace ID" value={rollbackForm.clientId} onChange={(value) => setRollbackForm((current) => ({ ...current, clientId: value }))} />
+            <ClientIdSelect label="Rollback client workspace ID" value={rollbackForm.clientId} onChange={(value) => setRollbackForm((current) => ({ ...current, clientId: value }))} clients={clients} required id="rollback-client-id" />
             <TextField label="Rollback solution name" value={rollbackForm.solutionName} onChange={(value) => setRollbackForm((current) => ({ ...current, solutionName: value }))} />
             <TextField label="Rollback publisher name" value={rollbackForm.publisherName} onChange={(value) => setRollbackForm((current) => ({ ...current, publisherName: value }))} />
             <TextField label="Rollback publisher prefix" value={rollbackForm.publisherPrefix} onChange={(value) => setRollbackForm((current) => ({ ...current, publisherPrefix: value }))} />

@@ -66,7 +66,7 @@ export function Settings() {
       if (error instanceof ApiRequestError && error.status === 403) {
         setStatusMessage(
           authState === "invalid-token"
-            ? "Token rejected. Clear Token and save a valid token to continue."
+            ? "Access credential rejected. Return to sign in and try again."
             : `Administrator role required for admin settings. Current role: ${accessRole}.`
         );
         return;
@@ -195,7 +195,7 @@ export function Settings() {
         {!isAdmin ? (
           <div className="notice danger">
             {authState === "invalid-token"
-              ? "Token rejected. Clear Token resets it before you save another token."
+              ? "Access credential rejected. Return to sign in and try again."
               : `Administrator role required for write controls. Current role: ${accessRole}.`}
           </div>
         ) : null}

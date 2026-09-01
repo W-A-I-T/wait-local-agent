@@ -1,13 +1,13 @@
 import { Fragment, useCallback, useEffect, useRef, useState, type FormEvent } from "react";
 import { apiFetch } from "../api/client";
-import type { ClientConnectorMapping, ClientDirectoryEntry, ConnectorInstance, PollSummary } from "../api/types";
+import type { ClientConnectorMapping, ClientDirectoryEntry, ConnectorInstance, PollSummary, SyncCursor } from "../api/types";
 import { useDashboard } from "../app/DashboardContext";
 import { RoleGate } from "../components/RoleGate";
 import { StatusChip } from "../components/StatusChip";
 import { EmptyState } from "../components/EmptyState";
 import { LoadingState } from "../components/LoadingState";
 
-type ConnectorType = "halopsa" | "connectwise";
+type ConnectorType = "halopsa" | "connectwise" | "autotask" | "syncro" | "servicenow";
 
 type DiscoveredCompany = {
   externalCompanyId: string;
@@ -33,6 +33,13 @@ type ConnectForm = {
   publicKey: string;
   privateKey: string;
   connectWiseClientId: string;
+  autotaskUsername: string;
+  autotaskSecret: string;
+  autotaskIntegrationCode: string;
+  syncroApiKey: string;
+  syncroSubdomain: string;
+  serviceNowUsername: string;
+  serviceNowPassword: string;
 };
 
 type InstanceEditDraft = {
@@ -55,7 +62,14 @@ const initialConnectForm: ConnectForm = {
   company: "",
   publicKey: "",
   privateKey: "",
-  connectWiseClientId: ""
+  connectWiseClientId: "",
+  autotaskUsername: "",
+  autotaskSecret: "",
+  autotaskIntegrationCode: "",
+  syncroApiKey: "",
+  syncroSubdomain: "",
+  serviceNowUsername: "",
+  serviceNowPassword: ""
 };
 
 const demoSecretStorageNotice = "Secret storage is unavailable in demo mode — credentials can't be saved here. In a real deployment this stores the credential in the local vault.";
@@ -72,6 +86,7 @@ export function ConnectorInstances() {
   const { role, roleResolved, refresh, refreshConfiguration = refresh } = useDashboard();
   const canView = roleResolved && role === "admin";
   const [instances, setInstances] = useState<ConnectorInstance[]>([]);
+  const [syncCursors, setSyncCursors] = useState<SyncCursor[]>([]);
   const [waitClients, setWaitClients] = useState<ClientDirectoryEntry[]>([]);
   const [selectedInstanceId, setSelectedInstanceId] = useState<string | null>(null);
   const [selectedInstance, setSelectedInstance] = useState<ConnectorInstance | null>(null);
@@ -118,11 +133,15 @@ export function ConnectorInstances() {
     setMappingError("");
     setMappingNotice("");
     try {
-      const result = await apiFetch<ConnectorInstance[]>("/connector-instances");
+      const [result, cursorResult] = await Promise.all([
+        apiFetch<ConnectorInstance[]>("/connector-instances"),
+        apiFetch<SyncCursor[]>("/ingestion/sync-cursors").catch(() => [])
+      ]);
       if (!Array.isArray(result)) {
         throw new Error("The appliance returned invalid Connector Instances data.");
       }
       setInstances(result);
+      setSyncCursors(Array.isArray(cursorResult) ? cursorResult : []);
       return result;
     } catch (requestError) {
       setError(requestError instanceof Error ? requestError.message : "Unable to load Connector Instances.");
@@ -391,14 +410,23 @@ export function ConnectorInstances() {
   const selectedSyncResult = selectedInstance ? syncResults[selectedInstance.connector_instance_id] : undefined;
   const selectedSyncError = selectedInstance ? syncErrors[selectedInstance.connector_instance_id] : undefined;
 
-  const apiVersionValid = connectForm.connectorType !== "connectwise" || /^[0-9]{4}\.[0-9]+$/.test(connectForm.apiVersion.trim());
+  const apiVersionValid = connectForm.connectorType === "connectwise"
+    ? /^[0-9]{4}\.[0-9]+$/.test(connectForm.apiVersion.trim())
+    : connectForm.connectorType !== "servicenow" || /^[A-Za-z0-9_]{1,20}$/.test(connectForm.apiVersion.trim());
+  const hasProviderCredentials = connectForm.connectorType === "halopsa"
+    ? connectForm.haloClientId.trim() && connectForm.clientSecret.trim() && connectForm.tenant.trim()
+    : connectForm.connectorType === "connectwise"
+      ? connectForm.company.trim() && connectForm.publicKey.trim() && connectForm.privateKey.trim() && connectForm.connectWiseClientId.trim()
+      : connectForm.connectorType === "autotask"
+        ? connectForm.autotaskUsername.trim() && connectForm.autotaskSecret.trim() && connectForm.autotaskIntegrationCode.trim()
+        : connectForm.connectorType === "syncro"
+          ? connectForm.syncroApiKey.trim() && connectForm.syncroSubdomain.trim()
+          : connectForm.serviceNowUsername.trim() && connectForm.serviceNowPassword.trim();
   const connectFormReady = Boolean(
     connectForm.displayName.trim()
-      && connectForm.baseUrl.trim()
+      && (connectForm.connectorType === "syncro" || connectForm.baseUrl.trim())
       && apiVersionValid
-      && (connectForm.connectorType === "halopsa"
-        ? connectForm.haloClientId.trim() && connectForm.clientSecret.trim() && connectForm.tenant.trim()
-        : connectForm.company.trim() && connectForm.publicKey.trim() && connectForm.privateKey.trim() && connectForm.connectWiseClientId.trim())
+      && hasProviderCredentials
   );
 
   const updateConnectForm = (field: keyof ConnectForm, value: string) => {
@@ -432,15 +460,36 @@ export function ConnectorInstances() {
           client_secret: connectForm.clientSecret.trim(),
           tenant: connectForm.tenant.trim()
         }
+      : connectorType === "connectwise"
+        ? {
+            company: connectForm.company.trim(),
+            public_key: connectForm.publicKey.trim(),
+            private_key: connectForm.privateKey.trim(),
+            client_id: connectForm.connectWiseClientId.trim()
+          }
+        : connectorType === "autotask"
+          ? {
+              integration_code: connectForm.autotaskIntegrationCode.trim(),
+              username: connectForm.autotaskUsername.trim(),
+              secret: connectForm.autotaskSecret.trim()
+            }
+          : connectorType === "syncro"
+            ? {
+                api_key: connectForm.syncroApiKey.trim(),
+                subdomain: connectForm.syncroSubdomain.trim()
+              }
+            : {
+                username: connectForm.serviceNowUsername.trim(),
+                password: connectForm.serviceNowPassword.trim()
+              };
+    const config: Record<string, string> = connectorType === "syncro"
+      ? {}
       : {
-          company: connectForm.company.trim(),
-          public_key: connectForm.publicKey.trim(),
-          private_key: connectForm.privateKey.trim(),
-          client_id: connectForm.connectWiseClientId.trim()
+          base_url: connectForm.baseUrl.trim(),
+          ...(connectorType === "connectwise" || connectorType === "servicenow"
+            ? { api_version: connectForm.apiVersion.trim() }
+            : {})
         };
-    const config: Record<string, string> = connectorType === "halopsa"
-      ? { base_url: connectForm.baseUrl.trim() }
-      : { base_url: connectForm.baseUrl.trim(), api_version: connectForm.apiVersion.trim() };
 
     try {
       await apiFetch<void>("/secrets", {
@@ -532,7 +581,7 @@ export function ConnectorInstances() {
             </div>
             <span>Per-client instance</span>
           </div>
-          <p className="screen-note">Connect a supported PSA or ticketing system. More providers are browse-only for now.</p>
+          <p className="screen-note">Connect a supported PSA or ticketing system. Appliance-wide environment configuration remains available as a bootstrap fallback.</p>
           {connectNotice ? <div className="notice" role="status">{connectNotice}</div> : null}
           {connectError ? <div className="notice danger" role="alert">{connectError}</div> : null}
           <form className="draft-form" onSubmit={(event) => void connect(event)}>
@@ -542,10 +591,22 @@ export function ConnectorInstances() {
               <select
                 id="connector-provider"
                 value={connectForm.connectorType}
-                onChange={(event) => updateConnectForm("connectorType", event.target.value as ConnectorType)}
+                onChange={(event) => {
+                  const connectorType = event.target.value as ConnectorType;
+                  setConnectForm((current) => ({
+                    ...current,
+                    connectorType,
+                    apiVersion: connectorType === "servicenow" ? "v1" : connectorType === "connectwise" ? "2024.1" : current.apiVersion
+                  }));
+                  setConnectError("");
+                  setConnectNotice("");
+                }}
               >
                 <option value="halopsa">HaloPSA</option>
                 <option value="connectwise">ConnectWise</option>
+                <option value="autotask">Autotask PSA</option>
+                <option value="syncro">Syncro</option>
+                <option value="servicenow">ServiceNow</option>
               </select>
             </fieldset>
 
@@ -561,11 +622,18 @@ export function ConnectorInstances() {
             </label>
             {clientsError ? <p className="field-error">{clientsError} You can still connect without a WAIT client association.</p> : null}
 
-            <label htmlFor="connector-base-url">Base URL
-              <input id="connector-base-url" value={connectForm.baseUrl} onChange={(event) => updateConnectForm("baseUrl", event.target.value)} required />
-            </label>
+            {connectForm.connectorType === "syncro" ? (
+              <label htmlFor="syncro-subdomain">Syncro subdomain
+                <input id="syncro-subdomain" aria-describedby="syncro-subdomain-help" value={connectForm.syncroSubdomain} onChange={(event) => updateConnectForm("syncroSubdomain", event.target.value)} required />
+                <span id="syncro-subdomain-help" className="field-help">The subdomain from your Syncro address, for example acme in acme.syncromsp.com.</span>
+              </label>
+            ) : (
+              <label htmlFor="connector-base-url">{connectForm.connectorType === "servicenow" ? "ServiceNow instance URL" : "Base URL"}
+                <input id="connector-base-url" value={connectForm.baseUrl} onChange={(event) => updateConnectForm("baseUrl", event.target.value)} required />
+              </label>
+            )}
 
-            {connectForm.connectorType === "connectwise" ? (
+            {connectForm.connectorType === "connectwise" || connectForm.connectorType === "servicenow" ? (
               <label htmlFor="connector-api-version">API version
                 <input
                   id="connector-api-version"
@@ -573,10 +641,10 @@ export function ConnectorInstances() {
                   onChange={(event) => updateConnectForm("apiVersion", event.target.value)}
                   aria-invalid={!apiVersionValid}
                   aria-describedby="connector-api-version-hint"
-                  required
+                  required={connectForm.connectorType === "connectwise"}
                 />
-                <span id="connector-api-version-hint" className="field-help">Use the format YYYY.N, such as 2024.1.</span>
-                {!apiVersionValid ? <span className="field-error">Use the format YYYY.N.</span> : null}
+                <span id="connector-api-version-hint" className="field-help">{connectForm.connectorType === "connectwise" ? "Use the format YYYY.N, such as 2024.1." : "Optional ServiceNow Table API version, such as v1."}</span>
+                {!apiVersionValid ? <span className="field-error">{connectForm.connectorType === "connectwise" ? "Use the format YYYY.N." : "Use letters, numbers, and underscores only."}</span> : null}
               </label>
             ) : null}
 
@@ -595,7 +663,7 @@ export function ConnectorInstances() {
                 </label>
                 <span id="halopsa-tenant-help" className="field-help">{credentialFieldHelp}</span>
               </>
-            ) : (
+            ) : connectForm.connectorType === "connectwise" ? (
               <>
                 <label htmlFor="connectwise-company">Company
                   <input id="connectwise-company" aria-describedby="connectwise-company-help" value={connectForm.company} onChange={(event) => updateConnectForm("company", event.target.value)} required />
@@ -613,6 +681,39 @@ export function ConnectorInstances() {
                   <input id="connectwise-client-id" aria-describedby="connectwise-client-id-help" value={connectForm.connectWiseClientId} onChange={(event) => updateConnectForm("connectWiseClientId", event.target.value)} required />
                 </label>
                 <span id="connectwise-client-id-help" className="field-help">{credentialFieldHelp}</span>
+              </>
+            ) : connectForm.connectorType === "autotask" ? (
+              <>
+                <label htmlFor="autotask-username">Username
+                  <input id="autotask-username" aria-describedby="autotask-username-help" value={connectForm.autotaskUsername} onChange={(event) => updateConnectForm("autotaskUsername", event.target.value)} required />
+                </label>
+                <span id="autotask-username-help" className="field-help">{credentialFieldHelp}</span>
+                <label htmlFor="autotask-secret">Secret
+                  <input id="autotask-secret" aria-describedby="autotask-secret-help" type="password" value={connectForm.autotaskSecret} onChange={(event) => updateConnectForm("autotaskSecret", event.target.value)} required />
+                </label>
+                <span id="autotask-secret-help" className="field-help">{credentialFieldHelp}</span>
+                <label htmlFor="autotask-integration-code">API integration code
+                  <input id="autotask-integration-code" aria-describedby="autotask-integration-code-help" value={connectForm.autotaskIntegrationCode} onChange={(event) => updateConnectForm("autotaskIntegrationCode", event.target.value)} required />
+                </label>
+                <span id="autotask-integration-code-help" className="field-help">{credentialFieldHelp}</span>
+              </>
+            ) : connectForm.connectorType === "syncro" ? (
+              <>
+                <label htmlFor="syncro-api-key">API key
+                  <input id="syncro-api-key" aria-describedby="syncro-api-key-help" type="password" value={connectForm.syncroApiKey} onChange={(event) => updateConnectForm("syncroApiKey", event.target.value)} required />
+                </label>
+                <span id="syncro-api-key-help" className="field-help">{credentialFieldHelp}</span>
+              </>
+            ) : (
+              <>
+                <label htmlFor="servicenow-username">Username
+                  <input id="servicenow-username" aria-describedby="servicenow-username-help" value={connectForm.serviceNowUsername} onChange={(event) => updateConnectForm("serviceNowUsername", event.target.value)} required />
+                </label>
+                <span id="servicenow-username-help" className="field-help">{credentialFieldHelp}</span>
+                <label htmlFor="servicenow-password">Password
+                  <input id="servicenow-password" aria-describedby="servicenow-password-help" type="password" value={connectForm.serviceNowPassword} onChange={(event) => updateConnectForm("serviceNowPassword", event.target.value)} required />
+                </label>
+                <span id="servicenow-password-help" className="field-help">{credentialFieldHelp}</span>
               </>
             )}
 
@@ -651,6 +752,7 @@ export function ConnectorInstances() {
                 <tbody>
                   {instances.map((instance) => {
                     const selected = instance.connector_instance_id === selectedInstanceId;
+                    const cursor = syncCursors.find((item) => item.connector_instance_id === instance.connector_instance_id && item.cursor_type === "connector_poll");
                     return (
                       <Fragment key={instance.connector_instance_id}>
                       <tr key={instance.connector_instance_id}>
@@ -666,7 +768,10 @@ export function ConnectorInstances() {
                           </button>
                         </td>
                         <td>{instance.connector_type}</td>
-                        <td><StatusChip status={instance.status} /></td>
+                        <td>
+                          <StatusChip status={instance.status} />
+                          <span className="screen-note">Sync: {cursor?.status || "Not run"}{cursor?.last_synced_at ? ` · ${formatTimestamp(cursor.last_synced_at)}` : ""}</span>
+                        </td>
                         <td>{instance.client_id || "Unassigned"}</td>
                         <td><PresenceBadge configured={Boolean(instance.credential_ref)} /></td>
                         <td>
@@ -915,6 +1020,12 @@ function slug(value: string): string {
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, "-")
     .replace(/^-+|-+$/g, "") || "system";
+}
+
+function formatTimestamp(value: string | null): string {
+  if (!value) return "Never";
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? "Unknown" : date.toLocaleString();
 }
 
 function PresenceBadge({ configured }: { configured: boolean }) {

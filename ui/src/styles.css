@@ -446,6 +446,54 @@ nav a:hover {
   justify-content: flex-end;
 }
 
+.account-chip {
+  align-items: flex-end;
+  display: inline-flex;
+  flex-direction: column;
+  gap: 2px;
+  line-height: 1.15;
+}
+
+.account-chip strong {
+  color: #253633;
+  font-size: 0.86rem;
+}
+
+.account-chip span {
+  color: #60706a;
+  font-size: 0.74rem;
+  font-weight: 700;
+}
+
+.login-screen {
+  align-items: center;
+  display: flex;
+  justify-content: center;
+  min-height: 100vh;
+  padding: 24px;
+}
+
+.login-card {
+  display: grid;
+  gap: 16px;
+  max-width: 440px;
+  width: 100%;
+}
+
+.login-card form {
+  display: grid;
+  gap: 16px;
+}
+
+.login-card .token-input input {
+  min-width: 0;
+  width: 100%;
+}
+
+.primary-button {
+  justify-content: center;
+}
+
 .client-selector {
   align-items: center;
   color: #60706a;
@@ -2507,6 +2555,30 @@ button:disabled {
   display: grid;
   font-weight: 800;
   gap: 6px;
+}
+
+.client-id-select {
+  display: grid;
+  gap: 6px;
+}
+
+.client-id-select-toggle {
+  align-items: flex-start;
+  background: transparent;
+  border: 0;
+  color: #1f6f55;
+  font-size: 0.82rem;
+  justify-content: flex-start;
+  padding: 0;
+  text-align: left;
+  width: fit-content;
+}
+
+.client-id-select-toggle:hover,
+.client-id-select-toggle:focus-visible {
+  background: transparent;
+  color: #235d43;
+  text-decoration: underline;
 }
 
 .draft-form input,

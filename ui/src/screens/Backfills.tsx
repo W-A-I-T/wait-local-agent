@@ -3,6 +3,7 @@ import { useDashboard } from "../app/DashboardContext";
 import { apiFetch } from "../api/client";
 import { EmptyState } from "../components/EmptyState";
 import { LoadingState } from "../components/LoadingState";
+import { ClientIdSelect } from "../components/ClientIdSelect";
 import type { AgentBackfill, AgentBackfillPreview, AgentDefinition } from "../api/types";
 
 function parseEntityIds(value: string): string[] {
@@ -10,7 +11,7 @@ function parseEntityIds(value: string): string[] {
 }
 
 export function Backfills() {
-  const { canWrite } = useDashboard();
+  const { canWrite, clients = [] } = useDashboard();
   const [agents, setAgents] = useState<AgentDefinition[]>([]);
   const [backfills, setBackfills] = useState<AgentBackfill[]>([]);
   const [loading, setLoading] = useState(true);
@@ -116,7 +117,7 @@ export function Backfills() {
         <form id="backfill-form" className="draft-form" onSubmit={createBackfill}>
           <div className="grid">
             <label>Agent<select value={agentId} onChange={(event) => setAgentId(event.target.value)}><option value="">Choose agent</option>{agents.map((agent) => <option key={agent.id} value={agent.id}>{agent.name}</option>)}</select></label>
-            <label>Client id (optional)<input value={clientId} onChange={(event) => setClientId(event.target.value)} /></label>
+            <ClientIdSelect label="Client id (optional)" value={clientId} onChange={setClientId} clients={clients} id="backfill-client-id" />
             <label>Max concurrency<select value={maxConcurrency} onChange={(event) => setMaxConcurrency(event.target.value)}><option value="1">1 · sequential</option><option value="2">2</option><option value="3">3</option><option value="4">4</option></select></label>
           </div>
           <label>Ticket IDs<textarea rows={5} value={entityText} onChange={(event) => setEntityText(event.target.value)} placeholder="One ticket ID per line" /></label>

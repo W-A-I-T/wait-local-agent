@@ -67,12 +67,12 @@ describe("App", () => {
 
     expect(await screen.findByRole("heading", { name: "WAIT AI Solutions Architect" })).toBeInTheDocument();
     expect(await screen.findByText("Local mode · full access")).toBeInTheDocument();
-    expect(screen.getByLabelText(/API token/)).toHaveAttribute("placeholder", "Paste token");
+    expect(screen.getByRole("button", { name: "Sign out" })).toBeInTheDocument();
+    expect(screen.getByLabelText("Signed-in account")).toHaveTextContent("Local appliance");
     fireEvent.click(screen.getByRole("button", { name: "Explain local mode" }));
-    expect(screen.getByText(/no API token configured/i)).toBeInTheDocument();
-    expect(screen.getByText("WAIT_ADMIN_TOKEN")).toBeInTheDocument();
+    expect(screen.getByText(/access controls are off/i)).toBeInTheDocument();
+    expect(screen.getByText(/configure an administrator or team access credential/i)).toBeInTheDocument();
     expect(screen.getByText("Local-first solution design, governed execution, and MSP operations.")).toBeInTheDocument();
-    expect(screen.getByDisplayValue("local-appliance")).toHaveAttribute("autocomplete", "username");
     expect((await screen.findAllByText("HALO-1")).length).toBeGreaterThan(0);
     expect(screen.getByRole("heading", { name: "Approval Queue" })).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Connector Readiness" })).toBeInTheDocument();
@@ -186,17 +186,15 @@ describe("App", () => {
 
     renderApp();
 
-    expect(await screen.findByText("Token rejected")).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "Explain rejected token" }));
-    expect(screen.getByText("The saved token was not accepted. Clear Token resets it.")).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "Sign in to the appliance" })).toBeInTheDocument();
+    expect(screen.getByLabelText("Access token")).toBeInTheDocument();
     expect(screen.queryByText("rejected-token")).not.toBeInTheDocument();
-    expect(await screen.findByRole("status")).toHaveTextContent("You do not have permission to do that.");
-    expect(screen.getByText("access unavailable")).toBeInTheDocument();
     expect(screen.queryByText("demo-ready")).not.toBeInTheDocument();
     expect(screen.queryByRole("heading", { name: "Set up your MSP operations" })).not.toBeInTheDocument();
   });
 
   it("hides write controls for viewer role", async () => {
+    window.localStorage.setItem("wait-local-agent-api-token", "viewer-token");
     vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL) => mockFetch(input, false, "viewer")));
 
     renderApp();
@@ -220,13 +218,19 @@ describe("App", () => {
   });
 
   it("reports the resolved role after saving a token", async () => {
+    vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL) => {
+      if (String(input) === "/auth/role" && !window.localStorage.getItem("wait-local-agent-api-token")) {
+        return new Response(JSON.stringify({ detail: "missing token" }), { status: 401 });
+      }
+      return mockFetch(input);
+    }));
     renderApp();
 
-    const tokenInput = await screen.findByLabelText(/API token/);
+    const tokenInput = await screen.findByLabelText("Access token");
     fireEvent.change(tokenInput, { target: { value: "new-token" } });
-    fireEvent.click(screen.getByRole("button", { name: "Save Token" }));
+    fireEvent.click(screen.getByRole("button", { name: "Sign in" }));
 
-    expect(await screen.findByRole("status")).toHaveTextContent("API token saved. Access resolved as admin.");
+    expect(await screen.findByRole("status")).toHaveTextContent("Signed in.");
   });
 });
 

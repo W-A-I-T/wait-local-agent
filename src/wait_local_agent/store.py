@@ -187,12 +187,65 @@ class PrincipalAuthRecord:
     global_roles: frozenset[str]
 
 
+@dataclass(frozen=True)
+class AuthSessionRecord:
+    session_token_hash: str
+    principal_id: str
+    auth_method: str
+    created_at: str
+    last_seen_at: str
+    idle_expires_at: str
+    absolute_expires_at: str
+    revoked: bool
+    user_agent: str
+
+
+@dataclass(frozen=True)
+class PrincipalCredentialSummary:
+    credential_hash_prefix: str
+    active: bool
+    created_at: str
+
+
+@dataclass(frozen=True)
+class PrincipalIdentity:
+    issuer: str
+    subject: str
+    subject_kind: str
+    principal_id: str
+    created_at: str
+    last_login_at: str | None
+
+
+@dataclass(frozen=True)
+class PrincipalDetails:
+    principal_id: str
+    principal_kind: str
+    display_name: str
+    active: bool
+    created_at: str
+    client_roles: tuple[tuple[str, str], ...]
+    global_roles: tuple[str, ...]
+    credential_count: int
+
+
 def hash_credential(credential: str) -> str:
     """Return the one-way digest used for persisted bearer credentials."""
 
     if not isinstance(credential, str) or not credential.strip():
         raise ValueError("credential must be a non-empty string")
     return hashlib.sha256(credential.encode("utf-8")).hexdigest()
+
+
+def _principal_identity_from_row(row: sqlite3.Row) -> PrincipalIdentity:
+    return PrincipalIdentity(
+        issuer=str(row["issuer"]),
+        subject=str(row["subject"]),
+        subject_kind=str(row["subject_kind"]),
+        principal_id=str(row["principal_id"]),
+        created_at=str(row["created_at"]),
+        last_login_at=str(row["last_login_at"]) if row["last_login_at"] is not None else None,
+    )
 
 
 class Store:
@@ -262,6 +315,8 @@ class Store:
                     ),
                     Migration(6, "poll_lease", self._apply_poll_lease_migration),
                     Migration(7, "operational_graph", self._apply_operational_graph_migration),
+                    Migration(8, "auth_sessions_and_config", self._apply_auth_sessions_and_config_migration),
+                    Migration(9, "principal_identities", self._apply_principal_identities_migration),
                 )
             )
             self._apply_startup_repairs(connection)
@@ -643,6 +698,66 @@ class Store:
         Store._ensure_column(connection, "sync_cursors", "lease_expires_at", "text")
 
     @staticmethod
+    def _apply_auth_sessions_and_config_migration(connection: sqlite3.Connection) -> None:
+        """Add hashed server sessions and generic persisted appliance configuration."""
+
+        connection.execute(
+            """
+            create table if not exists auth_sessions (
+                session_token_hash text primary key,
+                principal_id text not null references principals(principal_id) on delete cascade,
+                auth_method text not null check (auth_method in ('local', 'oidc')),
+                created_at text not null,
+                last_seen_at text not null,
+                idle_expires_at text not null,
+                absolute_expires_at text not null,
+                revoked integer not null default 0 check (revoked in (0, 1)),
+                user_agent text not null default ''
+            )
+            """
+        )
+        connection.execute(
+            """
+            create index if not exists idx_auth_sessions_principal_revoked
+            on auth_sessions (principal_id, revoked)
+            """
+        )
+        connection.execute(
+            """
+            create table if not exists app_config (
+                config_key text primary key,
+                config_value text,
+                updated_at text not null,
+                updated_by text
+            )
+            """
+        )
+
+    @staticmethod
+    def _apply_principal_identities_migration(connection: sqlite3.Connection) -> None:
+        """Persist OIDC links without introducing a second user model."""
+
+        connection.execute(
+            """
+            create table if not exists principal_identities (
+                issuer text not null,
+                subject text not null,
+                subject_kind text not null check (subject_kind in ('oid', 'email')),
+                principal_id text not null references principals(principal_id) on delete cascade,
+                created_at text not null,
+                last_login_at text,
+                primary key (issuer, subject, subject_kind)
+            )
+            """
+        )
+        connection.execute(
+            """
+            create index if not exists idx_principal_identities_principal
+            on principal_identities (principal_id)
+            """
+        )
+
+    @staticmethod
     def _apply_operational_graph_migration(connection: sqlite3.Connection) -> None:
         """Add the client-scoped operational graph tables without changing existing data."""
 
@@ -800,6 +915,347 @@ class Store:
                 (normalized_id, normalized_role),
             )
 
+    def set_principal_active(self, principal_id: str, active: bool) -> None:
+        normalized_id = principal_id.strip()
+        if not normalized_id:
+            raise ValueError("principal_id must be non-empty")
+        if not isinstance(active, bool):
+            raise ValueError("active must be a boolean")
+        with self._connect() as connection:
+            cursor = connection.execute(
+                "update principals set active = ? where principal_id = ?",
+                (int(active), normalized_id),
+            )
+            if cursor.rowcount != 1:
+                raise KeyError(normalized_id)
+
+    def set_principal_display_name(self, principal_id: str, display_name: str) -> None:
+        normalized_id = principal_id.strip()
+        if not normalized_id:
+            raise ValueError("principal_id must be non-empty")
+        normalized_name = display_name.strip()
+        if not normalized_name:
+            raise ValueError("display_name must be non-empty")
+        with self._connect() as connection:
+            cursor = connection.execute(
+                "update principals set display_name = ? where principal_id = ?",
+                (_redact_text(normalized_name), normalized_id),
+            )
+            if cursor.rowcount != 1:
+                raise KeyError(normalized_id)
+
+    def revoke_principal_credential(self, credential_hash: str) -> None:
+        normalized_hash = credential_hash.strip()
+        if not normalized_hash:
+            raise ValueError("credential_hash must be non-empty")
+        with self._connect() as connection:
+            cursor = connection.execute(
+                "update principal_credentials set active = 0 where credential_hash = ?",
+                (normalized_hash,),
+            )
+            if cursor.rowcount != 1:
+                rows = connection.execute(
+                    "select credential_hash from principal_credentials where credential_hash like ?",
+                    (f"{normalized_hash}%",),
+                ).fetchall()
+                if len(rows) != 1:
+                    raise KeyError(normalized_hash)
+                cursor = connection.execute(
+                    "update principal_credentials set active = 0 where credential_hash = ?",
+                    (str(rows[0][0]),),
+                )
+            if cursor.rowcount != 1:
+                raise KeyError(normalized_hash)
+
+    def remove_principal_client_role(self, principal_id: str, client_id: str, role: str) -> None:
+        normalized_id = principal_id.strip()
+        normalized_client_id = _normalize_client_id(client_id)
+        normalized_role = _principal_role_label(role)
+        if not normalized_id:
+            raise ValueError("principal_id must be non-empty")
+        if normalized_client_id is None:
+            raise ValueError("client_id must be non-empty")
+        _reject_reserved_client_id(normalized_client_id)
+        if normalized_role not in {"end_user", "viewer", "technician", "admin"}:
+            raise ValueError("unsupported principal client role")
+        with self._connect() as connection:
+            cursor = connection.execute(
+                """
+                delete from principal_client_roles
+                where principal_id = ? and client_id = ? and role = ?
+                """,
+                (normalized_id, normalized_client_id, normalized_role),
+            )
+            if cursor.rowcount != 1:
+                raise KeyError((normalized_id, normalized_client_id, normalized_role))
+
+    def remove_principal_global_role(self, principal_id: str, role: str = "msp_admin") -> None:
+        normalized_id = principal_id.strip()
+        normalized_role = role.strip().lower()
+        if not normalized_id:
+            raise ValueError("principal_id must be non-empty")
+        if normalized_role != "msp_admin":
+            raise ValueError("unsupported principal global role")
+        with self._connect() as connection:
+            cursor = connection.execute(
+                "delete from principal_global_roles where principal_id = ? and role = ?",
+                (normalized_id, normalized_role),
+            )
+            if cursor.rowcount != 1:
+                raise KeyError((normalized_id, normalized_role))
+
+    def list_principal_credentials(self, principal_id: str) -> list[PrincipalCredentialSummary]:
+        normalized_id = principal_id.strip()
+        if not normalized_id:
+            raise ValueError("principal_id must be non-empty")
+        with self._connect() as connection:
+            rows = connection.execute(
+                """
+                select credential_hash, active, created_at
+                from principal_credentials
+                where principal_id = ?
+                order by created_at, credential_hash
+                """,
+                (normalized_id,),
+            ).fetchall()
+        return [
+            PrincipalCredentialSummary(
+                credential_hash_prefix=str(row[0])[:12],
+                active=bool(row[1]),
+                created_at=str(row[2]),
+            )
+            for row in rows
+        ]
+
+    def get_app_config(self, config_key: str) -> str | None:
+        normalized_key = config_key.strip()
+        if not normalized_key:
+            raise ValueError("config_key must be non-empty")
+        with self._connect() as connection:
+            row = connection.execute(
+                "select config_value from app_config where config_key = ?", (normalized_key,)
+            ).fetchone()
+        return None if row is None else row[0]
+
+    def set_app_config(self, config_key: str, config_value: str, *, updated_by: str | None = None) -> None:
+        normalized_key = config_key.strip()
+        if not normalized_key:
+            raise ValueError("config_key must be non-empty")
+        with self._connect() as connection:
+            connection.execute(
+                """
+                insert into app_config (config_key, config_value, updated_at, updated_by)
+                values (?, ?, ?, ?)
+                on conflict(config_key) do update set
+                  config_value = excluded.config_value,
+                  updated_at = excluded.updated_at,
+                  updated_by = excluded.updated_by
+                """,
+                (normalized_key, config_value, utc_now(), updated_by),
+            )
+
+    def add_principal_identity(
+        self,
+        principal_id: str,
+        issuer: str,
+        subject: str,
+        subject_kind: str,
+    ) -> PrincipalIdentity:
+        normalized_id = principal_id.strip()
+        normalized_issuer = issuer.strip().rstrip("/")
+        normalized_kind = subject_kind.strip().lower()
+        normalized_subject = subject.strip().casefold() if normalized_kind == "email" else subject.strip()
+        if not normalized_id or not normalized_issuer or not normalized_subject:
+            raise ValueError("principal identity fields must be non-empty")
+        if normalized_kind not in {"oid", "email"}:
+            raise ValueError("unsupported principal identity kind")
+        with self._connect() as connection:
+            if connection.execute(
+                "select 1 from principals where principal_id = ?", (normalized_id,)
+            ).fetchone() is None:
+                raise KeyError(normalized_id)
+            now = utc_now()
+            connection.execute(
+                """
+                insert into principal_identities
+                  (issuer, subject, subject_kind, principal_id, created_at, last_login_at)
+                values (?, ?, ?, ?, ?, null)
+                """,
+                (normalized_issuer, normalized_subject, normalized_kind, normalized_id, now),
+            )
+            row = connection.execute(
+                """
+                select issuer, subject, subject_kind, principal_id, created_at, last_login_at
+                from principal_identities where issuer = ? and subject = ? and subject_kind = ?
+                """,
+                (normalized_issuer, normalized_subject, normalized_kind),
+            ).fetchone()
+        if row is None:
+            raise RuntimeError("principal identity was not persisted")
+        return _principal_identity_from_row(row)
+
+    def remove_principal_identity(self, principal_id: str, issuer: str, subject: str, subject_kind: str) -> None:
+        normalized_id = principal_id.strip()
+        normalized_issuer = issuer.strip().rstrip("/")
+        normalized_kind = subject_kind.strip().lower()
+        normalized_subject = subject.strip().casefold() if normalized_kind == "email" else subject.strip()
+        with self._connect() as connection:
+            cursor = connection.execute(
+                """
+                delete from principal_identities
+                where principal_id = ? and issuer = ? and subject = ? and subject_kind = ?
+                """,
+                (normalized_id, normalized_issuer, normalized_subject, normalized_kind),
+            )
+        if cursor.rowcount != 1:
+            raise KeyError((normalized_id, normalized_issuer, normalized_subject, normalized_kind))
+
+    def list_principal_identities(self, principal_id: str) -> list[PrincipalIdentity]:
+        normalized_id = principal_id.strip()
+        if not normalized_id:
+            raise ValueError("principal_id must be non-empty")
+        with self._connect() as connection:
+            rows = connection.execute(
+                """
+                select issuer, subject, subject_kind, principal_id, created_at, last_login_at
+                from principal_identities where principal_id = ?
+                order by subject_kind, subject
+                """,
+                (normalized_id,),
+            ).fetchall()
+        return [_principal_identity_from_row(row) for row in rows]
+
+    def find_principal_by_identity(self, issuer: str, subject: str, subject_kind: str) -> str | None:
+        normalized_issuer = issuer.strip().rstrip("/")
+        normalized_kind = subject_kind.strip().lower()
+        normalized_subject = subject.strip().casefold() if normalized_kind == "email" else subject.strip()
+        if not normalized_issuer or not normalized_subject or normalized_kind not in {"oid", "email"}:
+            return None
+        with self._connect() as connection:
+            row = connection.execute(
+                """
+                select i.principal_id
+                from principal_identities i
+                join principals p on p.principal_id = i.principal_id
+                where i.issuer = ? and i.subject = ? and i.subject_kind = ? and p.active = 1
+                """,
+                (normalized_issuer, normalized_subject, normalized_kind),
+            ).fetchone()
+        return None if row is None else str(row[0])
+
+    def mark_identity_login(self, issuer: str, subject: str, subject_kind: str, *, at: str | None = None) -> bool:
+        normalized_issuer = issuer.strip().rstrip("/")
+        normalized_kind = subject_kind.strip().lower()
+        normalized_subject = subject.strip().casefold() if normalized_kind == "email" else subject.strip()
+        with self._connect() as connection:
+            cursor = connection.execute(
+                """
+                update principal_identities set last_login_at = ?
+                where issuer = ? and subject = ? and subject_kind = ?
+                """,
+                (at or utc_now(), normalized_issuer, normalized_subject, normalized_kind),
+            )
+        return cursor.rowcount == 1
+
+    def upgrade_email_identity(
+        self,
+        issuer: str,
+        email: str,
+        oid: str,
+        *,
+        at: str | None = None,
+    ) -> str | None:
+        """Consume one email invite and replace it with the permanent Entra OID link."""
+
+        normalized_issuer = issuer.strip().rstrip("/")
+        normalized_email = email.strip().casefold()
+        normalized_oid = oid.strip()
+        if not normalized_issuer or not normalized_email or not normalized_oid:
+            return None
+        login_at = at or utc_now()
+        with self._connect() as connection:
+            connection.execute("begin immediate")
+            oid_row = connection.execute(
+                """
+                select principal_id from principal_identities
+                where issuer = ? and subject = ? and subject_kind = 'oid'
+                """,
+                (normalized_issuer, normalized_oid),
+            ).fetchone()
+            email_row = connection.execute(
+                """
+                select i.principal_id from principal_identities i
+                join principals p on p.principal_id = i.principal_id
+                where i.issuer = ? and i.subject = ? and i.subject_kind = 'email' and p.active = 1
+                """,
+                (normalized_issuer, normalized_email),
+            ).fetchone()
+            if email_row is None:
+                return None
+            principal_id = str(email_row[0])
+            if oid_row is not None and str(oid_row[0]) != principal_id:
+                return None
+            connection.execute(
+                "delete from principal_identities where issuer = ? and subject = ? and subject_kind = 'email'",
+                (normalized_issuer, normalized_email),
+            )
+            connection.execute(
+                """
+                insert into principal_identities
+                  (issuer, subject, subject_kind, principal_id, created_at, last_login_at)
+                values (?, ?, 'oid', ?, ?, ?)
+                on conflict(issuer, subject, subject_kind) do update set last_login_at = excluded.last_login_at
+                """,
+                (normalized_issuer, normalized_oid, principal_id, login_at, login_at),
+            )
+        return principal_id
+
+    def list_principals_with_details(self) -> list[PrincipalDetails]:
+        with self._connect() as connection:
+            principals = connection.execute(
+                """
+                select p.principal_id, p.kind, p.display_name, p.active, p.created_at,
+                       count(pc.credential_hash) as credential_count
+                from principals p
+                left join principal_credentials pc on pc.principal_id = p.principal_id
+                group by p.principal_id, p.kind, p.display_name, p.active, p.created_at
+                order by p.display_name, p.principal_id
+                """
+            ).fetchall()
+            details: list[PrincipalDetails] = []
+            for principal in principals:
+                principal_id = str(principal[0])
+                client_roles = tuple(
+                    (str(row[0]), str(row[1]))
+                    for row in connection.execute(
+                        """
+                        select client_id, role from principal_client_roles
+                        where principal_id = ? order by client_id, role
+                        """,
+                        (principal_id,),
+                    )
+                )
+                global_roles = tuple(
+                    str(row[0])
+                    for row in connection.execute(
+                        "select role from principal_global_roles where principal_id = ? order by role",
+                        (principal_id,),
+                    )
+                )
+                details.append(
+                    PrincipalDetails(
+                        principal_id=principal_id,
+                        principal_kind=str(principal[1]),
+                        display_name=str(principal[2]),
+                        active=bool(principal[3]),
+                        created_at=str(principal[4]),
+                        client_roles=client_roles,
+                        global_roles=global_roles,
+                        credential_count=int(principal[5]),
+                    )
+                )
+        return details
+
     def find_principal_by_credential_hash(self, credential_hash: str) -> PrincipalAuthRecord | None:
         with self._connect() as connection:
             principal = connection.execute(
@@ -838,6 +1294,186 @@ class Store:
             client_roles=client_roles,
             global_roles=global_roles,
         )
+
+    def find_principal_auth_record(self, principal_id: str) -> PrincipalAuthRecord | None:
+        """Load an active principal and its current roles for session resolution."""
+
+        normalized_id = principal_id.strip()
+        if not normalized_id:
+            return None
+        with self._connect() as connection:
+            principal = connection.execute(
+                "select principal_id, kind from principals where principal_id = ? and active = 1",
+                (normalized_id,),
+            ).fetchone()
+            if principal is None:
+                return None
+            client_roles = tuple(
+                (str(row[0]), str(row[1]))
+                for row in connection.execute(
+                    """
+                    select client_id, role
+                    from principal_client_roles
+                    where principal_id = ?
+                    order by client_id, role
+                    """,
+                    (normalized_id,),
+                )
+            )
+            global_roles = frozenset(
+                str(row[0])
+                for row in connection.execute(
+                    "select role from principal_global_roles where principal_id = ?",
+                    (normalized_id,),
+                )
+            )
+        return PrincipalAuthRecord(
+            principal_id=str(principal["principal_id"]),
+            principal_kind=str(principal["kind"]),
+            client_roles=client_roles,
+            global_roles=global_roles,
+        )
+
+    def create_auth_session(
+        self,
+        session_token_hash: str,
+        principal_id: str,
+        *,
+        idle_expires_at: str,
+        absolute_expires_at: str,
+        auth_method: str = "local",
+        user_agent: str = "",
+    ) -> AuthSessionRecord:
+        """Persist a session using only its one-way token digest."""
+
+        normalized_hash = session_token_hash.strip()
+        normalized_id = principal_id.strip()
+        normalized_method = auth_method.strip().lower()
+        if not normalized_hash or not normalized_id:
+            raise ValueError("session token hash and principal_id are required")
+        if normalized_method not in {"local", "oidc"}:
+            raise ValueError("unsupported session auth method")
+        if not idle_expires_at or not absolute_expires_at:
+            raise ValueError("session expiry timestamps are required")
+        created_at = utc_now()
+        with self._connect() as connection:
+            if connection.execute(
+                "select 1 from principals where principal_id = ? and active = 1", (normalized_id,)
+            ).fetchone() is None:
+                raise KeyError(normalized_id)
+            connection.execute(
+                """
+                insert into auth_sessions (
+                    session_token_hash, principal_id, auth_method, created_at, last_seen_at,
+                    idle_expires_at, absolute_expires_at, user_agent
+                ) values (?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    normalized_hash,
+                    normalized_id,
+                    normalized_method,
+                    created_at,
+                    created_at,
+                    idle_expires_at,
+                    absolute_expires_at,
+                    user_agent[:512],
+                ),
+            )
+        return AuthSessionRecord(
+            session_token_hash=normalized_hash,
+            principal_id=normalized_id,
+            auth_method=normalized_method,
+            created_at=created_at,
+            last_seen_at=created_at,
+            idle_expires_at=idle_expires_at,
+            absolute_expires_at=absolute_expires_at,
+            revoked=False,
+            user_agent=user_agent[:512],
+        )
+
+    def get_auth_session(self, session_token_hash: str) -> AuthSessionRecord | None:
+        """Return a live session and opportunistically remove expired sessions."""
+
+        normalized_hash = session_token_hash.strip()
+        if not normalized_hash:
+            return None
+        now = utc_now()
+        with self._connect() as connection:
+            connection.execute(
+                """
+                delete from auth_sessions
+                where idle_expires_at <= ? or absolute_expires_at <= ?
+                """,
+                (now, now),
+            )
+            row = connection.execute(
+                """
+                select session_token_hash, principal_id, auth_method, created_at, last_seen_at,
+                       idle_expires_at, absolute_expires_at, revoked, user_agent
+                from auth_sessions
+                where session_token_hash = ? and revoked = 0
+                """,
+                (normalized_hash,),
+            ).fetchone()
+        if row is None:
+            return None
+        return AuthSessionRecord(
+            session_token_hash=str(row["session_token_hash"]),
+            principal_id=str(row["principal_id"]),
+            auth_method=str(row["auth_method"]),
+            created_at=str(row["created_at"]),
+            last_seen_at=str(row["last_seen_at"]),
+            idle_expires_at=str(row["idle_expires_at"]),
+            absolute_expires_at=str(row["absolute_expires_at"]),
+            revoked=bool(row["revoked"]),
+            user_agent=str(row["user_agent"]),
+        )
+
+    def touch_auth_session(self, session_token_hash: str, *, last_seen_at: str, idle_expires_at: str) -> bool:
+        """Advance activity without allowing idle expiry past the absolute limit."""
+
+        normalized_hash = session_token_hash.strip()
+        if not normalized_hash or not last_seen_at or not idle_expires_at:
+            return False
+        with self._connect() as connection:
+            row = connection.execute(
+                "select absolute_expires_at from auth_sessions where session_token_hash = ? and revoked = 0",
+                (normalized_hash,),
+            ).fetchone()
+            if row is None:
+                return False
+            bounded_idle_expiry = min(idle_expires_at, str(row["absolute_expires_at"]))
+            cursor = connection.execute(
+                """
+                update auth_sessions
+                set last_seen_at = ?, idle_expires_at = ?
+                where session_token_hash = ? and revoked = 0
+                """,
+                (last_seen_at, bounded_idle_expiry, normalized_hash),
+            )
+        return cursor.rowcount == 1
+
+    def revoke_auth_session(self, session_token_hash: str) -> bool:
+        normalized_hash = session_token_hash.strip()
+        if not normalized_hash:
+            return False
+        with self._connect() as connection:
+            cursor = connection.execute(
+                "update auth_sessions set revoked = 1 where session_token_hash = ?",
+                (normalized_hash,),
+            )
+        return cursor.rowcount == 1
+
+    def revoke_principal_sessions(self, principal_id: str) -> int:
+        normalized_id = principal_id.strip()
+        if not normalized_id:
+            return 0
+        with self._connect() as connection:
+            cursor = connection.execute(
+                "update auth_sessions set revoked = 1 where principal_id = ? and revoked = 0",
+                (normalized_id,),
+            )
+        return cursor.rowcount
 
     def has_msp_admin_credential(self) -> bool:
         with self._connect() as connection:

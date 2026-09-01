@@ -3,6 +3,12 @@ import { MemoryRouter } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { Analytics } from "../src/screens/Analytics";
 
+vi.mock("../src/app/DashboardContext", () => ({
+  useDashboard: () => ({
+    clients: [{ client_id: "acme", name: "Acme Support", status: "active" }]
+  })
+}));
+
 describe("Analytics", () => {
   beforeEach(() => {
     vi.stubGlobal("fetch", vi.fn(() => Promise.resolve(new Response(JSON.stringify({

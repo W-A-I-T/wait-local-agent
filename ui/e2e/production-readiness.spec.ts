@@ -1,16 +1,35 @@
 import { randomUUID } from "node:crypto";
-import { expect, test } from "@playwright/test";
+import { expect, test, type Page } from "@playwright/test";
 
 const token = process.env.WAIT_BROWSER_TOKEN ?? "integration-admin-token";
 
 test.beforeEach(async ({ page }) => {
-  await page.addInitScript((value) => {
-    localStorage.setItem("wait-local-agent-api-token", value);
+  await page.addInitScript(() => {
     localStorage.setItem("wait-local-agent-onboarding-dismissed", "1");
-  }, token);
+  });
+});
+
+async function signIn(page: Page): Promise<void> {
+  await page.goto("/");
+  await expect(page.getByRole("heading", { name: "Sign in to the appliance", exact: true })).toBeVisible();
+  await page.getByLabel("Access token").fill(token);
+  await page.getByRole("button", { name: "Sign in", exact: true }).click();
+  await expect(page.getByRole("heading", { name: "WAIT AI Solutions Architect", exact: true })).toBeVisible();
+}
+
+test("shows the local sign-in screen without a stored credential", async ({ page }) => {
+  await page.goto("/");
+  await page.evaluate(() => localStorage.clear());
+  await page.reload();
+
+  await expect(page.getByRole("heading", { name: "Sign in to the appliance", exact: true })).toBeVisible();
+  await expect(page.getByLabel("Access token")).toBeVisible();
+  await expect(page.getByRole("button", { name: "Sign in", exact: true })).toBeVisible();
 });
 
 test("completes the safe local setup journey and exercises primary UI surfaces", async ({ page }, testInfo) => {
+  await signIn(page);
+
   const fixtureSuffix = `${testInfo.retry}-${testInfo.repeatEachIndex}-${randomUUID()}`;
   const clientId = `browser-smoke-${fixtureSuffix}`;
   const clientName = `Browser Smoke Client ${fixtureSuffix}`;
@@ -70,10 +89,12 @@ test("completes the safe local setup journey and exercises primary UI surfaces",
   await expect(page.getByText("Setup complete")).toBeVisible();
 
   await page.goto("/playbooks");
+  await page.locator("#app-client-selector").selectOption(clientId);
   const qbr = page.locator("article").filter({ hasText: "Quarterly Business Review" });
   await expect(qbr).toBeVisible();
   await qbr.getByLabel("Period start").fill("2026-01-01");
   await qbr.getByLabel("Period end").fill("2026-03-31");
+  await expect(qbr.getByRole("button", { name: "Preview" })).toBeEnabled();
   await qbr.getByRole("button", { name: "Preview" }).click();
   await expect(page.getByRole("status")).toContainText("Preview ready for Quarterly Business Review.");
 

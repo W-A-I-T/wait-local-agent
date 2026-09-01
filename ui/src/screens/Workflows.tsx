@@ -3,13 +3,14 @@ import { useDashboard } from "../app/DashboardContext";
 import { apiFetch } from "../api/client";
 import { EmptyState } from "../components/EmptyState";
 import { LoadingState } from "../components/LoadingState";
+import { ClientIdSelect } from "../components/ClientIdSelect";
 import { SchemaForm, validateRequiredFields, type SchemaFormValue } from "../components/SchemaForm";
 import { Link } from "react-router-dom";
 import { type WorkflowRun, type WorkflowRunComparison, type WorkflowTemplate } from "../api/types";
 import { workflowPayloadFields } from "../lib/structured-inputs";
 
 export function Workflows() {
-  const { isAdmin, canWrite } = useDashboard();
+  const { isAdmin, canWrite, clients = [] } = useDashboard();
   const [templates, setTemplates] = useState<WorkflowTemplate[]>([]);
   const [runs, setRuns] = useState<WorkflowRun[]>([]);
   const [runsLoading, setRunsLoading] = useState(false);
@@ -139,10 +140,7 @@ export function Workflows() {
               Ticket id
               <input value={ticketId} onChange={(event) => setTicketId(event.target.value)} placeholder="HALO-1001" />
             </label>
-            <label>
-              Client id (optional)
-              <input value={clientId} onChange={(event) => setClientId(event.target.value)} />
-            </label>
+            <ClientIdSelect label="Client id (optional)" value={clientId} onChange={setClientId} clients={clients} id="workflow-client-id" />
           </div>
           <SchemaForm
             key={selectedTemplate?.id ?? "workflow-inputs"}
