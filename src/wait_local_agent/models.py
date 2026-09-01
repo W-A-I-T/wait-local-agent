@@ -117,6 +117,23 @@ class ClientConnectorMapping:
 
 
 @dataclass(frozen=True)
+class ClientCandidate:
+    candidate_id: str
+    connector_instance_id: str
+    provider: str
+    external_id: str
+    display_name: str
+    domains_json: str
+    provenance: str
+    first_seen: str
+    last_seen: str
+    match_state: str
+    matched_client_id: str | None
+    match_reason: str
+    confidence: float
+
+
+@dataclass(frozen=True)
 class Ticket:
     id: str
     client: str

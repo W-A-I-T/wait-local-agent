@@ -60,6 +60,12 @@ from wait_local_agent.backup import (
     restore_state,
     run_restore_exercise,
 )
+from wait_local_agent.client_discovery import (
+    PSA_CONNECTOR_TYPES,
+    ClientDiscoveryError,
+    assert_bulk_accept_allowed,
+    discover_instance,
+)
 from wait_local_agent.client_scope import AllClients, BoundClients, ClientScope, resolve_client_scope
 from wait_local_agent.collectors import (
     CollectorService,
@@ -171,6 +177,7 @@ from wait_local_agent.models import (
     MAX_EVENT_RETRIES,
     MAX_EVENT_RETRY_DELAY_SECONDS,
     AgentDefinition,
+    ClientCandidate,
     ConnectorInstance,
     ConsultantDiscoverySession,
     WorkflowRun,
@@ -965,6 +972,24 @@ class ClientConnectorMappingCreateRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
+class ClientDiscoveryRunRequest(BaseModel):
+    connector_instance_id: str | None = Field(default=None, min_length=1, max_length=128)
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class ClientDiscoveryBulkAcceptRequest(BaseModel):
+    candidate_ids: list[str] = Field(min_length=1, max_length=100)
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class DeploymentModeRequest(BaseModel):
+    mode: Literal["msp", "smb"]
+
+    model_config = ConfigDict(extra="forbid")
+
+
 class QuarantineReclassificationRequest(BaseModel):
     client_id: str = Field(min_length=1, max_length=128)
 
@@ -1326,6 +1351,219 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     def clients(context: ViewerAccess, client_id: str | None = None) -> list[dict[str, object]]:
         scope = resolve_client_scope(context, client_id, allow_all=True)
         return [asdict(client) for client in store.list_clients(scope)]
+
+    def _discovery_summary() -> dict[str, int]:
+        counts = store.count_client_candidates()
+        return {
+            "discovered": sum(
+                counts.get(state, 0)
+                for state in ("verified", "proposed", "ambiguous", "unmatched", "conflicting")
+            ),
+            "reconciled": counts.get("verified", 0),
+            "need_confirmation": counts.get("proposed", 0) + counts.get("ambiguous", 0),
+            "unmatched": counts.get("unmatched", 0),
+            "conflicts": counts.get("conflicting", 0),
+        }
+
+    def _require_discovery_write(context: AuthContext) -> None:
+        if active_settings.demo_mode:
+            raise HTTPException(status_code=403, detail="client discovery is unavailable in demo mode")
+        _require_msp_operator(context)
+
+    @app.get("/setup/mode")
+    def deployment_mode(_: ViewerAccess) -> dict[str, str | None]:
+        mode = store.get_app_config("deployment.mode")
+        return {"mode": mode if mode in {"msp", "smb"} else None}
+
+    @app.put("/setup/mode")
+    def set_deployment_mode(payload: DeploymentModeRequest, context: AdminAccess) -> dict[str, str]:
+        _require_discovery_write(context)
+        store.set_app_config("deployment.mode", payload.mode, updated_by=context.approver_id or "admin")
+        store.add_audit_event(
+            "deployment.mode.updated", "deployment.mode", f"mode={payload.mode}", approver_id=context.approver_id
+        )
+        return {"mode": payload.mode}
+
+    @app.post("/discovery/clients/run")
+    def run_client_discovery(payload: ClientDiscoveryRunRequest, context: AdminAccess) -> dict[str, object]:
+        _require_discovery_write(context)
+        instances = store.list_connector_instances()
+        if payload.connector_instance_id:
+            instance = store.get_connector_instance(payload.connector_instance_id)
+            if instance is None:
+                raise HTTPException(status_code=404, detail="connector instance not found")
+            instances = [instance]
+        instances = [
+            instance for instance in instances if instance.connector_type.casefold().strip() in PSA_CONNECTOR_TYPES
+        ]
+        if payload.connector_instance_id and not instances:
+            raise HTTPException(status_code=409, detail="connector instance is not a supported PSA instance")
+        discovered: list[ClientCandidate] = []
+        failures: list[dict[str, str]] = []
+        for instance in instances:
+            try:
+                discovered.extend(discover_instance(store, instance, settings=active_settings, vault=vault))
+            except ClientDiscoveryError as exc:
+                failures.append({"connector_instance_id": instance.connector_instance_id, "detail": str(exc)})
+        store.add_audit_event(
+            "client.discovery.run",
+            payload.connector_instance_id or "all",
+            f"candidates={len(discovered)} failures={len(failures)}",
+            approver_id=context.approver_id,
+        )
+        return {
+            "candidates": [asdict(candidate) for candidate in discovered],
+            "failures": failures,
+            "summary": _discovery_summary(),
+        }
+
+    @app.get("/discovery/clients")
+    def list_client_discovery_candidates(
+        context: AdminAccess,
+        match_state: Literal[
+            "verified", "proposed", "ambiguous", "unmatched", "conflicting", "dismissed"
+        ] | None = None,
+        page: int = Query(default=1, ge=1, le=5000),
+        page_size: int = Query(default=50, ge=1, le=500),
+    ) -> dict[str, object]:
+        _require_discovery_write(context)
+        candidates = store.list_client_candidates(
+            match_state=match_state, offset=(page - 1) * page_size, limit=page_size
+        )
+        return {
+            "items": [asdict(candidate) for candidate in candidates],
+            "page": page,
+            "page_size": page_size,
+            "summary": _discovery_summary(),
+        }
+
+    def _accept_discovery_candidate(candidate: ClientCandidate, context: AuthContext) -> dict[str, object]:
+        if candidate.match_state != "proposed" or not candidate.matched_client_id:
+            raise HTTPException(
+                status_code=409, detail="only proposed candidates with one matched client can be accepted"
+            )
+        if store.get_client(AllClients(), candidate.matched_client_id) is None:
+            raise HTTPException(status_code=409, detail="the proposed client no longer exists")
+        try:
+            mapping = store.create_client_connector_mapping(
+                AllClients(), candidate.connector_instance_id, candidate.external_id, candidate.matched_client_id,
+                external_company_name=candidate.display_name,
+            )
+            verification = store.verify_client_connector_mapping(
+                AllClients(), mapping.mapping_id, return_retenanted_count=True
+            )
+        except ClientConnectorMappingConflictError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        except (sqlite3.IntegrityError, KeyError, ValueError) as exc:
+            raise HTTPException(status_code=409, detail="candidate mapping could not be created") from exc
+        if not isinstance(verification, tuple):  # pragma: no cover
+            raise RuntimeError("mapping verification did not return re-tenant count")
+        verified_mapping, retenanted_count = verification
+        updated = store.set_client_candidate_state(
+            candidate.candidate_id, "verified", matched_client_id=verified_mapping.client_id,
+            match_reason="accepted proposed exact normalized name", confidence=1.0,
+        )
+        if updated is None:  # pragma: no cover
+            raise HTTPException(status_code=404, detail="candidate not found")
+        store.add_audit_event(
+            "client.discovery.accepted",
+            candidate.candidate_id,
+            f"client={verified_mapping.client_id}",
+            client_id=verified_mapping.client_id,
+            approver_id=context.approver_id,
+        )
+        return {
+            **asdict(updated),
+            "mapping": asdict(verified_mapping),
+            "retenanted_count": retenanted_count,
+        }
+
+    @app.post("/discovery/clients/{candidate_id}/accept")
+    def accept_client_discovery_candidate(candidate_id: str, context: AdminAccess) -> dict[str, object]:
+        _require_discovery_write(context)
+        candidate = store.get_client_candidate(candidate_id)
+        if candidate is None:
+            raise HTTPException(status_code=404, detail="candidate not found")
+        return _accept_discovery_candidate(candidate, context)
+
+    @app.post("/discovery/clients/accept-proposed")
+    def bulk_accept_client_discovery_candidates(
+        payload: ClientDiscoveryBulkAcceptRequest,
+        context: AdminAccess,
+    ) -> dict[str, object]:
+        _require_discovery_write(context)
+        candidates = [store.get_client_candidate(candidate_id) for candidate_id in payload.candidate_ids]
+        if any(candidate is None for candidate in candidates):
+            raise HTTPException(status_code=404, detail="candidate not found")
+        resolved = cast(list[ClientCandidate], candidates)
+        try:
+            assert_bulk_accept_allowed(resolved)
+        except ClientDiscoveryError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        accepted = [_accept_discovery_candidate(candidate, context) for candidate in resolved]
+        return {"accepted": accepted, "summary": _discovery_summary()}
+
+    @app.post("/discovery/clients/{candidate_id}/create-client")
+    def create_client_from_discovery_candidate(candidate_id: str, context: AdminAccess) -> dict[str, object]:
+        _require_discovery_write(context)
+        candidate = store.get_client_candidate(candidate_id)
+        if candidate is None:
+            raise HTTPException(status_code=404, detail="candidate not found")
+        if candidate.match_state in {"verified", "dismissed"}:
+            raise HTTPException(status_code=409, detail="candidate cannot create a client in its current state")
+        client_id = f"discovered-{candidate.candidate_id.replace('-', '')[:24]}"
+        try:
+            client = store.create_client(client_id, candidate.display_name)
+            mapping = store.create_client_connector_mapping(
+                AllClients(), candidate.connector_instance_id, candidate.external_id, client.client_id,
+                external_company_name=candidate.display_name,
+            )
+            verification = store.verify_client_connector_mapping(
+                AllClients(), mapping.mapping_id, return_retenanted_count=True
+            )
+        except (sqlite3.IntegrityError, KeyError, ValueError, ClientConnectorMappingConflictError) as exc:
+            raise HTTPException(status_code=409, detail="client or candidate mapping already exists") from exc
+        if not isinstance(verification, tuple):  # pragma: no cover
+            raise RuntimeError("mapping verification did not return re-tenant count")
+        verified_mapping, retenanted_count = verification
+        updated = store.set_client_candidate_state(
+            candidate.candidate_id,
+            "verified",
+            matched_client_id=client.client_id,
+            match_reason="new client created from provider candidate",
+            confidence=1.0,
+        )
+        if updated is None:  # pragma: no cover
+            raise HTTPException(status_code=404, detail="candidate not found")
+        store.add_audit_event(
+            "client.discovery.created",
+            candidate.candidate_id,
+            f"client={client.client_id}",
+            client_id=client.client_id,
+            approver_id=context.approver_id,
+        )
+        return {
+            **asdict(updated),
+            "client": asdict(client),
+            "mapping": asdict(verified_mapping),
+            "retenanted_count": retenanted_count,
+        }
+
+    @app.post("/discovery/clients/{candidate_id}/dismiss")
+    def dismiss_client_discovery_candidate(candidate_id: str, context: AdminAccess) -> dict[str, object]:
+        _require_discovery_write(context)
+        candidate = store.get_client_candidate(candidate_id)
+        if candidate is None:
+            raise HTTPException(status_code=404, detail="candidate not found")
+        if candidate.match_state == "verified":
+            raise HTTPException(status_code=409, detail="verified candidates cannot be dismissed")
+        updated = store.set_client_candidate_state(candidate_id, "dismissed", match_reason="dismissed by administrator")
+        if updated is None:  # pragma: no cover
+            raise HTTPException(status_code=404, detail="candidate not found")
+        store.add_audit_event(
+            "client.discovery.dismissed", candidate_id, "dismissed by administrator", approver_id=context.approver_id
+        )
+        return asdict(updated)
 
     @app.post("/clients")
     def create_client(payload: ClientCreateRequest, context: AdminAccess) -> dict[str, object]:
