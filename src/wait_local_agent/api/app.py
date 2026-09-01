@@ -144,6 +144,7 @@ from wait_local_agent.lp_client import (
     LaunchPassportRequestError,
     LaunchPassportUnauthorized,
 )
+from wait_local_agent.m365_auth import M365ConnectionResolver
 from wait_local_agent.m365_graph import (
     M365GraphClient,
     M365GraphGroupReadResponse,
@@ -1004,6 +1005,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         )
     store = Store(active_settings.data_path)
     vault = SecretVault(active_settings.vault_path)
+    m365_connection_resolver = M365ConnectionResolver(active_settings, store, vault)
     session_signing_key = get_or_create_session_signing_key(active_settings, vault)
     if not active_settings.demo_mode and not admin_credential_configured(active_settings, store):
         raise RuntimeError(
@@ -1030,6 +1032,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     timezest_client = TimeZestClient(active_settings)
     scalepad_client = ScalePadClient(active_settings)
     m365_client = M365GraphClient(active_settings)
+    # Keep construction compatible with injected test clients while making the
+    # runtime Graph client use the same profile resolver as the admin pack.
+    m365_client.connection_resolver = m365_connection_resolver
     teams_client = TeamsGraphClient(active_settings)
     work_iq_client = WorkIqClient(active_settings)
     update_status_cache = UpdateStatusCache(ttl_seconds=3600.0)
@@ -1092,6 +1097,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.state.settings = active_settings
     app.state.store = store
     app.state.vault = vault
+    app.state.m365_connection_resolver = m365_connection_resolver
     app.state.scheduler = scheduler
     app.state.limiter = limiter
     app.state.update_status_cache = update_status_cache
@@ -1128,6 +1134,15 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     )
     app.include_router(create_founder_router())
     app.include_router(create_auth_router(limiter))
+
+    def _m365_health_configured() -> bool:
+        try:
+            return m365_connection_resolver.resolve().token_provider.configured
+        except Exception:
+            # Health must remain available even when a stored profile is
+            # malformed or ambiguous; the connector endpoint reports the
+            # sanitized failure when it is used.
+            return bool(active_settings.m365_graph_base_url and active_settings.m365_access_token)
 
     @app.get("/health")
     @limiter.exempt
@@ -1171,7 +1186,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             "sharepoint_configured": bool(
                 active_settings.sharepoint_base_url and active_settings.sharepoint_access_token
             ),
-            "m365_configured": bool(active_settings.m365_graph_base_url and active_settings.m365_access_token),
+            "m365_configured": _m365_health_configured(),
         }
 
     @app.get("/healthz", include_in_schema=False)
@@ -1459,6 +1474,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             "ninjaone",
             "dattormm",
             "ncentral",
+            "m365",
         }:
             candidate = ConnectorInstance(
                 connector_instance_id="pending-validation",

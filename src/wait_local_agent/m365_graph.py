@@ -16,6 +16,13 @@ from urllib.parse import parse_qs, quote, unquote, urlsplit
 import httpx
 
 from wait_local_agent.config import Settings
+from wait_local_agent.m365_auth import (
+    M365AuthFailure,
+    M365Connection,
+    M365ConnectionResolver,
+    M365ProfileResolutionError,
+    env_connection,
+)
 from wait_local_agent.models import ConnectorReadResult
 from wait_local_agent.net_security import NetSecurityError, validate_operator_url
 
@@ -387,9 +394,20 @@ class M365GraphReadError(Exception):
 class M365GraphClient:
     """Bounded Microsoft Graph context lookup and approved-write client."""
 
-    def __init__(self, settings: Settings, *, transport: httpx.BaseTransport | None = None) -> None:
+    def __init__(
+        self,
+        settings: Settings,
+        *,
+        transport: httpx.BaseTransport | None = None,
+        connection: M365Connection | None = None,
+        connection_resolver: M365ConnectionResolver | None = None,
+        client_id: str | None = None,
+    ) -> None:
         self.settings = settings
         self.transport = transport
+        self.connection = connection
+        self.connection_resolver = connection_resolver
+        self.client_id = client_id
 
     def health(self) -> ConnectorReadResult:
         blocked = self._blocked_result()
@@ -676,8 +694,9 @@ class M365GraphClient:
             encoded_user_id = quote(safe_user_id, safe="")
             if operation == "add":
                 endpoint = f"groups/{encoded_group_id}/members/$ref"
+                graph_connection = self._connection()
                 base_url = _api_base_url(
-                    self.settings.m365_graph_base_url,
+                    graph_connection.graph_base_url,
                     allow_insecure_transport=self.settings.allow_insecure_provider_transport,
                 )
                 payload: dict[str, object] = {
@@ -1108,19 +1127,21 @@ class M365GraphClient:
             raise M365GraphReadError(missing.message)
         try:
             safe_endpoint = _safe_endpoint(endpoint)
+            connection = self._connection()
             base_url = _api_base_url(
-                self.settings.m365_graph_base_url,
+                connection.graph_base_url,
                 allow_insecure_transport=self.settings.allow_insecure_provider_transport,
             )
             with httpx.Client(timeout=self.settings.connector_timeout_seconds, transport=self.transport) as client:
                 response = client.get(
                     f"{base_url}/{safe_endpoint}",
-                    headers={
-                        "Authorization": f"Bearer {self.settings.m365_access_token}",
-                        "Accept": "application/json",
-                    },
+                    headers=self._headers(connection),
                     params=params,
                 )
+        except M365AuthFailure as exc:
+            raise M365GraphReadError("Microsoft Graph token acquisition failed.") from exc
+        except M365ProfileResolutionError as exc:
+            raise M365GraphReadError(str(exc)) from exc
         except (httpx.TimeoutException, httpx.ConnectError) as exc:
             raise M365GraphReadError("Microsoft Graph request failed before receiving a response.") from exc
         except httpx.HTTPError as exc:
@@ -1146,16 +1167,13 @@ class M365GraphClient:
             raise M365GraphReadError(missing.message)
         try:
             safe_endpoint = _safe_endpoint(endpoint)
+            connection = self._connection()
             base_url = _api_base_url(
-                self.settings.m365_graph_base_url,
+                connection.graph_base_url,
                 allow_insecure_transport=self.settings.allow_insecure_provider_transport,
             )
             with httpx.Client(timeout=self.settings.connector_timeout_seconds, transport=self.transport) as client:
-                headers = {
-                    "Authorization": f"Bearer {self.settings.m365_access_token}",
-                    "Accept": "application/json",
-                    "Content-Type": "application/json",
-                }
+                headers = self._headers(connection, content_type=True)
                 if payload is None:
                     response = client.post(
                         f"{base_url}/{safe_endpoint}",
@@ -1168,6 +1186,10 @@ class M365GraphClient:
                         headers=headers,
                         json=payload,
                     )
+        except M365AuthFailure as exc:
+            raise M365GraphReadError("Microsoft Graph token acquisition failed.") from exc
+        except M365ProfileResolutionError as exc:
+            raise M365GraphReadError(str(exc)) from exc
         except (httpx.TimeoutException, httpx.ConnectError) as exc:
             raise M365GraphReadError("Microsoft Graph request failed before receiving a response.") from exc
         except httpx.HTTPError as exc:
@@ -1191,20 +1213,21 @@ class M365GraphClient:
             raise M365GraphReadError(missing.message)
         try:
             safe_endpoint = _safe_endpoint(endpoint)
+            connection = self._connection()
             base_url = _api_base_url(
-                self.settings.m365_graph_base_url,
+                connection.graph_base_url,
                 allow_insecure_transport=self.settings.allow_insecure_provider_transport,
             )
             with httpx.Client(timeout=self.settings.connector_timeout_seconds, transport=self.transport) as client:
                 response = client.patch(
                     f"{base_url}/{safe_endpoint}",
-                    headers={
-                        "Authorization": f"Bearer {self.settings.m365_access_token}",
-                        "Accept": "application/json",
-                        "Content-Type": "application/json",
-                    },
+                    headers=self._headers(connection, content_type=True),
                     json=payload,
                 )
+        except M365AuthFailure as exc:
+            raise M365GraphReadError("Microsoft Graph token acquisition failed.") from exc
+        except M365ProfileResolutionError as exc:
+            raise M365GraphReadError(str(exc)) from exc
         except (httpx.TimeoutException, httpx.ConnectError) as exc:
             raise M365GraphReadError("Microsoft Graph request failed before receiving a response.") from exc
         except httpx.HTTPError as exc:
@@ -1228,18 +1251,20 @@ class M365GraphClient:
             raise M365GraphReadError(missing.message)
         try:
             safe_endpoint = _safe_endpoint(endpoint)
+            connection = self._connection()
             base_url = _api_base_url(
-                self.settings.m365_graph_base_url,
+                connection.graph_base_url,
                 allow_insecure_transport=self.settings.allow_insecure_provider_transport,
             )
             with httpx.Client(timeout=self.settings.connector_timeout_seconds, transport=self.transport) as client:
                 response = client.delete(
                     f"{base_url}/{safe_endpoint}",
-                    headers={
-                        "Authorization": f"Bearer {self.settings.m365_access_token}",
-                        "Accept": "application/json",
-                    },
+                    headers=self._headers(connection),
                 )
+        except M365AuthFailure as exc:
+            raise M365GraphReadError("Microsoft Graph token acquisition failed.") from exc
+        except M365ProfileResolutionError as exc:
+            raise M365GraphReadError(str(exc)) from exc
         except (httpx.TimeoutException, httpx.ConnectError) as exc:
             raise M365GraphReadError("Microsoft Graph request failed before receiving a response.") from exc
         except httpx.HTTPError as exc:
@@ -1257,10 +1282,16 @@ class M365GraphClient:
         )
 
     def _not_configured_result(self) -> ConnectorReadResult | None:
+        try:
+            connection = self._connection()
+        except M365ProfileResolutionError as exc:
+            return ConnectorReadResult("failed", str(exc))
+        if connection.token_provider.configured and connection.graph_base_url:
+            return None
         missing = [
             key
             for key, value in {
-                "WAIT_M365_GRAPH_BASE_URL": self.settings.m365_graph_base_url,
+                "WAIT_M365_GRAPH_BASE_URL": connection.graph_base_url,
                 "WAIT_M365_ACCESS_TOKEN": self.settings.m365_access_token,
             }.items()
             if not value
@@ -1271,6 +1302,18 @@ class M365GraphClient:
             "not_configured",
             f"Microsoft Graph live read credentials are incomplete: {', '.join(missing)}.",
         )
+
+    def _connection(self) -> M365Connection:
+        if self.connection_resolver is not None:
+            return self.connection_resolver.resolve(self.client_id)
+        return self.connection or env_connection(self.settings)
+
+    @staticmethod
+    def _headers(connection: M365Connection, *, content_type: bool = False) -> dict[str, str]:
+        headers = {"Authorization": f"Bearer {connection.token_provider.get_token()}", "Accept": "application/json"}
+        if content_type:
+            headers["Content-Type"] = "application/json"
+        return headers
 
     def _blocked_response(self) -> M365GraphReadResponse | None:
         blocked = self._blocked_result()

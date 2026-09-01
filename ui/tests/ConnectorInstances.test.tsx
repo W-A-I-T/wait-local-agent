@@ -208,6 +208,57 @@ describe("Connector Instances screen", () => {
     expect(screen.getByLabelText("N-central organization-unit map JSON")).toBeInTheDocument();
     expect(screen.getByLabelText("Provider base URL")).toBeInTheDocument();
   });
+
+  it("supports Microsoft 365 client-credential and static-token profile modes", async () => {
+    vi.spyOn(crypto, "randomUUID").mockReturnValue("123e4567-e89b-12d3-a456-426614174002");
+    const created = {
+      ...instances[0],
+      connector_instance_id: "ci-m365-1",
+      connector_type: "m365",
+      display_name: "Acme Microsoft 365",
+      credential_ref: "connector:m365:acme-microsoft-365:123e4567-e89b-12d3-a456-426614174002",
+      config_json: "{}"
+    };
+    let instanceListCalls = 0;
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const path = String(input);
+      if (path === "/clients") return jsonResponse([]);
+      if (path === "/connector-instances" && init?.method === "POST") return jsonResponse(created);
+      if (path === "/connector-instances") {
+        instanceListCalls += 1;
+        return jsonResponse(instanceListCalls === 1 ? [] : [created]);
+      }
+      if (path === "/ingestion/sync-cursors") return jsonResponse([]);
+      if (path === "/secrets" && init?.method === "POST") return jsonResponse(undefined);
+      if (path === "/connector-instances/ci-m365-1") return jsonResponse(created);
+      if (path === "/client-connector-mappings?connector_instance_id=ci-m365-1") return jsonResponse([]);
+      throw new Error(`Unexpected request: ${path}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(<ConnectorInstances />);
+    fireEvent.change(await screen.findByLabelText("Provider"), { target: { value: "m365" } });
+    expect(screen.queryByLabelText("Base URL")).not.toBeInTheDocument();
+    expect(screen.getByLabelText("Tenant ID")).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText("Credential mode"), { target: { value: "static_token" } });
+    expect(screen.getByLabelText("Access token")).toHaveAttribute("type", "password");
+    fireEvent.change(screen.getByLabelText("Credential mode"), { target: { value: "client_credentials" } });
+    fireEvent.change(screen.getByLabelText("Display name"), { target: { value: "Acme Microsoft 365" } });
+    fireEvent.change(screen.getByLabelText("Tenant ID"), { target: { value: "tenant-value" } });
+    fireEvent.change(screen.getByLabelText("Client ID"), { target: { value: "application-value" } });
+    fireEvent.change(screen.getByLabelText("Client secret"), { target: { value: "credential-value" } });
+    fireEvent.click(screen.getByRole("button", { name: "Connect system" }));
+
+    expect(await screen.findByRole("status")).toHaveTextContent("Connected Acme Microsoft 365.");
+    const secretCall = fetchMock.mock.calls.find(([input, request]) => String(input) === "/secrets" && request?.method === "POST");
+    const instanceCall = fetchMock.mock.calls.find(([input, request]) => String(input) === "/connector-instances" && request?.method === "POST");
+    expect(JSON.parse(String(secretCall?.[1]?.body))).toEqual({
+      name: created.credential_ref,
+      value: JSON.stringify({ mode: "client_credentials", tenant_id: "tenant-value", client_id: "application-value", client_secret: "credential-value" })
+    });
+    expect(JSON.parse(String(instanceCall?.[1]?.body))).toMatchObject({ connector_type: "m365", config_json: "{}" });
+    expect(String(instanceCall?.[1]?.body)).not.toContain("credential-value");
+  });
 });
 
 function jsonResponse(payload: unknown): Response {

@@ -111,9 +111,9 @@ export const connectorSetup = {
   },
   m365: {
     label: "Microsoft 365 / Entra",
-    tier: "env",
+    tier: "instance",
     envVars: ["WAIT_M365_GRAPH_BASE_URL", "WAIT_M365_ACCESS_TOKEN", "WAIT_M365_PAGE_SIZE"],
-    docsNote: "Microsoft Graph is configured at appliance scope; token acquisition remains external to this appliance."
+    docsNote: "Use a client-scoped or MSP-wide Microsoft 365 profile. App-registration credentials are acquired lazily through Microsoft Graph; the existing environment token remains the bootstrap fallback."
   },
   timezest: {
     label: "TimeZest",
