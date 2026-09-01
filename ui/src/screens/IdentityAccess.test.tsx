@@ -76,6 +76,8 @@ describe("IdentityAccess", () => {
     await screen.findByText("No database principals");
     fireEvent.change(screen.getByLabelText("Principal ID"), { target: { value: "tech-alpha" } });
     fireEvent.change(screen.getByLabelText("Display name"), { target: { value: "Alpha technician" } });
+    fireEvent.change(screen.getByLabelText("Initial client"), { target: { value: "alpha" } });
+    fireEvent.change(screen.getByLabelText("Initial role"), { target: { value: "technician" } });
     fireEvent.click(screen.getByRole("button", { name: "Create & issue credential" }));
 
     await waitFor(() => expect(mockedApiFetch).toHaveBeenCalledWith(
@@ -90,6 +92,20 @@ describe("IdentityAccess", () => {
       issue_credential: true
     });
     expect(await screen.findByText("wait_new_token")).toBeInTheDocument();
+  });
+
+  it("requires explicit tenant and role choices before granting client access", async () => {
+    mockedApiFetch.mockResolvedValue([]);
+
+    render(<IdentityAccess />);
+
+    await screen.findByText("No database principals");
+    fireEvent.change(screen.getByLabelText("Principal ID"), { target: { value: "tech-explicit" } });
+    expect(screen.getByRole("button", { name: "Create & issue credential" })).toBeDisabled();
+    fireEvent.change(screen.getByLabelText("Initial client"), { target: { value: "alpha" } });
+    expect(screen.getByRole("button", { name: "Create & issue credential" })).toBeDisabled();
+    fireEvent.change(screen.getByLabelText("Initial role"), { target: { value: "viewer" } });
+    expect(screen.getByRole("button", { name: "Create & issue credential" })).not.toBeDisabled();
   });
 
   it("shows a recoverable error for invalid principal data", async () => {

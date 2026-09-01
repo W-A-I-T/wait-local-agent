@@ -42,10 +42,10 @@ export function IdentityAccess() {
   const [newName, setNewName] = useState("");
   const [newKind, setNewKind] = useState<"staff" | "customer">("staff");
   const [newClientId, setNewClientId] = useState("");
-  const [newRole, setNewRole] = useState<ClientRole>("technician");
+  const [newRole, setNewRole] = useState<ClientRole | "">("");
   const [newMspAdmin, setNewMspAdmin] = useState(false);
   const [membershipClientId, setMembershipClientId] = useState("");
-  const [membershipRole, setMembershipRole] = useState<ClientRole>("technician");
+  const [membershipRole, setMembershipRole] = useState<ClientRole | "">("");
 
   const selected = useMemo(
     () => principals.find((principal) => principal.principal_id === selectedId) ?? null,
@@ -71,16 +71,11 @@ export function IdentityAccess() {
     void refresh();
   }, [refresh]);
 
-  useEffect(() => {
-    if (!newClientId && clients[0]) setNewClientId(clients[0].client_id);
-    if (!membershipClientId && clients[0]) setMembershipClientId(clients[0].client_id);
-  }, [clients, membershipClientId, newClientId]);
-
   async function createPrincipal(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!newId.trim()) return;
-    if (!newMspAdmin && !newClientId) {
-      setMessage("Choose a client scope or grant MSP administrator access.");
+    if ((newClientId && !newRole) || (!newMspAdmin && (!newClientId || !newRole))) {
+      setMessage("Choose an initial client and role, or grant MSP administrator access.");
       return;
     }
     setBusy(true);
@@ -93,7 +88,7 @@ export function IdentityAccess() {
           principal_id: newId.trim(),
           kind: newKind,
           display_name: newName.trim(),
-          client_roles: newClientId ? [{ client_id: newClientId, role: newRole }] : [],
+          client_roles: newClientId && newRole ? [{ client_id: newClientId, role: newRole }] : [],
           msp_admin: newKind === "staff" && newMspAdmin,
           issue_credential: true
         })
@@ -146,7 +141,7 @@ export function IdentityAccess() {
 
   async function addMembership(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (!selected || !membershipClientId) return;
+    if (!selected || !membershipClientId || !membershipRole) return;
     await mutate(
       `/packs/operator-control/principals/${encodeURIComponent(selected.principal_id)}/client-roles/${encodeURIComponent(membershipClientId)}`,
       {
@@ -201,10 +196,13 @@ export function IdentityAccess() {
               <option value="">No client role</option>
               {clients.map((client) => <option key={client.client_id} value={client.client_id}>{client.name}</option>)}
             </select></label>
-            <label>Initial role<select value={newRole} onChange={(event) => setNewRole(event.target.value as ClientRole)}>{roles.map((role) => <option key={role} value={role}>{role}</option>)}</select></label>
+            <label>Initial role<select value={newRole} onChange={(event) => setNewRole(event.target.value as ClientRole | "")}>
+              <option value="">Choose a role</option>
+              {roles.map((role) => <option key={role} value={role}>{role}</option>)}
+            </select></label>
             <label><input type="checkbox" checked={newMspAdmin} disabled={newKind === "customer"} onChange={(event) => setNewMspAdmin(event.target.checked)} /> MSP administrator</label>
           </div>
-          <button type="submit" disabled={busy || !newId.trim() || (!newMspAdmin && !newClientId)}>{busy ? "Saving…" : "Create & issue credential"}</button>
+          <button type="submit" disabled={busy || !newId.trim() || (newClientId && !newRole) || (!newMspAdmin && (!newClientId || !newRole))}>{busy ? "Saving…" : "Create & issue credential"}</button>
         </form>
       </section>
 
@@ -275,8 +273,11 @@ export function IdentityAccess() {
               </div>}
               <form onSubmit={(event) => void addMembership(event)}>
                 <label>Client<select value={membershipClientId} onChange={(event) => setMembershipClientId(event.target.value)}>{clients.map((client) => <option key={client.client_id} value={client.client_id}>{client.name}</option>)}</select></label>
-                <label>Role<select value={membershipRole} onChange={(event) => setMembershipRole(event.target.value as ClientRole)}>{roles.map((role) => <option key={role} value={role}>{role}</option>)}</select></label>
-                <button type="submit" disabled={busy || !membershipClientId}>Add / update role</button>
+                <label>Role<select value={membershipRole} onChange={(event) => setMembershipRole(event.target.value as ClientRole | "")}>
+                  <option value="">Choose a role</option>
+                  {roles.map((role) => <option key={role} value={role}>{role}</option>)}
+                </select></label>
+                <button type="submit" disabled={busy || !membershipClientId || !membershipRole}>Add / update role</button>
               </form>
             </div>
 
