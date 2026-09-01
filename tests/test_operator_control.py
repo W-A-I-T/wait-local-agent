@@ -15,8 +15,8 @@ from packs.operator_control.identity import (
     set_msp_admin,
     update_principal,
 )
-from wait_local_agent.client_scope import AllClients, BoundClients
 from wait_local_agent.api.app import create_app
+from wait_local_agent.client_scope import AllClients, BoundClients
 from wait_local_agent.store import Store, hash_credential
 
 
@@ -237,17 +237,19 @@ def test_unified_activity_route_respects_tenant_scope_and_filters(settings) -> N
 
 
 def test_unified_activity_projects_all_sources_and_deduplicates_canonical_runs() -> None:
-    execution = lambda run_kind, source_run_id, run_id, client_id, started_at: SimpleNamespace(
-        run_kind=run_kind,
-        source_run_id=source_run_id,
-        id=run_id,
-        actor="operator",
-        status="completed",
-        started_at=started_at,
-        finished_at=started_at,
-        client_id=client_id,
-        trigger_source="manual",
-    )
+    def execution(run_kind, source_run_id, run_id, client_id, started_at):
+        return SimpleNamespace(
+            run_kind=run_kind,
+            source_run_id=source_run_id,
+            id=run_id,
+            actor="operator",
+            status="completed",
+            started_at=started_at,
+            finished_at=started_at,
+            client_id=client_id,
+            trigger_source="manual",
+        )
+
     store = SimpleNamespace(
         list_execution_runs=lambda scope: [
             execution("agent", 1, 10, "alpha", "2026-08-30T10:00:00Z"),
@@ -255,32 +257,57 @@ def test_unified_activity_projects_all_sources_and_deduplicates_canonical_runs()
             execution("smart-action", 4, 12, "alpha", "2026-08-30T08:00:00Z"),
         ],
         list_agent_runs=lambda scope: [
-            SimpleNamespace(id=1, agent_id="duplicate", entity_id="ticket-1", actor="", status="completed", started_at="2026-08-30T10:00:00Z", finished_at="", client_id="alpha"),
-            SimpleNamespace(id=2, agent_id="triage", entity_id="ticket-2", actor="tech", status="failed", started_at="2026-08-30T07:00:00Z", finished_at="", client_id="alpha"),
+            SimpleNamespace(
+                id=1, agent_id="duplicate", entity_id="ticket-1", actor="", status="completed",
+                started_at="2026-08-30T10:00:00Z", finished_at="", client_id="alpha",
+            ),
+            SimpleNamespace(
+                id=2, agent_id="triage", entity_id="ticket-2", actor="tech", status="failed",
+                started_at="2026-08-30T07:00:00Z", finished_at="", client_id="alpha",
+            ),
         ],
         list_workflow_runs=lambda scope: [
-            SimpleNamespace(id=3, template_id="onboarding", ticket_id="ticket-3", status="running", created_at="2026-08-30T06:00:00Z", updated_at="", client_id="alpha"),
+            SimpleNamespace(
+                id=3, template_id="onboarding", ticket_id="ticket-3", status="running",
+                created_at="2026-08-30T06:00:00Z", updated_at="", client_id="alpha",
+            ),
         ],
         list_smart_action_runs=lambda scope: [
-            SimpleNamespace(id=4, action_id="duplicate", actor="", status="completed", created_at="2026-08-30T08:00:00Z", updated_at="", client_id="alpha"),
-            SimpleNamespace(id=5, action_id="notify", actor="operator", status="completed", created_at="2026-08-30T05:00:00Z", updated_at="", client_id="alpha"),
+            SimpleNamespace(
+                id=4, action_id="duplicate", actor="", status="completed",
+                created_at="2026-08-30T08:00:00Z", updated_at="", client_id="alpha",
+            ),
+            SimpleNamespace(
+                id=5, action_id="notify", actor="operator", status="completed",
+                created_at="2026-08-30T05:00:00Z", updated_at="", client_id="alpha",
+            ),
         ],
         list_collector_runs=lambda scope: [
-            SimpleNamespace(id=6, module_id="inventory", source_id=6, actor_id=None, status="completed", started_at="2026-08-30T04:00:00Z", completed_at="", client_id="alpha"),
+            SimpleNamespace(
+                id=6, module_id="inventory", source_id=6, actor_id=None, status="completed",
+                started_at="2026-08-30T04:00:00Z", completed_at="", client_id="alpha",
+            ),
         ],
         list_agent_backfills=lambda scope: [
-            SimpleNamespace(id=7, agent_id="historical", actor="operator", status="completed", created_at="2026-08-30T03:00:00Z", updated_at="", client_id="alpha"),
+            SimpleNamespace(
+                id=7, agent_id="historical", actor="operator", status="completed",
+                created_at="2026-08-30T03:00:00Z", updated_at="", client_id="alpha",
+            ),
         ],
     )
 
     rows = list_activity(store, scope=BoundClients(frozenset({"alpha"})))
 
-    assert [row.kind for row in rows] == ["agent", "execution", "smart-action", "agent", "workflow", "smart_action", "collector", "backfill"]
+    assert [row.kind for row in rows] == [
+        "agent", "execution", "smart-action", "agent", "workflow", "smart_action", "collector", "backfill"
+    ]
     assert sum(row.activity_id == "agent:1" for row in rows) == 0
     assert sum(row.activity_id == "execution:10" for row in rows) == 1
     assert rows[1].title == "Execution"
     assert activity_to_dict(rows[-1])["detail_path"] == "/backfills"
-    assert [row.kind for row in list_activity(store, scope=AllClients(), kinds=frozenset({"AGENT"}), status=" FAILED ")] == ["agent"]
+    assert [
+        row.kind for row in list_activity(store, scope=AllClients(), kinds=frozenset({"AGENT"}), status=" FAILED ")
+    ] == ["agent"]
     assert len(list_activity(store, scope=AllClients(), limit=2)) == 2
 
 
@@ -299,7 +326,13 @@ def test_identity_lifecycle_updates_roles_and_rejects_unsafe_shapes(settings) ->
         issue_credential=False,
     )
     assert principal.client_roles == (("alpha", "viewer"),)
-    renamed = update_principal(store, principal_id="staff-alpha", display_name="Renamed", active=None, actor_principal_id=None)
+    renamed = update_principal(
+        store,
+        principal_id="staff-alpha",
+        display_name="Renamed",
+        active=None,
+        actor_principal_id=None,
+    )
     assert renamed.display_name == "Renamed"
     with pytest.raises(IdentityConflictError, match="retain a client role"):
         remove_client_role(store, principal_id="staff-alpha", client_id="alpha", actor_principal_id=None)
