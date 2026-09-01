@@ -1192,6 +1192,11 @@ export type KnowledgeDocument = {
   chunk_count: number;
   indexed_at: string;
   client_id?: string | null;
+  authority: string;
+  sop_version?: string | null;
+  approved_by?: string | null;
+  approved_at?: string | null;
+  superseded_by?: number | null;
 };
 
 export type KnowledgeChunk = {
@@ -1398,7 +1403,7 @@ export type AuditExportResponse = {
 
 export type ScheduledJob = {
   id: number;
-  job_kind: "workflow" | "playbook" | "agent" | "report" | "connector_poll" | "graph_sync";
+  job_kind: "workflow" | "playbook" | "agent" | "report" | "connector_poll" | "graph_sync" | "baseline_snapshot" | "backup";
   template_id: string | null;
   playbook_id: string | null;
   agent_id: string | null;
@@ -1423,7 +1428,7 @@ export type ScheduledJobRequestBody = {
   report_type?: "qbr" | "automation_opportunity" | "recurring_service_review";
   agent_id?: string;
   entity_id?: string;
-  job_kind?: "graph_sync";
+  job_kind?: "graph_sync" | "backup";
   graph_sync?: boolean;
   cron: string;
   schedule_type?: "cron" | "interval" | "once";
@@ -1431,6 +1436,33 @@ export type ScheduledJobRequestBody = {
   run_at?: string;
   timezone?: string;
   params: Record<string, unknown>;
+};
+
+export type BackupRun = {
+  backup_run_id: number;
+  started_at: string;
+  finished_at: string;
+  status: "succeeded" | "failed";
+  destination: string;
+  size_bytes: number | null;
+  failure_summary: string;
+};
+
+export type BackupStatusResponse = {
+  items: BackupRun[];
+  page: number;
+  page_size: number;
+  total: number;
+  schedule_configured: boolean;
+  schedule: ScheduledJob | null;
+  last_restore_exercise: {
+    id: number | null;
+    exercise_id: string;
+    status: string;
+    backup_artifact_id: string;
+    completed_at: string;
+    evidence_reference: string;
+  } | null;
 };
 
 export type AgentDefinition = {

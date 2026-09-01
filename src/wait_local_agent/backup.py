@@ -4,6 +4,7 @@ import shutil
 import sqlite3
 import tempfile
 import time
+from datetime import UTC, datetime
 from pathlib import Path
 from uuid import uuid4
 
@@ -16,6 +17,8 @@ from wait_local_agent.vault import SecretVault, SecretVaultError
 
 BACKUP_KEY_SECRET_NAME = "WAIT_BACKUP_FERNET_KEY"  # nosec B105: secret name constant, not a secret value
 RESTORE_EXERCISE_SCRATCH_PREFIX = "restore-exercise-scratch-"
+BACKUP_FILE_PREFIX = "state-"
+BACKUP_FILE_SUFFIX = ".db.enc"
 
 
 class BackupEncryptionError(RuntimeError):
@@ -24,6 +27,47 @@ class BackupEncryptionError(RuntimeError):
 
 class BackupPathError(ValueError):
     """Raised when a backup path escapes the appliance data directory."""
+
+
+def scheduled_backup_directory(settings: Settings) -> Path:
+    return settings.data_path.expanduser().resolve().parent / "backups"
+
+
+def create_scheduled_backup(store: Store, settings: Settings) -> Path:
+    """Create the appliance's encrypted scheduled-backup artifact."""
+
+    destination = scheduled_backup_directory(settings) / (
+        f"{BACKUP_FILE_PREFIX}{datetime.now(UTC).strftime('%Y%m%dT%H%M%S%fZ')}{BACKUP_FILE_SUFFIX}"
+    )
+    return backup_state(store, destination, encrypt=True, settings=settings)
+
+
+def prune_backup_files(directory: Path, retention_count: int, protected: Path) -> int:
+    """Retain the newest generated backup files and return pruning failures."""
+
+    if retention_count < 1:
+        raise ValueError("retention_count must be at least 1")
+    directory = directory.expanduser().resolve()
+    protected = protected.expanduser().resolve()
+    try:
+        candidates = [
+            candidate
+            for candidate in directory.glob(f"{BACKUP_FILE_PREFIX}*{BACKUP_FILE_SUFFIX}")
+            if candidate.is_file() and not candidate.is_symlink()
+        ]
+        candidates.sort(key=lambda candidate: (candidate.stat().st_mtime_ns, candidate.name), reverse=True)
+    except OSError:
+        return 1
+
+    failures = 0
+    for candidate in candidates[retention_count:]:
+        if candidate.resolve() == protected:
+            continue
+        try:
+            candidate.unlink()
+        except OSError:
+            failures += 1
+    return failures
 
 
 def _confine_backup_path(path: Path, settings: Settings | None) -> Path:

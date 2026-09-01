@@ -193,10 +193,12 @@ from wait_local_agent.models import (
     MAX_APPROVAL_EXPIRY_SECONDS,
     MAX_EVENT_RETRIES,
     MAX_EVENT_RETRY_DELAY_SECONDS,
+    MAX_KNOWLEDGE_SOP_VERSION_LENGTH,
     AgentDefinition,
     ClientCandidate,
     ConnectorInstance,
     ConsultantDiscoverySession,
+    KnowledgeAuthority,
     WorkflowRun,
 )
 from wait_local_agent.monitoring import build_agent_health_summary
@@ -373,6 +375,14 @@ class KnowledgeIngestRequest(BaseModel):
     parser: str | None = None
     ocr: bool | None = None
     client_id: str | None = None
+
+
+class KnowledgeAuthorityRequest(BaseModel):
+    authority: KnowledgeAuthority
+    sop_version: str | None = Field(default=None, max_length=MAX_KNOWLEDGE_SOP_VERSION_LENGTH)
+    superseded_by: int | None = Field(default=None, gt=0)
+
+    model_config = ConfigDict(extra="forbid")
 
 
 class ApprovalPayloadPatchRequest(BaseModel):
@@ -921,7 +931,7 @@ class ScheduledJobCreateRequest(BaseModel):
     playbook_id: str | None = None
     agent_id: str | None = None
     job_kind: Literal[
-        "workflow", "playbook", "agent", "report", "connector_poll", "graph_sync", "baseline_snapshot"
+        "workflow", "playbook", "agent", "report", "connector_poll", "graph_sync", "baseline_snapshot", "backup"
     ] | None = None
     graph_sync: bool = False
     entity_id: str | None = None
@@ -1205,6 +1215,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         ingestion_poller=IngestionPoller(store, base_settings=active_settings),
         graph_sync_runner=_run_client_graph_sync,
         baseline_snapshot_runner=lambda client_id: baseline_service.create_baseline(client_id),
+        settings=active_settings,
     )
 
     @asynccontextmanager
@@ -3878,6 +3889,53 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         except (SecretVaultError, ValueError) as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         return {"name": payload.name, "status": "stored"}
+
+    @app.get("/backups")
+    def list_backups(
+        context: AdminAccess,
+        page: Annotated[int, Query(ge=1, le=100)] = 1,
+        page_size: Annotated[int, Query(ge=1, le=100)] = 25,
+    ) -> dict[str, object]:
+        _require_msp_operator(context)
+        offset = (page - 1) * page_size
+        runs = store.list_backup_runs(limit=page_size, offset=offset)
+        backup_schedules = [job for job in store.list_scheduled_jobs() if job.job_kind == "backup"]
+        latest_exercise = store.list_restore_exercises()[-1:]
+        restore_reference: dict[str, object] | None = None
+        if latest_exercise:
+            exercise = latest_exercise[0]
+            restore_reference = {
+                "id": exercise.id,
+                "exercise_id": exercise.exercise_id,
+                "status": exercise.status,
+                "backup_artifact_id": exercise.backup_artifact_id,
+                "completed_at": exercise.completed_at,
+                "evidence_reference": exercise.exercise_id,
+            }
+        schedule = _scheduled_job_view(backup_schedules[0]) if backup_schedules else None
+        return {
+            "items": [asdict(run) for run in runs],
+            "runs": [asdict(run) for run in runs],
+            "page": page,
+            "page_size": page_size,
+            "total": store.count_backup_runs(),
+            "schedule_configured": schedule is not None,
+            "schedule": schedule,
+            "last_restore_exercise": restore_reference,
+        }
+
+    @app.post("/backups/run")
+    def run_backup(context: AdminAccess) -> dict[str, object]:
+        _require_msp_operator(context)
+        store.add_audit_event(
+            "backup.run_requested",
+            "manual",
+            "admin requested backup run",
+            approver_id=context.approver_id,
+        )
+        if active_settings.demo_mode:
+            raise HTTPException(status_code=403, detail="backup runs are unavailable in demo mode")
+        return asdict(scheduler.run_backup())
 
     @app.post("/backups")
     def create_backup(payload: BackupCreateRequest, _: AdminAccess) -> dict[str, object]:
@@ -6935,6 +6993,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         request: ScheduledJobCreateRequest,
         context: TechnicianAccess,
     ) -> dict[str, object]:
+        if request.job_kind == "backup":
+            return _create_scheduled_backup_job(request, context)
         if request.job_kind == "baseline_snapshot":
             return _create_scheduled_baseline_snapshot_job(request, context)
         if request.graph_sync or request.job_kind == "graph_sync":
@@ -6968,6 +7028,43 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 request.template_id,
                 request.cron,
                 params,
+                schedule_type=request.schedule_type,
+                interval_seconds=request.interval_seconds,
+                run_at=request.run_at,
+                timezone=request.timezone,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        return _scheduled_job_view(scheduled_job)
+
+    def _create_scheduled_backup_job(
+        request: ScheduledJobCreateRequest,
+        context: AuthContext,
+    ) -> dict[str, object]:
+        if context.role < Role.ADMIN:
+            raise HTTPException(status_code=403, detail="administrator access required")
+        _require_msp_operator(context)
+        if active_settings.demo_mode:
+            raise HTTPException(status_code=403, detail="backup scheduling is unavailable in demo mode")
+        if request.graph_sync or any(
+            value is not None
+            for value in (
+                request.template_id,
+                request.report_type,
+                request.playbook_id,
+                request.agent_id,
+                request.entity_id,
+            )
+        ):
+            raise HTTPException(status_code=422, detail="backup schedules cannot include another target")
+        if request.params:
+            raise HTTPException(status_code=422, detail="backup schedules do not accept params")
+        try:
+            scheduled_job = scheduler.register(
+                "",
+                request.cron,
+                {},
+                job_kind="backup",
                 schedule_type=request.schedule_type,
                 interval_seconds=request.interval_seconds,
                 run_at=request.run_at,
@@ -7454,6 +7551,30 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     ) -> list[dict[str, object]]:
         scope = resolve_client_scope(context, client_id, allow_all=True)
         return [asdict(document) for document in store.list_knowledge_documents(client_id=scope)]
+
+    @app.patch("/knowledge/documents/{document_id}/authority")
+    def set_knowledge_document_authority(
+        document_id: int,
+        payload: KnowledgeAuthorityRequest,
+        context: AdminAccess,
+        client_id: str | None = None,
+    ) -> dict[str, object]:
+        scope = resolve_client_scope(context, client_id, allow_all=True)
+        actor = context.approver_id or context.principal_id or "authenticated-admin"
+        try:
+            document = store.set_knowledge_document_authority(
+                document_id,
+                payload.authority,
+                actor,
+                client_id=scope,
+                sop_version=payload.sop_version,
+                superseded_by=payload.superseded_by,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        if document is None:
+            raise HTTPException(status_code=404, detail="knowledge document not found")
+        return asdict(document)
 
     @app.get("/knowledge/search")
     def knowledge_search(

@@ -6,6 +6,7 @@ import logging
 from collections.abc import Callable
 from dataclasses import replace
 from datetime import UTC, date, datetime, timedelta
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
@@ -15,8 +16,10 @@ from apscheduler.triggers.date import DateTrigger
 from apscheduler.triggers.interval import IntervalTrigger
 
 from wait_local_agent.agents import AgentService
+from wait_local_agent.backup import create_scheduled_backup, prune_backup_files, scheduled_backup_directory
 from wait_local_agent.client_scope import AllClients, ClientScope
-from wait_local_agent.models import EVENT_RETRY_POLL_SECONDS, ScheduledJob
+from wait_local_agent.config import Settings
+from wait_local_agent.models import EVENT_RETRY_POLL_SECONDS, BackupRun, ScheduledJob, utc_now
 from wait_local_agent.msp_playbooks import run_msp_playbook
 from wait_local_agent.reports.models import ReportType
 from wait_local_agent.reports.msp import (
@@ -51,6 +54,9 @@ class SchedulerManager:
         ingestion_poller: IngestionPoller | None = None,
         graph_sync_runner: Callable[[str], object] | None = None,
         baseline_snapshot_runner: Callable[[str], object] | None = None,
+        backup_runner: Callable[[], Path] | None = None,
+        backup_directory: Path | None = None,
+        settings: Settings | None = None,
     ) -> None:
         self._store = store
         self._enabled = enabled
@@ -60,6 +66,15 @@ class SchedulerManager:
         self._ingestion_poller = ingestion_poller
         self._graph_sync_runner = graph_sync_runner
         self._baseline_snapshot_runner = baseline_snapshot_runner
+        self._backup_runner = backup_runner
+        if self._backup_runner is None and settings is not None:
+            self._backup_runner = lambda: create_scheduled_backup(store, settings)
+        if backup_directory is not None:
+            self._backup_directory = backup_directory
+        elif settings is not None:
+            self._backup_directory = scheduled_backup_directory(settings)
+        else:
+            self._backup_directory = store.path.parent / "backups"
         self._scheduler: AsyncIOScheduler | None = None
         self._started = False
 
@@ -110,6 +125,8 @@ class SchedulerManager:
         normalized_timezone = validate_schedule(schedule_type, cron, interval_seconds, run_at, timezone)
         _validate_schedule_target(job_kind, template_id, agent_id, entity_id)
         client_id = _string_or_none(params.get("client_id"))
+        if job_kind == "backup" and client_id is not None:
+            raise ValueError("backup schedules must be appliance-level")
         if job_kind in {"graph_sync", "baseline_snapshot"}:
             scoped_client_id = _string_or_none(entity_id)
             if client_id is not None and client_id != scoped_client_id:
@@ -187,6 +204,9 @@ class SchedulerManager:
         return self._with_runtime_state(scheduled_job)
 
     async def _run_job(self, scheduled_job: ScheduledJob) -> None:
+        if scheduled_job.job_kind == "backup":
+            await self._run_backup_job(scheduled_job)
+            return
         if scheduled_job.job_kind == "connector_poll":
             await self._run_connector_poll_job(scheduled_job)
             return
@@ -255,6 +275,63 @@ class SchedulerManager:
             client_id=run.client_id,
             actor="scheduler",
         )
+
+    async def _run_backup_job(self, scheduled_job: ScheduledJob) -> None:
+        await asyncio.to_thread(
+            self.run_backup,
+            audit_event_type="scheduled_job.backup",
+            subject_id=str(scheduled_job.id),
+            audit_detail_prefix="scheduled backup",
+        )
+
+    def run_backup(
+        self,
+        *,
+        audit_event_type: str = "backup.run",
+        subject_id: str = "manual",
+        audit_detail_prefix: str = "backup",
+    ) -> BackupRun:
+        """Run one encrypted appliance backup and persist its sanitized outcome."""
+
+        started_at = utc_now()
+        destination = str(self._backup_directory)
+        destination_path = self._backup_directory
+        status = "failed"
+        size_bytes: int | None = None
+        failure_summary = ""
+        try:
+            if self._backup_runner is None:
+                raise RuntimeError("backup runner is not configured")
+            backup_path = self._backup_runner()
+            if not isinstance(backup_path, Path):
+                backup_path = Path(str(backup_path))
+            destination_path = backup_path.expanduser().resolve()
+            destination = str(destination_path)
+            size_bytes = destination_path.stat().st_size
+            status = "succeeded"
+        except Exception:  # noqa: BLE001 - persisted failure is intentionally generic
+            failure_summary = "backup creation failed"
+        if status == "succeeded":
+            try:
+                retention_count = _backup_retention_count(self._store)
+                if prune_backup_files(self._backup_directory, retention_count, destination_path):
+                    failure_summary = "retention pruning failed"
+            except Exception:  # noqa: BLE001 - retention failures are non-fatal and recorded
+                failure_summary = "retention pruning failed"
+        finished_at = utc_now()
+        backup_run = self._store.add_backup_run(
+            started_at=started_at,
+            finished_at=finished_at,
+            status=status,
+            destination=destination,
+            size_bytes=size_bytes,
+            failure_summary=failure_summary,
+        )
+        detail = f"{audit_detail_prefix} -> {status}"
+        if failure_summary:
+            detail = f"{detail}: {failure_summary}"
+        self._store.add_audit_event(audit_event_type, subject_id, detail)
+        return backup_run
 
     async def _run_connector_poll_job(self, scheduled_job: ScheduledJob) -> None:
         if self._ingestion_poller is None:
@@ -740,6 +817,10 @@ def _validate_schedule_target(
         if template_id or agent_id is not None or not _string_or_none(entity_id):
             raise ValueError("baseline_snapshot schedules require entity_id only")
         return
+    if job_kind == "backup":
+        if template_id or agent_id is not None or entity_id is not None:
+            raise ValueError("backup schedules require no target")
+        return
     if job_kind == "playbook":
         if not template_id or agent_id is not None or entity_id is not None:
             raise ValueError("playbook schedules require playbook_id only")
@@ -821,3 +902,14 @@ def _string_or_none(value: object) -> str | None:
     if isinstance(value, str) and value.strip():
         return value
     return None
+
+
+def _backup_retention_count(store: Store) -> int:
+    raw_value = store.get_app_config("backup.retention_count")
+    if raw_value is None:
+        return 7
+    try:
+        value = int(raw_value)
+    except (TypeError, ValueError):
+        return 7
+    return value if 1 <= value <= 1000 else 7

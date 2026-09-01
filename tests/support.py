@@ -7,6 +7,24 @@ from wait_local_agent.store import Store
 
 DEFAULT_TEST_CLIENT_ID = "acme"
 
+PINNED_SCHEMA_MIGRATIONS: list[tuple[int, str]] = [
+    (0, "baseline"),
+    (1, "principals"),
+    (2, "clients_and_connectors"),
+    (3, "provenance_and_ingestion"),
+    (4, "canonical_assets_tenant_unique"),
+    (5, "ticket_identity_and_tenancy"),
+    (6, "poll_lease"),
+    (7, "operational_graph"),
+    (8, "auth_sessions_and_config"),
+    (9, "principal_identities"),
+    (10, "client_candidates"),
+    (11, "client_baselines"),
+    (12, "commercial_activations"),
+    (13, "document_authority"),
+    (14, "backup_runs"),
+]
+
 
 def ensure_test_client(store: Store, client_id: str = DEFAULT_TEST_CLIENT_ID) -> str:
     """Create the active tenant used by local-ingest fixtures when needed."""

@@ -8,6 +8,8 @@ import pytest
 from fastapi import HTTPException
 from fastapi.testclient import TestClient
 
+from tests.support import PINNED_SCHEMA_MIGRATIONS
+
 from wait_local_agent.api.app import create_app
 from wait_local_agent.rbac import (
     Role,
@@ -27,21 +29,7 @@ def test_principals_migration_is_additive_and_credentials_are_hashed(tmp_path: P
 
     with sqlite3.connect(store.path) as connection:
         versions = connection.execute("select version, name from schema_migrations order by version").fetchall()
-        assert versions == [
-            (0, "baseline"),
-            (1, "principals"),
-            (2, "clients_and_connectors"),
-            (3, "provenance_and_ingestion"),
-            (4, "canonical_assets_tenant_unique"),
-            (5, "ticket_identity_and_tenancy"),
-            (6, "poll_lease"),
-            (7, "operational_graph"),
-            (8, "auth_sessions_and_config"),
-            (9, "principal_identities"),
-            (10, "client_candidates"),
-            (11, "client_baselines"),
-            (12, "commercial_activations"),
-        ]
+        assert versions == PINNED_SCHEMA_MIGRATIONS
         assert connection.execute(
             "select credential_hash from principal_credentials where principal_id = 'customer-a'"
         ).fetchone() == (hash_credential("customer-secret"),)

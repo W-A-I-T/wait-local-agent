@@ -26,6 +26,7 @@ from wait_local_agent.models import (
     MAX_APPROVAL_EXPIRY_SECONDS,
     MAX_EVENT_RETRIES,
     MAX_EVENT_RETRY_DELAY_SECONDS,
+    MAX_KNOWLEDGE_SOP_VERSION_LENGTH,
     AgentBackfill,
     AgentDefinition,
     AgentDefinitionRevision,
@@ -33,6 +34,7 @@ from wait_local_agent.models import (
     ApprovalRequest,
     AssetObservation,
     AuditEvent,
+    BackupRun,
     CanonicalAsset,
     Client,
     ClientBaseline,
@@ -54,6 +56,7 @@ from wait_local_agent.models import (
     ExecutionRun,
     ExecutionStep,
     IngestSummary,
+    KnowledgeAuthority,
     KnowledgeChunk,
     KnowledgeDocument,
     KnowledgeDocumentWrite,
@@ -335,6 +338,8 @@ class Store:
             Migration(10, "client_candidates", self._apply_client_candidates_migration),
             Migration(11, "client_baselines", self._apply_client_baselines_migration),
             Migration(12, "commercial_activations", self._apply_commercial_activations_migration),
+            Migration(13, "document_authority", self._apply_document_authority_migration),
+            Migration(14, "backup_runs", self._apply_backup_runs_migration),
         )
 
     def _apply_principals_migration(self, connection: sqlite3.Connection) -> None:
@@ -850,6 +855,41 @@ class Store:
         )
 
     @staticmethod
+    def _apply_document_authority_migration(connection: sqlite3.Connection) -> None:
+        Store._ensure_column(connection, "knowledge_documents", "authority", "text not null default 'UNTRUSTED'")
+        Store._ensure_column(connection, "knowledge_documents", "sop_version", "text")
+        Store._ensure_column(connection, "knowledge_documents", "approved_by", "text")
+        Store._ensure_column(connection, "knowledge_documents", "approved_at", "text")
+        Store._ensure_column(
+            connection,
+            "knowledge_documents",
+            "superseded_by",
+            "integer references knowledge_documents(id)",
+        )
+        connection.execute("update knowledge_documents set authority = 'UNTRUSTED'")
+
+    @staticmethod
+    def _apply_backup_runs_migration(connection: sqlite3.Connection) -> None:
+        """Record appliance-level backup outcomes without storing backup contents."""
+
+        connection.execute(
+            """
+            create table if not exists backup_runs (
+                backup_run_id integer primary key autoincrement,
+                started_at text not null,
+                finished_at text not null,
+                status text not null check (status in ('succeeded', 'failed')),
+                destination text not null,
+                size_bytes integer,
+                failure_summary text not null default ''
+            )
+            """
+        )
+        connection.execute(
+            "create index if not exists idx_backup_runs_finished_at on backup_runs (finished_at desc)"
+        )
+
+    @staticmethod
     def _apply_operational_graph_migration(connection: sqlite3.Connection) -> None:
         """Add the client-scoped operational graph tables without changing existing data."""
 
@@ -1239,6 +1279,71 @@ class Store:
                 """,
                 (normalized_key, config_value, utc_now(), updated_by),
             )
+
+    def add_backup_run(
+        self,
+        *,
+        started_at: str,
+        finished_at: str,
+        status: str,
+        destination: str,
+        size_bytes: int | None = None,
+        failure_summary: str = "",
+    ) -> BackupRun:
+        if status not in {"succeeded", "failed"}:
+            raise ValueError("backup status must be succeeded or failed")
+        if size_bytes is not None and (isinstance(size_bytes, bool) or size_bytes < 0):
+            raise ValueError("backup size_bytes must be non-negative")
+        if failure_summary not in {"", "backup creation failed", "retention pruning failed"}:
+            failure_summary = "backup operation failed"
+        with self._connect() as connection:
+            cursor = connection.execute(
+                """
+                insert into backup_runs
+                  (started_at, finished_at, status, destination, size_bytes, failure_summary)
+                values (?, ?, ?, ?, ?, ?)
+                """,
+                (started_at, finished_at, status, destination, size_bytes, failure_summary[:512]),
+            )
+            if cursor.lastrowid is None:
+                raise RuntimeError("backup run insert did not return an id")
+            run_id = int(cursor.lastrowid)
+        result = self.get_backup_run(run_id)
+        if result is None:
+            raise RuntimeError("backup run was not persisted")
+        return result
+
+    def get_backup_run(self, backup_run_id: int) -> BackupRun | None:
+        with self._connect() as connection:
+            row = connection.execute(
+                "select * from backup_runs where backup_run_id = ?",
+                (backup_run_id,),
+            ).fetchone()
+        return BackupRun(**dict(row)) if row else None
+
+    def count_backup_runs(self) -> int:
+        with self._connect() as connection:
+            return int(connection.execute("select count(*) from backup_runs").fetchone()[0])
+
+    def list_backup_runs(self, *, limit: int = 25, offset: int = 0) -> list[BackupRun]:
+        if isinstance(limit, bool) or not 1 <= limit <= 100:
+            raise ValueError("backup run limit must be between 1 and 100")
+        if isinstance(offset, bool) or offset < 0:
+            raise ValueError("backup run offset must be non-negative")
+        with self._connect() as connection:
+            rows = connection.execute(
+                """
+                select * from backup_runs
+                order by finished_at desc, backup_run_id desc
+                limit ? offset ?
+                """,
+                (limit, offset),
+            ).fetchall()
+        return [BackupRun(**dict(row)) for row in rows]
+
+    def latest_backup_run(self) -> BackupRun | None:
+        rows = self.list_backup_runs(limit=1)
+        return rows[0] if rows else None
 
     def upsert_client_candidate(
         self,
@@ -8190,10 +8295,89 @@ class Store:
             raise RuntimeError("knowledge document was not persisted")
         return persisted
 
-    def get_knowledge_document(self, document_id: int) -> KnowledgeDocument | None:
+    def get_knowledge_document(
+        self,
+        document_id: int,
+        client_id: ClientScope | str | None = _ALL_CLIENTS,
+    ) -> KnowledgeDocument | None:
+        client_predicate, client_params = _client_scope_predicate(client_id)
         with self._connect() as connection:
-            row = connection.execute("select * from knowledge_documents where id = ?", (document_id,)).fetchone()
+            row = connection.execute(
+                f"select * from knowledge_documents where id = ? and {client_predicate}",
+                (document_id, *client_params),
+            ).fetchone()
         return KnowledgeDocument(**dict(row)) if row else None
+
+    def set_knowledge_document_authority(
+        self,
+        document_id: int,
+        authority: KnowledgeAuthority | str,
+        actor: str,
+        *,
+        client_id: ClientScope | str | None = _ALL_CLIENTS,
+        sop_version: str | None = None,
+        superseded_by: int | None = None,
+    ) -> KnowledgeDocument | None:
+        if isinstance(authority, KnowledgeAuthority):
+            normalized_authority = authority
+        else:
+            try:
+                normalized_authority = KnowledgeAuthority(authority.strip())
+            except (AttributeError, ValueError) as exc:
+                allowed = ", ".join(item.value for item in KnowledgeAuthority)
+                raise ValueError(f"authority must be one of: {allowed}") from exc
+        if not isinstance(actor, str) or not actor.strip():
+            raise ValueError("authority change actor must be non-empty")
+        if sop_version is not None:
+            if not isinstance(sop_version, str):
+                raise ValueError("sop_version must be text")
+            sop_version = sop_version.strip() or None
+            if sop_version is not None and len(sop_version) > MAX_KNOWLEDGE_SOP_VERSION_LENGTH:
+                raise ValueError(f"sop_version must contain at most {MAX_KNOWLEDGE_SOP_VERSION_LENGTH} characters")
+        if superseded_by is not None and (
+            isinstance(superseded_by, bool) or not isinstance(superseded_by, int) or superseded_by <= 0
+        ):
+            raise ValueError("superseded_by must be a positive document id")
+        client_predicate, client_params = _client_scope_predicate(client_id)
+        with self._connect() as connection:
+            row = connection.execute(
+                f"select * from knowledge_documents where id = ? and {client_predicate}",
+                (document_id, *client_params),
+            ).fetchone()
+            if row is None:
+                return None
+            current_authority = KnowledgeAuthority(str(row["authority"]))
+            target_client_id = row["client_id"]
+            if superseded_by is not None:
+                if superseded_by == document_id:
+                    raise ValueError("superseded_by must point to another document")
+                superseded = connection.execute(
+                    "select id, client_id from knowledge_documents where id = ?", (superseded_by,)
+                ).fetchone()
+                if superseded is None or superseded["client_id"] != target_client_id:
+                    raise ValueError("superseded_by document is not in the same client scope")
+            is_approved = normalized_authority in {
+                KnowledgeAuthority.AUTHORITATIVE_POLICY,
+                KnowledgeAuthority.APPROVED_SOP,
+            }
+            now = utc_now()
+            connection.execute(
+                "update knowledge_documents set authority = ?, sop_version = ?, approved_by = ?, approved_at = ?, superseded_by = ? where id = ?",
+                (
+                    normalized_authority.value,
+                    sop_version if is_approved else None,
+                    actor.strip() if is_approved else None,
+                    now if is_approved else None,
+                    superseded_by if is_approved else None,
+                    document_id,
+                ),
+            )
+            if current_authority != normalized_authority:
+                detail = f"actor={actor.strip()} document_id={document_id} old_authority={current_authority.value} new_authority={normalized_authority.value}"
+                normalized_client_id = str(target_client_id) if target_client_id is not None else None
+                self._add_audit_event(connection, "knowledge.authority.changed", str(document_id), detail, client_id=normalized_client_id, approver_id=actor.strip())
+                self._add_event_history(connection, "knowledge.authority.changed", str(document_id), "completed", detail, "{}", normalized_client_id)
+        return self.get_knowledge_document(document_id, client_id=client_id)
 
     def list_knowledge_documents(
         self, client_id: ClientScope | str | None = _ALL_CLIENTS
