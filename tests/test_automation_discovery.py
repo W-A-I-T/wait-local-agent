@@ -3,10 +3,17 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
 from fastapi.testclient import TestClient
 
 from packs.automation_discovery.service import (
     HistoricalTimeEntry,
+    _connector_family,
+    _playbook_match,
+    _prerequisite_status,
+    _subject_signature,
+    _timestamp,
+    _workflow_match,
     build_historical_discovery,
     build_mapping_readiness,
     import_time_entries,
@@ -118,6 +125,63 @@ def test_normalized_time_entries_are_idempotent_and_reported_as_measured(setting
     assert report["labor"]["measured_minutes"] == 25
 
 
+def test_time_entry_import_rejects_invalid_evidence_and_discovery_bounds(settings) -> None:
+    store = Store(settings.data_path)
+    client_id = ensure_test_client(store)
+    common = {
+        "client_id": client_id,
+        "connector_instance_id": "connector-1",
+        "work_type": "remote support",
+        "occurred_at": "2026-08-30T18:00:00+00:00",
+        "source_system": "test-psa",
+    }
+    rejected = import_time_entries(
+        store,
+        [
+            HistoricalTimeEntry(ticket_id="T-1", external_time_entry_id="time-1", minutes=-1, **common),
+            HistoricalTimeEntry(ticket_id="T-2", external_time_entry_id="time-2", minutes=1441, **common),
+            HistoricalTimeEntry(ticket_id="  ", external_time_entry_id="time-3", minutes=10, **common),
+            HistoricalTimeEntry(ticket_id="T-4", external_time_entry_id="  ", minutes=10, **common),
+        ],
+    )
+
+    assert rejected == {"inserted": 0, "duplicate": 0, "rejected": 4}
+    with pytest.raises(ValueError, match="days must be between"):
+        build_historical_discovery(store, client_id=client_id, days=6)
+    with pytest.raises(ValueError, match="min_tickets must be between"):
+        build_historical_discovery(store, client_id=client_id, min_tickets=1)
+    with pytest.raises(ValueError, match="occurred_at must be"):
+        import_time_entries(
+            store,
+            [
+                HistoricalTimeEntry(
+                    ticket_id="T-5",
+                    external_time_entry_id="time-5",
+                    minutes=10,
+                    **{**common, "occurred_at": "not-a-date"},
+                )
+            ],
+        )
+
+
+def test_discovery_helpers_keep_unknown_and_unclassified_values_explicit() -> None:
+    assert _workflow_match("missing-workflow") == {"id": "missing-workflow", "available": False}
+    assert _playbook_match("missing-playbook") == {"id": "missing-playbook", "available": False}
+    assert _prerequisite_status(
+        ("psa", "rmm", "documentation"),
+        {"families": {"psa": {"unverified": 1}, "rmm": {"verified": 1}}},
+    ) == [
+        {"family": "psa", "status": "review_mapping"},
+        {"family": "rmm", "status": "verified"},
+        {"family": "documentation", "status": "missing"},
+    ]
+    assert _connector_family("unknown-system") == "other"
+    assert _subject_signature("VPN") == ""
+    assert _timestamp("").year == 1
+    assert _timestamp("not-a-date").year == 1
+    assert _timestamp("2026-08-30T18:00:00").tzinfo is not None
+
+
 def test_mapping_readiness_reports_cross_system_families(settings) -> None:
     store = Store(settings.data_path)
     client_id = ensure_test_client(store)
@@ -152,6 +216,16 @@ def test_historical_discovery_reports_unclassified_recurring_subjects(settings, 
         }
         for index in range(1, 4)
     ]
+    tickets.append(
+        {
+            "id": "ODD-1",
+            "client": "Acme",
+            "subject": "Odd request pending",
+            "body": "A one-off request is waiting for review.",
+            "priority": "low",
+            "status": "open",
+        }
+    )
     source = tmp_path / "unclassified-tickets.json"
     source.write_text(json.dumps(tickets), encoding="utf-8")
     store.ingest_ticket_file(source, client_id=client_id)
