@@ -39,7 +39,7 @@ function isWorkflowDesign(value: WorkflowDesign | undefined): value is WorkflowD
 }
 
 export function WorkflowDesigner() {
-  const { canWrite } = useDashboard();
+  const { canWrite, selectedClientId } = useDashboard();
   const [templates, setTemplates] = useState<WorkflowTemplate[]>([]);
   const [entries, setEntries] = useState<TemplateGalleryEntry[]>([]);
   const [loading, setLoading] = useState(true);
@@ -95,6 +95,10 @@ export function WorkflowDesigner() {
   const nodeOptions = useMemo(() => design?.nodes ?? [], [design]);
 
   async function createDesign() {
+    if (!selectedClientId) {
+      setMessage("Select a client from the top bar to create a workflow design.");
+      return;
+    }
     if (!sourceTemplateId) {
       setMessage("Choose a reviewed template first.");
       return;
@@ -111,7 +115,8 @@ export function WorkflowDesigner() {
         body: JSON.stringify({
           source_template_id: sourceTemplateId,
           provenance: "Workflow designer draft",
-          definition: defaultDesign(sourceTemplate)
+          definition: defaultDesign(sourceTemplate),
+          client_id: selectedClientId
         })
       });
       setEntries((current) => [...current, created]);
@@ -123,12 +128,15 @@ export function WorkflowDesigner() {
   }
 
   async function saveDesign() {
-    if (!selectedEntry || !design) return;
+    if (!selectedEntry || !design || !selectedClientId) {
+      if (!selectedClientId) setMessage("Select a client from the top bar to save this workflow design.");
+      return;
+    }
     try {
       const updated = await apiFetch<TemplateGalleryEntry>(`/workflow-templates/gallery/${encodeURIComponent(selectedEntry.id)}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ definition: design })
+        body: JSON.stringify({ definition: design, client_id: selectedClientId })
       });
       setEntries((current) => current.map((entry) => entry.id === updated.id ? updated : entry));
       setMessage(`Saved ${updated.name} as version ${updated.version}. The design remains side-effect free.`);
@@ -210,8 +218,8 @@ export function WorkflowDesigner() {
           </select></label>
         </div>
         <div className="designer-actions">
-          <button type="button" disabled={!canWrite || !sourceTemplateId} title={!canWrite ? "Requires technician access" : !sourceTemplateId ? "Choose a reviewed template first" : undefined} onClick={() => void createDesign()}>Create design</button>
-          <button type="button" disabled={!canWrite || !selectedEntry || !design} title={!canWrite ? "Requires technician access" : !selectedEntry || !design ? "Choose a local design first" : undefined} onClick={() => void saveDesign()}>Save design</button>
+          <button type="button" disabled={!canWrite || !selectedClientId || !sourceTemplateId} title={!canWrite ? "Requires technician access" : !selectedClientId ? "Select a client from the top bar first" : !sourceTemplateId ? "Choose a reviewed template first" : undefined} onClick={() => void createDesign()}>Create design</button>
+          <button type="button" disabled={!canWrite || !selectedClientId || !selectedEntry || !design} title={!canWrite ? "Requires technician access" : !selectedClientId ? "Select a client from the top bar first" : !selectedEntry || !design ? "Choose a local design first" : undefined} onClick={() => void saveDesign()}>Save design</button>
           {selectedTemplate ? <span className="status-pill">Source: {selectedTemplate.name}</span> : null}
         </div>
         {message ? <div className="notice" role="status">{message}</div> : null}

@@ -1,6 +1,8 @@
 import { Activity, CheckCircle2, Clock3, ShieldCheck, TicketCheck } from "lucide-react";
 import { useEffect, useState, type ReactNode } from "react";
 import { apiFetch } from "../api/client";
+import { useDashboard } from "../app/DashboardContext";
+import { ClientIdSelect } from "../components/ClientIdSelect";
 import { type AnalyticsSummary } from "../api/types";
 
 const EMPTY_SUMMARY: AnalyticsSummary = {
@@ -49,6 +51,7 @@ const EMPTY_SUMMARY: AnalyticsSummary = {
 };
 
 export function Analytics() {
+  const { clients = [] } = useDashboard();
   const [summary, setSummary] = useState<AnalyticsSummary>(EMPTY_SUMMARY);
   const [startedFrom, setStartedFrom] = useState("");
   const [startedTo, setStartedTo] = useState("");
@@ -136,10 +139,7 @@ export function Analytics() {
             To date
             <input type="date" value={startedTo} onChange={(event) => setStartedTo(event.target.value)} />
           </label>
-          <label>
-            Client ID
-            <input value={clientId} onChange={(event) => setClientId(event.target.value)} placeholder="Optional client" />
-          </label>
+          <ClientIdSelect label="Client ID" value={clientId} onChange={setClientId} clients={clients} id="analytics-client-id" />
           <div className="analytics-filter-actions">
             <button type="button" onClick={() => setFilters({ startedFrom, startedTo, clientId })}>Apply filters</button>
             <button type="button" className="secondary-button" onClick={() => {

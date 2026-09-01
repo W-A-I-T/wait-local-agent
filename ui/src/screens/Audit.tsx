@@ -1,10 +1,13 @@
 import { useCallback, useEffect, useState } from "react";
 import { apiFetch } from "../api/client";
+import { useDashboard } from "../app/DashboardContext";
 import type { AuditEvent } from "../api/types";
+import { ClientIdSelect } from "../components/ClientIdSelect";
 import { EmptyState } from "../components/EmptyState";
 import { LoadingState } from "../components/LoadingState";
 
 export function Audit() {
+  const { clients = [] } = useDashboard();
   const [events, setEvents] = useState<AuditEvent[]>([]);
   const [loading, setLoading] = useState(true);
   const [clientId, setClientId] = useState("");
@@ -78,10 +81,7 @@ export function Audit() {
         </div>
 
         <div className="grid">
-          <label>
-            client_id
-            <input value={clientId} onChange={(event) => setClientId(event.target.value)} />
-          </label>
+          <ClientIdSelect label="client_id" value={clientId} onChange={setClientId} clients={clients} id="audit-client-id" />
           <label>
             From date
             <input type="date" value={fromDate} onChange={(event) => setFromDate(event.target.value)} />

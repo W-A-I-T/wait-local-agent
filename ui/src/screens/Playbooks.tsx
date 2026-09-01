@@ -79,7 +79,7 @@ function renderDiffValue(value: unknown): string {
 }
 
 export function Playbooks() {
-  const { canWrite, clientId, selectedTicketId } = useDashboard();
+  const { canWrite, selectedClientId, selectedTicketId } = useDashboard();
   const [playbooks, setPlaybooks] = useState<MspPlaybook[]>([]);
   const [entries, setEntries] = useState<MspPlaybookEntry[]>([]);
   const [subscriptions, setSubscriptions] = useState<MspPlaybookSubscription[]>([]);
@@ -141,6 +141,10 @@ export function Playbooks() {
   }
 
   function requestBody(playbook: MspPlaybook): Record<string, unknown> | null {
+    if (!selectedClientId) {
+      setMessage("Select a client from the top bar to run this playbook.");
+      return null;
+    }
     const payload = payloads[playbook.id] ?? {};
     if (payloadJsonValidity[playbook.id] === false) {
       setMessage(`${playbook.name}: input must be valid JSON.`);
@@ -159,7 +163,7 @@ export function Playbooks() {
     setPayloadErrors((current) => ({ ...current, [playbook.id]: {} }));
     return {
       ticket_id: ticketIds[playbook.id]?.trim() || selectedTicketId || undefined,
-      client_id: clientId || undefined,
+      client_id: selectedClientId,
       payload
     };
   }
@@ -199,7 +203,7 @@ export function Playbooks() {
   }
 
   async function publish(playbook: MspPlaybook) {
-    if (!canWrite) return;
+    if (!canWrite || !selectedClientId) return;
     try {
       await apiFetch<MspPlaybookEntry>("/msp/playbook-entries", {
         method: "POST",
@@ -208,7 +212,7 @@ export function Playbooks() {
           source_playbook_id: playbook.id,
           provenance: "Published from the Playbooks dashboard.",
           enabled: true,
-          client_id: clientId || undefined
+          client_id: selectedClientId
         })
       });
       setMessage(`Published ${playbook.name}.`);
@@ -449,6 +453,7 @@ export function Playbooks() {
           Workflows run single reviewed actions — <Link to="/workflows">see Run</Link>. Customize tenant copies in <Link to="/templates">My templates</Link>.
         </p>
         {message ? <div className="notice" role="status">{message}</div> : null}
+        {!selectedClientId ? <p className="notice">Select a client from the top bar to run or publish a playbook.</p> : null}
         <div className="table-list">
           {playbooks.length === 0 ? <p>No playbooks are available.</p> : null}
           {playbooks.map((playbook) => {
@@ -492,15 +497,15 @@ export function Playbooks() {
                 </div>
                 <div className="template-actions">
                   {entry ? (
-                    <button type="button" disabled={!canWrite} onClick={() => void toggleEntry(entry)}>
+                    <button type="button" disabled={!canWrite || !selectedClientId} title={!selectedClientId ? "Select a client from the top bar to manage this playbook." : undefined} onClick={() => void toggleEntry(entry)}>
                       {entry.enabled ? "Disable" : "Enable"}
                     </button>
                   ) : (
-                    <button type="button" disabled={!canWrite} onClick={() => void publish(playbook)}>Publish</button>
+                    <button type="button" disabled={!canWrite || !selectedClientId} title={!selectedClientId ? "Select a client from the top bar to publish this playbook." : undefined} onClick={() => void publish(playbook)}>Publish</button>
                   )}
-                  {entry ? <button type="button" disabled={!canWrite} onClick={() => editEntry(entry)}>Edit</button> : null}
-                  <button type="button" disabled={!canWrite || Boolean(entry && !entry.enabled)} onClick={() => void preview(playbook)}>Preview</button>
-                  <button type="button" disabled={!canWrite || Boolean(entry && !entry.enabled)} onClick={() => void run(playbook)}>Run</button>
+                  {entry ? <button type="button" disabled={!canWrite || !selectedClientId} title={!selectedClientId ? "Select a client from the top bar to edit this playbook." : undefined} onClick={() => editEntry(entry)}>Edit</button> : null}
+                  <button type="button" disabled={!canWrite || !selectedClientId || Boolean(entry && !entry.enabled)} title={!selectedClientId ? "Select a client from the top bar to run this playbook." : undefined} onClick={() => void preview(playbook)}>Preview</button>
+                  <button type="button" disabled={!canWrite || !selectedClientId || Boolean(entry && !entry.enabled)} title={!selectedClientId ? "Select a client from the top bar to run this playbook." : undefined} onClick={() => void run(playbook)}>Run</button>
                 </div>
                 {entry && editingEntryId === entry.id && draft ? (
                   <form className="playbook-edit-form" onSubmit={(event) => { event.preventDefault(); void saveEntry(entry); }}>

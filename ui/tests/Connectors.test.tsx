@@ -4,6 +4,7 @@ import { Connectors } from "../src/screens/Connectors";
 
 vi.mock("../src/app/DashboardContext", () => ({
   useDashboard: () => ({
+    clients: [{ client_id: "acme", name: "Acme Support", status: "active" }],
     connectors: [{ id: "syncro", name: "Syncro", status: "ready", message: "configured" }],
     haloConnector: { status: "blocked", message: "not configured" },
     huduConnector: { status: "blocked", message: "not configured" },

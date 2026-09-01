@@ -3,6 +3,7 @@ import { useDashboard } from "../app/DashboardContext";
 import { apiFetch } from "../api/client";
 import { EmptyState } from "../components/EmptyState";
 import { LoadingState } from "../components/LoadingState";
+import { ClientIdSelect } from "../components/ClientIdSelect";
 import type { TemplateGalleryEntry, TemplateGalleryRevision, TemplateGalleryRevisionDiff, WorkflowTemplate } from "../api/types";
 
 type GalleryDraft = {
@@ -12,7 +13,7 @@ type GalleryDraft = {
 };
 
 export function Templates() {
-  const { canWrite } = useDashboard();
+  const { canWrite, clients = [] } = useDashboard();
   const [templates, setTemplates] = useState<WorkflowTemplate[]>([]);
   const [entries, setEntries] = useState<TemplateGalleryEntry[]>([]);
   const [loading, setLoading] = useState(true);
@@ -223,7 +224,7 @@ export function Templates() {
             </select></label>
             <label>Display name<input value={displayName} onChange={(event) => setDisplayName(event.target.value)} placeholder="Acme triage" /></label>
             <label>Source note<input value={provenance} onChange={(event) => setProvenance(event.target.value)} /></label>
-            <label>Client id (optional)<input value={clientId} onChange={(event) => setClientId(event.target.value)} /></label>
+            <ClientIdSelect label="Client id (optional)" value={clientId} onChange={setClientId} clients={clients} id="template-client-id" />
           </div>
           <label>Operator instructions<textarea rows={3} value={instructions} onChange={(event) => setInstructions(event.target.value)} /></label>
         <button type="submit" disabled={!canWrite || !sourceTemplateId} title={!canWrite ? "Requires technician access" : !sourceTemplateId ? "Choose a reviewed template first" : undefined}>Create local template</button>

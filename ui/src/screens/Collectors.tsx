@@ -13,10 +13,11 @@ import {
 import { SchemaForm, defaultsForFields, validateRequiredFields, type SchemaFormValue } from "../components/SchemaForm";
 import { EmptyState } from "../components/EmptyState";
 import { LoadingState } from "../components/LoadingState";
+import { ClientIdSelect } from "../components/ClientIdSelect";
 import { ScopeChip, StatusChip } from "../components/StatusChip";
 
 export function Collectors() {
-  const { canWrite } = useDashboard();
+  const { canWrite, clients = [] } = useDashboard();
   const [modules, setModules] = useState<CollectorModule[]>([]);
   const [loading, setLoading] = useState(true);
   const hasLoadedRef = useRef(false);
@@ -211,10 +212,7 @@ export function Collectors() {
             </select>
           </label>
           {activeModule ? <p className="screen-note">{activeModule.description}</p> : null}
-          <label>
-            Client id
-            <input value={clientId} onChange={(event) => setClientId(event.target.value)} />
-          </label>
+          <ClientIdSelect label="Client id" value={clientId} onChange={setClientId} clients={clients} id="collector-client-id" />
           {activeModule ? (
             <SchemaForm
               fields={activeModule.config_schema ?? []}

@@ -2,6 +2,7 @@ import { FormEvent, useCallback, useEffect, useState } from "react";
 import { AlertTriangle, Compass, RefreshCw } from "lucide-react";
 import { Link } from "react-router-dom";
 import { useDashboard } from "../app/DashboardContext";
+import { ClientIdSelect } from "../components/ClientIdSelect";
 import {
   ApiRequestError,
   CLIENT_SCOPE_ERROR_MESSAGE,
@@ -164,7 +165,9 @@ function SectionLoadNotice({
 export function Consultant() {
   const {
     canWrite,
+    clients = [],
     clientId: scopedClientId,
+    selectedClientId,
     authState,
     writeHealth,
   } = useDashboard();
@@ -691,7 +694,7 @@ export function Consultant() {
   }
 
   async function promoteDiscovery() {
-    const clientId = resolveClientId(selected?.client_id, scopedClientId, discoveryClientId, blueprints[0]?.client_id);
+    const clientId = resolveClientId(selected?.client_id, scopedClientId, selectedClientId, discoveryClientId || blueprints[0]?.client_id);
     if (!clientId || !discoveryResult || discoveryResult.readiness !== "ready_for_architecture") {
       setMessage("Complete the required discovery evidence before saving a solution blueprint.");
       return;
@@ -764,7 +767,7 @@ export function Consultant() {
   }
 
   async function runEmployeeOnboardingDemo() {
-    const clientId = resolveClientId(selected?.client_id, scopedClientId, discoveryClientId, blueprints[0]?.client_id);
+    const clientId = resolveClientId(selected?.client_id, scopedClientId, selectedClientId, discoveryClientId || blueprints[0]?.client_id);
     if (!selected || !clientId || !employeeOnboardingEntityId.trim()) {
       setMessage("Select a saved blueprint and provide an existing tenant-scoped ticket before running the local walkthrough.");
       return;
@@ -793,7 +796,7 @@ export function Consultant() {
   const workflowComponents = architecture?.components.filter((component) => component.kind === "workflow") ?? [];
 
   function currentClientId() {
-    return selected?.client_id?.trim() || scopedClientId.trim() || discoveryClientId.trim() || blueprints[0]?.client_id?.trim() || "";
+    return selected?.client_id?.trim() || scopedClientId.trim() || selectedClientId?.trim() || discoveryClientId.trim() || blueprints[0]?.client_id?.trim() || "";
   }
 
   return (
@@ -949,14 +952,15 @@ export function Consultant() {
         </div>
         <form className="draft-form" onSubmit={(event) => void assessDiscovery(event)}>
           <div className="grid">
-            <label>
-              Customer workspace ID
-              <input
-                value={discoveryClientId || selected?.client_id || scopedClientId || blueprints[0]?.client_id || ""}
-                onChange={(event) => setDiscoveryClientId(event.target.value)}
-                placeholder="acme"
-              />
-            </label>
+            <ClientIdSelect
+              label="Customer workspace ID"
+              value={discoveryClientId || selected?.client_id || scopedClientId || selectedClientId || blueprints[0]?.client_id || ""}
+              onChange={setDiscoveryClientId}
+              clients={clients}
+              required
+              allowFreeform
+              id="discovery-client-id"
+            />
             <label>
               Solution name
               <input
@@ -1239,7 +1243,6 @@ export function Consultant() {
                       <strong>{child.id}</strong>
                       <span>{child.kind} · {child.context_policy ?? "bounded structured context"}</span>
                     </div>
-                    <StatusChip status="evidence_partial" />
                   </div>
                 ))}
               </div>
@@ -1410,9 +1413,6 @@ export function Consultant() {
               </article>
             </div>
           ) : null}
-          <div className="notice consultant-delivery-link">
-            <strong>Ready to package?</strong> The Solution Delivery screen is not available in this checkout; complete the review-only chain here and hand off only after that surface is restored.
-          </div>
         </section>
       ) : null}
     </div>
@@ -1624,7 +1624,6 @@ function UseCaseCard({ useCase }: { useCase: ConsultantUseCase }) {
         <span>Services: {useCase.services.join(", ")}</span>
         <span>Approval boundaries: {useCase.approval_boundaries.join(", ")}</span>
       </div>
-      <StatusChip status="evidence_partial" />
     </article>
   );
 }

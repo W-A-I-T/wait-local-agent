@@ -3,10 +3,11 @@ import { useDashboard } from "../app/DashboardContext";
 import { apiFetch } from "../api/client";
 import { EmptyState } from "../components/EmptyState";
 import { LoadingState } from "../components/LoadingState";
+import { ClientIdSelect } from "../components/ClientIdSelect";
 import type { AgentDefinition, MspPlaybook, ScheduledJob, ScheduledJobRequestBody, WorkflowTemplate } from "../api/types";
 
 export function ScheduledJobs() {
-  const { canWrite } = useDashboard();
+  const { canWrite, clients = [], selectedClientId, setSelectedClientId } = useDashboard();
   const [jobs, setJobs] = useState<ScheduledJob[]>([]);
   const [templates, setTemplates] = useState<WorkflowTemplate[]>([]);
   const [agents, setAgents] = useState<AgentDefinition[]>([]);
@@ -68,14 +69,25 @@ export function ScheduledJobs() {
       setMessage("An entity ID is required for agent schedules.");
       return;
     }
+    const requiresClientScope = scheduleKind === "playbook" || scheduleKind === "report";
+    if (requiresClientScope && !selectedClientId) {
+      setMessage("Select a client from the top bar before creating this schedule.");
+      return;
+    }
 
     let params: Record<string, unknown> = {};
     try {
-      params = JSON.parse(paramsText);
+      const parsed = JSON.parse(paramsText) as unknown;
+      if (!parsed || Array.isArray(parsed) || typeof parsed !== "object") {
+        setMessage("Params must be a JSON object.");
+        return;
+      }
+      params = parsed as Record<string, unknown>;
     } catch {
       setMessage("Params must be valid JSON.");
       return;
     }
+    if (requiresClientScope) params = { ...params, client_id: selectedClientId };
 
     try {
       const body: ScheduledJobRequestBody = scheduleKind === "playbook"
@@ -187,7 +199,8 @@ export function ScheduledJobs() {
                 ) : null}
               </>
             )}
-            {scheduleKind === "playbook" ? <span className="field-help">Params must include a client_id and may include ticket_id and input.</span> : null}
+            {scheduleKind === "playbook" || scheduleKind === "report" ? <ClientIdSelect label="Client ID" value={selectedClientId} onChange={setSelectedClientId} clients={clients} required id="scheduled-job-client-id" /> : null}
+            {scheduleKind === "playbook" ? <span className="field-help">The selected client is added automatically; params may include ticket_id and input.</span> : null}
             <label>
               Cron
               <input value={cron} onChange={(event) => setCron(event.target.value)} />
@@ -204,10 +217,11 @@ export function ScheduledJobs() {
                 value={paramsText}
                 onChange={(event) => setParamsText(event.target.value)}
               />
-              {scheduleKind === "report" ? <span>Include a client_id and either period_days (1–366) or period_start/period_end ISO dates.</span> : null}
+              {scheduleKind === "report" ? <span>The selected client is added automatically; include period_days (1–366) or period_start/period_end ISO dates.</span> : null}
             </label>
           </div>
-          <button type="submit" disabled={!canWrite} title={!canWrite ? "Requires technician access" : undefined}>Create schedule</button>
+          {(scheduleKind === "playbook" || scheduleKind === "report") && !selectedClientId ? <p className="screen-note">Select a client from the top bar before creating this schedule.</p> : null}
+          <button type="submit" disabled={!canWrite || ((scheduleKind === "playbook" || scheduleKind === "report") && !selectedClientId)} title={!canWrite ? "Requires technician access" : (scheduleKind === "playbook" || scheduleKind === "report") && !selectedClientId ? "Select a client from the top bar first" : undefined}>Create schedule</button>
         </form>
 
         {message ? <div className="notice">{message}</div> : null}

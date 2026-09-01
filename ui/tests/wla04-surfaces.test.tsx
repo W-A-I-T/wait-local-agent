@@ -7,7 +7,7 @@ import { FounderJourney } from "../src/surfaces/founder/FounderJourney";
 import { OnboardingWizard } from "../src/surfaces/onboarding/OnboardingWizard";
 
 vi.mock("../src/app/DashboardContext", () => ({
-  useDashboard: () => ({ isAdmin: true, canWrite: true, refresh: vi.fn() })
+  useDashboard: () => ({ isAdmin: true, canWrite: true, refresh: vi.fn(), clients: [{ client_id: "acme", name: "Acme Support", status: "active" }], selectedClientId: "acme", setSelectedClientId: vi.fn() })
 }));
 
 afterEach(() => {
@@ -32,7 +32,7 @@ describe("wla-04 onboarding and parity surfaces", () => {
     vi.stubGlobal("fetch", fetchMock);
 
     render(<Knowledge />);
-    const parser = await screen.findByRole("combobox");
+    const parser = await screen.findByLabelText("Parser");
     expect(Array.from(parser.querySelectorAll("option")).map((option) => option.value)).toEqual(["auto", "plain", "markdown", "pdf"]);
 
     fireEvent.change(screen.getByPlaceholderText("/path/to/docs"), { target: { value: "/workspace/knowledge" } });
@@ -40,7 +40,7 @@ describe("wla-04 onboarding and parity surfaces", () => {
     await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
       "/knowledge/ingest",
       expect.objectContaining({
-        body: JSON.stringify({ path: "/workspace/knowledge", parser: "", ocr: true })
+        body: JSON.stringify({ path: "/workspace/knowledge", parser: "", ocr: true, client_id: "acme" })
       })
     ));
   });
