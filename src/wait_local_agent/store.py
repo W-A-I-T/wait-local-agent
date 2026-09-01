@@ -187,6 +187,25 @@ class PrincipalAuthRecord:
     global_roles: frozenset[str]
 
 
+@dataclass(frozen=True)
+class PrincipalCredentialSummary:
+    credential_hash_prefix: str
+    active: bool
+    created_at: str
+
+
+@dataclass(frozen=True)
+class PrincipalDetails:
+    principal_id: str
+    principal_kind: str
+    display_name: str
+    active: bool
+    created_at: str
+    client_roles: tuple[tuple[str, str], ...]
+    global_roles: tuple[str, ...]
+    credential_count: int
+
+
 def hash_credential(credential: str) -> str:
     """Return the one-way digest used for persisted bearer credentials."""
 
@@ -799,6 +818,164 @@ class Store:
                 "insert into principal_global_roles (principal_id, role) values (?, ?)",
                 (normalized_id, normalized_role),
             )
+
+    def set_principal_active(self, principal_id: str, active: bool) -> None:
+        normalized_id = principal_id.strip()
+        if not normalized_id:
+            raise ValueError("principal_id must be non-empty")
+        if not isinstance(active, bool):
+            raise ValueError("active must be a boolean")
+        with self._connect() as connection:
+            cursor = connection.execute(
+                "update principals set active = ? where principal_id = ?",
+                (int(active), normalized_id),
+            )
+            if cursor.rowcount != 1:
+                raise KeyError(normalized_id)
+
+    def set_principal_display_name(self, principal_id: str, display_name: str) -> None:
+        normalized_id = principal_id.strip()
+        if not normalized_id:
+            raise ValueError("principal_id must be non-empty")
+        normalized_name = display_name.strip()
+        if not normalized_name:
+            raise ValueError("display_name must be non-empty")
+        with self._connect() as connection:
+            cursor = connection.execute(
+                "update principals set display_name = ? where principal_id = ?",
+                (_redact_text(normalized_name), normalized_id),
+            )
+            if cursor.rowcount != 1:
+                raise KeyError(normalized_id)
+
+    def revoke_principal_credential(self, credential_hash: str) -> None:
+        normalized_hash = credential_hash.strip()
+        if not normalized_hash:
+            raise ValueError("credential_hash must be non-empty")
+        with self._connect() as connection:
+            cursor = connection.execute(
+                "update principal_credentials set active = 0 where credential_hash = ?",
+                (normalized_hash,),
+            )
+            if cursor.rowcount != 1:
+                rows = connection.execute(
+                    "select credential_hash from principal_credentials where credential_hash like ?",
+                    (f"{normalized_hash}%",),
+                ).fetchall()
+                if len(rows) != 1:
+                    raise KeyError(normalized_hash)
+                cursor = connection.execute(
+                    "update principal_credentials set active = 0 where credential_hash = ?",
+                    (str(rows[0][0]),),
+                )
+            if cursor.rowcount != 1:
+                raise KeyError(normalized_hash)
+
+    def remove_principal_client_role(self, principal_id: str, client_id: str, role: str) -> None:
+        normalized_id = principal_id.strip()
+        normalized_client_id = _normalize_client_id(client_id)
+        normalized_role = _principal_role_label(role)
+        if not normalized_id:
+            raise ValueError("principal_id must be non-empty")
+        if normalized_client_id is None:
+            raise ValueError("client_id must be non-empty")
+        _reject_reserved_client_id(normalized_client_id)
+        if normalized_role not in {"end_user", "viewer", "technician", "admin"}:
+            raise ValueError("unsupported principal client role")
+        with self._connect() as connection:
+            cursor = connection.execute(
+                """
+                delete from principal_client_roles
+                where principal_id = ? and client_id = ? and role = ?
+                """,
+                (normalized_id, normalized_client_id, normalized_role),
+            )
+            if cursor.rowcount != 1:
+                raise KeyError((normalized_id, normalized_client_id, normalized_role))
+
+    def remove_principal_global_role(self, principal_id: str, role: str = "msp_admin") -> None:
+        normalized_id = principal_id.strip()
+        normalized_role = role.strip().lower()
+        if not normalized_id:
+            raise ValueError("principal_id must be non-empty")
+        if normalized_role != "msp_admin":
+            raise ValueError("unsupported principal global role")
+        with self._connect() as connection:
+            cursor = connection.execute(
+                "delete from principal_global_roles where principal_id = ? and role = ?",
+                (normalized_id, normalized_role),
+            )
+            if cursor.rowcount != 1:
+                raise KeyError((normalized_id, normalized_role))
+
+    def list_principal_credentials(self, principal_id: str) -> list[PrincipalCredentialSummary]:
+        normalized_id = principal_id.strip()
+        if not normalized_id:
+            raise ValueError("principal_id must be non-empty")
+        with self._connect() as connection:
+            rows = connection.execute(
+                """
+                select credential_hash, active, created_at
+                from principal_credentials
+                where principal_id = ?
+                order by created_at, credential_hash
+                """,
+                (normalized_id,),
+            ).fetchall()
+        return [
+            PrincipalCredentialSummary(
+                credential_hash_prefix=str(row[0])[:12],
+                active=bool(row[1]),
+                created_at=str(row[2]),
+            )
+            for row in rows
+        ]
+
+    def list_principals_with_details(self) -> list[PrincipalDetails]:
+        with self._connect() as connection:
+            principals = connection.execute(
+                """
+                select p.principal_id, p.kind, p.display_name, p.active, p.created_at,
+                       count(pc.credential_hash) as credential_count
+                from principals p
+                left join principal_credentials pc on pc.principal_id = p.principal_id
+                group by p.principal_id, p.kind, p.display_name, p.active, p.created_at
+                order by p.display_name, p.principal_id
+                """
+            ).fetchall()
+            details: list[PrincipalDetails] = []
+            for principal in principals:
+                principal_id = str(principal[0])
+                client_roles = tuple(
+                    (str(row[0]), str(row[1]))
+                    for row in connection.execute(
+                        """
+                        select client_id, role from principal_client_roles
+                        where principal_id = ? order by client_id, role
+                        """,
+                        (principal_id,),
+                    )
+                )
+                global_roles = tuple(
+                    str(row[0])
+                    for row in connection.execute(
+                        "select role from principal_global_roles where principal_id = ? order by role",
+                        (principal_id,),
+                    )
+                )
+                details.append(
+                    PrincipalDetails(
+                        principal_id=principal_id,
+                        principal_kind=str(principal[1]),
+                        display_name=str(principal[2]),
+                        active=bool(principal[3]),
+                        created_at=str(principal[4]),
+                        client_roles=client_roles,
+                        global_roles=global_roles,
+                        credential_count=int(principal[5]),
+                    )
+                )
+        return details
 
     def find_principal_by_credential_hash(self, credential_hash: str) -> PrincipalAuthRecord | None:
         with self._connect() as connection:
