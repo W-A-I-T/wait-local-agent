@@ -7,16 +7,24 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Protocol, cast
 
+from wait_local_agent.autotask import AutotaskReadResponse
 from wait_local_agent.models import (
     ConnectWiseReadResponse,
     HaloReadResponse,
     HaloTicket,
     Ticket,
 )
+from wait_local_agent.servicenow import ServiceNowReadResponse
+from wait_local_agent.syncro import SyncroReadResponse
 
 
 class TicketListClient(Protocol):
     def list_tickets(self, *args: object, **kwargs: object) -> object:
+        ...
+
+
+class ServiceNowIncidentClient(Protocol):
+    def list_incidents(self, *args: object, **kwargs: object) -> object:
         ...
 
 
@@ -127,18 +135,135 @@ class ConnectWiseTicketAdapter(ProviderTicketAdapter):
         return _page(response, records, adapter_dropped)
 
 
+class AutotaskTicketAdapter(ProviderTicketAdapter):
+    """Adapt the normalized Autotask ticket dictionaries."""
+
+    def fetch_page(self, client: TicketListClient, *, page: int, page_size: int) -> ProviderPage:
+        response = cast(AutotaskReadResponse, client.list_tickets(page=page, page_size=page_size))
+        records: list[Ticket] = []
+        adapter_dropped = 0
+        for item in response.items:
+            if not isinstance(item, Mapping):
+                adapter_dropped += 1
+                continue
+            external_id = _required_text(item.get("id"))
+            external_client_id = _required_text(item.get("company_id"))
+            if external_id is None or external_client_id is None:
+                adapter_dropped += 1
+                continue
+            records.append(
+                Ticket(
+                    id=external_id,
+                    client=external_client_id,
+                    subject=_text(item.get("title")),
+                    body=_text(item.get("description")),
+                    priority=_text(item.get("priority")),
+                    status=_text(item.get("status")),
+                    client_id=None,
+                    source_system=None,
+                    connector_instance_id=self.connector_instance_id,
+                    external_id=external_id,
+                    external_client_id=external_client_id,
+                )
+            )
+        return _page(response, records, adapter_dropped)
+
+
+class SyncroTicketAdapter(ProviderTicketAdapter):
+    """Adapt the normalized Syncro ticket dictionaries."""
+
+    def fetch_page(self, client: TicketListClient, *, page: int, page_size: int) -> ProviderPage:
+        del page_size  # Syncro's existing client exposes page-only pagination.
+        response = cast(SyncroReadResponse, client.list_tickets(page=page))
+        records: list[Ticket] = []
+        adapter_dropped = 0
+        for item in response.items:
+            if not isinstance(item, Mapping):
+                adapter_dropped += 1
+                continue
+            external_id = _required_text(item.get("id"))
+            external_client_id = _required_text(item.get("customer_id"))
+            if external_id is None or external_client_id is None:
+                adapter_dropped += 1
+                continue
+            records.append(
+                Ticket(
+                    id=external_id,
+                    client=_text(item.get("customer_name")),
+                    subject=_text(item.get("subject")),
+                    body="",
+                    priority=_text(item.get("priority")),
+                    status=_text(item.get("status")),
+                    client_id=None,
+                    source_system=None,
+                    connector_instance_id=self.connector_instance_id,
+                    external_id=external_id,
+                    external_client_id=external_client_id,
+                )
+            )
+        return _page(response, records, adapter_dropped)
+
+
+class ServiceNowIncidentAdapter(ProviderTicketAdapter):
+    """Adapt ServiceNow incidents through the existing ticket-ingest seam."""
+
+    def fetch_page(self, client: TicketListClient, *, page: int, page_size: int) -> ProviderPage:
+        response = cast(
+            ServiceNowReadResponse,
+            cast(ServiceNowIncidentClient, client).list_incidents(page=page, page_size=page_size),
+        )
+        records: list[Ticket] = []
+        adapter_dropped = 0
+        for item in response.items:
+            if not isinstance(item, Mapping):
+                adapter_dropped += 1
+                continue
+            external_id = _required_text(item.get("sys_id"))
+            external_client_id = _required_text(item.get("company"))
+            if external_id is None or external_client_id is None:
+                adapter_dropped += 1
+                continue
+            records.append(
+                Ticket(
+                    id=external_id,
+                    client=external_client_id,
+                    subject=_text(item.get("short_description")),
+                    body=_text(item.get("description")),
+                    priority=_text(item.get("priority")),
+                    status=_text(item.get("state")),
+                    client_id=None,
+                    source_system=None,
+                    connector_instance_id=self.connector_instance_id,
+                    external_id=external_id,
+                    external_client_id=external_client_id,
+                )
+            )
+        return _page(response, records, adapter_dropped)
+
+
+# Keep the provider terminology available to callers while retaining the
+# common ticket-adapter registry contract.
+ServiceNowTicketAdapter = ServiceNowIncidentAdapter
+
+
 def _page(
-    response: HaloReadResponse | ConnectWiseReadResponse,
+    response: (
+        HaloReadResponse
+        | ConnectWiseReadResponse
+        | AutotaskReadResponse
+        | SyncroReadResponse
+        | ServiceNowReadResponse
+    ),
     records: list[Ticket],
     adapter_dropped: int,
 ) -> ProviderPage:
     return ProviderPage(
         records=records,
         provider_status=response.result.status,
-        raw_count=response.raw_count,
-        dropped_count=response.dropped_count + adapter_dropped,
-        http_status=response.http_status,
-        retry_after=response.retry_after,
+        raw_count=getattr(response, "raw_count", response.result.count),
+        dropped_count=getattr(response, "dropped_count", 0) + adapter_dropped,
+        http_status=getattr(response, "http_status", 200 if response.result.status == "ready" else None),
+        retry_after=getattr(response, "retry_after", None),
     )
 
 
@@ -156,6 +281,9 @@ def _text(value: object) -> str:
 ADAPTER_REGISTRY: dict[str, type[ProviderTicketAdapter]] = {
     "halopsa": HaloTicketAdapter,
     "connectwise": ConnectWiseTicketAdapter,
+    "autotask": AutotaskTicketAdapter,
+    "syncro": SyncroTicketAdapter,
+    "servicenow": ServiceNowIncidentAdapter,
 }
 
 # Keep a descriptive alias available to callers that want to inspect the
@@ -165,9 +293,13 @@ PROVIDER_ADAPTERS = ADAPTER_REGISTRY
 
 __all__ = [
     "ADAPTER_REGISTRY",
+    "AutotaskTicketAdapter",
     "ConnectWiseTicketAdapter",
     "HaloTicketAdapter",
     "PROVIDER_ADAPTERS",
     "ProviderPage",
     "ProviderTicketAdapter",
+    "ServiceNowIncidentAdapter",
+    "ServiceNowTicketAdapter",
+    "SyncroTicketAdapter",
 ]
