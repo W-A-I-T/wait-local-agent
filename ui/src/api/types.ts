@@ -109,6 +109,39 @@ export type ClientGraph = {
   entity_type_counts?: Record<string, number>;
 };
 
+export type ClientBaseline = {
+  baseline_id: string;
+  client_id: string;
+  version: number;
+  generated_at: string;
+  accepted: boolean;
+  source_coverage: Record<string, string>;
+  summary: Record<string, unknown>;
+  sections: Record<string, unknown>;
+};
+
+export type BaselineFinding = {
+  domain: string;
+  path: string;
+  classification: string;
+  previous: unknown;
+  current: unknown;
+  correlation?: string;
+  approval_id?: number;
+  correlation_label?: string;
+};
+
+export type ClientDrift = {
+  client_id: string;
+  baseline_version: number;
+  baseline_generated_at: string;
+  generated_at: string;
+  unchanged: boolean;
+  findings: BaselineFinding[];
+  source_coverage: Record<string, string>;
+  fresh_summary: Record<string, unknown>;
+};
+
 export type RmmInventorySyncResult = {
   devices: number;
   alerts: number;

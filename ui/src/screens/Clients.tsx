@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState, type FormEvent, type KeyboardEvent } from "react";
 import { ApiRequestError, apiFetch } from "../api/client";
-import type { Client, ClientConnectorMapping, ClientDirectoryEntry, ClientGraph, M365InventorySyncResult, MappingVerifyResult, RmmInventorySyncResult } from "../api/types";
+import type { BaselineFinding, Client, ClientBaseline, ClientConnectorMapping, ClientDirectoryEntry, ClientDrift, ClientGraph, M365InventorySyncResult, MappingVerifyResult, RmmInventorySyncResult } from "../api/types";
 import { useDashboard } from "../app/DashboardContext";
 import { EmptyState } from "../components/EmptyState";
 import { LoadingState } from "../components/LoadingState";
@@ -8,11 +8,12 @@ import { RoleGate } from "../components/RoleGate";
 import { StatusChip } from "../components/StatusChip";
 
 type ClientForm = { client_id: string; name: string; status: string };
-type ClientDetailTab = "details" | "graph";
+type ClientDetailTab = "details" | "graph" | "baseline";
 
 const detailTabs: Array<{ id: ClientDetailTab; label: string }> = [
   { id: "details", label: "Details" },
-  { id: "graph", label: "Environment" }
+  { id: "graph", label: "Environment" },
+  { id: "baseline", label: "Baseline" }
 ];
 
 function isNotFoundError(error: unknown): boolean {
@@ -77,6 +78,11 @@ export function Clients() {
   const [verifyingMappingId, setVerifyingMappingId] = useState<string | null>(null);
   const [formError, setFormError] = useState("");
   const [deploymentMode, setDeploymentMode] = useState<string | null>(null);
+  const [baselines, setBaselines] = useState<ClientBaseline[]>([]);
+  const [drift, setDrift] = useState<ClientDrift | null>(null);
+  const [baselineLoading, setBaselineLoading] = useState(false);
+  const [baselineError, setBaselineError] = useState("");
+  const [baselineBusy, setBaselineBusy] = useState(false);
 
   const loadClients = useCallback(async () => {
     setLoading(true);
@@ -114,6 +120,9 @@ export function Clients() {
     setGraphLinkType("");
     setGraphOffset(0);
     setMappings([]);
+    setBaselines([]);
+    setDrift(null);
+    setBaselineError("");
     setDetailLoading(true);
     setDetailError("");
     setMappingError("");
@@ -180,6 +189,63 @@ export function Clients() {
     return () => { cancelled = true; };
   }, [activeDetailTab, graphEntityType, graphLinkType, graphOffset, graphSourceSystem, selectedClientId]);
 
+  useEffect(() => {
+    if (activeDetailTab !== "baseline" || !selectedClientId) return;
+    let cancelled = false;
+    setBaselineLoading(true);
+    setBaselineError("");
+    void Promise.all([
+      apiFetch<ClientBaseline[]>(`/clients/${encodeURIComponent(selectedClientId)}/baselines`),
+      apiFetch<ClientDrift>(`/clients/${encodeURIComponent(selectedClientId)}/drift`).catch((requestError: unknown) => {
+        if (isNotFoundError(requestError)) return null;
+        throw requestError;
+      })
+    ])
+      .then(([versionList, driftResult]) => {
+        if (!cancelled) {
+          setBaselines(Array.isArray(versionList) ? versionList : []);
+          setDrift(driftResult);
+        }
+      })
+      .catch((requestError: unknown) => {
+        if (!cancelled) setBaselineError(requestError instanceof Error ? requestError.message : "Unable to load baseline data.");
+      })
+      .finally(() => { if (!cancelled) setBaselineLoading(false); });
+    return () => { cancelled = true; };
+  }, [activeDetailTab, selectedClientId]);
+
+  const createBaseline = useCallback(async () => {
+    if (!selectedClientId) return;
+    setBaselineBusy(true);
+    setBaselineError("");
+    try {
+      await apiFetch<ClientBaseline>(`/clients/${encodeURIComponent(selectedClientId)}/baselines`, { method: "POST" });
+      setStatusMessage("Baseline snapshot created.");
+      setActiveDetailTab("baseline");
+      const versionList = await apiFetch<ClientBaseline[]>(`/clients/${encodeURIComponent(selectedClientId)}/baselines`);
+      setBaselines(versionList);
+    } catch (requestError) {
+      setBaselineError(requestError instanceof Error ? requestError.message : "Unable to create the baseline.");
+    } finally {
+      setBaselineBusy(false);
+    }
+  }, [selectedClientId]);
+
+  const acceptBaseline = useCallback(async (version: number) => {
+    if (!selectedClientId) return;
+    setBaselineBusy(true);
+    setBaselineError("");
+    try {
+      const accepted = await apiFetch<ClientBaseline>(`/clients/${encodeURIComponent(selectedClientId)}/baselines/${version}/accept`, { method: "POST" });
+      setBaselines((current) => current.map((baseline) => ({ ...baseline, accepted: baseline.version === accepted.version })));
+      setStatusMessage(`Baseline version ${version} accepted.`);
+    } catch (requestError) {
+      setBaselineError(requestError instanceof Error ? requestError.message : "Unable to accept the baseline.");
+    } finally {
+      setBaselineBusy(false);
+    }
+  }, [selectedClientId]);
+
   const refsById = new Map((clientGraph?.refs ?? []).map((ref) => [ref.id, ref]));
   const entityName = (refId: number) => {
     const ref = refsById.get(refId);
@@ -189,6 +255,10 @@ export function Clients() {
     counts[ref.entity_type] = (counts[ref.entity_type] ?? 0) + 1;
     return counts;
   }, {});
+  const driftGroups = Object.entries((drift?.findings ?? []).reduce<Record<string, BaselineFinding[]>>((groups, finding) => {
+    (groups[finding.classification] ??= []).push(finding);
+    return groups;
+  }, {}));
 
   const syncRmmGraph = useCallback(async () => {
     if (!selectedClientId) return;
@@ -382,7 +452,7 @@ export function Clients() {
         </section>
       ) : null}
 
-      {selectedClientId ? <section className="panel" aria-labelledby="client-detail-heading"><div className="panel-heading"><div><h2 id="client-detail-heading">Client detail</h2><span>{selectedClientId}</span></div>{selectedClient ? <RoleGate role={role} resolved={roleResolved} allowed={["admin"]}><button className="secondary-button" type="button" onClick={beginEdit}>Edit client</button></RoleGate> : null}</div>{selectedClient ? <><div className="tab-list" role="tablist" aria-label="Client detail"><div className="row-actions">{detailTabs.map((tab) => <button key={tab.id} id={`client-detail-tab-${tab.id}`} type="button" role="tab" aria-selected={activeDetailTab === tab.id} aria-controls={`client-detail-panel-${tab.id}`} tabIndex={activeDetailTab === tab.id ? 0 : -1} className={activeDetailTab === tab.id ? "selected" : "secondary-button"} onClick={() => selectDetailTab(tab.id)} onKeyDown={handleDetailTabKeyDown}>{tab.label}</button>)}</div></div>{activeDetailTab === "details" ? <div id="client-detail-panel-details" role="tabpanel" aria-labelledby="client-detail-tab-details"><dl className="mcp-detail-grid"><div><dt>Client ID</dt><dd><code>{selectedClient.client_id}</code></dd></div><div><dt>Name</dt><dd>{selectedClient.name}</dd></div><div><dt>Status</dt><dd><StatusChip status={selectedClient.status} /></dd></div><div><dt>Created</dt><dd>{selectedClient.created_at}</dd></div><div><dt>Updated</dt><dd>{selectedClient.updated_at}</dd></div></dl><h3>Connector mappings</h3>{mappingError ? <div className="notice danger" role="alert">{mappingError}</div> : null}{mappings.length === 0 ? <p className="screen-note">No connector mappings are configured for this client.</p> : <div className="clients-table-wrap"><table className="clients-table"><thead><tr><th scope="col">External company</th><th scope="col">Connector</th><th scope="col">Verification</th></tr></thead><tbody>{mappings.map((mapping) => <tr key={mapping.mapping_id}><td>{mapping.external_company_name || mapping.external_company_id}</td><td><code>{mapping.connector_instance_id}</code></td><td>{mapping.verified === 1 ? <StatusChip status="verified" /> : <RoleGate role={role} resolved={roleResolved} allowed={["admin"]}><button className="secondary-button" type="button" onClick={() => void verifyMapping(mapping.mapping_id)} disabled={verifyingMappingId !== null}>{verifyingMappingId === mapping.mapping_id ? "Verifying…" : "Verify"}</button></RoleGate>}</td></tr>)}</tbody></table></div>}</div> : <div id="client-detail-panel-graph" role="tabpanel" aria-labelledby="client-detail-tab-graph" aria-busy={graphLoading}><div className="analytics-filters"><label>Type<select aria-label="Environment type filter" value={graphEntityType} onChange={(event) => { setGraphEntityType(event.target.value); setGraphOffset(0); }}><option value="">All types</option>{Object.keys(entityTypeCounts).sort().map((type) => <option key={type} value={type}>{type}</option>)}</select></label><label>Source<select aria-label="Environment source filter" value={graphSourceSystem} onChange={(event) => { setGraphSourceSystem(event.target.value); setGraphOffset(0); }}><option value="">All sources</option>{[...new Set((clientGraph?.refs ?? []).map((ref) => ref.source_system))].sort().map((source) => <option key={source} value={source}>{source}</option>)}</select></label><label>Relationship<select aria-label="Environment relationship filter" value={graphLinkType} onChange={(event) => { setGraphLinkType(event.target.value); setGraphOffset(0); }}><option value="">All relationships</option>{[...new Set((clientGraph?.links ?? []).map((link) => link.link_type))].sort().map((type) => <option key={type} value={type}>{type}</option>)}</select></label></div>{clientGraph && !graphLoading ? <div className="connection-state" role="status">{Object.entries(entityTypeCounts).map(([type, count]) => <span key={type}>{type}: {count}</span>)}<span>{clientGraph.total_refs} entities · {clientGraph.total_links} relationships</span></div> : null}<h3>Entities</h3>{graphLoading ? <p className="screen-note">Loading environment…</p> : graphError ? <div className="notice danger" role="alert">{graphError}</div> : !clientGraph || clientGraph.refs.length === 0 ? <p className="screen-note">No environment entities are linked to this client yet.</p> : <><div className="clients-table-wrap"><table className="clients-table"><thead><tr><th scope="col">Type</th><th scope="col">Name</th><th scope="col">Source</th><th scope="col">External ID</th><th scope="col">Last seen</th><th scope="col">Provenance</th></tr></thead><tbody>{groupGraphRefs(clientGraph.refs).map((ref) => <tr key={ref.id}><td><StatusChip status={ref.entity_type} /></td><td>{ref.display_name || ref.external_id}</td><td>{ref.source_system}</td><td><code>{ref.external_id}</code></td><td>{isStale(ref.last_seen) ? <span className="screen-note">Stale</span> : ref.last_seen || "—"}</td><td>{ref.provenance}</td></tr>)}</tbody></table></div><h3>Relationships</h3>{clientGraph.links.length === 0 ? <p className="screen-note">No relationships are linked to these entities.</p> : <div className="clients-table-wrap"><table className="clients-table"><thead><tr><th scope="col">From</th><th scope="col">Relationship</th><th scope="col">To</th><th scope="col">Provenance</th></tr></thead><tbody>{clientGraph.links.map((link) => <tr key={link.id}><td>{entityName(link.from_ref_id)}</td><td>{link.link_type}</td><td>{entityName(link.to_ref_id)}</td><td>{link.provenance}</td></tr>)}</tbody></table></div>}</>}<div className="analytics-filter-actions"><button className="secondary-button" type="button" onClick={() => setGraphOffset(Math.max(0, graphOffset - 100))} disabled={graphOffset === 0 || graphLoading}>Previous</button><span>Page {Math.floor(graphOffset / 100) + 1}</span><button className="secondary-button" type="button" onClick={() => setGraphOffset(graphOffset + 100)} disabled={!clientGraph?.has_more || graphLoading}>Next</button></div></div>}</> : detailLoading ? <p className="screen-note" aria-busy="true">Loading client details…</p> : detailError ? <div className="notice danger" role="alert">{detailError}</div> : null}</section> : null}
+      {selectedClientId ? <section className="panel" aria-labelledby="client-detail-heading"><div className="panel-heading"><div><h2 id="client-detail-heading">Client detail</h2><span>{selectedClientId}</span></div>{selectedClient ? <RoleGate role={role} resolved={roleResolved} allowed={["admin"]}><button className="secondary-button" type="button" onClick={beginEdit}>Edit client</button></RoleGate> : null}</div>{selectedClient ? <><div className="tab-list" role="tablist" aria-label="Client detail"><div className="row-actions">{detailTabs.map((tab) => <button key={tab.id} id={`client-detail-tab-${tab.id}`} type="button" role="tab" aria-selected={activeDetailTab === tab.id} aria-controls={`client-detail-panel-${tab.id}`} tabIndex={activeDetailTab === tab.id ? 0 : -1} className={activeDetailTab === tab.id ? "selected" : "secondary-button"} onClick={() => selectDetailTab(tab.id)} onKeyDown={handleDetailTabKeyDown}>{tab.label}</button>)}</div></div>{activeDetailTab === "details" ? <div id="client-detail-panel-details" role="tabpanel" aria-labelledby="client-detail-tab-details"><dl className="mcp-detail-grid"><div><dt>Client ID</dt><dd><code>{selectedClient.client_id}</code></dd></div><div><dt>Name</dt><dd>{selectedClient.name}</dd></div><div><dt>Status</dt><dd><StatusChip status={selectedClient.status} /></dd></div><div><dt>Created</dt><dd>{selectedClient.created_at}</dd></div><div><dt>Updated</dt><dd>{selectedClient.updated_at}</dd></div></dl><h3>Connector mappings</h3>{mappingError ? <div className="notice danger" role="alert">{mappingError}</div> : null}{mappings.length === 0 ? <p className="screen-note">No connector mappings are configured for this client.</p> : <div className="clients-table-wrap"><table className="clients-table"><thead><tr><th scope="col">External company</th><th scope="col">Connector</th><th scope="col">Verification</th></tr></thead><tbody>{mappings.map((mapping) => <tr key={mapping.mapping_id}><td>{mapping.external_company_name || mapping.external_company_id}</td><td><code>{mapping.connector_instance_id}</code></td><td>{mapping.verified === 1 ? <StatusChip status="verified" /> : <RoleGate role={role} resolved={roleResolved} allowed={["admin"]}><button className="secondary-button" type="button" onClick={() => void verifyMapping(mapping.mapping_id)} disabled={verifyingMappingId !== null}>{verifyingMappingId === mapping.mapping_id ? "Verifying…" : "Verify"}</button></RoleGate>}</td></tr>)}</tbody></table></div>}</div> : activeDetailTab === "graph" ? <div id="client-detail-panel-graph" role="tabpanel" aria-labelledby="client-detail-tab-graph" aria-busy={graphLoading}><div className="analytics-filters"><label>Type<select aria-label="Environment type filter" value={graphEntityType} onChange={(event) => { setGraphEntityType(event.target.value); setGraphOffset(0); }}><option value="">All types</option>{Object.keys(entityTypeCounts).sort().map((type) => <option key={type} value={type}>{type}</option>)}</select></label><label>Source<select aria-label="Environment source filter" value={graphSourceSystem} onChange={(event) => { setGraphSourceSystem(event.target.value); setGraphOffset(0); }}><option value="">All sources</option>{[...new Set((clientGraph?.refs ?? []).map((ref) => ref.source_system))].sort().map((source) => <option key={source} value={source}>{source}</option>)}</select></label><label>Relationship<select aria-label="Environment relationship filter" value={graphLinkType} onChange={(event) => { setGraphLinkType(event.target.value); setGraphOffset(0); }}><option value="">All relationships</option>{[...new Set((clientGraph?.links ?? []).map((link) => link.link_type))].sort().map((type) => <option key={type} value={type}>{type}</option>)}</select></label></div>{clientGraph && !graphLoading ? <div className="connection-state" role="status">{Object.entries(entityTypeCounts).map(([type, count]) => <span key={type}>{type}: {count}</span>)}<span>{clientGraph.total_refs} entities · {clientGraph.total_links} relationships</span></div> : null}<h3>Entities</h3>{graphLoading ? <p className="screen-note">Loading environment…</p> : graphError ? <div className="notice danger" role="alert">{graphError}</div> : !clientGraph || clientGraph.refs.length === 0 ? <p className="screen-note">No environment entities are linked to this client yet.</p> : <><div className="clients-table-wrap"><table className="clients-table"><thead><tr><th scope="col">Type</th><th scope="col">Name</th><th scope="col">Source</th><th scope="col">External ID</th><th scope="col">Last seen</th><th scope="col">Provenance</th></tr></thead><tbody>{groupGraphRefs(clientGraph.refs).map((ref) => <tr key={ref.id}><td><StatusChip status={ref.entity_type} /></td><td>{ref.display_name || ref.external_id}</td><td>{ref.source_system}</td><td><code>{ref.external_id}</code></td><td>{isStale(ref.last_seen) ? <span className="screen-note">Stale</span> : ref.last_seen || "—"}</td><td>{ref.provenance}</td></tr>)}</tbody></table></div><h3>Relationships</h3>{clientGraph.links.length === 0 ? <p className="screen-note">No relationships are linked to these entities.</p> : <div className="clients-table-wrap"><table className="clients-table"><thead><tr><th scope="col">From</th><th scope="col">Relationship</th><th scope="col">To</th><th scope="col">Provenance</th></tr></thead><tbody>{clientGraph.links.map((link) => <tr key={link.id}><td>{entityName(link.from_ref_id)}</td><td>{link.link_type}</td><td>{entityName(link.to_ref_id)}</td><td>{link.provenance}</td></tr>)}</tbody></table></div>}</>}<div className="analytics-filter-actions"><button className="secondary-button" type="button" onClick={() => setGraphOffset(Math.max(0, graphOffset - 100))} disabled={graphOffset === 0 || graphLoading}>Previous</button><span>Page {Math.floor(graphOffset / 100) + 1}</span><button className="secondary-button" type="button" onClick={() => setGraphOffset(graphOffset + 100)} disabled={!clientGraph?.has_more || graphLoading}>Next</button></div></div> : <div id="client-detail-panel-baseline" role="tabpanel" aria-labelledby="client-detail-tab-baseline" aria-busy={baselineLoading}><div className="panel-heading"><div><h3>Client baseline</h3><span>Versioned observed state and normalized drift</span></div><RoleGate role={role} resolved={roleResolved} allowed={["admin"]}><button className="secondary-button" type="button" onClick={() => void createBaseline()} disabled={baselineBusy}>{baselineBusy ? "Creating…" : "Create snapshot"}</button></RoleGate></div>{baselineError ? <div className="notice danger" role="alert">{baselineError}</div> : null}{baselineLoading ? <p className="screen-note">Loading baseline data…</p> : null}{!baselineLoading && baselines.length === 0 ? <p className="screen-note">No baseline snapshots have been captured.</p> : null}{!baselineLoading && baselines.length > 0 ? <div className="clients-table-wrap"><table className="clients-table"><thead><tr><th>Version</th><th>Generated</th><th>Sources</th><th>State</th><th>Action</th></tr></thead><tbody>{baselines.map((baseline) => <tr key={baseline.baseline_id}><td>{baseline.version}</td><td>{baseline.generated_at}</td><td>{Object.entries(baseline.source_coverage).map(([source, status]) => <StatusChip key={source} status={source + ": " + status} />)}</td><td><StatusChip status={baseline.accepted ? "accepted" : "candidate"} /></td><td>{baseline.accepted ? "Current" : <button className="secondary-button" type="button" onClick={() => void acceptBaseline(baseline.version)} disabled={baselineBusy}>Accept</button>}</td></tr>)}</tbody></table></div> : null}{!baselineLoading && drift && drift.findings.length > 0 ? <><h3>Drift</h3><div className="clients-table-wrap"><table className="clients-table"><thead><tr><th>Finding</th><th>Classification</th><th>Correlation</th></tr></thead><tbody>{driftGroups.flatMap(([classification, group]) => [<tr key={"group-" + classification}><th colSpan={3}>{classification}</th></tr>, ...group.map((finding) => <tr key={finding.path + finding.classification}><td><code>{finding.path}</code></td><td><StatusChip status={finding.classification} /></td><td>{finding.correlation_label || "—"}</td></tr>)])}</tbody></table></div></> : null}</div>}</> : detailLoading ? <p className="screen-note" aria-busy="true">Loading client details…</p> : detailError ? <div className="notice danger" role="alert">{detailError}</div> : null}</section> : null}
     </div>
   );
 }

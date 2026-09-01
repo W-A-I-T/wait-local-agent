@@ -1,15 +1,22 @@
 from __future__ import annotations
 
 import sqlite3
+from dataclasses import replace
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Literal, cast
 
 import pytest
 
 import wait_local_agent.store as store_module
 from wait_local_agent.client_scope import AllClients, BoundClients
-from wait_local_agent.models import AgentDefinition
-from wait_local_agent.store import SMART_ACTION_APPROVAL_CAPABILITY, Store
+from wait_local_agent.models import AgentDefinition, ClientCandidate
+from wait_local_agent.store import (
+    SMART_ACTION_APPROVAL_CAPABILITY,
+    ClientConnectorMappingConflictError,
+    PrincipalInvariantError,
+    Store,
+)
 from wait_local_agent.workflows import get_workflow_template
 
 
@@ -778,6 +785,368 @@ def test_store_smart_action_completion_requires_approval_and_approver(tmp_path: 
             approver_id="tech",
             _smart_action_capability=SMART_ACTION_APPROVAL_CAPABILITY,
         )
+
+
+def test_store_principal_validation_not_found_and_scope_guards(tmp_path: Path) -> None:
+    store = Store(tmp_path / "state.db")
+    store.create_client("alpha", "Alpha")
+    store.create_client("beta", "Beta")
+    staff = store.create_principal("staff", kind="staff", display_name="Staff")
+    customer = store.create_principal("customer", display_name="Customer")
+    inactive = store.create_principal("inactive", kind="staff")
+
+    with pytest.raises(KeyError):
+        store.add_principal_credential("missing", "unit-test-value")
+    store.set_principal_active(inactive, False)
+    with pytest.raises(PrincipalInvariantError, match="inactive principals"):
+        store.add_principal_credential(inactive, "unit-test-value")
+
+    with pytest.raises(ValueError, match="unsupported principal global role"):
+        store.add_principal_global_role(staff, "viewer")
+    with pytest.raises(KeyError):
+        store.add_principal_global_role("missing")
+    with pytest.raises(PrincipalInvariantError, match="only staff"):
+        store.add_principal_global_role(customer)
+
+    with pytest.raises(ValueError, match="principal_id"):
+        store.set_principal_active(" ", True)
+    with pytest.raises(ValueError, match="active must"):
+        store.set_principal_active(staff, cast(bool, 1))
+    with pytest.raises(KeyError):
+        store.set_principal_active("missing", True)
+    with pytest.raises(ValueError, match="principal_id"):
+        store.set_principal_display_name(" ", "Name")
+    with pytest.raises(ValueError, match="display_name"):
+        store.set_principal_display_name(staff, " ")
+    with pytest.raises(KeyError):
+        store.set_principal_display_name("missing", "Name")
+    with pytest.raises(ValueError, match="credential_hash"):
+        store.revoke_principal_credential(" ")
+    with pytest.raises(KeyError):
+        store.revoke_principal_credential("missing-prefix")
+    with pytest.raises(ValueError, match="principal_id"):
+        store.list_principal_credentials(" ")
+
+    admin_hash = store.add_principal_credential(staff, "unit-test-value-admin")
+    store.add_principal_global_role(staff)
+    auth_record = store.find_principal_by_credential_hash(admin_hash)
+    assert auth_record is not None
+    assert auth_record.principal_id == staff
+    assert store.find_principal_by_credential_hash("missing-hash") is None
+    assert store.find_principal_auth_record(" ") is None
+    assert any(item.principal_id == staff for item in store.list_principals_with_details())
+
+    store.add_principal_client_role(customer, "alpha", "viewer")
+    with pytest.raises(PrincipalInvariantError, match="exactly one client"):
+        store.add_principal_client_role(customer, "beta", "viewer")
+    with pytest.raises(ValueError, match="principal_id"):
+        store.remove_principal_client_role(" ", "alpha", "viewer")
+    with pytest.raises(ValueError, match="client_id"):
+        store.remove_principal_client_role(customer, " ", "viewer")
+    with pytest.raises(ValueError, match="unsupported principal client role"):
+        store.remove_principal_client_role(customer, "alpha", "viewer-bad")
+    with pytest.raises(KeyError):
+        store.remove_principal_client_role("missing", "alpha", "viewer")
+    with pytest.raises(KeyError):
+        store.remove_principal_client_role(customer, "alpha", "admin")
+    with pytest.raises(PrincipalInvariantError, match="final access scope"):
+        store.remove_principal_client_role(customer, "alpha", "viewer", actor_principal_id=customer)
+
+    with pytest.raises(ValueError, match="principal_id"):
+        store.remove_principal_global_role(" ")
+    with pytest.raises(ValueError, match="unsupported principal global role"):
+        store.remove_principal_global_role(staff, "viewer")
+    with pytest.raises(KeyError):
+        store.remove_principal_global_role("missing")
+    with pytest.raises(KeyError):
+        store.remove_principal_global_role(inactive)
+    roleless = store.create_principal("roleless", kind="staff")
+    store.add_principal_global_role(roleless)
+    with pytest.raises(PrincipalInvariantError, match="retain a client role"):
+        store.remove_principal_global_role(roleless)
+
+
+def test_store_identity_and_session_validation_edges(tmp_path: Path) -> None:
+    store = Store(tmp_path / "state.db")
+    principal = store.create_principal("identity-principal", kind="staff")
+    other = store.create_principal("other-principal", kind="staff")
+
+    with pytest.raises(ValueError, match="identity fields"):
+        store.add_principal_identity(principal, "", "subject", "email")
+    with pytest.raises(ValueError, match="unsupported principal identity kind"):
+        store.add_principal_identity(principal, "issuer", "subject", "unsupported")
+    with pytest.raises(KeyError):
+        store.add_principal_identity("missing", "issuer", "subject", "oid")
+    email_identity = store.add_principal_identity(
+        principal, "https://issuer.example/", "User@Example.test", "email"
+    )
+    store.add_principal_identity(other, "https://issuer.example", "oid-other", "oid")
+    assert email_identity.subject == "user@example.test"
+    assert store.find_principal_by_identity("", "subject", "oid") is None
+    assert store.mark_identity_login("missing", "subject", "oid") is False
+    with pytest.raises(ValueError, match="principal_id"):
+        store.list_principal_identities(" ")
+    assert store.upgrade_email_identity("", "user@example.test", "oid-new") is None
+    assert store.upgrade_email_identity("https://issuer.example", "user@example.test", "oid-other") is None
+    assert store.upgrade_email_identity(
+        "https://issuer.example", "user@example.test", "oid-principal", at="2026-08-31T00:00:00+00:00"
+    ) == principal
+
+    with pytest.raises(ValueError, match="token hash and principal"):
+        store.create_auth_session(
+            " ", principal, idle_expires_at="2099-01-01", absolute_expires_at="2099-01-02"
+        )
+    with pytest.raises(ValueError, match="unsupported session auth method"):
+        store.create_auth_session(
+            "session-hash",
+            principal,
+            idle_expires_at="2099-01-01",
+            absolute_expires_at="2099-01-02",
+            auth_method="other",
+        )
+    with pytest.raises(ValueError, match="expiry timestamps"):
+        store.create_auth_session("session-hash", principal, idle_expires_at="", absolute_expires_at="2099-01-02")
+    with pytest.raises(KeyError):
+        store.create_auth_session(
+            "session-hash", "missing", idle_expires_at="2099-01-01", absolute_expires_at="2099-01-02"
+        )
+    session = store.create_auth_session(
+        "session-hash", principal, idle_expires_at="2099-01-01", absolute_expires_at="2099-01-02", auth_method="oidc"
+    )
+    assert session.auth_method == "oidc"
+    assert store.get_auth_session(" ") is None
+    assert store.touch_auth_session(" ", last_seen_at="2099-01-01", idle_expires_at="2099-01-01") is False
+    assert store.touch_auth_session("missing", last_seen_at="2099-01-01", idle_expires_at="2099-01-01") is False
+    assert store.revoke_auth_session(" ") is False
+    assert store.revoke_auth_session("missing") is False
+    assert store.revoke_principal_sessions(" ") == 0
+    with pytest.raises(ValueError, match="config_key"):
+        store.get_app_config(" ")
+    with pytest.raises(ValueError, match="config_key"):
+        store.set_app_config(" ", "value")
+    assert store.touch_auth_session(
+        session.session_token_hash,
+        last_seen_at="2026-09-01T00:00:00+00:00",
+        idle_expires_at="2100-01-01T00:00:00+00:00",
+    ) is True
+    assert store.revoke_auth_session(session.session_token_hash) is True
+    assert store.get_auth_session(session.session_token_hash) is None
+
+
+def test_store_candidate_baseline_and_mapping_edges(tmp_path: Path) -> None:
+    store = Store(tmp_path / "state.db")
+    store.create_client("acme", "Acme")
+    store.create_client("beta", "Beta")
+    instance = store.create_connector_instance("halopsa", "Mapping source")
+    candidate = ClientCandidate(
+        candidate_id="candidate-1",
+        connector_instance_id=instance.connector_instance_id,
+        provider="halopsa",
+        external_id="external-1",
+        display_name="External one",
+        domains_json="[]",
+        provenance="unit-test",
+        first_seen="2026-08-31T00:00:00+00:00",
+        last_seen="2026-08-31T00:00:00+00:00",
+        match_state="proposed",
+        matched_client_id=None,
+        match_reason="",
+        confidence=0.25,
+    )
+    with pytest.raises(ValueError, match="candidate and connector"):
+        store.upsert_client_candidate(replace(candidate, candidate_id=" "))
+    with pytest.raises(ValueError, match="external_id and display"):
+        store.upsert_client_candidate(replace(candidate, external_id=" "))
+    created = store.upsert_client_candidate(candidate)
+    refreshed = store.upsert_client_candidate(
+        replace(candidate, display_name="External refreshed", match_state="ambiguous", confidence=0.75),
+        preserve_state=False,
+    )
+    assert created.candidate_id == refreshed.candidate_id
+    assert refreshed.match_state == "ambiguous"
+    with pytest.raises(ValueError, match="pagination"):
+        store.list_client_candidates(offset=-1)
+    with pytest.raises(ValueError, match="unsupported candidate match state"):
+        store.list_client_candidates(match_state="unknown")
+    assert store.get_client_candidate(" ") is None
+    assert store.set_client_candidate_state(" ", "proposed") is None
+    with pytest.raises(ValueError, match="between 0 and 1"):
+        store.set_client_candidate_state(candidate.candidate_id, "proposed", confidence=1.1)
+
+    invalid_payload = cast(dict[str, object], [])
+    with pytest.raises(ValueError, match="client_id"):
+        store.create_client_baseline(
+            " ", generated_at="2026-08-31T00:00:00+00:00", source_coverage={}, summary={}, sections={}
+        )
+    with pytest.raises(ValueError, match="generated_at"):
+        store.create_client_baseline("acme", generated_at=" ", source_coverage={}, summary={}, sections={})
+    with pytest.raises(ValueError, match="source_coverage"):
+        store.create_client_baseline(
+            "acme", generated_at="2026-08-31T00:00:00+00:00", source_coverage=invalid_payload, summary={}, sections={}
+        )
+    with pytest.raises(KeyError):
+        store.create_client_baseline(
+            "missing", generated_at="2026-08-31T00:00:00+00:00", source_coverage={}, summary={}, sections={}
+        )
+    baseline = store.create_client_baseline(
+        "acme",
+        generated_at="2026-08-31T00:00:00+00:00",
+        source_coverage={"source": "ready"},
+        summary={"score": 1},
+        sections={"devices": []},
+    )
+    assert store.get_client_baseline("acme", True) is None
+    assert store.get_accepted_client_baseline("acme") == baseline
+    assert store.accept_client_baseline("acme", 0) is None
+    assert store.accept_client_baseline("beta", 1) is None
+
+    with pytest.raises(KeyError):
+        store.create_client_connector_mapping(
+            BoundClients(frozenset({"beta"})), instance.connector_instance_id, "external-scope", "acme"
+        )
+    with pytest.raises(KeyError):
+        store.create_client_connector_mapping(AllClients(), "missing-instance", "external-missing", "acme")
+    first = store.create_client_connector_mapping(
+        AllClients(), instance.connector_instance_id, "external-shared", "acme"
+    )
+    race = store.create_client_connector_mapping(
+        AllClients(), instance.connector_instance_id, "external-shared", "acme"
+    )
+    second = store.create_client_connector_mapping(
+        AllClients(), instance.connector_instance_id, "external-shared", "beta"
+    )
+    with pytest.raises(KeyError):
+        store.verify_client_connector_mapping(AllClients(), " ")
+    with pytest.raises(KeyError):
+        store.verify_client_connector_mapping(BoundClients(frozenset({"beta"})), first.mapping_id)
+    assert store.verify_client_connector_mapping(AllClients(), first.mapping_id).verified == 1
+    verified, retenanted_count = store.verify_client_connector_mapping(
+        AllClients(), first.mapping_id, return_retenanted_count=True
+    )
+    assert verified.verified == 1
+    assert retenanted_count == 0
+    with store._connect() as connection:  # noqa: SLF001
+        connection.execute(
+            f"""
+            create trigger force_verified_mapping_conflict
+            after update of verified on client_connector_mappings
+            when new.mapping_id = '{first.mapping_id}' and new.verified = 1
+            begin
+                update client_connector_mappings
+                set verified = 1
+                where mapping_id = '{race.mapping_id}';
+            end
+            """
+        )
+    with pytest.raises(ClientConnectorMappingConflictError, match="different verified mapping"):
+        store.verify_client_connector_mapping(AllClients(), first.mapping_id)
+    with pytest.raises(ClientConnectorMappingConflictError, match="different verified mapping"):
+        store.verify_client_connector_mapping(AllClients(), second.mapping_id)
+
+
+def test_store_poll_lease_and_unmapped_record_edges(tmp_path: Path) -> None:
+    store = Store(tmp_path / "state.db")
+    instance = store.create_connector_instance("halopsa", "Lease source")
+    with pytest.raises(ValueError, match="ttl_seconds"):
+        store.claim_poll_lease(
+            instance.connector_instance_id,
+            "tickets",
+            token="unit-test",
+            ttl_seconds=cast(float, "bad"),
+            now="2026-08-31T00:00:00+00:00",
+        )
+    with pytest.raises(ValueError, match="ttl_seconds"):
+        store.claim_poll_lease(
+            instance.connector_instance_id, "tickets", token="unit-test", ttl_seconds=0, now="2026-08-31T00:00:00+00:00"
+        )
+    assert store.claim_poll_lease(
+        "missing-instance", "tickets", token="unit-test", ttl_seconds=60, now="2026-08-31T00:00:00+00:00"
+    ) == store_module.PollLeaseClaimResult.INSTANCE_MISSING
+    assert store.claim_poll_lease(
+        instance.connector_instance_id, "tickets", token="unit-test", ttl_seconds=60, now="2026-08-31T00:00:00+00:00"
+    ) == store_module.PollLeaseClaimResult.GRANTED
+    assert store.claim_poll_lease(
+        instance.connector_instance_id, "tickets", token="unit-test-2", ttl_seconds=60, now="2026-08-31T00:00:30+00:00"
+    ) == store_module.PollLeaseClaimResult.LOCKED
+    assert store.finish_poll_lease(
+        instance.connector_instance_id,
+        "tickets",
+        token="wrong-token",
+        status="failed",
+        cursor_value=None,
+        last_synced_at=None,
+        now="2026-08-31T00:00:30+00:00",
+    ) is False
+    with pytest.raises(ValueError, match="terminal sync cursor status"):
+        store.finish_poll_lease(
+            instance.connector_instance_id,
+            "tickets",
+            token="unit-test",
+            status=cast("Literal['idle', 'degraded', 'failed']", "unknown"),
+            cursor_value=None,
+            last_synced_at=None,
+            now="2026-08-31T00:00:30+00:00",
+        )
+    with pytest.raises(ValueError, match="connector_instance_id"):
+        store.finish_poll_lease(
+            " ",
+            "tickets",
+            token="unit-test",
+            status="failed",
+            cursor_value=None,
+            last_synced_at=None,
+            now="2026-08-31T00:00:30+00:00",
+        )
+    with pytest.raises(ValueError, match="cursor_type"):
+        store.finish_poll_lease(
+            instance.connector_instance_id,
+            " ",
+            token="unit-test",
+            status="failed",
+            cursor_value=None,
+            last_synced_at=None,
+            now="2026-08-31T00:00:30+00:00",
+        )
+    assert store.finish_poll_lease(
+        instance.connector_instance_id,
+        "tickets",
+        token="unit-test",
+        status="idle",
+        cursor_value="cursor-1",
+        last_synced_at="2026-08-31T00:00:30+00:00",
+        now="2026-08-31T00:00:30+00:00",
+    ) is True
+    assert store.claim_poll_lease(
+        instance.connector_instance_id, "tickets", token="unit-test-3", ttl_seconds=60, now="2026-08-31T00:02:00+00:00"
+    ) == store_module.PollLeaseClaimResult.GRANTED
+    assert store.finish_poll_lease(
+        "missing-instance",
+        "tickets",
+        token="unit-test",
+        status="failed",
+        cursor_value=None,
+        last_synced_at=None,
+        now="2026-08-31T00:02:00+00:00",
+    ) is False
+
+    with pytest.raises(ValueError, match="connector_instance_id"):
+        store.record_unmapped(" ", "external", "record", "ticket", "digest", "reason")
+    with pytest.raises(ValueError, match="record_type"):
+        store.record_unmapped(instance.connector_instance_id, "external", "record", " ", "digest", "reason")
+    with pytest.raises(ValueError, match="reason"):
+        store.record_unmapped(instance.connector_instance_id, "external", "record", "ticket", "digest", " ")
+    with pytest.raises(KeyError):
+        store.record_unmapped("missing-instance", "external", "record", "ticket", "digest", "reason")
+    record = store.record_unmapped(
+        instance.connector_instance_id, "external", "record", "ticket", "digest", "reason"
+    )
+    duplicate = store.record_unmapped(
+        instance.connector_instance_id, "external-new", "record", "ticket", "digest-2", "reason-2"
+    )
+    assert duplicate.record_id == record.record_id
+    assert duplicate.occurrence_count == 2
+    assert store.list_unmapped_records(BoundClients(frozenset({"__quarantine__"}))) == []
+    assert store.resolve_unmapped_record(" ") is None
 
 
 def _seed_prechange_schema(path: Path) -> None:

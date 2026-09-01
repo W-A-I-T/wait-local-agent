@@ -15,6 +15,7 @@ from fastapi.routing import APIRoute
 from fastapi.testclient import TestClient
 
 import wait_local_agent.api.app as app_module
+import wait_local_agent.baseline as baseline_module
 from tests.support import ensure_test_client, ensure_test_clients, ingest_local
 from wait_local_agent.api.app import ClientReportRequest, ScheduledJobCreateRequest, create_app
 from wait_local_agent.autotask import AutotaskReadResponse
@@ -156,6 +157,131 @@ def test_api_auth_requires_bearer_token_when_demo_mode_disabled(settings) -> Non
     assert good.json()["api_auth_required"] is True
     assert security.status_code == 200
     assert security.json()["api_auth_required"] is True
+
+
+@pytest.mark.parametrize(
+    ("method", "path"),
+    [
+        ("POST", "/clients/acme/baselines"),
+        ("GET", "/clients/acme/baselines"),
+        ("POST", "/clients/acme/baselines/1/accept"),
+        ("GET", "/clients/acme/drift"),
+    ],
+)
+def test_baseline_routes_reject_unauthenticated_requests(settings, method: str, path: str) -> None:
+    secure_settings = replace(
+        settings,
+        demo_mode=False,
+        allow_write_actions=True,
+        allow_http_probing=True,
+        admin_token="bootstrap-admin",
+    )
+    client = TestClient(create_app(secure_settings))
+
+    response = client.request(method, path)
+
+    assert response.status_code == 401
+
+
+@pytest.mark.parametrize(
+    ("method", "path"),
+    [
+        ("POST", "/clients/acme/baselines"),
+        ("GET", "/clients/acme/baselines"),
+        ("POST", "/clients/acme/baselines/1/accept"),
+        ("GET", "/clients/acme/drift"),
+    ],
+)
+def test_baseline_routes_reject_non_msp_admin_requests(settings, method: str, path: str) -> None:
+    secure_settings = replace(
+        settings,
+        demo_mode=False,
+        allow_write_actions=True,
+        allow_http_probing=True,
+        admin_token="bootstrap-admin",
+    )
+    store = Store(secure_settings.data_path)
+    ensure_test_client(store, "acme")
+    _provision_bound_principal(store, "acme-admin", "tenant-admin", "acme", "admin")
+    client = TestClient(create_app(secure_settings))
+
+    response = client.request(method, path, headers=_auth("tenant-admin"))
+
+    assert response.status_code == 403
+
+
+def test_baseline_demo_mode_refuses_both_write_routes(settings) -> None:
+    client = TestClient(create_app(settings))
+
+    create_response = client.post("/clients/acme/baselines")
+    accept_response = client.post("/clients/acme/baselines/1/accept")
+
+    assert create_response.status_code == 403
+    assert accept_response.status_code == 403
+
+
+def test_baseline_routes_gate_live_drift_when_probing_is_disabled(settings) -> None:
+    secure_settings = replace(
+        settings,
+        demo_mode=False,
+        allow_write_actions=True,
+        allow_http_probing=False,
+        admin_token="bootstrap-admin",
+    )
+    client = TestClient(create_app(secure_settings))
+
+    response = client.get("/clients/acme/drift", headers=_auth("bootstrap-admin"))
+
+    assert response.status_code == 409
+
+
+def test_baseline_routes_return_unknown_client_and_version_404s_and_emit_audits(
+    settings, monkeypatch
+) -> None:
+    monkeypatch.setattr(
+        baseline_module,
+        "build_dashboard_summary",
+        lambda *_args, **_kwargs: {"summary": {}, "source_statuses": {}},
+    )
+    secure_settings = replace(
+        settings,
+        demo_mode=False,
+        allow_write_actions=True,
+        allow_http_probing=True,
+        admin_token="bootstrap-admin",
+    )
+    store = Store(secure_settings.data_path)
+    ensure_test_client(store, "acme")
+    client = TestClient(create_app(secure_settings))
+    headers = _auth("bootstrap-admin")
+
+    created = client.post("/clients/acme/baselines", headers=headers)
+    created_second = client.post("/clients/acme/baselines", headers=headers)
+    accepted = client.post("/clients/acme/baselines/1/accept", headers=headers)
+    listed = client.get("/clients/acme/baselines", headers=headers)
+    drift = client.get("/clients/acme/drift", headers=headers)
+
+    assert created.status_code == 201
+    assert created_second.status_code == 201
+    assert accepted.status_code == 200
+    assert accepted.json()["accepted"] is True
+    assert listed.status_code == 200
+    assert [item["version"] for item in listed.json()] == [2, 1]
+    assert drift.status_code == 200
+    assert isinstance(drift.json()["findings"], list)
+
+    unknown_client_responses = (
+        client.post("/clients/missing/baselines", headers=headers),
+        client.get("/clients/missing/baselines", headers=headers),
+        client.post("/clients/missing/baselines/1/accept", headers=headers),
+        client.get("/clients/missing/drift", headers=headers),
+    )
+    assert all(response.status_code == 404 for response in unknown_client_responses)
+    assert client.post("/clients/acme/baselines/999/accept", headers=headers).status_code == 404
+    assert client.get("/clients/acme/drift?baseline_version=999", headers=headers).status_code == 404
+
+    event_types = {event.event_type for event in store.list_audit_events(client_id="acme")}
+    assert {"baseline.created", "baseline.accepted", "baseline.listed", "baseline.drift.viewed"} <= event_types
 
 
 def test_provider_settings_and_tickets_list(settings) -> None:
