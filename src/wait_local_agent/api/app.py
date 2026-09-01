@@ -34,6 +34,7 @@ from starlette.middleware.trustedhost import TrustedHostMiddleware
 from starlette.staticfiles import StaticFiles
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
+from packs.microsoft_admin.client import MicrosoftAdminGraphClient
 from wait_local_agent import __version__
 from wait_local_agent.agents import AgentDefinitionError, AgentService
 from wait_local_agent.api.auth_routes import create_auth_router
@@ -63,6 +64,7 @@ from wait_local_agent.backup import (
     restore_state,
     run_restore_exercise,
 )
+from wait_local_agent.baseline import BaselineService
 from wait_local_agent.client_discovery import (
     PSA_CONNECTOR_TYPES,
     ClientDiscoveryError,
@@ -328,6 +330,7 @@ AdminAccess = Annotated[AuthContext, Depends(require_role(Role.ADMIN))]
 EndUserAccess = Annotated[AuthContext, Depends(require_end_user)]
 LOGGER = logging.getLogger(__name__)
 CORRELATION_HEADER = "X-Correlation-ID"
+_TERMINAL_EXECUTION_STATUSES = frozenset({"succeeded", "verified", "unverified", "submitted"})
 
 
 class CorrelationIdMiddleware:
@@ -926,7 +929,9 @@ class ScheduledJobCreateRequest(BaseModel):
     report_type: Literal["qbr", "automation_opportunity", "recurring_service_review"] | None = None
     playbook_id: str | None = None
     agent_id: str | None = None
-    job_kind: Literal["workflow", "playbook", "agent", "report", "connector_poll", "graph_sync"] | None = None
+    job_kind: Literal[
+        "workflow", "playbook", "agent", "report", "connector_poll", "graph_sync", "baseline_snapshot"
+    ] | None = None
     graph_sync: bool = False
     entity_id: str | None = None
     cron: str = ""
@@ -1171,6 +1176,19 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     def _m365_graph_service_for_client(client_id: str) -> OperationalGraphService:
         return OperationalGraphService(store, m365_client=_m365_graph_client_for_client(client_id))
 
+    def _microsoft_admin_client_for_client(client_id: str) -> MicrosoftAdminGraphClient:
+        return MicrosoftAdminGraphClient(
+            active_settings,
+            connection_resolver=m365_connection_resolver,
+            client_id=client_id,
+        )
+
+    baseline_service = BaselineService(
+        store,
+        microsoft_provider_factory=_microsoft_admin_client_for_client,
+        core_client_factory=_m365_graph_client_for_client,
+    )
+
     def _run_client_graph_sync(client_id: str) -> object:
         client = store.get_client(AllClients(), client_id)
         if client is None or client.status.strip().lower() != "active":
@@ -1195,6 +1213,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         event_dispatcher=event_dispatcher,
         ingestion_poller=IngestionPoller(store, base_settings=active_settings),
         graph_sync_runner=_run_client_graph_sync,
+        baseline_snapshot_runner=lambda client_id: baseline_service.create_baseline(client_id),
     )
 
     @asynccontextmanager
@@ -1683,6 +1702,77 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         if client is None:
             raise HTTPException(status_code=404, detail="client not found")
         return asdict(client)
+
+    @app.post("/clients/{client_id}/baselines", status_code=201)
+    def create_client_baseline(client_id: str, context: AdminAccess) -> dict[str, object]:
+        _require_msp_operator(context)
+        if active_settings.demo_mode or not active_settings.allow_write_actions:
+            raise HTTPException(status_code=403, detail="baseline writes are unavailable in demo mode")
+        scope = _resolve_client_target_scope(context, client_id)
+        if store.get_client(scope, client_id) is None:
+            raise HTTPException(status_code=404, detail="client not found")
+        try:
+            return _baseline_view(baseline_service.create_baseline(client_id))
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail="client not found") from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        except Exception as exc:  # noqa: BLE001 - do not expose provider failures
+            raise HTTPException(status_code=503, detail="baseline collection failed") from exc
+
+    @app.get("/clients/{client_id}/baselines")
+    def client_baselines(client_id: str, context: AdminAccess) -> list[dict[str, object]]:
+        _require_msp_operator(context)
+        scope = _resolve_client_target_scope(context, client_id)
+        if store.get_client(scope, client_id) is None:
+            raise HTTPException(status_code=404, detail="client not found")
+        store.add_audit_event(
+            "baseline.listed",
+            client_id,
+            "baseline versions listed",
+            client_id=client_id,
+            approver_id=context.approver_id,
+        )
+        return [_baseline_view(baseline) for baseline in store.list_client_baselines(scope)]
+
+    @app.post("/clients/{client_id}/baselines/{version}/accept")
+    def accept_client_baseline(client_id: str, version: int, context: AdminAccess) -> dict[str, object]:
+        _require_msp_operator(context)
+        if active_settings.demo_mode or not active_settings.allow_write_actions:
+            raise HTTPException(status_code=403, detail="baseline writes are unavailable in demo mode")
+        scope = _resolve_client_target_scope(context, client_id)
+        accepted = store.accept_client_baseline(scope, version)
+        if accepted is None or accepted.client_id != client_id.strip():
+            raise HTTPException(status_code=404, detail="baseline not found")
+        return _baseline_view(accepted)
+
+    @app.get("/clients/{client_id}/drift")
+    def client_drift(
+        client_id: str,
+        context: AdminAccess,
+        baseline_version: Annotated[int | None, Query(ge=1)] = None,
+    ) -> dict[str, object]:
+        _require_msp_operator(context)
+        if not active_settings.allow_http_probing:
+            raise HTTPException(status_code=409, detail="baseline drift requires live read probing")
+        scope = _resolve_client_target_scope(context, client_id)
+        if store.get_client(scope, client_id) is None:
+            raise HTTPException(status_code=404, detail="client not found")
+        try:
+            result = baseline_service.diff_baseline(
+                client_id,
+                baseline_version=baseline_version,
+            )
+        except LookupError as exc:
+            raise HTTPException(status_code=404, detail="client baseline not found") from exc
+        store.add_audit_event(
+            "baseline.drift.viewed",
+            client_id,
+            "baseline drift comparison completed",
+            client_id=client_id,
+            approver_id=context.approver_id,
+        )
+        return result
 
     @app.get("/clients/{client_id}/graph")
     def client_graph(
@@ -6370,6 +6460,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             raise HTTPException(status_code=404, detail="deployment approval request not found")
         if approval.status != "approved":
             raise HTTPException(status_code=409, detail="deployment approval must be approved before execution")
+        if approval.execution_status in _TERMINAL_EXECUTION_STATUSES:
+            raise HTTPException(status_code=409, detail="deployment approval request has already executed")
         try:
             payload = _safe_json_object(approval.payload_json)
             plan = build_power_platform_deployment_plan_from_payload(payload)
@@ -6478,6 +6570,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             raise HTTPException(status_code=404, detail="Power Platform rollback approval request not found")
         if approval.status != "approved":
             raise HTTPException(status_code=409, detail="rollback approval must be approved before execution")
+        if approval.execution_status in _TERMINAL_EXECUTION_STATUSES:
+            raise HTTPException(status_code=409, detail="rollback approval request has already executed")
         try:
             payload = _safe_json_object(approval.payload_json)
             plan = build_power_platform_deployment_plan_from_payload(payload)
@@ -6802,6 +6896,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         request: ScheduledJobCreateRequest,
         context: TechnicianAccess,
     ) -> dict[str, object]:
+        if request.job_kind == "baseline_snapshot":
+            return _create_scheduled_baseline_snapshot_job(request, context)
         if request.graph_sync or request.job_kind == "graph_sync":
             return _create_scheduled_graph_sync_job(request, context)
         if request.playbook_id is not None:
@@ -7018,6 +7114,49 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 request.cron,
                 params,
                 job_kind="graph_sync",
+                entity_id=scoped_client_id,
+                schedule_type=request.schedule_type,
+                interval_seconds=request.interval_seconds,
+                run_at=request.run_at,
+                timezone=request.timezone,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        return _scheduled_job_view(scheduled_job)
+
+    def _create_scheduled_baseline_snapshot_job(
+        request: ScheduledJobCreateRequest,
+        context: AuthContext,
+    ) -> dict[str, object]:
+        if context.role < Role.ADMIN:
+            raise HTTPException(status_code=403, detail="administrator access required")
+        _require_msp_operator(context)
+        if active_settings.demo_mode or not active_settings.allow_write_actions:
+            raise HTTPException(status_code=403, detail="baseline scheduling is unavailable in demo mode")
+        if any(
+            value is not None
+            for value in (request.template_id, request.report_type, request.playbook_id, request.agent_id)
+        ):
+            raise HTTPException(status_code=422, detail="baseline snapshot schedules cannot include another target")
+        requested_client_id = request.params.get("client_id")
+        if requested_client_id is not None and not isinstance(requested_client_id, str):
+            raise HTTPException(status_code=422, detail="params.client_id must be a string")
+        scoped_client_id = resolve_client_scope(
+            context,
+            requested_client_id.strip() if isinstance(requested_client_id, str) else None,
+        ).client_id
+        if scoped_client_id is None:
+            raise HTTPException(status_code=403, detail="client scope is required")
+        if store.get_client(AllClients(), scoped_client_id) is None:
+            raise HTTPException(status_code=404, detail="client not found")
+        params = dict(request.params)
+        params["client_id"] = scoped_client_id
+        try:
+            scheduled_job = scheduler.register(
+                "",
+                request.cron,
+                params,
+                job_kind="baseline_snapshot",
                 entity_id=scoped_client_id,
                 schedule_type=request.schedule_type,
                 interval_seconds=request.interval_seconds,
@@ -7614,7 +7753,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         if request.action_type == "power_platform.solution_stage":
             if request.status != "approved":
                 return False, "Approval must be approved before execution."
-            if request.execution_status == "succeeded":
+            if request.execution_status in _TERMINAL_EXECUTION_STATUSES:
                 return False, "Approval request has already executed successfully."
             if not active_settings.allow_write_actions:
                 return False, "Power Platform execution is blocked until WAIT_ALLOW_WRITE_ACTIONS=true."
@@ -7684,6 +7823,33 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             app.mount("/", SPAStaticFiles(directory=ui_dist), name="ui")
 
     return app
+
+
+def _baseline_view(baseline) -> dict[str, object]:
+    """Decode the safe normalized baseline fields for API and UI consumers."""
+
+    try:
+        source_coverage = json.loads(baseline.source_coverage_json)
+    except (TypeError, json.JSONDecodeError):
+        source_coverage = {}
+    try:
+        summary = json.loads(baseline.summary_json)
+    except (TypeError, json.JSONDecodeError):
+        summary = {}
+    try:
+        sections = json.loads(baseline.sections_json)
+    except (TypeError, json.JSONDecodeError):
+        sections = {}
+    return {
+        "baseline_id": baseline.baseline_id,
+        "client_id": baseline.client_id,
+        "version": baseline.version,
+        "generated_at": baseline.generated_at,
+        "accepted": baseline.accepted,
+        "source_coverage": source_coverage,
+        "summary": summary,
+        "sections": sections,
+    }
 
 
 def _smart_action_run_view(run) -> dict[str, object]:

@@ -19,7 +19,8 @@ PINNED_SCHEMA_MIGRATIONS: list[tuple[int, str]] = [
     (8, "auth_sessions_and_config"),
     (9, "principal_identities"),
     (10, "client_candidates"),
-    (11, "document_authority"),
+    (11, "client_baselines"),
+    (12, "document_authority"),
 ]
 
 

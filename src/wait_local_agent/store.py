@@ -36,6 +36,7 @@ from wait_local_agent.models import (
     AuditEvent,
     CanonicalAsset,
     Client,
+    ClientBaseline,
     ClientCandidate,
     ClientConnectorMapping,
     CollectorRun,
@@ -333,7 +334,8 @@ class Store:
             Migration(8, "auth_sessions_and_config", self._apply_auth_sessions_and_config_migration),
             Migration(9, "principal_identities", self._apply_principal_identities_migration),
             Migration(10, "client_candidates", self._apply_client_candidates_migration),
-            Migration(11, "document_authority", self._apply_document_authority_migration),
+            Migration(11, "client_baselines", self._apply_client_baselines_migration),
+            Migration(12, "document_authority", self._apply_document_authority_migration),
         )
 
     def _apply_principals_migration(self, connection: sqlite3.Connection) -> None:
@@ -799,6 +801,39 @@ class Store:
         )
         connection.execute(
             "create index if not exists idx_client_candidates_state on client_candidates(match_state, last_seen desc)"
+        )
+
+    @staticmethod
+    def _apply_client_baselines_migration(connection: sqlite3.Connection) -> None:
+        """Persist versioned, tenant-scoped normalized client observations."""
+
+        connection.execute(
+            """
+            create table if not exists client_baselines (
+                baseline_id text primary key,
+                client_id text not null references clients(client_id) on delete cascade,
+                version integer not null check (version > 0),
+                generated_at text not null,
+                accepted integer not null default 0 check (accepted in (0, 1)),
+                source_coverage_json text not null,
+                summary_json text not null,
+                sections_json text not null,
+                unique(client_id, version)
+            )
+            """
+        )
+        connection.execute(
+            """
+            create unique index if not exists ux_client_baselines_accepted
+            on client_baselines(client_id)
+            where accepted = 1
+            """
+        )
+        connection.execute(
+            """
+            create index if not exists idx_client_baselines_client_version
+            on client_baselines(client_id, version desc)
+            """
         )
 
     @staticmethod
@@ -1894,6 +1929,167 @@ class Store:
                 [normalized_id, *client_params],
             ).fetchone()
         return _client_from_row(row) if row else None
+
+    def create_client_baseline(
+        self,
+        client_id: str,
+        *,
+        generated_at: str,
+        source_coverage: dict[str, object],
+        summary: dict[str, object],
+        sections: dict[str, object],
+        baseline_id: str | None = None,
+    ) -> ClientBaseline:
+        """Insert a normalized snapshot and accept the first snapshot atomically."""
+
+        normalized_client_id = _normalize_client_id(client_id)
+        if normalized_client_id is None:
+            raise ValueError("client_id must be non-empty")
+        if not isinstance(generated_at, str) or not generated_at.strip():
+            raise ValueError("generated_at must be a non-empty ISO timestamp")
+        for name, value in (
+            ("source_coverage", source_coverage),
+            ("summary", summary),
+            ("sections", sections),
+        ):
+            if not isinstance(value, dict):
+                raise ValueError(f"{name} must be an object")
+        normalized_baseline_id = _normalize_client_id(baseline_id) or str(uuid.uuid4())
+        source_coverage_json = _json_dumps_value(source_coverage)
+        summary_json = _json_dumps_value(summary)
+        sections_json = _json_dumps_value(sections)
+        with self._connect() as connection:
+            connection.execute("begin immediate")
+            if connection.execute(
+                "select 1 from clients where client_id = ?", (normalized_client_id,)
+            ).fetchone() is None:
+                raise KeyError(normalized_client_id)
+            version_row = connection.execute(
+                "select coalesce(max(version), 0) + 1 from client_baselines where client_id = ?",
+                (normalized_client_id,),
+            ).fetchone()
+            version = int(version_row[0]) if version_row is not None else 1
+            accepted = connection.execute(
+                "select 1 from client_baselines where client_id = ? and accepted = 1 limit 1",
+                (normalized_client_id,),
+            ).fetchone() is None
+            now = generated_at.strip()
+            connection.execute(
+                """
+                insert into client_baselines
+                  (baseline_id, client_id, version, generated_at, accepted,
+                   source_coverage_json, summary_json, sections_json)
+                values (?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    normalized_baseline_id,
+                    normalized_client_id,
+                    version,
+                    now,
+                    int(accepted),
+                    source_coverage_json,
+                    summary_json,
+                    sections_json,
+                ),
+            )
+            self._add_audit_event(
+                connection,
+                "baseline.created",
+                normalized_baseline_id,
+                f"baseline version {version} created",
+                client_id=normalized_client_id,
+            )
+        baseline = self.get_client_baseline(normalized_client_id, version)
+        if baseline is None:  # pragma: no cover - insert committed successfully
+            raise RuntimeError("client baseline was not persisted")
+        return baseline
+
+    def get_client_baseline(
+        self, scope: ClientScope | str, version: int
+    ) -> ClientBaseline | None:
+        if isinstance(version, bool) or not isinstance(version, int) or version < 1:
+            return None
+        client_predicate, client_params = _client_scope_predicate(scope)
+        with self._connect() as connection:
+            row = connection.execute(
+                f"""
+                select * from client_baselines
+                where version = ? and {client_predicate}
+                limit 1
+                """,  # nosec B608: scope predicate is fixed SQL and IDs are parameterized
+                (version, *client_params),
+            ).fetchone()
+        return _client_baseline_from_row(row) if row else None
+
+    def list_client_baselines(
+        self, scope: ClientScope | str
+    ) -> list[ClientBaseline]:
+        client_predicate, client_params = _client_scope_predicate(scope)
+        with self._connect() as connection:
+            rows = connection.execute(
+                f"""
+                select * from client_baselines
+                where {client_predicate}
+                order by client_id, version desc
+                """,  # nosec B608: scope predicate is fixed SQL and IDs are parameterized
+                client_params,
+            ).fetchall()
+        return [_client_baseline_from_row(row) for row in rows]
+
+    def get_accepted_client_baseline(
+        self, scope: ClientScope | str
+    ) -> ClientBaseline | None:
+        client_predicate, client_params = _client_scope_predicate(scope)
+        with self._connect() as connection:
+            row = connection.execute(
+                f"""
+                select * from client_baselines
+                where accepted = 1 and {client_predicate}
+                limit 1
+                """,  # nosec B608: scope predicate is fixed SQL and IDs are parameterized
+                client_params,
+            ).fetchone()
+        return _client_baseline_from_row(row) if row else None
+
+    def accept_client_baseline(
+        self, scope: ClientScope | str, version: int
+    ) -> ClientBaseline | None:
+        if isinstance(version, bool) or not isinstance(version, int) or version < 1:
+            return None
+        client_predicate, client_params = _client_scope_predicate(scope)
+        with self._connect() as connection:
+            connection.execute("begin immediate")
+            target = connection.execute(
+                f"""
+                select client_id from client_baselines
+                where version = ? and {client_predicate}
+                limit 1
+                """,  # nosec B608: scope predicate is fixed SQL and IDs are parameterized
+                (version, *client_params),
+            ).fetchone()
+            if target is None:
+                return None
+            target_client_id = str(target[0])
+            connection.execute(
+                "update client_baselines set accepted = 0 where client_id = ?",
+                (target_client_id,),
+            )
+            connection.execute(
+                "update client_baselines set accepted = 1 where client_id = ? and version = ?",
+                (target_client_id, version),
+            )
+            baseline_id = connection.execute(
+                "select baseline_id from client_baselines where client_id = ? and version = ?",
+                (target_client_id, version),
+            ).fetchone()[0]
+            self._add_audit_event(
+                connection,
+                "baseline.accepted",
+                str(baseline_id),
+                f"baseline version {version} accepted",
+                client_id=target_client_id,
+            )
+        return self.get_client_baseline(target_client_id, version)
 
     def list_connector_instances(self) -> list[ConnectorInstance]:
         with self._connect() as connection:
@@ -10905,6 +11101,13 @@ def _sync_cursor_from_row(row: sqlite3.Row) -> SyncCursor:
         last_synced_at=cast(str | None, row["last_synced_at"]),
         updated_at=str(row["updated_at"]),
     )
+
+
+def _client_baseline_from_row(row: sqlite3.Row) -> ClientBaseline:
+    payload = dict(row)
+    payload["version"] = int(payload["version"])
+    payload["accepted"] = bool(payload["accepted"])
+    return ClientBaseline(**payload)
 
 
 def _normalize_lease_token(token: str) -> str:

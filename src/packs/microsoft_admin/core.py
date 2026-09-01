@@ -1,7 +1,7 @@
 """Public facade for the Microsoft administrator pack implementation."""
 
 from .client import MicrosoftAdminGraphClient
-from .insights import build_dashboard, diagnose_access, remediation_catalog
+from .insights import build_dashboard, build_dashboard_summary, diagnose_access, remediation_catalog
 from .models import (
     DEFAULT_PAGE_SIZE,
     MAX_CURSOR_LENGTH,
@@ -28,6 +28,7 @@ __all__ = [
     "MicrosoftAdminProvider",
     "MicrosoftAdminReadResponse",
     "build_dashboard",
+    "build_dashboard_summary",
     "diagnose_access",
     "remediation_catalog",
 ]
