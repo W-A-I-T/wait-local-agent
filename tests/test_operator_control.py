@@ -11,6 +11,7 @@ from packs.operator_control.activity import activity_to_dict, list_activity
 from packs.operator_control.identity import (
     IdentityConflictError,
     create_principal,
+    get_principal_detail,
     remove_client_role,
     set_client_role,
     set_msp_admin,
@@ -317,6 +318,15 @@ def test_identity_lifecycle_updates_roles_and_rejects_unsafe_shapes(settings) ->
     store = Store(secure.data_path)
     store.create_client("alpha", "Alpha")
     store.create_client("beta", "Beta")
+    api = TestClient(create_app(secure))
+    status = api.get("/packs/operator-control/status", headers=_auth("bootstrap-admin"))
+    assert status.status_code == 200
+    assert status.json() == {
+        "status": "ready",
+        "principal_management": True,
+        "credential_rotation": True,
+        "unified_activity": True,
+    }
     principal, _ = create_principal(
         store,
         principal_id="staff-alpha",
@@ -327,6 +337,18 @@ def test_identity_lifecycle_updates_roles_and_rejects_unsafe_shapes(settings) ->
         issue_credential=False,
     )
     assert principal.client_roles == (("alpha", "viewer"),)
+    with pytest.raises(KeyError):
+        get_principal_detail(store, "missing-principal")
+    with pytest.raises(IdentityConflictError, match="already exists"):
+        create_principal(
+            store,
+            principal_id="staff-alpha",
+            kind="staff",
+            display_name="Duplicate",
+            client_roles=(("alpha", "viewer"),),
+            msp_admin=False,
+            issue_credential=False,
+        )
     renamed = update_principal(
         store,
         principal_id="staff-alpha",
