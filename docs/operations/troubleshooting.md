@@ -11,6 +11,16 @@ the affected appliance.
 | You need to review what happened | Read recent audit events or export them for local review | `wait-local-agent audit list`<br>`wait-local-agent audit export <dest> --format json`<br>`wait-local-agent audit export <dest> --format csv` | The audit trail records local decisions and outcomes. An export is evidence from this appliance; it is not proof that every external system accepted a requested change. |
 | A connector is not reachable | Review connector readiness and the latest appliance checks | `wait-local-agent connectors list`<br>`wait-local-agent hardening run`<br>`wait-local-agent hardening list` | Connector readiness distinguishes configured surfaces from unavailable ones. Hardening results identify local safety or configuration issues, but do not promise that a provider or network is reachable. |
 
+## Deep links return JSON or 401
+
+When a browser refreshes a known dashboard path such as `/clients` or
+`/reports`, the appliance uses the `Accept` header to choose the response. A
+request that accepts `text/html` receives the dashboard so the browser can
+continue loading that screen. JSON requests, default command-line requests,
+and requests without that browser preference continue to receive the API
+response, including its normal authentication status. This mirrors the local
+development proxy behavior.
+
 ## Local API reference
 
 When the local API is running, its interactive documentation is available at
@@ -24,4 +34,3 @@ files as well as copied console output before sharing either one.
 
 The planned redacted-bundle flow is defined in [Diagnostics &
 Support](diagnostics-and-support.md).
-
