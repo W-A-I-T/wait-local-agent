@@ -34,6 +34,8 @@ def test_compiled_ui_has_assets_and_spa_fallback(settings, monkeypatch, tmp_path
     asset = client.get("/assets/app.js")
     browser_route = client.get("/settings/unknown-view")
     api_namespace = client.get("/api/unknown")
+    docs_namespace = client.get("/docs/unknown")
+    post_unknown = client.post("/unknown")
     known_api_404 = client.get("/clients/does-not-exist")
     openapi = client.get("/openapi.json")
 
@@ -45,6 +47,10 @@ def test_compiled_ui_has_assets_and_spa_fallback(settings, monkeypatch, tmp_path
     assert 'id="root"' in browser_route.text
     assert api_namespace.status_code == 404
     assert 'id="root"' not in api_namespace.text
+    assert docs_namespace.status_code == 404
+    assert 'id="root"' not in docs_namespace.text
+    assert post_unknown.status_code in {404, 405}
+    assert 'id="root"' not in post_unknown.text
     assert known_api_404.status_code == 404
     assert known_api_404.json() == {"detail": "client not found"}
     assert openapi.status_code == 200

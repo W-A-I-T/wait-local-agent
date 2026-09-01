@@ -86,6 +86,9 @@ export type EntityRef = {
   external_id: string;
   display_name: string;
   provenance: string;
+  attributes_json?: string;
+  first_seen?: string;
+  last_seen?: string;
 };
 
 export type EntityLink = {
@@ -100,11 +103,22 @@ export type EntityLink = {
 export type ClientGraph = {
   refs: EntityRef[];
   links: EntityLink[];
+  total_refs: number;
+  total_links: number;
+  has_more: boolean;
+  entity_type_counts?: Record<string, number>;
 };
 
 export type RmmInventorySyncResult = {
   devices: number;
   alerts: number;
+  links: number;
+  errors: string[];
+};
+
+export type M365InventorySyncResult = {
+  users: number;
+  devices: number;
   links: number;
   errors: string[];
 };
@@ -1341,7 +1355,7 @@ export type AuditExportResponse = {
 
 export type ScheduledJob = {
   id: number;
-  job_kind: "workflow" | "playbook" | "agent" | "report";
+  job_kind: "workflow" | "playbook" | "agent" | "report" | "connector_poll" | "graph_sync";
   template_id: string | null;
   playbook_id: string | null;
   agent_id: string | null;
@@ -1366,6 +1380,8 @@ export type ScheduledJobRequestBody = {
   report_type?: "qbr" | "automation_opportunity" | "recurring_service_review";
   agent_id?: string;
   entity_id?: string;
+  job_kind?: "graph_sync";
+  graph_sync?: boolean;
   cron: string;
   schedule_type?: "cron" | "interval" | "once";
   interval_seconds?: number;

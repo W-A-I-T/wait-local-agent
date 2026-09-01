@@ -820,8 +820,19 @@ class EntityLink:
 
 @dataclass(frozen=True)
 class SubGraph:
+    """A graph page plus filtered totals and an overall type summary.
+
+    ``total_refs``, ``total_links``, and ``has_more`` describe the active
+    page filters. ``entity_type_counts`` is an overall summary for the
+    client's graph and is intentionally not narrowed by those filters.
+    """
+
     refs: tuple[EntityRef, ...]
     links: tuple[EntityLink, ...]
+    total_refs: int = 0
+    total_links: int = 0
+    has_more: bool = False
+    entity_type_counts: dict[str, int] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)

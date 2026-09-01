@@ -240,6 +240,7 @@
       "POST /discovery/clients/{candidate_id}/dismiss": "admin",
       "POST /clients": "admin",
       "POST /clients/{client_id}/graph/sync-rmm": "admin",
+      "POST /clients/{client_id}/graph/sync-m365": "admin",
       "POST /collectors/modules/{module_id}/preview": "exposed",
       "POST /collectors/modules/{module_id}/run": "exposed",
       "POST /collectors/modules/{module_id}/validate": "exposed",
