@@ -649,13 +649,25 @@ def test_knowledge_authority_route_is_admin_scoped_and_records_authenticated_act
     assert demoted.json()["authority"] == "REFERENCE"
     assert demoted.json()["approved_by"] is None
     assert demoted.json()["approved_at"] is None
-    assert [document["authority"] for document in listed.json()] == ["REFERENCE", "UNTRUSTED", "UNTRUSTED"]
-    assert {"authority", "sop_version", "approved_by", "approved_at", "superseded_by"} <= set(listed.json()[0])
+    listed_documents = listed.json()
+    assert [document["authority"] for document in listed_documents] == ["REFERENCE", "UNTRUSTED"]
+    # The beta document must not appear in an acme-scoped listing.
+    assert foreign.id not in {document["id"] for document in listed_documents}
+    assert {"authority", "sop_version", "approved_by", "approved_at", "superseded_by"} <= set(listed_documents[0])
     authority_events = [event for event in audit.json() if event["event_type"] == "knowledge.authority.changed"]
     assert len(authority_events) == 2
-    assert "old_authority=UNTRUSTED" in authority_events[0]["detail"]
-    assert "new_authority=APPROVED_SOP" in authority_events[0]["detail"]
-    assert authority_events[0]["approver_id"] == hashlib.sha256(b"acme-admin-token").hexdigest()[:16]
+    expected_actor = hashlib.sha256(b"acme-admin-token").hexdigest()[:16]
+    # Audit events are returned newest-first by Store.list_audit_events (order by id desc).
+    assert authority_events[0]["detail"] == (
+        f"actor={expected_actor} document_id={first.id} "
+        "old_authority=APPROVED_SOP new_authority=REFERENCE"
+    )
+    assert authority_events[0]["approver_id"] == expected_actor
+    assert authority_events[1]["detail"] == (
+        f"actor={expected_actor} document_id={first.id} "
+        "old_authority=UNTRUSTED new_authority=APPROVED_SOP"
+    )
+    assert authority_events[1]["approver_id"] == expected_actor
 
 
 def test_approval_requests_are_scoped_to_authenticated_tenant(settings, monkeypatch) -> None:

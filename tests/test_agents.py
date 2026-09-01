@@ -13,7 +13,7 @@ from fastapi.testclient import TestClient
 import wait_local_agent.agents as agents_module
 import wait_local_agent.api.app as app_module
 from tests.support import ensure_test_client, ingest_local
-from wait_local_agent.agents import AgentDefinitionError, AgentService
+from wait_local_agent.agents import KNOWLEDGE_CONTENT_INVARIANT, AgentDefinitionError, AgentService
 from wait_local_agent.api.app import create_app
 from wait_local_agent.models import (
     AgentDefinitionRevision,
@@ -963,7 +963,12 @@ def test_agent_context_reports_knowledge_unavailable(settings, monkeypatch) -> N
 
     context = service._build_context(definition, "TCK-1001")  # noqa: SLF001
 
-    assert context["knowledge"] == {"status": "unavailable", "sources": [], "count": 0}
+    assert context["knowledge"] == {
+        "status": "unavailable",
+        "sources": [],
+        "count": 0,
+        "system_invariant": KNOWLEDGE_CONTENT_INVARIANT,
+    }
 
 
 def test_agent_context_marks_retrieved_poisoning_as_authority_labelled_evidence(settings) -> None:
