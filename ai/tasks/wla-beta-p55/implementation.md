@@ -18,18 +18,28 @@
 
 - `npm ci` — installed the committed lockfile tree; audit reported 0 vulnerabilities.
 - `npm ls --depth=0` — resolved the declared tree, including Vite `8.2.2`, Vitest `4.1.11`, React `19.2.8`, TypeScript `7.0.2`, and Playwright `1.62.1`.
-- `npm outdated --json` — no outdated compatible dependency results.
+- `npm outdated --json` — the prior packet check returned no outdated
+  compatible dependency results; the follow-up recheck stalled on unavailable
+  registry access and was stopped.
 - Focused Vitest acceptance set — 5 files, 33 tests passed.
 - `npm test -- --run` — 71 files, 397 tests passed; run twice.
 - `npm run build` — passed (`tsc -b` and Vite production build).
 - `git diff --check` — passed.
+- `npx playwright test e2e/production-readiness.spec.ts --list` — passed;
+  the targeted browser run was not executed because the configured local UI
+  service at `127.0.0.1:5173` was unavailable.
 
 ## Files Touched
 
 - Production: `ui/src/screens/Agents.tsx`, `Consultant.tsx`, `Knowledge.tsx`, `Playbooks.tsx`, `ScheduledJobs.tsx`, `TechnicianChat.tsx`, and `WorkflowDesigner.tsx`.
-- Tests: corresponding screen tests plus `ui/src/screens/ClientIdSelectScreens.test.tsx` and `ui/tests/wla04-surfaces.test.tsx`.
+- Tests: corresponding screen tests, `ui/src/screens/ClientIdSelectScreens.test.tsx`, `ui/tests/wla04-surfaces.test.tsx`, and `ui/e2e/production-readiness.spec.ts`.
 - Task artifacts: `implementation.md`, `review.md`, and `status.json`.
 
 ## Follow-Up
 
-- No code follow-up is required. Human review/merge remains the next action.
+- Updated `ui/e2e/production-readiness.spec.ts` to select the created active
+  client in the shared top-bar selector before using Playbooks, and to assert
+  that Preview is enabled before clicking it. This keeps the e2e flow aligned
+  with the intentional scoped-write gate without changing application code.
+- Human review/merge remains the next action; no PR was created by this
+  execution.
