@@ -66,4 +66,19 @@ describe("ActivityRuns", () => {
       expect.stringContaining("kinds=backfill")
     ));
   });
+
+  it("shows an empty state when filters match no activity", async () => {
+    mockedApiFetch.mockResolvedValue([]);
+    render(<MemoryRouter><ActivityRuns /></MemoryRouter>);
+
+    expect(await screen.findByRole("heading", { name: "No matching runs" })).toBeInTheDocument();
+  });
+
+  it("surfaces invalid activity data without a fake run list", async () => {
+    mockedApiFetch.mockResolvedValue({});
+    render(<MemoryRouter><ActivityRuns /></MemoryRouter>);
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("invalid activity data");
+    expect(screen.getByRole("heading", { name: "No matching runs" })).toBeInTheDocument();
+  });
 });

@@ -91,4 +91,13 @@ describe("IdentityAccess", () => {
     });
     expect(await screen.findByText("wait_new_token")).toBeInTheDocument();
   });
+
+  it("shows a recoverable error for invalid principal data", async () => {
+    mockedApiFetch.mockResolvedValue({});
+
+    render(<IdentityAccess />);
+
+    expect(await screen.findByRole("status")).toHaveTextContent("invalid principal data");
+    expect(screen.getByText("No database principals")).toBeInTheDocument();
+  });
 });
