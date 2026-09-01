@@ -448,3 +448,24 @@ def test_non_positive_timeout_env_falls_back_to_default(monkeypatch) -> None:
     settings = load_settings()
 
     assert settings.local_model_timeout_seconds == 20.0
+
+
+def test_environment_helpers_cover_optional_values_and_invalid_secret_vault(monkeypatch, tmp_path) -> None:
+    vault_path = tmp_path / "corrupt-vault"
+    vault = SecretVault.initialize(vault_path)
+    vault.secrets_path.write_bytes(b"sample-invalid-vault-payload")
+    monkeypatch.setenv("WAIT_MODEL_INPUT_COST_USD_PER_MILLION_TOKENS", "0")
+    monkeypatch.setenv("WAIT_MODEL_OUTPUT_COST_USD_PER_MILLION_TOKENS", " ")
+    monkeypatch.setenv("WAIT_LOCAL_MODEL_TIMEOUT_SECONDS", "15")
+    monkeypatch.setenv("WAIT_COMMUNICATION_EMAIL_PORT", "2525")
+    monkeypatch.setenv("WAIT_SECRETS_BACKEND", "fernet")
+    monkeypatch.setenv("WAIT_VAULT_PATH", str(vault_path))
+    monkeypatch.setenv("WAIT_REMOTE_MODEL_API_KEY", "sample-model-value")
+
+    settings = load_settings()
+
+    assert settings.model_input_cost_usd_per_million_tokens == 0
+    assert settings.model_output_cost_usd_per_million_tokens is None
+    assert settings.local_model_timeout_seconds == 15.0
+    assert settings.communication_email_port == 2525
+    assert settings.remote_model_api_key == "sample-model-value"

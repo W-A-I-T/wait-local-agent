@@ -1,0 +1,122 @@
+name: release-image
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+  packages: write
+
+env:
+  IMAGE_NAME: ghcr.io/w-a-i-t/wait-local-agent
+
+jobs:
+  image:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v7
+
+      - name: Verify release version
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            python scripts/check_release_version.py --tag "$RELEASE_TAG"
+          else
+            python scripts/check_release_version.py
+          fi
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Calculate image metadata
+        id: meta
+        uses: docker/metadata-action@v6
+        with:
+          images: ${{ env.IMAGE_NAME }}
+          tags: |
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=raw,value=stable,enable=${{ github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/v') }}
+
+      - name: Build image for smoke test
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          load: true
+          tags: wait-local-agent:smoke-${{ github.sha }}
+
+      - name: Smoke test image before push
+        env:
+          SMOKE_IMAGE: wait-local-agent:smoke-${{ github.sha }}
+          SMOKE_CONTAINER: wait-local-agent-smoke
+        run: |
+          set -euo pipefail
+          trap 'docker rm --force "$SMOKE_CONTAINER" >/dev/null 2>&1 || true' EXIT
+          docker run --detach --name "$SMOKE_CONTAINER" \
+            --publish 127.0.0.1:18788:8788 \
+            --env WAIT_ADMIN_TOKEN=smoke-admin-token \
+            --env WAIT_DEMO_MODE=false \
+            --env WAIT_SECRETS_BACKEND=env \
+            --env WAIT_SCHEDULER_ENABLED=false \
+            --env WAIT_TRUSTED_HOSTS=127.0.0.1,localhost \
+            "$SMOKE_IMAGE"
+
+          for attempt in $(seq 1 60); do
+            if curl --fail --silent http://127.0.0.1:18788/healthz >/dev/null; then
+              break
+            fi
+            if [[ "$attempt" == 60 ]]; then
+              docker logs "$SMOKE_CONTAINER"
+              exit 1
+            fi
+            sleep 2
+          done
+
+          curl --fail --silent http://127.0.0.1:18788/healthz | grep -Fx '{"status":"ok"}'
+          curl --fail --silent http://127.0.0.1:18788/ | grep -q 'id="root"'
+          if docker exec "$SMOKE_CONTAINER" sh -c 'command -v node || command -v npm'; then
+            echo "node/npm unexpectedly exists in the runtime image" >&2
+            exit 1
+          fi
+          test "$(docker exec "$SMOKE_CONTAINER" id -u)" != "0"
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Push versioned image
+        id: publish
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+
+      - name: Record image digest
+        env:
+          IMAGE_DIGEST: ${{ steps.publish.outputs.digest }}
+        run: |
+          echo "Published image ${IMAGE_NAME}@${IMAGE_DIGEST}" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Install Cosign
+        continue-on-error: true
+        uses: sigstore/cosign-installer@v4
+
+      - name: Sign published image (best effort)
+        continue-on-error: true
+        env:
+          COSIGN_EXPERIMENTAL: "1"
+          IMAGE_DIGEST: ${{ steps.publish.outputs.digest }}
+        run: cosign sign --yes "${IMAGE_NAME}@${IMAGE_DIGEST}"

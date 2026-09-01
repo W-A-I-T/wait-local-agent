@@ -9,11 +9,13 @@ bounded by the current code and the verification notes in the relevant pages.
 
 ## Getting started
 
-- [Docker quickstart](getting-started/quickstart-docker.md) — run the Compose appliance.
+- [Production appliance](getting-started/production-install.md) — install the published image for MSP operation.
+- [Docker quickstart](getting-started/quickstart-docker.md) — use the development source/Vite stack.
+- [Desktop install](getting-started/desktop-install.md) — use the non-MSP desktop surface.
 - [CLI quickstart](getting-started/quickstart-cli.md) — install and exercise the local CLI.
-- [Desktop install](getting-started/desktop-install.md) — build and operate the desktop surface.
 - [Local demo](getting-started/local-demo.md) — use deterministic local demo data and flows.
 - [Configuration](getting-started/configuration.md) — safety flags, authentication, and demo mode.
+- [Microsoft sign-in](getting-started/entra-oidc.md) — configure tenant-pinned Entra ID OIDC with PKCE.
 - [Technician quickstart](getting-started/technician-quickstart.md) — resolve one ticket through chat, review, approval, execution, and audit.
 
 ## Concepts

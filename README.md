@@ -265,7 +265,20 @@ an external system is unavailable or rejects the request.
 
 ## Quickstart
 
-### Docker
+### Production (image, recommended for MSP operation)
+
+The published production appliance serves the compiled dashboard and API from
+one versioned image. It is the recommended MSP path and requires Linux, Docker,
+and Compose v2, but no Git or Node.js.
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/W-A-I-T/wait-local-agent/main/scripts/install.sh \
+  | bash -s -- --version stable
+```
+
+See the [production installation guide](docs/getting-started/production-install.md).
+
+### Development (source and Vite, contributors)
 
 ```bash
 git clone https://github.com/W-A-I-T/wait-local-agent.git
@@ -279,18 +292,18 @@ docker compose up --build
 
 - Dashboard: `http://127.0.0.1:5173`
 - API: `http://127.0.0.1:8788`
-- The dashboard is a Vite dev server that proxies API traffic to the API container.
+- The dashboard is a Vite development server that proxies API traffic to the API container.
 - Persistent SQLite state lives in the `wait-local-agent-data` Docker volume.
-- `scripts/install.sh` generates `.env` from `.env.example` when it is missing.
 - The shipped `.env.example` keeps demo mode off. Set `WAIT_DEMO_MODE=true`
   explicitly for the bounded local walkthrough, or configure an admin token.
 - Linux collectors are container-scoped by default. Host collection is an explicit, security-sensitive opt-in; see [host-collection.md](docs/operations/host-collection.md).
 
-### Desktop
+### Desktop (non-MSP surface)
 
 Download the installer for your operating system from [GitHub
 Releases](https://github.com/W-A-I-T/wait-local-agent/releases). The desktop
-bundle runs the dashboard with a local server sidecar. [Full guide
+bundle runs the dashboard with a local server sidecar for individual local use;
+it is not the MSP production appliance. [Full guide
 →](docs/getting-started/desktop-install.md)
 
 ### CLI
