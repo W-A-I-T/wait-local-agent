@@ -3,13 +3,14 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { MemoryRouter } from "react-router-dom";
 import { ClientDiscovery } from "./ClientDiscovery";
 import { apiFetch } from "../api/client";
+import type { DiscoveryResponse } from "../api/types";
 
 vi.mock("../api/client", () => ({ apiFetch: vi.fn() }));
 vi.mock("../app/DashboardContext", () => ({
   useDashboard: () => ({ role: "admin", roleResolved: true })
 }));
 
-const response = {
+const response: DiscoveryResponse = {
   items: [{
     candidate_id: "candidate-1",
     connector_instance_id: "instance-1",
@@ -30,7 +31,7 @@ const response = {
   summary: { discovered: 1, reconciled: 0, need_confirmation: 1, unmatched: 0, conflicts: 0 }
 };
 
-const populatedResponse = {
+const populatedResponse: DiscoveryResponse = {
   items: [
     response.items[0],
     { ...response.items[0], candidate_id: "candidate-2", external_id: "43", display_name: "Ambiguous Co", match_state: "ambiguous", matched_client_id: null },
@@ -41,7 +42,7 @@ const populatedResponse = {
   summary: { discovered: 8, reconciled: 5, need_confirmation: 2, unmatched: 1, conflicts: 3 }
 };
 
-const emptyResponse = {
+const emptyResponse: DiscoveryResponse = {
   items: [],
   page: 1,
   page_size: 50,
