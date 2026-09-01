@@ -268,6 +268,8 @@ describe("Consultant architecture decisions", () => {
     render(<MemoryRouter><Consultant /></MemoryRouter>);
 
     expect(await screen.findByRole("heading", { name: "Solutions Architect blueprints" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Blueprint walkthrough" })).toBeInTheDocument();
+    expect(screen.getByText(/Run the selected blueprint through discovery, architecture/)).toBeInTheDocument();
     expect(screen.queryByRole("heading", { name: "Architecture decisions" })).not.toBeInTheDocument();
     fireEvent.click(await screen.findByRole("button", { name: /Employee onboarding/ }));
 

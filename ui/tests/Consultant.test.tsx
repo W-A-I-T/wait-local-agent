@@ -302,7 +302,7 @@ describe("Consultant", () => {
     });
     fireEvent.click(screen.getByRole("button", { name: "Build local artifact" }));
     expect(await screen.findByText(/Power Apps artifact ready for review/i)).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "Run local onboarding walkthrough" }));
+    fireEvent.click(screen.getByRole("button", { name: "Run blueprint walkthrough" }));
     expect(await screen.findByText(/completed in local_fixture mode/i)).toBeInTheDocument();
     expect(screen.getByText(/Artifacts: 1 review-only/)).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Delivery handoff" })).toBeInTheDocument();
