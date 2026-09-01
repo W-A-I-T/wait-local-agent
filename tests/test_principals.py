@@ -9,7 +9,6 @@ from fastapi import HTTPException
 from fastapi.testclient import TestClient
 
 from tests.support import PINNED_SCHEMA_MIGRATIONS
-
 from wait_local_agent.api.app import create_app
 from wait_local_agent.rbac import (
     Role,

@@ -52,8 +52,8 @@ def _load_surface_manifest() -> SurfaceManifest:
 
 def test_store_migrations_are_idempotent_and_connection_pragmas_are_safe(tmp_path: Path) -> None:
     path = tmp_path / "state.db"
-    Store(path)
-    with Store(path)._connect() as connection:  # noqa: SLF001
+    store = Store(path)
+    with store._connect() as connection:  # noqa: SLF001
         migration_columns = [str(row[1]) for row in connection.execute("pragma table_info(schema_migrations)")]
         assert migration_columns == ["version", "name", "applied_at"]
         assert [

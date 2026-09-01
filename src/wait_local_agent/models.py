@@ -204,6 +204,7 @@ class SourceReference:
     excerpt: str
     document_id: int | None = None
     chunk_id: int | None = None
+    authority: str = KnowledgeAuthority.UNTRUSTED.value
 
 
 @dataclass(frozen=True)

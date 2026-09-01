@@ -10,7 +10,7 @@ import pytest
 
 import wait_local_agent.store as store_module
 from wait_local_agent.client_scope import AllClients, BoundClients
-from wait_local_agent.models import AgentDefinition, ClientCandidate
+from wait_local_agent.models import AgentDefinition, ClientCandidate, KnowledgeAuthority
 from wait_local_agent.store import (
     SMART_ACTION_APPROVAL_CAPABILITY,
     ClientConnectorMappingConflictError,
@@ -48,6 +48,12 @@ def test_store_migrates_populated_prechange_schema_idempotently(tmp_path: Path) 
         document = connection.execute("select * from knowledge_documents where id = 1").fetchone()
 
     assert "client_id" in tickets_columns
+    assert {"authority", "sop_version", "approved_by", "approved_at", "superseded_by"} <= knowledge_columns
+    assert document["authority"] == "UNTRUSTED"
+    assert document["sop_version"] is None
+    assert document["approved_by"] is None
+    assert document["approved_at"] is None
+    assert document["superseded_by"] is None
     assert "client_id" in approval_columns
     assert "approver_id" in approval_columns
     assert "expires_at" in approval_columns
@@ -528,6 +534,123 @@ def test_store_rejects_invalid_approval_transitions(tmp_path: Path) -> None:
         store.update_approval_request(approval.id or 0, "unknown")
     with pytest.raises(PermissionError, match="already completed"):
         store.update_approval_request(approval.id or 0, "rejected")
+
+
+def test_knowledge_authority_is_validated_scoped_and_audited(tmp_path: Path) -> None:
+    store = Store(tmp_path / "state.db")
+    first = store.upsert_knowledge_document(
+        path="docs/first.md",
+        title="First",
+        kind="markdown",
+        checksum="first-sum",
+        modified_at="2026-08-31T00:00:00+00:00",
+        chunks=["first evidence"],
+        client_id="acme",
+    )
+    replacement = store.upsert_knowledge_document(
+        path="docs/replacement.md",
+        title="Replacement",
+        kind="markdown",
+        checksum="replacement-sum",
+        modified_at="2026-08-31T00:00:00+00:00",
+        chunks=["replacement evidence"],
+        client_id="acme",
+    )
+    foreign = store.upsert_knowledge_document(
+        path="docs/foreign.md",
+        title="Foreign",
+        kind="markdown",
+        checksum="foreign-sum",
+        modified_at="2026-08-31T00:00:00+00:00",
+        chunks=["foreign evidence"],
+        client_id="beta",
+    )
+    assert first.authority == "UNTRUSTED"
+    assert replacement.authority == "UNTRUSTED"
+    assert foreign.authority == "UNTRUSTED"
+
+    promoted = store.set_knowledge_document_authority(
+        first.id,
+        KnowledgeAuthority.APPROVED_SOP,
+        "actor-7",
+        client_id="acme",
+        sop_version="2026.08",
+        superseded_by=replacement.id,
+    )
+    assert promoted is not None
+    assert promoted.authority == "APPROVED_SOP"
+    assert promoted.sop_version == "2026.08"
+    assert promoted.approved_by == "actor-7"
+    assert promoted.approved_at
+    assert promoted.superseded_by == replacement.id
+    repeated = store.set_knowledge_document_authority(
+        first.id,
+        "APPROVED_SOP",
+        "actor-7",
+        client_id="acme",
+        sop_version="2026.08",
+        superseded_by=replacement.id,
+    )
+    assert repeated is not None and repeated.approved_by == "actor-7"
+    assert store.set_knowledge_document_authority(first.id, "REFERENCE", "actor-7", client_id="beta") is None
+    with pytest.raises(ValueError, match="authority must be one of"):
+        store.set_knowledge_document_authority(first.id, "NOT_A_CLASS", "actor-7", client_id="acme")
+    with pytest.raises(ValueError, match="same client scope"):
+        store.set_knowledge_document_authority(
+            first.id,
+            "APPROVED_SOP",
+            "actor-7",
+            client_id="acme",
+            superseded_by=foreign.id,
+        )
+    with pytest.raises(ValueError, match="same client scope"):
+        store.set_knowledge_document_authority(
+            first.id,
+            "APPROVED_SOP",
+            "actor-7",
+            client_id="acme",
+            superseded_by=99999,
+        )
+    with pytest.raises(ValueError, match="another document"):
+        store.set_knowledge_document_authority(
+            first.id,
+            "APPROVED_SOP",
+            "actor-7",
+            client_id="acme",
+            superseded_by=first.id,
+        )
+    with pytest.raises(ValueError, match="actor must be non-empty"):
+        store.set_knowledge_document_authority(first.id, "REFERENCE", "", client_id="acme")
+    with pytest.raises(ValueError, match="sop_version must contain at most"):
+        store.set_knowledge_document_authority(
+            first.id,
+            "APPROVED_SOP",
+            "actor-7",
+            client_id="acme",
+            sop_version="v" * 201,
+        )
+    with pytest.raises(ValueError, match="positive document id"):
+        store.set_knowledge_document_authority(
+            first.id,
+            "APPROVED_SOP",
+            "actor-7",
+            client_id="acme",
+            superseded_by=0,
+        )
+
+    demoted = store.set_knowledge_document_authority(first.id, "REFERENCE", "actor-8", client_id="acme")
+    assert demoted is not None
+    assert demoted.authority == "REFERENCE"
+    assert demoted.sop_version is None
+    assert demoted.approved_by is None
+    assert demoted.approved_at is None
+    assert demoted.superseded_by is None
+    events = store.list_audit_events(client_id="acme")
+    authority_events = [event for event in events if event.event_type == "knowledge.authority.changed"]
+    assert len(authority_events) == 2
+    assert "actor=actor-7" in authority_events[-1].detail
+    assert "old_authority=UNTRUSTED" in authority_events[-1].detail
+    assert "new_authority=APPROVED_SOP" in authority_events[-1].detail
 
 
 def test_store_expires_pending_approval_and_blocks_mutation(tmp_path: Path) -> None:

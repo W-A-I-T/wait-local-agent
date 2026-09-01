@@ -841,6 +841,25 @@ class Store:
         )
 
     @staticmethod
+    def _apply_document_authority_migration(connection: sqlite3.Connection) -> None:
+        Store._ensure_column(
+            connection,
+            "knowledge_documents",
+            "authority",
+            "text not null default 'UNTRUSTED'",
+        )
+        Store._ensure_column(connection, "knowledge_documents", "sop_version", "text")
+        Store._ensure_column(connection, "knowledge_documents", "approved_by", "text")
+        Store._ensure_column(connection, "knowledge_documents", "approved_at", "text")
+        Store._ensure_column(
+            connection,
+            "knowledge_documents",
+            "superseded_by",
+            "integer references knowledge_documents(id)",
+        )
+        connection.execute("update knowledge_documents set authority = 'UNTRUSTED'")
+
+    @staticmethod
     def _apply_commercial_activations_migration(connection: sqlite3.Connection) -> None:
         """Store commercial-pack bookkeeping without changing client behavior."""
 
@@ -853,20 +872,6 @@ class Store:
             )
             """
         )
-
-    @staticmethod
-    def _apply_document_authority_migration(connection: sqlite3.Connection) -> None:
-        Store._ensure_column(connection, "knowledge_documents", "authority", "text not null default 'UNTRUSTED'")
-        Store._ensure_column(connection, "knowledge_documents", "sop_version", "text")
-        Store._ensure_column(connection, "knowledge_documents", "approved_by", "text")
-        Store._ensure_column(connection, "knowledge_documents", "approved_at", "text")
-        Store._ensure_column(
-            connection,
-            "knowledge_documents",
-            "superseded_by",
-            "integer references knowledge_documents(id)",
-        )
-        connection.execute("update knowledge_documents set authority = 'UNTRUSTED'")
 
     @staticmethod
     def _apply_backup_runs_migration(connection: sqlite3.Connection) -> None:
@@ -8303,7 +8308,7 @@ class Store:
         client_predicate, client_params = _client_scope_predicate(client_id)
         with self._connect() as connection:
             row = connection.execute(
-                f"select * from knowledge_documents where id = ? and {client_predicate}",
+                f"select * from knowledge_documents where id = ? and {client_predicate}",  # nosec B608: predicate is a fixed internal string; client ids are parameterized
                 (document_id, *client_params),
             ).fetchone()
         return KnowledgeDocument(**dict(row)) if row else None
@@ -8333,15 +8338,18 @@ class Store:
                 raise ValueError("sop_version must be text")
             sop_version = sop_version.strip() or None
             if sop_version is not None and len(sop_version) > MAX_KNOWLEDGE_SOP_VERSION_LENGTH:
-                raise ValueError(f"sop_version must contain at most {MAX_KNOWLEDGE_SOP_VERSION_LENGTH} characters")
+                raise ValueError(
+                    f"sop_version must contain at most {MAX_KNOWLEDGE_SOP_VERSION_LENGTH} characters"
+                )
         if superseded_by is not None and (
             isinstance(superseded_by, bool) or not isinstance(superseded_by, int) or superseded_by <= 0
         ):
             raise ValueError("superseded_by must be a positive document id")
+
         client_predicate, client_params = _client_scope_predicate(client_id)
         with self._connect() as connection:
             row = connection.execute(
-                f"select * from knowledge_documents where id = ? and {client_predicate}",
+                f"select * from knowledge_documents where id = ? and {client_predicate}",  # nosec B608: predicate is a fixed internal string; client ids are parameterized
                 (document_id, *client_params),
             ).fetchone()
             if row is None:
@@ -8352,31 +8360,62 @@ class Store:
                 if superseded_by == document_id:
                     raise ValueError("superseded_by must point to another document")
                 superseded = connection.execute(
-                    "select id, client_id from knowledge_documents where id = ?", (superseded_by,)
+                    "select id, client_id from knowledge_documents where id = ?",
+                    (superseded_by,),
                 ).fetchone()
                 if superseded is None or superseded["client_id"] != target_client_id:
                     raise ValueError("superseded_by document is not in the same client scope")
+
             is_approved = normalized_authority in {
                 KnowledgeAuthority.AUTHORITATIVE_POLICY,
                 KnowledgeAuthority.APPROVED_SOP,
             }
             now = utc_now()
+            next_sop_version = sop_version if is_approved else None
+            next_superseded_by = superseded_by if is_approved else None
+            next_approved_by = actor.strip() if is_approved else None
+            next_approved_at = now if is_approved else None
             connection.execute(
-                "update knowledge_documents set authority = ?, sop_version = ?, approved_by = ?, approved_at = ?, superseded_by = ? where id = ?",
+                """
+                update knowledge_documents
+                set authority = ?, sop_version = ?, approved_by = ?, approved_at = ?, superseded_by = ?
+                where id = ?
+                """,
                 (
                     normalized_authority.value,
-                    sop_version if is_approved else None,
-                    actor.strip() if is_approved else None,
-                    now if is_approved else None,
-                    superseded_by if is_approved else None,
+                    next_sop_version,
+                    next_approved_by,
+                    next_approved_at,
+                    next_superseded_by,
                     document_id,
                 ),
             )
             if current_authority != normalized_authority:
-                detail = f"actor={actor.strip()} document_id={document_id} old_authority={current_authority.value} new_authority={normalized_authority.value}"
-                normalized_client_id = str(target_client_id) if target_client_id is not None else None
-                self._add_audit_event(connection, "knowledge.authority.changed", str(document_id), detail, client_id=normalized_client_id, approver_id=actor.strip())
-                self._add_event_history(connection, "knowledge.authority.changed", str(document_id), "completed", detail, "{}", normalized_client_id)
+                detail = (
+                    f"actor={actor.strip()} document_id={document_id} "
+                    f"old_authority={current_authority.value} new_authority={normalized_authority.value}"
+                )
+                normalized_client_id = (
+                    str(target_client_id) if target_client_id is not None else None
+                )
+                self._add_audit_event(
+                    connection,
+                    "knowledge.authority.changed",
+                    str(document_id),
+                    detail,
+                    client_id=normalized_client_id,
+                    approver_id=actor.strip(),
+                )
+                self._add_event_history(
+                    connection,
+                    "knowledge.authority.changed",
+                    str(document_id),
+                    "completed",
+                    detail,
+                    "{}",
+                    normalized_client_id,
+                )
+
         return self.get_knowledge_document(document_id, client_id=client_id)
 
     def list_knowledge_documents(

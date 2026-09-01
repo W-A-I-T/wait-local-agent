@@ -9,7 +9,6 @@ from typing import Literal
 import pytest
 
 from tests.support import PINNED_SCHEMA_MIGRATIONS
-
 from wait_local_agent.store import (
     PollLeaseClaimResult,
     Store,
