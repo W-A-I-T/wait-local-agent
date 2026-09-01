@@ -8,10 +8,48 @@ import pytest
 
 from tests.support import ingest_local
 from wait_local_agent.employee_onboarding_demo import (
+    CANONICAL_EMPLOYEE_ONBOARDING_REQUEST,
     EmployeeOnboardingDemoError,
+    _blueprint_request,
+    _derive_fixture_children,
+    _fixture_dependencies,
+    _FixtureChildSpec,
+    _format_value,
+    _service_slug,
+    _system_category,
     run_employee_onboarding_demo,
 )
+from wait_local_agent.models import BlueprintAgent, SolutionBlueprint
 from wait_local_agent.store import Store
+
+
+def _make_blueprint(
+    *,
+    solution_name: str = "Fixture solution",
+    business_goal: dict[str, str | bool | int] | None = None,
+    users: tuple[str, ...] = (),
+    systems: tuple[str, ...] = (),
+    agents: tuple[BlueprintAgent, ...] = (),
+    discovery: dict[str, object] | None = None,
+) -> SolutionBlueprint:
+    return SolutionBlueprint(
+        id="bp-test",
+        client_id="acme",
+        created_by="tester",
+        created_at="2026-08-31T00:00:00+00:00",
+        updated_at="2026-08-31T00:00:00+00:00",
+        solution_name=solution_name,
+        business_goal={} if business_goal is None else business_goal,
+        users=users,
+        knowledge=(),
+        systems=systems,
+        agents=agents,
+        workflows=(),
+        approvals={},
+        deployment=(),
+        risk="low",
+        discovery={} if discovery is None else discovery,
+    )
 
 
 def test_employee_onboarding_demo_composes_local_fixture_stages(settings) -> None:
@@ -171,3 +209,61 @@ def test_employee_onboarding_demo_maps_blueprint_validation_errors(settings) -> 
             settings=settings,
             blueprint_payload={},
         )
+
+
+def test_derive_fixture_children_uses_declared_agent_names_when_systems_are_empty() -> None:
+    blueprint = _make_blueprint(
+        agents=(BlueprintAgent(id="finance-agent", name="Finance workflow specialist", purpose="Review finance"),)
+    )
+
+    specs = _derive_fixture_children(blueprint)
+
+    assert len(specs) == 1
+    assert specs[0].systems == ("Finance workflow specialist",)
+
+
+def test_derive_fixture_children_falls_back_to_solution_name() -> None:
+    specs = _derive_fixture_children(_make_blueprint(solution_name="Fallback solution"))
+
+    assert len(specs) == 1
+    assert specs[0].systems == ("Fallback solution",)
+
+
+def test_system_category_defaults_to_service_for_unmatched_system() -> None:
+    assert _system_category("Payroll orchestration") == "service"
+
+
+def test_service_slug_hashes_long_system_lists() -> None:
+    slug = _service_slug(["A" * 32, "B" * 32])
+    digest = slug.rsplit("-", 1)[-1]
+
+    assert len(slug) == 54
+    assert len(digest) == 8
+    assert all(character in "0123456789abcdef" for character in digest)
+
+
+def test_fixture_dependencies_cover_empty_prerequisite_paths() -> None:
+    assert _fixture_dependencies("licensing", [], {}) == ()
+    assert _fixture_dependencies("endpoint", [], {}) == ()
+
+
+def test_fixture_dependencies_service_uses_previous_spec() -> None:
+    previous = _FixtureChildSpec(
+        key="identity-1",
+        role="identity-entra",
+        category="identity",
+        systems=("Entra",),
+        dependencies=(),
+    )
+
+    assert _fixture_dependencies("service", [previous], {}) == ("identity-1",)
+
+
+def test_blueprint_request_uses_canonical_request_for_empty_blueprint() -> None:
+    blueprint = _make_blueprint(solution_name="", business_goal={}, systems=(), users=(), discovery={})
+
+    assert _blueprint_request(blueprint) == CANONICAL_EMPLOYEE_ONBOARDING_REQUEST
+
+
+def test_format_value_formats_nested_mapping() -> None:
+    assert _format_value({"region": "North", "department": "HR"}) == "department=HR; region=North"
