@@ -1,10 +1,11 @@
-import { useEffect, useState, type FormEvent } from "react";
+import { useEffect, useMemo, useState, type FormEvent } from "react";
 import { AlertTriangle, CheckCircle2, Circle, FileJson, PackageOpen, PlayCircle, RefreshCw, RotateCcw, ShieldCheck } from "lucide-react";
-import { Link } from "react-router-dom";
+import { Link, useLocation, useNavigate } from "react-router-dom";
 import { executeEndpointFor, useDashboard } from "../app/DashboardContext";
 import { apiFetch } from "../api/client";
 import { ClientIdSelect } from "../components/ClientIdSelect";
 import type { ApprovalRequest } from "../api/types";
+import { readSolutionDeliveryHandoff } from "../lib/solutionDeliveryHandoff";
 
 type JsonRecord = Record<string, unknown>;
 type GateStatus = "met" | "unmet" | "unknown";
@@ -113,8 +114,18 @@ export function SolutionDelivery() {
     isAdmin,
     refresh,
   } = useDashboard();
+  const location = useLocation();
+  const navigate = useNavigate();
   const defaultClientId = scopedClientId.trim();
-  const [packageForm, setPackageForm] = useState<PackageForm>({ ...initialPackageForm, clientId: defaultClientId });
+  const handoff = useMemo(() => readSolutionDeliveryHandoff(location.state), [location.state]);
+  const [handoffNotice] = useState(
+    handoff ? `${handoff.artifacts.length} artifact${handoff.artifacts.length === 1 ? "" : "s"} received from Solutions Architect. Review the package contents before building.` : "",
+  );
+  const [packageForm, setPackageForm] = useState<PackageForm>(() => ({
+    ...initialPackageForm,
+    clientId: handoff?.clientId || defaultClientId,
+    artifacts: handoff ? JSON.stringify(handoff.artifacts, null, 2) : initialPackageForm.artifacts,
+  }));
   const [deploymentForm, setDeploymentForm] = useState<DeploymentForm>({ ...initialDeploymentForm, clientId: defaultClientId });
   const [rollbackForm, setRollbackForm] = useState<RollbackForm>({ ...initialRollbackForm, clientId: defaultClientId });
   const [packageArtifact, setPackageArtifact] = useState<PackageArtifact | null>(null);
@@ -126,6 +137,11 @@ export function SolutionDelivery() {
   const [message, setMessage] = useState("");
   const [busy, setBusy] = useState<string | null>(null);
   const [rollbackBusyId, setRollbackBusyId] = useState<number | null>(null);
+
+  useEffect(() => {
+    if (!handoff) return;
+    navigate(location.pathname, { replace: true, state: null });
+  }, [handoff, location.pathname, navigate]);
 
   useEffect(() => {
     if (!defaultClientId) return;
@@ -381,6 +397,7 @@ export function SolutionDelivery() {
 
       <section className="panel delivery-step-panel">
         <div className="panel-heading"><div><h2><PackageOpen size={18} aria-hidden="true" /> 1. Package</h2><p className="screen-note">Create deterministic, credential-free YAML source in memory.</p></div></div>
+        {handoffNotice ? <div className="notice" role="status">{handoffNotice}</div> : null}
         <form className="draft-form" onSubmit={(event) => void buildPackage(event)}>
           <div className="grid">
             <ClientIdSelect label="Client workspace ID" value={packageForm.clientId} onChange={(value) => setPackageForm((current) => ({ ...current, clientId: value }))} clients={clients} required id="package-client-id" />

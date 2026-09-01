@@ -19,6 +19,8 @@ Non-GET steps must declare approval. The output records the trigger and action
 sequence in a Power Automate-oriented artifact, but remains explicitly
 `export_status: review_only`.
 
+Plan output is accepted unchanged by the source packager; no reshaping is required.
+
 This slice does not invoke `pac`, create connections, acquire credentials,
 call Microsoft services, execute a flow, or deploy a solution. It is the safe
 handoff artifact between the visual workflow design and a separately approved

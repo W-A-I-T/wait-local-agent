@@ -304,6 +304,11 @@ def test_ninjaone_validates_script_inputs_and_provider_map(settings) -> None:
     with pytest.raises(NinjaOneRmmError, match="bounded text"):
         adapter.preview_script("12", "7", {"bad\nkey": "x"}, client_id="acme")
 
+    with pytest.raises(NinjaOneRmmError, match="bounded text"):
+        adapter.preview_script("12", "7", {"key": "x" * 501}, client_id="acme")
+    with pytest.raises(NinjaOneRmmError, match="bounded text"):
+        adapter.preview_script("12", "7", {"k" * 101: "x"}, client_id="acme")
+
     non_integer = _adapter(
         settings,
         lambda request: httpx.Response(200, json=[]),
