@@ -7,7 +7,7 @@ and stops it when the app closes.
 
 ## Download and install
 
-Download the draft release asset for the operating system:
+Download the published prerelease or stable asset for the operating system:
 
 - Windows: `.msi` or `.exe` installer
 - macOS: `.dmg`
@@ -47,8 +47,10 @@ download and install it; accepting restarts the app after installation, while
 declining leaves the current version running. Offline checks, missing releases,
 and updater errors are logged and do not prevent the app from starting.
 
-The updater endpoint uses published releases. Draft releases are not available
-to the in-app updater until they are published. Updater artifacts require the
+The release workflow publishes `v2.0.0-rc.1` prerelease assets for external
+testers; it does not leave tester releases draft-only. Stable installations
+ignore prerelease metadata unless `WAIT_UPDATE_ALLOW_PRERELEASE=true` is set
+for an explicit tester channel. Updater artifacts require the
 CI secrets `TAURI_SIGNING_PRIVATE_KEY` and
 `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`; without them, the normal unsigned
 installer fallback remains available, but an installer cannot provide a signed
@@ -121,10 +123,10 @@ CLI operation when a desktop installer is not the right fit.
 
 ## Release automation
 
-Pushing a `v*` tag starts `.github/workflows/release-desktop.yml`. Each runner
+Pushing a human-created `v2.0.0-rc.1` tag starts `.github/workflows/release-desktop.yml`. Each runner
 builds its own PyInstaller sidecar, builds the React UI in desktop mode, and
-uses `tauri-apps/tauri-action@v1` to attach installers to a draft GitHub
-Release. The workflow runs macOS on both `macos-15-intel` (Intel) and
+uses `tauri-apps/tauri-action@v1` to attach installers to a published
+prerelease or stable GitHub Release. The workflow runs macOS on both `macos-15-intel` (Intel) and
 `macos-latest` (Apple Silicon), producing one native `.dmg` from each runner.
 macOS signing and notarization and Windows Authenticode signing are enabled
 only when their complete secret sets are present; otherwise all jobs publish

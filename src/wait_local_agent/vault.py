@@ -26,7 +26,8 @@ class SecretVault:
         self.external_key = os.getenv("WAIT_VAULT_KEY", "").strip().encode("utf-8") or None
 
     @classmethod
-    def initialize(cls, vault_path: Path) -> SecretVault:
+    def initialize(cls, vault_path: Path, *, demo_mode: bool = True) -> SecretVault:
+        """Initialize a vault, allowing a local key only for explicit demo mode."""
         vault = cls(vault_path)
         fs_permissions.create_private_directory(vault.vault_path)
         if vault.external_key is not None:
@@ -34,6 +35,11 @@ class SecretVault:
                 Fernet(vault.external_key)
             except (TypeError, ValueError) as exc:
                 raise SecretVaultError("WAIT_VAULT_KEY is not a valid Fernet key") from exc
+        elif not demo_mode and not vault.key_path.exists():
+            raise SecretVaultError(
+                "WAIT_VAULT_KEY is required for non-demo vault initialization; "
+                "use secrets migrate-external-key for an existing vault.key installation"
+            )
         elif not vault.key_path.exists():
             fs_permissions.write_private_bytes(
                 vault.key_path, Fernet.generate_key(), replace_existing=False
@@ -61,6 +67,33 @@ class SecretVault:
         if not self.is_initialized() or not self.secrets_path.exists():
             return []
         return sorted(self._read_encrypted())
+
+    @classmethod
+    def migrate_to_external_key(
+        cls,
+        vault_path: Path,
+        *,
+        source_key: str,
+        destination_key: str,
+    ) -> int:
+        """Re-encrypt an existing local-key vault without deleting its key file."""
+
+        path = Path(vault_path)
+        secrets_path = path / "secrets.json.enc"
+        if not secrets_path.exists():
+            raise SecretVaultError(f"secret vault has no encrypted payload at {path}")
+        try:
+            source = Fernet(source_key.encode("utf-8"))
+            destination = Fernet(destination_key.encode("utf-8"))
+            payload = json.loads(source.decrypt(secrets_path.read_bytes()).decode("utf-8"))
+        except (OSError, InvalidToken, TypeError, ValueError, json.JSONDecodeError) as exc:
+            raise SecretVaultError("existing secret vault could not be decrypted with the supplied key") from exc
+        if not isinstance(payload, dict):
+            raise SecretVaultError("secret vault payload is malformed")
+        secrets = {str(key): str(value) for key, value in payload.items()}
+        encrypted = destination.encrypt(json.dumps(secrets, sort_keys=True).encode("utf-8"))
+        fs_permissions.write_private_bytes(secrets_path, encrypted, replace_existing=True)
+        return len(secrets)
 
     def _fernet(self) -> Fernet:
         if self.external_key is not None:

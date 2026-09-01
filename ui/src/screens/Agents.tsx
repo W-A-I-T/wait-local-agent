@@ -1,7 +1,20 @@
 import { FormEvent, useCallback, useEffect, useState } from "react";
 import { useDashboard } from "../app/DashboardContext";
 import { apiFetch } from "../api/client";
+import { EmptyState } from "../components/EmptyState";
+import { LoadingState } from "../components/LoadingState";
+import { AgentToolPicker } from "../components/AgentToolPicker";
 import type { AgentApprovalRule, AgentDefinition, AgentFailurePolicy, AgentPlan, AgentRevision, AgentRevisionDiff, AgentRunDetail, AgentTool } from "../api/types";
+
+type RevisionSelection = {
+  fromVersion: string;
+  toVersion: string;
+};
+
+type RestoreRequest = {
+  agentId: string;
+  version: number;
+};
 
 const contextOptions = [
   ["ticket", "Ticket details"],
@@ -18,10 +31,19 @@ const failurePolicyModes: Array<[AgentFailurePolicy["mode"], string]> = [
   ["blocked", "Block for review"]
 ];
 
+function jsonText(value: unknown): string {
+  return JSON.stringify(value, null, 2) ?? String(value);
+}
+
+function renderDiffValue(value: unknown): string {
+  return typeof value === "string" ? value : jsonText(value);
+}
+
 export function Agents() {
-  const { canWrite } = useDashboard();
+  const { canWrite, connectors = [] } = useDashboard();
   const [agents, setAgents] = useState<AgentDefinition[]>([]);
   const [tools, setTools] = useState<AgentTool[]>([]);
+  const [loading, setLoading] = useState(true);
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
   const [clientId, setClientId] = useState("");
@@ -42,8 +64,11 @@ export function Agents() {
   const [editingAgentId, setEditingAgentId] = useState<string | null>(null);
   const [revisions, setRevisions] = useState<Record<string, AgentRevision[]>>({});
   const [diffs, setDiffs] = useState<Record<string, AgentRevisionDiff>>({});
+  const [revisionSelections, setRevisionSelections] = useState<Record<string, RevisionSelection>>({});
+  const [confirmingRestore, setConfirmingRestore] = useState<RestoreRequest | null>(null);
 
   const refresh = useCallback(async () => {
+    setLoading(true);
     try {
       const [agentRows, toolRows] = await Promise.all([
         apiFetch<AgentDefinition[]>("/agents"),
@@ -53,6 +78,8 @@ export function Agents() {
       setTools(toolRows);
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "Unable to load agents.");
+    } finally {
+      setLoading(false);
     }
   }, []);
 
@@ -226,15 +253,28 @@ export function Agents() {
     try {
       const rows = await apiFetch<AgentRevision[]>(`/agents/${encodeURIComponent(agent.id)}/revisions`);
       setRevisions((current) => ({ ...current, [agent.id]: rows }));
+      setRevisionSelections((current) => ({
+        ...current,
+        [agent.id]: { fromVersion: "", toVersion: "" }
+      }));
+      setDiffs((current) => {
+        const next = { ...current };
+        delete next[agent.id];
+        return next;
+      });
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "Unable to load agent history.");
     }
   }
 
-  async function compareRevision(agent: AgentDefinition, version: number) {
+  async function compareRevisions(agent: AgentDefinition) {
+    const selection = revisionSelections[agent.id];
+    if (!selection?.fromVersion || !selection.toVersion || selection.fromVersion === selection.toVersion) {
+      return;
+    }
     try {
       const diff = await apiFetch<AgentRevisionDiff>(
-        `/agents/${encodeURIComponent(agent.id)}/revisions/${version}/diff/${agent.version}`
+        `/agents/${encodeURIComponent(agent.id)}/revisions/${encodeURIComponent(selection.fromVersion)}/diff/${encodeURIComponent(selection.toVersion)}`
       );
       setDiffs((current) => ({ ...current, [agent.id]: diff }));
     } catch (error) {
@@ -242,13 +282,24 @@ export function Agents() {
     }
   }
 
-  async function restoreRevision(agent: AgentDefinition, version: number) {
+  function requestRestore(agent: AgentDefinition, version: number) {
+    if (!canWrite) return;
+    setConfirmingRestore({ agentId: agent.id, version });
+  }
+
+  async function confirmRestore(agent: AgentDefinition, version: number) {
+    if (!canWrite) return;
+    const wasEditing = editingAgentId === agent.id;
+    setConfirmingRestore(null);
     try {
       const restored = await apiFetch<AgentDefinition>(
         `/agents/${encodeURIComponent(agent.id)}/revisions/${version}/restore`,
         { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" }
       );
-      setAgents((current) => current.map((item) => item.id === restored.id ? restored : item));
+      await refresh();
+      if (wasEditing) {
+        editAgent(restored);
+      }
       setMessage(`Restored ${agent.name} version ${version} as version ${restored.version}.`);
       await showRevisions(restored);
     } catch (error) {
@@ -327,7 +378,7 @@ export function Agents() {
       <section className="panel">
         <div className="panel-heading"><h2>Agents</h2><span>{agents.length} definitions</span></div>
         <p className="screen-note">Create and review bounded ticket agents from the existing tool catalog. Saving an existing agent creates a recoverable revision; selected context is tenant-scoped and recorded with each run.</p>
-        <form className="draft-form" onSubmit={createAgent}>
+        <form id="agent-form" className="draft-form" onSubmit={createAgent}>
           <div className="grid">
             <label>Name<input value={name} onChange={(event) => setName(event.target.value)} placeholder="MFA triage" /></label>
             <label>Client id (optional)<input value={clientId} onChange={(event) => setClientId(event.target.value)} /></label>
@@ -336,23 +387,27 @@ export function Agents() {
           <label>Approval deadline (hours, optional)<input type="number" min="1" max="720" step="1" value={approvalExpiryHours} onChange={(event) => setApprovalExpiryHours(event.target.value)} placeholder="Tool default" /></label>
           <label><input type="checkbox" checked={resultAware} onChange={(event) => setResultAware(event.target.checked)} /> Continue from each approved result using the bounded catalog</label>
           <fieldset className="agent-option-group"><legend>Context sources</legend>{contextOptions.map(([value, label]) => <label key={value}><input type="checkbox" checked={contextSources.includes(value)} onChange={() => setContextSources((current) => toggleValue(current, value))} />{label}</label>)}</fieldset>
-          <fieldset className="agent-option-group"><legend>Enabled tools (maximum 8 steps)</legend>{tools.map((tool) => {
-            const selected = selectedTools.includes(tool.id);
-            const atLimit = selectedTools.length >= 8;
-            return <label key={tool.id}><input type="checkbox" checked={selected} disabled={!selected && atLimit} onChange={() => {
-              if (!selected && atLimit) {
-                setMessage("An agent can contain at most 8 tools.");
-                return;
-              }
-              setSelectedTools((current) => toggleValue(current, tool.id));
-              if (!selected && !stepPayloads[tool.id]) {
-                setStepPayloads((current) => ({ ...current, [tool.id]: "{}" }));
-              }
-              if (selected) {
-                setApprovalRequiredTools((current) => current.filter((value) => value !== tool.id));
-              }
-            }} />{tool.name}{tool.approval_required ? " · approval" : ""}</label>;
-          })}</fieldset>
+          <fieldset className="agent-option-group">
+            <legend><span>Enabled tools (maximum 8 steps)</span><span aria-live="polite">{selectedTools.length} of 8 tools selected</span></legend>
+            {loading ? <LoadingState label="Loading tool catalog…" /> : tools.length === 0 ? <EmptyState title="No tools are available" why="The local tool catalog returned no tools to include in an agent." /> : (
+              <AgentToolPicker
+                tools={tools}
+                selectedTools={selectedTools}
+                connectors={connectors}
+                onLimitReached={() => setMessage("An agent can contain at most 8 tools.")}
+                onToggle={(tool) => {
+                  const selected = selectedTools.includes(tool.id);
+                  setSelectedTools((current) => toggleValue(current, tool.id));
+                  if (!selected && !stepPayloads[tool.id]) {
+                    setStepPayloads((current) => ({ ...current, [tool.id]: "{}" }));
+                  }
+                  if (selected) {
+                    setApprovalRequiredTools((current) => current.filter((value) => value !== tool.id));
+                  }
+                }}
+              />
+            )}
+          </fieldset>
           <fieldset className="agent-option-group"><legend>Tool inputs (JSON objects)</legend><p className="screen-note">Provide the bounded inputs each selected tool needs. The ticket id is added automatically when a tool supports it; client-scoped tools can use the agent's client mapping.</p>{tools.filter((tool) => selectedTools.includes(tool.id)).map((tool) => <label key={`payload-${tool.id}`}>{tool.name}<textarea aria-label={`${tool.name} input JSON`} rows={4} value={stepPayloads[tool.id] ?? "{}"} onChange={(event) => setStepPayloads((current) => ({ ...current, [tool.id]: event.target.value }))} /></label>)}</fieldset>
           <fieldset className="agent-option-group"><legend>Failure handling</legend><p className="screen-note">Failure policies are deterministic and bounded. Retries are limited to three attempts; fallbacks must be another selected tool. Human-input, technician-escalation, and blocked modes stop the run with an explicit recovery state.</p>{tools.filter((tool) => selectedTools.includes(tool.id)).map((tool) => {
             const draft = failurePolicyDrafts[tool.id] ?? { mode: "stop" as const };
@@ -364,7 +419,7 @@ export function Agents() {
             return <div className="agent-rule-row" key={`conditional-${tool.id}`}><strong>{tool.name}</strong><label>Priority values<input aria-label={`${tool.name} priority conditions`} value={draft.priority} onChange={(event) => setApprovalRuleDrafts((current) => ({ ...current, [tool.id]: { ...draft, priority: event.target.value } }))} placeholder="urgent, high" /></label><label>Status values<input aria-label={`${tool.name} status conditions`} value={draft.status} onChange={(event) => setApprovalRuleDrafts((current) => ({ ...current, [tool.id]: { ...draft, status: event.target.value } }))} placeholder="new, open" /></label><label>Requester roles<input aria-label={`${tool.name} requester role conditions`} value={draft.actor_role} onChange={(event) => setApprovalRuleDrafts((current) => ({ ...current, [tool.id]: { ...draft, actor_role: event.target.value } }))} placeholder="technician, viewer" /></label></div>;
           })}</fieldset>
           <div className="row-actions">
-            <button type="submit" disabled={!canWrite}>{editingAgentId ? "Save agent revision" : "Create agent"}</button>
+            <button type="submit" disabled={!canWrite} title={!canWrite ? "Requires technician access" : undefined}>{editingAgentId ? "Save agent revision" : "Create agent"}</button>
             {editingAgentId ? <button type="button" className="secondary-button" onClick={resetAgentForm}>Cancel edit</button> : null}
           </div>
         </form>
@@ -372,8 +427,7 @@ export function Agents() {
       </section>
 
       <section className="agent-grid">
-        {agents.length === 0 ? <p className="panel">No agents yet.</p> : null}
-        {agents.map((agent) => {
+        {loading ? <LoadingState label="Loading agent definitions…" /> : agents.length === 0 ? <EmptyState title="No agent definitions yet" why="A fresh workspace has no agent definitions. Create one from the bounded tool catalog above." action={{ label: "Create your first agent below", to: "#agent-form" }} /> : agents.map((agent) => {
           const detail = runDetails[agent.id];
           const additionalApprovalTools = agent.approval_required_tools ?? [];
           const conditionalApprovalRules = (agent.approval_rules ?? []).map((rule) => `${rule.tool_id} (${Object.entries(rule.when).map(([field, values]) => `${field}=${values.join("|")}`).join(", ")})`);
@@ -386,8 +440,68 @@ export function Agents() {
             <p className="screen-note">Additional approval: {additionalApprovalTools.length ? additionalApprovalTools.join(", ") : "none"}</p>
             <p className="screen-note">Conditional approval: {conditionalApprovalRules.length ? conditionalApprovalRules.join("; ") : "none"}</p>
             <p className="screen-note">Continuation: {agent.result_aware ? "result-aware, bounded" : "reviewed sequence"}</p>
-            <div className="agent-run-row"><input aria-label={`Ticket for ${agent.name}`} value={ticketIds[agent.id] ?? ""} onChange={(event) => setTicketIds((current) => ({ ...current, [agent.id]: event.target.value }))} placeholder="Ticket id" /><button type="button" disabled={!canWrite || !agent.enabled} onClick={() => void runAgent(agent)}>Run</button><button type="button" disabled={!canWrite} onClick={() => void setEnabled(agent, !agent.enabled)}>{agent.enabled ? "Disable" : "Enable"}</button><button type="button" disabled={!canWrite} onClick={() => editAgent(agent)}>Edit</button><button type="button" className="secondary-button" onClick={() => void showRevisions(agent)}>History</button></div>
-            {revisions[agent.id] ? <div className="agent-history" aria-live="polite"><strong>Revision history</strong>{revisions[agent.id].map((revision) => <div className="agent-history-row" key={`${agent.id}-${revision.version}`}><span>Version {revision.version} · {revision.created_at}</span><div className="row-actions">{revision.version !== agent.version ? <><button type="button" className="secondary-button" onClick={() => void compareRevision(agent, revision.version)}>Compare to current</button><button type="button" className="secondary-button" disabled={!canWrite} onClick={() => void restoreRevision(agent, revision.version)}>Restore</button></> : <span>current</span>}</div></div>)}{diffs[agent.id] ? <div className="agent-diff"><strong>{diffs[agent.id].changed ? "Changes" : "No changes"}</strong>{diffs[agent.id].changes.length ? diffs[agent.id].changes.map((change) => <div key={change.field}><span>{change.field}</span><small>{JSON.stringify(change.before)} → {JSON.stringify(change.after)}</small></div>) : <span>No persisted fields differ.</span>}</div> : null}</div> : null}
+            <div className="agent-run-row"><input aria-label={`Ticket for ${agent.name}`} value={ticketIds[agent.id] ?? ""} onChange={(event) => setTicketIds((current) => ({ ...current, [agent.id]: event.target.value }))} placeholder="Ticket id" /><button type="button" disabled={!canWrite || !agent.enabled} title={!canWrite ? "Requires technician access" : !agent.enabled ? "Enable this agent before running it" : undefined} onClick={() => void runAgent(agent)}>Run</button><button type="button" disabled={!canWrite} title={!canWrite ? "Requires technician access" : undefined} onClick={() => void setEnabled(agent, !agent.enabled)}>{agent.enabled ? "Disable" : "Enable"}</button><button type="button" disabled={!canWrite} title={!canWrite ? "Requires technician access" : undefined} onClick={() => editAgent(agent)}>Edit</button></div>
+            <details className="agent-revisions-drawer">
+              <summary onClick={() => { if (!revisions[agent.id]) void showRevisions(agent); }}>History and recovery</summary>
+              {revisions[agent.id] ? (() => {
+                const selection = revisionSelections[agent.id];
+                const diff = diffs[agent.id];
+                return <div className="event-list" aria-label={`Revisions for ${agent.name}`}>
+                  <strong>Revision history</strong>
+                  <div className="grid revision-selector">
+                    <label>
+                      From revision
+                      <select
+                        aria-label={`From revision for ${agent.name}`}
+                        value={selection?.fromVersion ?? ""}
+                        onChange={(event) => setRevisionSelections((current) => ({
+                          ...current,
+                          [agent.id]: { fromVersion: event.target.value, toVersion: selection?.toVersion ?? "" }
+                        }))}
+                      >
+                        <option value="">Choose a version</option>
+                        {revisions[agent.id].map((revision) => <option key={`from-${revision.version}`} value={revision.version}>Version {revision.version}</option>)}
+                      </select>
+                    </label>
+                    <label>
+                      To revision
+                      <select
+                        aria-label={`To revision for ${agent.name}`}
+                        value={selection?.toVersion ?? ""}
+                        onChange={(event) => setRevisionSelections((current) => ({
+                          ...current,
+                          [agent.id]: { fromVersion: selection?.fromVersion ?? "", toVersion: event.target.value }
+                        }))}
+                      >
+                        <option value="">Choose a version</option>
+                        {revisions[agent.id].map((revision) => <option key={`to-${revision.version}`} value={revision.version}>Version {revision.version}</option>)}
+                      </select>
+                    </label>
+                    <button type="button" disabled={!selection?.fromVersion || !selection.toVersion || selection.fromVersion === selection.toVersion} onClick={() => void compareRevisions(agent)}>Compare revisions</button>
+                  </div>
+                  {revisions[agent.id].map((revision) => <article className="event-row" key={`${agent.id}-${revision.version}`}>
+                    <span>Version {revision.version}</span>
+                    <span>{revision.created_at}</span>
+                    {revision.version !== agent.version ? <button type="button" className="secondary-button" disabled={!canWrite} title={!canWrite ? "Requires technician access" : undefined} onClick={() => requestRestore(agent, revision.version)}>Restore</button> : <span>current</span>}
+                  </article>)}
+                  {confirmingRestore?.agentId === agent.id ? <div className="notice confirm-panel" role="alertdialog" aria-label="Confirm agent restore">
+                    <p>Restore version {confirmingRestore.version} of {agent.name}? This creates a new current version.</p>
+                    <div className="row-actions">
+                      <button type="button" onClick={() => void confirmRestore(agent, confirmingRestore.version)}>Confirm restore</button>
+                      <button type="button" className="icon-button" onClick={() => setConfirmingRestore(null)}>Cancel</button>
+                    </div>
+                  </div> : null}
+                  {diff ? <div className="agent-diff" aria-label={`Revision diff for ${agent.name}`}>
+                    <strong>Changes: v{diff.from_version} → v{diff.to_version}</strong>
+                    {diff.changes.length === 0 ? <p>No changes.</p> : <ul>{diff.changes.map((change) => <li key={change.field}>
+                      <code>{change.field}</code>
+                      <div><span>Before</span><pre>{renderDiffValue(change.before)}</pre></div>
+                      <div><span>After</span><pre>{renderDiffValue(change.after)}</pre></div>
+                    </li>)}</ul>}
+                  </div> : null}
+                </div>;
+              })() : <p className="screen-note">Loading history.</p>}
+            </details>
             {detail ? <div className="agent-run-detail">
               <strong>Run {detail.id}: {detail.status}</strong>
               <span>Revision {detail.revision_version ?? "n/a"}</span>
@@ -397,8 +511,8 @@ export function Agents() {
               {detail.state?.final_result?.exception && typeof detail.state.final_result.exception === "object" ? <span>Recovery: {String((detail.state.final_result.exception as { kind?: unknown }).kind ?? "review required")} · {String((detail.state.final_result.exception as { next_action?: unknown }).next_action ?? "technician review")}</span> : null}
               {detail.state?.steps?.map((step, index) => <small key={`${detail.id}-step-${index}`}>Step {index + 1}: {String(step.tool_id ?? "unknown")} · {String(step.status ?? "unknown")}{step.attempt !== undefined ? ` · attempt ${String(step.attempt)}` : ""}{step.failure_policy && typeof step.failure_policy === "object" ? ` · policy ${String((step.failure_policy as { mode?: unknown }).mode ?? "stop")}` : ""}{step.error_detail ? ` · ${String(step.error_detail)}` : ""}</small>)}
               <div className="row-actions">
-                {(detail.status === "queued" || detail.status === "pending_approval") ? <button type="button" className="secondary-button" disabled={!canWrite} onClick={() => void controlRun(agent, detail, "cancel")}>Cancel run</button> : null}
-                {(detail.status === "failed" || detail.status === "cancelled") ? <button type="button" disabled={!canWrite} onClick={() => void controlRun(agent, detail, "retry")}>Retry run</button> : null}
+                {(detail.status === "queued" || detail.status === "pending_approval") ? <button type="button" className="secondary-button" disabled={!canWrite} title={!canWrite ? "Requires technician access" : undefined} onClick={() => void controlRun(agent, detail, "cancel")}>Cancel run</button> : null}
+                {(detail.status === "failed" || detail.status === "cancelled") ? <button type="button" disabled={!canWrite} title={!canWrite ? "Requires technician access" : undefined} onClick={() => void controlRun(agent, detail, "retry")}>Retry run</button> : null}
               </div>
             </div> : null}
           </article>;
@@ -413,13 +527,13 @@ export function Agents() {
             <label>Ticket<input value={planTicket} onChange={(event) => setPlanTicket(event.target.value)} placeholder="TCK-1001" /></label>
             <label>Instruction<textarea rows={2} value={planInstruction} onChange={(event) => setPlanInstruction(event.target.value)} placeholder="Triage this ticket, search the runbook, and suggest a resolution." maxLength={2000} /></label>
           </div>
-          <button type="submit" disabled={!canWrite}>Preview plan</button>
+          <button type="submit" disabled={!canWrite} title={!canWrite ? "Requires technician access" : undefined}>Preview plan</button>
         </form>
         {plan ? <div className="agent-run-detail" aria-live="polite">
           <strong>{plan.status === "preview" ? `${plan.steps.length} approved tool step(s) proposed` : "Plan blocked"}</strong>
           <span>Selection: {plan.selection_mode === "model" ? "configured local model" : "deterministic rules"}</span>
           {plan.steps.map((step) => <div key={`${step.index}-${step.tool_id}`}><span>{step.index + 1}. {step.name}</span><small>{step.reason} {step.approval_required ? "Approval required." : "Read-only or draft."}</small></div>)}
-          {plan.status === "preview" ? <button type="button" disabled={!canWrite} onClick={() => void createPlanDraft()}>Create disabled draft</button> : null}
+          {plan.status === "preview" ? <button type="button" disabled={!canWrite} title={!canWrite ? "Requires technician access" : undefined} onClick={() => void createPlanDraft()}>Create disabled draft</button> : null}
           {plan.blocked_reason ? <p className="notice danger">{plan.blocked_reason}</p> : null}
         </div> : null}
       </section>

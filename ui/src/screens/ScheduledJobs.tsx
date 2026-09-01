@@ -1,17 +1,23 @@
-import { FormEvent, useCallback, useEffect, useState } from "react";
+import { FormEvent, useCallback, useEffect, useRef, useState } from "react";
 import { useDashboard } from "../app/DashboardContext";
 import { apiFetch } from "../api/client";
-import type { AgentDefinition, ScheduledJob, ScheduledJobRequestBody, WorkflowTemplate } from "../api/types";
+import { EmptyState } from "../components/EmptyState";
+import { LoadingState } from "../components/LoadingState";
+import type { AgentDefinition, MspPlaybook, ScheduledJob, ScheduledJobRequestBody, WorkflowTemplate } from "../api/types";
 
 export function ScheduledJobs() {
   const { canWrite } = useDashboard();
   const [jobs, setJobs] = useState<ScheduledJob[]>([]);
   const [templates, setTemplates] = useState<WorkflowTemplate[]>([]);
   const [agents, setAgents] = useState<AgentDefinition[]>([]);
-  const [scheduleKind, setScheduleKind] = useState<"workflow" | "agent" | "report">("workflow");
+  const [playbooks, setPlaybooks] = useState<MspPlaybook[]>([]);
+  const [loading, setLoading] = useState(true);
+  const hasLoadedRef = useRef(false);
+  const [scheduleKind, setScheduleKind] = useState<"workflow" | "playbook" | "agent" | "report">("workflow");
   const [templateId, setTemplateId] = useState("");
   const [reportType, setReportType] = useState<"qbr" | "automation_opportunity" | "recurring_service_review">("qbr");
   const [agentId, setAgentId] = useState("");
+  const [playbookId, setPlaybookId] = useState("");
   const [entityId, setEntityId] = useState("HALO-1");
   const [cron, setCron] = useState("0 */6 * * *");
   const [timezone, setTimezone] = useState("UTC");
@@ -21,15 +27,18 @@ export function ScheduledJobs() {
   const selectedAgent = agents.find((agent) => agent.id === agentId);
 
   const refresh = useCallback(async () => {
+    if (!hasLoadedRef.current) setLoading(true);
     try {
-      const [jobsResponse, templatesResponse, agentsResponse] = await Promise.all([
+      const [jobsResponse, templatesResponse, agentsResponse, playbooksResponse] = await Promise.all([
         apiFetch<ScheduledJob[]>("/scheduled-jobs"),
         apiFetch<WorkflowTemplate[]>("/workflows/templates"),
-        apiFetch<AgentDefinition[]>("/agents")
+        apiFetch<AgentDefinition[]>("/agents"),
+        apiFetch<MspPlaybook[]>("/msp/playbooks")
       ]);
       setJobs(jobsResponse);
       setTemplates(templatesResponse);
       setAgents(agentsResponse);
+      setPlaybooks(playbooksResponse);
       if (!templateId && templatesResponse[0]) {
         setTemplateId(templatesResponse[0].id);
       }
@@ -39,6 +48,9 @@ export function ScheduledJobs() {
       }
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "Unable to load scheduled jobs.");
+    } finally {
+      hasLoadedRef.current = true;
+      setLoading(false);
     }
   }, [agentId, templateId]);
 
@@ -48,7 +60,7 @@ export function ScheduledJobs() {
 
   async function createJob(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if ((!templateId && scheduleKind === "workflow") || (!agentId && scheduleKind === "agent") || !cron) {
+    if ((!templateId && scheduleKind === "workflow") || (!playbookId && scheduleKind === "playbook") || (!agentId && scheduleKind === "agent") || !cron) {
       setMessage("A target and cron expression are required.");
       return;
     }
@@ -66,7 +78,9 @@ export function ScheduledJobs() {
     }
 
     try {
-      const body: ScheduledJobRequestBody = scheduleKind === "agent"
+      const body: ScheduledJobRequestBody = scheduleKind === "playbook"
+        ? { playbook_id: playbookId, cron, timezone: timezone.trim(), params }
+        : scheduleKind === "agent"
         ? { agent_id: agentId, entity_id: entityId.trim(), cron, timezone: timezone.trim(), params }
         : scheduleKind === "report"
           ? { report_type: reportType, cron, timezone: timezone.trim(), params }
@@ -111,12 +125,13 @@ export function ScheduledJobs() {
           <h2>Scheduled Jobs</h2>
           <span>{jobs.length} configured</span>
         </div>
-        <form className="draft-form" onSubmit={createJob}>
+        <form id="scheduled-job-form" className="draft-form" onSubmit={createJob}>
           <div className="grid">
             <label>
               Schedule type
-              <select value={scheduleKind} onChange={(event) => setScheduleKind(event.target.value as "workflow" | "agent" | "report")}>
+              <select value={scheduleKind} onChange={(event) => setScheduleKind(event.target.value as "workflow" | "playbook" | "agent" | "report")}>
                 <option value="workflow">Workflow template</option>
+                <option value="playbook">MSP playbook</option>
                 <option value="agent">Agent definition</option>
                 <option value="report">Client report</option>
               </select>
@@ -131,6 +146,14 @@ export function ScheduledJobs() {
                   ))}
                 </select>
               </label>
+            ) : scheduleKind === "playbook" ? (
+              <label>
+                Playbook
+                <select value={playbookId} onChange={(event) => setPlaybookId(event.target.value)}>
+                  <option value="">Choose playbook</option>
+                  {playbooks.map((playbook) => <option key={playbook.id} value={playbook.id}>{playbook.name}</option>)}
+                </select>
+              </label>
             ) : scheduleKind === "report" ? (
               <label>
                 Report
@@ -142,7 +165,7 @@ export function ScheduledJobs() {
               </label>
             ) : (
               <>
-                <label>
+                {agents.filter((agent) => agent.trigger === "scheduled" && agent.enabled).length === 0 ? <EmptyState title="No scheduled agents available" why="Agents exist, but none are scheduled and enabled. Enable an agent with a scheduled trigger before creating an agent schedule." /> : <label>
                   Agent
                   <select value={agentId} onChange={(event) => setAgentId(event.target.value)}>
                     <option value="">Choose scheduled agent</option>
@@ -150,7 +173,7 @@ export function ScheduledJobs() {
                       <option key={agent.id} value={agent.id}>{agent.name}</option>
                     ))}
                   </select>
-                </label>
+                </label>}
                 <label>
                   Entity ID
                   <input value={entityId} onChange={(event) => setEntityId(event.target.value)} />
@@ -164,6 +187,7 @@ export function ScheduledJobs() {
                 ) : null}
               </>
             )}
+            {scheduleKind === "playbook" ? <span className="field-help">Params must include a client_id and may include ticket_id and input.</span> : null}
             <label>
               Cron
               <input value={cron} onChange={(event) => setCron(event.target.value)} />
@@ -183,31 +207,30 @@ export function ScheduledJobs() {
               {scheduleKind === "report" ? <span>Include a client_id and either period_days (1–366) or period_start/period_end ISO dates.</span> : null}
             </label>
           </div>
-          <button type="submit" disabled={!canWrite}>Create schedule</button>
+          <button type="submit" disabled={!canWrite} title={!canWrite ? "Requires technician access" : undefined}>Create schedule</button>
         </form>
 
         {message ? <div className="notice">{message}</div> : null}
-        {jobs.length === 0 ? <p>No scheduled jobs yet.</p> : null}
-        <div className="table-list">
+        {loading ? <LoadingState label="Loading scheduled jobs…" /> : jobs.length === 0 ? <EmptyState title="No scheduled jobs yet" why="Scheduled jobs appear after you create a workflow, agent, or report schedule above." action={{ label: "Create a schedule above", to: "#scheduled-job-form" }} /> : <div className="table-list">
           {jobs.map((job) => (
             <article className="table-row" key={job.id}>
               <div>
-                <strong>{job.job_kind === "agent" ? `Agent ${job.agent_id}` : job.job_kind === "report" ? `Report ${job.template_id}` : job.template_id}</strong>
+                <strong>{jobTargetLabel(job)}</strong>
                 <span>{job.cron} ({job.timezone})</span>
               </div>
               <span>{job.paused ? "paused" : "running"}</span>
               <div>
                 <button className="icon-button" type="button" onClick={() => setSelectedJob(job)}>Details</button>
-                <button className="icon-button" type="button" disabled={!canWrite} onClick={() => void controlJob(job.paused ? "resume" : "pause", job.id)}>
+                <button className="icon-button" type="button" disabled={!canWrite} title={!canWrite ? "Requires technician access" : undefined} onClick={() => void controlJob(job.paused ? "resume" : "pause", job.id)}>
                   {job.paused ? "Resume" : "Pause"}
                 </button>
-                <button className="icon-button" type="button" disabled={!canWrite} onClick={() => void controlJob("delete", job.id)}>
+                <button className="icon-button" type="button" disabled={!canWrite} title={!canWrite ? "Requires technician access" : undefined} onClick={() => void controlJob("delete", job.id)}>
                   Delete
                 </button>
               </div>
             </article>
           ))}
-        </div>
+        </div>}
       </section>
 
       <section className="panel settings-panel">
@@ -218,7 +241,7 @@ export function ScheduledJobs() {
         {selectedJob ? (
           <>
             <div className="event-row">
-              <span>{selectedJob.job_kind === "agent" ? `Agent ${selectedJob.agent_id}` : selectedJob.job_kind === "report" ? `Report ${selectedJob.template_id}` : selectedJob.template_id}</span>
+              <span>{jobTargetLabel(selectedJob)}</span>
               <em>{selectedJob.client_id || "global"}</em>
               <span>{selectedJob.next_run_at || "next run unknown"}</span>
             </div>
@@ -228,4 +251,11 @@ export function ScheduledJobs() {
       </section>
     </div>
   );
+}
+
+function jobTargetLabel(job: ScheduledJob): string {
+  if (job.job_kind === "agent") return `Agent ${job.agent_id}`;
+  if (job.job_kind === "report") return `Report ${job.template_id}`;
+  if (job.job_kind === "playbook") return `Playbook ${job.playbook_id ?? job.template_id}`;
+  return `Workflow ${job.template_id}`;
 }

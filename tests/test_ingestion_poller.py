@@ -600,3 +600,23 @@ def test_sink_audit_does_not_contain_provider_subject(tmp_path: Path) -> None:
     details = [event.detail for event in store.list_audit_events()]
     assert any("Imported provider ticket" in detail for detail in details)
     assert all(secret_subject not in detail for detail in details)
+
+
+def test_poll_failure_logs_stable_redacted_fields(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
+    store, instance_id = _seed_store(tmp_path)
+    caplog.set_level("WARNING", logger=poller_module.__name__)
+    poller = _poller(
+        store,
+        _HaloPages([]),
+        client_builder=lambda *_args: (_ for _ in ()).throw(RuntimeError("provider secret should not be logged")),
+    )
+    summary = poller.poll_instance(
+        instance_id, max_pages=1, page_size=25, deadline_seconds=10, lease_ttl_seconds=100
+    )
+
+    assert summary.status == "failed"
+    assert summary.reason == "factory_error"
+    record = next(record for record in caplog.records if record.message == "ingestion_poll_failed")
+    assert getattr(record, "connector_instance_id", None) == instance_id
+    assert getattr(record, "reason", None) == "factory_error"
+    assert "provider secret" not in caplog.text

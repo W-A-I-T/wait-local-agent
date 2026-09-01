@@ -1,6 +1,8 @@
-import { FormEvent, useCallback, useEffect, useState } from "react";
+import { FormEvent, useCallback, useEffect, useRef, useState } from "react";
 import { useDashboard } from "../app/DashboardContext";
 import { apiFetch } from "../api/client";
+import { EmptyState } from "../components/EmptyState";
+import { LoadingState } from "../components/LoadingState";
 import type { AgentBackfill, AgentBackfillPreview, AgentDefinition } from "../api/types";
 
 function parseEntityIds(value: string): string[] {
@@ -11,6 +13,8 @@ export function Backfills() {
   const { canWrite } = useDashboard();
   const [agents, setAgents] = useState<AgentDefinition[]>([]);
   const [backfills, setBackfills] = useState<AgentBackfill[]>([]);
+  const [loading, setLoading] = useState(true);
+  const hasLoadedRef = useRef(false);
   const [agentId, setAgentId] = useState("");
   const [entityText, setEntityText] = useState("");
   const [inputText, setInputText] = useState("{}");
@@ -20,6 +24,7 @@ export function Backfills() {
   const [message, setMessage] = useState("");
 
   const refresh = useCallback(async () => {
+    if (!hasLoadedRef.current) setLoading(true);
     try {
       const [agentRows, backfillRows] = await Promise.all([
         apiFetch<AgentDefinition[]>("/agents"),
@@ -30,6 +35,9 @@ export function Backfills() {
       if (!agentId && agentRows[0]) setAgentId(agentRows[0].id);
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "Unable to load backfills.");
+    } finally {
+      hasLoadedRef.current = true;
+      setLoading(false);
     }
   }, [agentId]);
 
@@ -105,7 +113,7 @@ export function Backfills() {
       <section className="panel">
         <div className="panel-heading"><h2>Agent Backfills</h2><span>{backfills.length} runs</span></div>
         <p className="screen-note">Preview a bounded historical run before queueing it. Backfills reuse the normal agent executor and never exceed 100 entities.</p>
-        <form className="draft-form" onSubmit={createBackfill}>
+        <form id="backfill-form" className="draft-form" onSubmit={createBackfill}>
           <div className="grid">
             <label>Agent<select value={agentId} onChange={(event) => setAgentId(event.target.value)}><option value="">Choose agent</option>{agents.map((agent) => <option key={agent.id} value={agent.id}>{agent.name}</option>)}</select></label>
             <label>Client id (optional)<input value={clientId} onChange={(event) => setClientId(event.target.value)} /></label>
@@ -113,15 +121,14 @@ export function Backfills() {
           </div>
           <label>Ticket IDs<textarea rows={5} value={entityText} onChange={(event) => setEntityText(event.target.value)} placeholder="One ticket ID per line" /></label>
           <label>Input JSON<textarea rows={3} value={inputText} onChange={(event) => setInputText(event.target.value)} /></label>
-          <div className="template-actions"><button type="button" disabled={!canWrite} onClick={() => void previewBackfill()}>Preview</button><button type="submit" disabled={!canWrite}>Queue backfill</button></div>
+          <div className="template-actions"><button type="button" disabled={!canWrite} title={!canWrite ? "Requires technician access" : undefined} onClick={() => void previewBackfill()}>Preview</button><button type="submit" disabled={!canWrite} title={!canWrite ? "Requires technician access" : undefined}>Queue backfill</button></div>
         </form>
         {preview ? <div className="notice">Preview: {preview.entity_count} entities, {preview.execution_mode.replace("_", " ")}, no data persisted.</div> : null}
         {message ? <div className="notice" role="status">{message}</div> : null}
       </section>
 
       <section className="table-list">
-        {backfills.length === 0 ? <p className="panel">No backfills yet.</p> : null}
-        {backfills.map((backfill) => {
+        {loading ? <LoadingState label="Loading backfills…" /> : backfills.length === 0 ? <EmptyState title="No backfills yet" why="Backfills appear after you queue a historical agent run from the form above." action={{ label: "Preview a backfill above", to: "#backfill-form" }} /> : backfills.map((backfill) => {
           const terminal = ["completed", "completed_with_errors", "cancelled"].includes(backfill.status);
           return <article className="panel" key={backfill.id}>
             <div className="panel-heading"><h3>Backfill #{backfill.id}</h3><span>{backfill.status}</span></div>
@@ -130,10 +137,10 @@ export function Backfills() {
             {backfill.failed_entity_ids.length ? <p className="screen-note">Failed: {backfill.failed_entity_ids.join(", ")}</p> : null}
             {backfill.error_detail ? <p className="notice danger">{backfill.error_detail}</p> : null}
             <div className="template-actions">
-              <button type="button" disabled={!canWrite || terminal} onClick={() => void controlBackfill(backfill, "run")}>Run / resume</button>
-              <button type="button" disabled={!canWrite || backfill.status !== "queued"} onClick={() => void controlBackfill(backfill, "pause")}>Pause</button>
-              <button type="button" disabled={!canWrite || terminal} onClick={() => void controlBackfill(backfill, "cancel")}>Cancel</button>
-              <button type="button" disabled={!canWrite || backfill.failed_entity_ids.length === 0} onClick={() => void controlBackfill(backfill, "rerun-failed")}>Rerun failed</button>
+              <button type="button" disabled={!canWrite || terminal} title={!canWrite ? "Requires technician access" : terminal ? "This backfill is complete" : undefined} onClick={() => void controlBackfill(backfill, "run")}>Run / resume</button>
+              <button type="button" disabled={!canWrite || backfill.status !== "queued"} title={!canWrite ? "Requires technician access" : backfill.status !== "queued" ? "Only queued backfills can be paused" : undefined} onClick={() => void controlBackfill(backfill, "pause")}>Pause</button>
+              <button type="button" disabled={!canWrite || terminal} title={!canWrite ? "Requires technician access" : terminal ? "This backfill is complete" : undefined} onClick={() => void controlBackfill(backfill, "cancel")}>Cancel</button>
+              <button type="button" disabled={!canWrite || backfill.failed_entity_ids.length === 0} title={!canWrite ? "Requires technician access" : backfill.failed_entity_ids.length === 0 ? "There are no failed items to rerun" : undefined} onClick={() => void controlBackfill(backfill, "rerun-failed")}>Rerun failed</button>
             </div>
           </article>;
         })}

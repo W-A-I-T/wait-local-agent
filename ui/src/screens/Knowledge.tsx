@@ -3,15 +3,25 @@ import { useDashboard } from "../app/DashboardContext";
 import { apiFetch } from "../api/client";
 import { type KnowledgeChunk, type KnowledgeDocument } from "../api/types";
 
+export type KnowledgeParser = "auto" | "plain" | "markdown" | "pdf";
+
+export function parserPayload(parser: KnowledgeParser): "" | "basic" | "pypdf" {
+  if (parser === "auto") return "";
+  if (parser === "pdf") return "pypdf";
+  return "basic";
+}
+
 export function Knowledge() {
   const { isAdmin, canWrite } = useDashboard();
   const [documents, setDocuments] = useState<KnowledgeDocument[]>([]);
   const [chunks, setChunks] = useState<KnowledgeChunk[]>([]);
   const [path, setPath] = useState("");
-  const [parser, setParser] = useState("auto");
+  const [parser, setParser] = useState<KnowledgeParser>("auto");
   const [ocr, setOcr] = useState(true);
   const [searchText, setSearchText] = useState("");
   const [searchLimit, setSearchLimit] = useState(3);
+  const [searchBackend, setSearchBackend] = useState("");
+  const [searchClientId, setSearchClientId] = useState("");
   const [statusMessage, setStatusMessage] = useState("");
   const [isLoading, setIsLoading] = useState(false);
 
@@ -37,11 +47,10 @@ export function Knowledge() {
     setIsLoading(true);
     setStatusMessage("Ingesting documents...");
     try {
-      const parserName = parser === "auto" ? "" : parser;
       const result = await apiFetch<KnowledgeDocument[]>("/knowledge/ingest", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ path, parser: parserName, ocr })
+        body: JSON.stringify({ path, parser: parserPayload(parser), ocr })
       });
       setDocuments((current) => [
         ...result,
@@ -64,9 +73,10 @@ export function Knowledge() {
     }
     setIsLoading(true);
     try {
-      const found = await apiFetch<KnowledgeChunk[]>(
-        `/knowledge/search?q=${encodeURIComponent(searchText)}&limit=${searchLimit}`
-      );
+      const params = new URLSearchParams({ q: searchText, limit: String(searchLimit) });
+      if (searchBackend) params.set("backend", searchBackend);
+      if (searchClientId.trim()) params.set("client_id", searchClientId.trim());
+      const found = await apiFetch<KnowledgeChunk[]>(`/knowledge/search?${params.toString()}`);
       setChunks(found);
       setStatusMessage(`${found.length} results found.`);
     } catch (error) {
@@ -91,10 +101,11 @@ export function Knowledge() {
             </label>
             <label>
               Parser
-              <select value={parser} onChange={(event) => setParser(event.target.value)}>
+              <select value={parser} onChange={(event) => setParser(event.target.value as KnowledgeParser)}>
                 <option value="auto">auto</option>
-                <option value="basic">plain / markdown</option>
-                <option value="pypdf">pdf</option>
+                <option value="plain">plain text</option>
+                <option value="markdown">markdown</option>
+                <option value="pdf">pdf</option>
               </select>
             </label>
             <label className="switch-label">
@@ -149,6 +160,19 @@ export function Knowledge() {
           />
           <button className="icon-button" type="submit">Search</button>
         </form>
+        <details className="technical-details">
+          <summary>Advanced search controls</summary>
+          <div className="grid">
+            <label>
+              Search backend
+              <input value={searchBackend} onChange={(event) => setSearchBackend(event.target.value)} placeholder="sqlite, fts, or qdrant" />
+            </label>
+            <label>
+              Client ID
+              <input value={searchClientId} onChange={(event) => setSearchClientId(event.target.value)} placeholder="Optional client scope" />
+            </label>
+          </div>
+        </details>
         <div className="source-results">
           {chunks.map((chunk) => (
             <article key={chunk.id}>

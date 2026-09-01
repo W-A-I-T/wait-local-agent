@@ -1,6 +1,8 @@
-import { FormEvent, useCallback, useEffect, useState } from "react";
+import { FormEvent, useCallback, useEffect, useRef, useState } from "react";
 import { useDashboard } from "../app/DashboardContext";
 import { apiFetch } from "../api/client";
+import { EmptyState } from "../components/EmptyState";
+import { LoadingState } from "../components/LoadingState";
 import type { TemplateGalleryEntry, TemplateGalleryRevision, TemplateGalleryRevisionDiff, WorkflowTemplate } from "../api/types";
 
 type GalleryDraft = {
@@ -13,6 +15,8 @@ export function Templates() {
   const { canWrite } = useDashboard();
   const [templates, setTemplates] = useState<WorkflowTemplate[]>([]);
   const [entries, setEntries] = useState<TemplateGalleryEntry[]>([]);
+  const [loading, setLoading] = useState(true);
+  const hasLoadedRef = useRef(false);
   const [drafts, setDrafts] = useState<Record<string, GalleryDraft>>({});
   const [ticketIds, setTicketIds] = useState<Record<string, string>>({});
   const [revisions, setRevisions] = useState<Record<string, TemplateGalleryRevision[]>>({});
@@ -26,6 +30,7 @@ export function Templates() {
   const [message, setMessage] = useState("");
 
   const refresh = useCallback(async () => {
+    if (!hasLoadedRef.current) setLoading(true);
     try {
       const [coreRows, galleryRows] = await Promise.all([
         apiFetch<WorkflowTemplate[]>("/workflows/templates"),
@@ -43,6 +48,9 @@ export function Templates() {
       }
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "Unable to load template gallery.");
+    } finally {
+      hasLoadedRef.current = true;
+      setLoading(false);
     }
   }, [sourceTemplateId]);
 
@@ -207,7 +215,7 @@ export function Templates() {
           <span>{entries.length} local templates</span>
         </div>
         <p className="screen-note">Create tenant-scoped copies of reviewed templates, edit their operator notes, and keep a recoverable local history.</p>
-        <form className="draft-form" onSubmit={createEntry}>
+        <form id="template-form" className="draft-form" onSubmit={createEntry}>
           <div className="grid">
             <label>Reviewed template<select value={sourceTemplateId} onChange={(event) => setSourceTemplateId(event.target.value)}>
               <option value="">Choose template</option>
@@ -218,18 +226,17 @@ export function Templates() {
             <label>Client id (optional)<input value={clientId} onChange={(event) => setClientId(event.target.value)} /></label>
           </div>
           <label>Operator instructions<textarea rows={3} value={instructions} onChange={(event) => setInstructions(event.target.value)} /></label>
-        <button type="submit" disabled={!canWrite || !sourceTemplateId}>Create local template</button>
+        <button type="submit" disabled={!canWrite || !sourceTemplateId} title={!canWrite ? "Requires technician access" : !sourceTemplateId ? "Choose a reviewed template first" : undefined}>Create local template</button>
         <div className="template-import-row">
           <label>Import template artifact<input type="file" accept="application/json,.json" onChange={(event) => setImportFile(event.target.files?.[0] ?? null)} /></label>
-          <button type="button" disabled={!canWrite || !importFile} onClick={() => void importEntry()}>Import template</button>
+          <button type="button" disabled={!canWrite || !importFile} title={!canWrite ? "Requires technician access" : !importFile ? "Choose a template artifact first" : undefined} onClick={() => void importEntry()}>Import template</button>
         </div>
         </form>
         {message ? <div className="notice">{message}</div> : null}
       </section>
 
       <section className="template-gallery-grid">
-        {entries.length === 0 ? <p className="panel">No local templates yet.</p> : null}
-        {entries.map((entry) => {
+        {loading ? <LoadingState label="Loading local templates…" /> : entries.length === 0 ? <EmptyState title="No local templates yet" why="Create a tenant-scoped copy from a reviewed template above to begin." action={{ label: "Create a local template above", to: "#template-form" }} /> : entries.map((entry) => {
           const draft = drafts[entry.id] ?? { name: entry.name, description: entry.description, instructions: entry.instructions };
           const entryRevisions = revisions[entry.id] ?? [];
           return (
@@ -240,19 +247,19 @@ export function Templates() {
               <label>Description<textarea rows={2} value={draft.description} onChange={(event) => setDrafts((current) => ({ ...current, [entry.id]: { ...draft, description: event.target.value } }))} /></label>
               <label>Instructions<textarea rows={2} value={draft.instructions} onChange={(event) => setDrafts((current) => ({ ...current, [entry.id]: { ...draft, instructions: event.target.value } }))} /></label>
               <div className="template-actions">
-                <button type="button" disabled={!canWrite} onClick={() => void saveEntry(entry)}>Save changes</button>
+                <button type="button" disabled={!canWrite} title={!canWrite ? "Requires technician access" : undefined} onClick={() => void saveEntry(entry)}>Save changes</button>
                 <button type="button" onClick={() => void exportEntry(entry)}>Export</button>
-                <button type="button" disabled={!canWrite} onClick={() => void setEnabled(entry, !entry.enabled)}>{entry.enabled ? "Disable" : "Enable"}</button>
+                <button type="button" disabled={!canWrite} title={!canWrite ? "Requires technician access" : undefined} onClick={() => void setEnabled(entry, !entry.enabled)}>{entry.enabled ? "Disable" : "Enable"}</button>
                 <button type="button" onClick={() => void showRevisions(entry)}>History</button>
               </div>
               <div className="template-run-row">
                 <input aria-label={`Ticket for ${entry.name}`} value={ticketIds[entry.id] ?? ""} onChange={(event) => setTicketIds((current) => ({ ...current, [entry.id]: event.target.value }))} placeholder="Ticket id" />
-                <button type="button" disabled={!canWrite || !entry.enabled} onClick={() => void runEntry(entry)}>Run</button>
+                <button type="button" disabled={!canWrite || !entry.enabled} title={!canWrite ? "Requires technician access" : !entry.enabled ? "Enable this template before running it" : undefined} onClick={() => void runEntry(entry)}>Run</button>
               </div>
               {entryRevisions.length ? <div className="template-history"><strong>History</strong>{entryRevisions.map((revision) => <div className="template-history-row" key={revision.version}>
                 <span>Version {revision.version}</span>
                 <button type="button" onClick={() => void compareRevision(entry, revision.version)}>Compare to current</button>
-                <button type="button" disabled={!canWrite || revision.version === entry.version} onClick={() => void restoreRevision(entry, revision.version)}>Restore</button>
+                <button type="button" disabled={!canWrite || revision.version === entry.version} title={!canWrite ? "Requires technician access" : revision.version === entry.version ? "This is the current version" : undefined} onClick={() => void restoreRevision(entry, revision.version)}>Restore</button>
               </div>)}</div> : null}
               {diffs[entry.id] ? <div className="template-diff">
                 <strong>Changes: v{diffs[entry.id].from_version} → v{diffs[entry.id].to_version}</strong>

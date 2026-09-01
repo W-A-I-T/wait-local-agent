@@ -4,7 +4,10 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { Agents } from "../src/screens/Agents";
 
 vi.mock("../src/app/DashboardContext", () => ({
-  useDashboard: () => ({ canWrite: true })
+  useDashboard: () => ({
+    canWrite: true,
+    connectors: [{ id: "timezest", name: "TimeZest", status: "not_configured", message: "not configured" }]
+  })
 }));
 
 describe("Agents", () => {
@@ -33,16 +36,18 @@ describe("Agents", () => {
   };
 
   beforeEach(() => {
+    let currentAgent = agent;
     vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
       const path = String(input);
       if (path === "/agents" && !init?.method) {
-        return Promise.resolve(new Response(JSON.stringify([agent]), { status: 200 }));
+        return Promise.resolve(new Response(JSON.stringify([currentAgent]), { status: 200 }));
       }
       if (path === "/tools" && !init?.method) {
         return Promise.resolve(new Response(JSON.stringify([
           {
             id: "ticket-triage",
             name: "Ticket Triage",
+            title: "Ticket classification",
             description: "Classify tickets.",
             risk_level: "low",
             required_role: "viewer",
@@ -229,7 +234,8 @@ describe("Agents", () => {
         return Promise.resolve(new Response(JSON.stringify({ run_id: 7 }), { status: 200 }));
       }
       if (path === "/agents/agent-1" && init?.method === "PUT") {
-        return Promise.resolve(new Response(JSON.stringify({ ...agent, version: 3, description: "Updated bounded triage." }), { status: 200 }));
+        currentAgent = { ...currentAgent, version: 3, description: "Updated bounded triage." };
+        return Promise.resolve(new Response(JSON.stringify(currentAgent), { status: 200 }));
       }
       if (path === "/agents/agent-1/revisions" && !init?.method) {
         return Promise.resolve(new Response(JSON.stringify([
@@ -241,7 +247,8 @@ describe("Agents", () => {
         return Promise.resolve(new Response(JSON.stringify({ agent_id: "agent-1", from_version: 1, to_version: 2, changed: false, changes: [], client_id: "acme" }), { status: 200 }));
       }
       if (path === "/agents/agent-1/revisions/1/restore" && init?.method === "POST") {
-        return Promise.resolve(new Response(JSON.stringify({ ...agent, version: 4 }), { status: 200 }));
+        currentAgent = { ...currentAgent, version: 4, description: "Restored bounded triage." };
+        return Promise.resolve(new Response(JSON.stringify(currentAgent), { status: 200 }));
       }
       if (path === "/agent-runs/7") {
         return Promise.resolve(new Response(JSON.stringify({
@@ -256,6 +263,36 @@ describe("Agents", () => {
       }
       throw new Error(`Unexpected request: ${path}`);
     }));
+  });
+
+  it("groups tools, shows live selection counts, and warns about missing connectors", async () => {
+    render(<MemoryRouter><Agents /></MemoryRouter>);
+
+    expect(await screen.findByText("Core / ticket intelligence")).toBeInTheDocument();
+    expect(screen.getByText("N-sight")).toBeInTheDocument();
+    expect(screen.getByText("TimeZest")).toBeInTheDocument();
+    expect(screen.getByText("3 tools · 0 selected")).toBeInTheDocument();
+    expect(screen.getByText("connector not configured")).toBeInTheDocument();
+    expect(screen.getAllByText("high").length).toBeGreaterThan(0);
+
+    fireEvent.click(screen.getByRole("checkbox", { name: "Ticket Triage" }));
+    expect(screen.getByText("1 of 8 tools selected")).toBeInTheDocument();
+    expect(screen.getByText("3 tools · 1 selected")).toBeInTheDocument();
+  });
+
+  it("filters tools by name, title, and description and expands matching groups", async () => {
+    render(<MemoryRouter><Agents /></MemoryRouter>);
+
+    const search = await screen.findByRole("searchbox", { name: "Search tools" });
+    fireEvent.change(search, { target: { value: "classification" } });
+    expect(screen.getByRole("checkbox", { name: "Ticket Triage" })).toBeInTheDocument();
+    expect(screen.queryByRole("checkbox", { name: "Assess ticket SLA risk" })).not.toBeInTheDocument();
+    const coreDetails = screen.getByText("Core / ticket intelligence").closest("details");
+    expect(coreDetails?.open).toBe(true);
+
+    fireEvent.change(search, { target: { value: "quarantine" } });
+    expect(screen.getByRole("checkbox", { name: "N-sight antivirus quarantine lookup" })).toBeInTheDocument();
+    expect(screen.queryByRole("checkbox", { name: "Ticket Triage" })).not.toBeInTheDocument();
   });
 
   it("creates an agent with selected context and shows its run context", async () => {
@@ -570,16 +607,42 @@ describe("Agents", () => {
     expect(String(request?.[1]?.body)).toContain("acme");
   });
 
-  it("loads, compares, and restores agent revisions", async () => {
+  it("loads two selected revisions, renders their diff, and confirms restore with a refresh", async () => {
     render(<MemoryRouter><Agents /></MemoryRouter>);
 
-    expect(await screen.findByRole("button", { name: "History" })).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "History" }));
+    expect(await screen.findByText("History and recovery")).toBeInTheDocument();
+    fireEvent.click(screen.getByText("History and recovery"));
     expect(await screen.findByText("Revision history")).toBeInTheDocument();
-    expect(screen.getByText(/Version 1/)).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "Compare to current" }));
-    expect(await screen.findByText("No changes")).toBeInTheDocument();
+    expect(screen.getAllByText(/Version 1/).length).toBeGreaterThan(0);
+    fireEvent.click(screen.getByRole("button", { name: "Edit" }));
+    fireEvent.change(screen.getByLabelText("Description"), { target: { value: "Unsaved form state." } });
+    fireEvent.change(screen.getByLabelText("From revision for MFA triage"), { target: { value: "1" } });
+    fireEvent.change(screen.getByLabelText("To revision for MFA triage"), { target: { value: "2" } });
+    fireEvent.click(screen.getByRole("button", { name: "Compare revisions" }));
+    expect(await screen.findByText("No changes.")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Restore" }));
+    expect(screen.getByRole("alertdialog", { name: "Confirm agent restore" })).toBeInTheDocument();
+    expect((vi.mocked(fetch) as unknown as { mock: { calls: Array<[RequestInfo | URL, RequestInit?]> } }).mock.calls.some(
+      ([input]) => String(input) === "/agents/agent-1/revisions/1/restore"
+    )).toBe(false);
+    fireEvent.click(screen.getByRole("button", { name: "Confirm restore" }));
     await waitFor(() => expect(screen.getByText("Restored MFA triage version 1 as version 4.")).toBeInTheDocument());
+    expect(screen.getByText("v4 · enabled")).toBeInTheDocument();
+    expect(screen.getByLabelText("Description")).toHaveValue("Restored bounded triage.");
+    expect((vi.mocked(fetch) as unknown as { mock: { calls: Array<[RequestInfo | URL, RequestInit?]> } }).mock.calls.some(
+      ([input]) => String(input) === "/agents"
+    )).toBe(true);
+  });
+  it("shows loading while agent definitions are being fetched", () => {
+    vi.stubGlobal("fetch", vi.fn(() => new Promise<Response>(() => undefined)));
+    render(<MemoryRouter><Agents /></MemoryRouter>);
+    expect(screen.getByText("Loading agent definitions…")).toBeInTheDocument();
+  });
+
+  it("explains an empty agent catalog and points to the setup form", async () => {
+    vi.stubGlobal("fetch", vi.fn(() => Promise.resolve(new Response(JSON.stringify([]), { status: 200 }))));
+    render(<MemoryRouter><Agents /></MemoryRouter>);
+    expect(await screen.findByRole("heading", { name: "No agent definitions yet" })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Create your first agent below" })).toHaveAttribute("href", "/#agent-form");
   });
 });

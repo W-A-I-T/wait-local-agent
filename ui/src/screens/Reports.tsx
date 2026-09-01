@@ -300,6 +300,7 @@ export function Reports() {
           <div>
             <h3>Client reports</h3>
             <p className="screen-note">Generate deterministic QBR, automation-opportunity, or recurring service review reports from local ticket and execution evidence. Follow-up candidates are review-only; no workflow or communication is enabled by report generation.</p>
+            <p className="screen-note"><a className="inline-link" href="/connectors?view=scalepad-qbr">Review live ScalePad QBR data in Connector Explorer →</a></p>
           </div>
           <div className="grid">
             <label>

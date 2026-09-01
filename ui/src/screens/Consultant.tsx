@@ -2,7 +2,7 @@ import { FormEvent, useCallback, useEffect, useState } from "react";
 import { AlertTriangle, Compass, RefreshCw } from "lucide-react";
 import { Link } from "react-router-dom";
 import { useDashboard } from "../app/DashboardContext";
-import { apiFetch } from "../api/client";
+import { ApiRequestError, apiFetch } from "../api/client";
 import { StatusChip } from "../components/StatusChip";
 import { humanizeName } from "../lib/fields";
 import type {
@@ -13,7 +13,11 @@ import type {
   ConsultantBlueprintPromotionResult,
   ConsultantDiscoveryResult,
   ConsultantDiscoverySession,
+  ConsultantDeliveryPlan,
+  ConsultantEnvironmentResult,
   ConsultantEmployeeOnboardingDemo,
+  ConsultantEvaluationResult,
+  ConsultantGovernanceResult,
   ConsultantMonitoring,
   ConsultantUseCase,
   MspPlaybookEntry,
@@ -40,10 +44,117 @@ const DEFAULT_POWER_APPS_ACTIONS = JSON.stringify([
   { id: "employee_create", connector_id: "m365", method: "POST", approval_required: true },
 ], null, 2);
 
+const ENVIRONMENT_SYSTEMS = [
+  "HaloPSA",
+  "Hudu",
+  "IT Glue",
+  "Confluence Cloud",
+  "Notion",
+  "SharePoint",
+  "ConnectWise PSA",
+  "Syncro",
+  "ServiceNow",
+  "Autotask PSA",
+  "Microsoft 365 / Entra",
+  "TimeZest",
+  "ScalePad",
+];
+
+type ConsultantSection =
+  | "blueprints"
+  | "blueprintDetail"
+  | "discoverySessions"
+  | "environment"
+  | "governance"
+  | "evaluations"
+  | "deliveryPlan"
+  | "useCases"
+  | "monitoring";
+type SectionLoadStatus = "loading" | "ready" | "empty" | "gated" | "error";
+type SectionLoadState = { status: SectionLoadStatus; detail?: string };
+type SectionLoadStates = Record<ConsultantSection, SectionLoadState>;
+
+const SECTION_DETAILS: Record<ConsultantSection, { label: string; pack: string; retryLabel: string }> = {
+  blueprints: { label: "solution blueprints", pack: "Microsoft Admin", retryLabel: "blueprints" },
+  blueprintDetail: { label: "blueprint detail", pack: "Microsoft Admin", retryLabel: "blueprint detail" },
+  discoverySessions: { label: "guided discovery sessions", pack: "Microsoft Admin", retryLabel: "discovery sessions" },
+  environment: { label: "environment evidence", pack: "Microsoft Admin", retryLabel: "environment probe" },
+  governance: { label: "governance review", pack: "Microsoft Admin", retryLabel: "governance review" },
+  evaluations: { label: "agent evaluation", pack: "Microsoft Admin", retryLabel: "evaluation" },
+  deliveryPlan: { label: "delivery plan", pack: "Microsoft Admin", retryLabel: "delivery plan" },
+  useCases: { label: "Solutions Architect use cases", pack: "Microsoft Admin", retryLabel: "use cases" },
+  monitoring: { label: "agent monitoring", pack: "Microsoft Admin", retryLabel: "monitoring" },
+};
+
+const INITIAL_SECTION_STATES: SectionLoadStates = {
+  blueprints: { status: "loading" },
+  blueprintDetail: { status: "empty" },
+  discoverySessions: { status: "loading" },
+  environment: { status: "empty" },
+  governance: { status: "empty" },
+  evaluations: { status: "empty" },
+  deliveryPlan: { status: "empty" },
+  useCases: { status: "loading" },
+  monitoring: { status: "loading" },
+};
+
+function sectionStateForError(error: unknown): SectionLoadState {
+  if (error instanceof ApiRequestError && error.status === 403) {
+    return { status: "gated", detail: apiRequestReason(error) };
+  }
+  if (error instanceof ApiRequestError && error.status === 404) {
+    return { status: "empty" };
+  }
+  return {
+    status: "error",
+    detail: error instanceof ApiRequestError && (error.status === 409 || error.status === 422)
+      ? apiRequestReason(error)
+      : error instanceof Error ? error.message : "The section could not be loaded.",
+  };
+}
+
+function apiRequestReason(error: ApiRequestError): string {
+  const separator = error.technicalDetail.lastIndexOf(": ");
+  return separator >= 0 ? error.technicalDetail.slice(separator + 2) : error.message;
+}
+
+function SectionLoadNotice({
+  section,
+  state,
+  onRetry,
+}: {
+  section: ConsultantSection;
+  state: SectionLoadState;
+  onRetry: () => void;
+}) {
+  const details = SECTION_DETAILS[section];
+  if (state.status === "gated") {
+    return (
+      <div className="notice" role="status">
+        <span>Requires the {details.pack} pack or Microsoft Admin capability.</span>{state.detail ? " " + state.detail : ""} <Link to="/system/extensions">Open Extensions / Packs</Link>
+      </div>
+    );
+  }
+  if (state.status === "error") {
+    return (
+      <div className="notice danger" role="alert">
+        Unable to load {details.label}. {state.detail} <button type="button" onClick={onRetry}>Retry {details.retryLabel}</button>
+      </div>
+    );
+  }
+  return null;
+}
+
 export function Consultant() {
-  const { canWrite, clientId: scopedClientId } = useDashboard();
+  const {
+    canWrite,
+    clientId: scopedClientId,
+    authState,
+    writeHealth,
+  } = useDashboard();
   const [blueprints, setBlueprints] = useState<ConsultantBlueprint[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [blueprintDetail, setBlueprintDetail] = useState<ConsultantBlueprint | null>(null);
   const [architecture, setArchitecture] = useState<ConsultantArchitecture | null>(null);
   const [workflowDrafts, setWorkflowDrafts] = useState<Record<string, { trigger: string; steps: string[] }>>({});
   const [useCases, setUseCases] = useState<ConsultantUseCase[]>([]);
@@ -81,57 +192,93 @@ export function Consultant() {
   const [promotionLoading, setPromotionLoading] = useState(false);
   const [playbookLoading, setPlaybookLoading] = useState(false);
   const [playbookNotice, setPlaybookNotice] = useState("");
+  const [environmentResult, setEnvironmentResult] = useState<ConsultantEnvironmentResult | null>(null);
+  const [governanceResult, setGovernanceResult] = useState<ConsultantGovernanceResult | null>(null);
+  const [governanceArtifacts, setGovernanceArtifacts] = useState("[]");
+  const [evaluationResult, setEvaluationResult] = useState<ConsultantEvaluationResult | null>(null);
+  const [evaluationMode, setEvaluationMode] = useState<"contract" | "controlled">("contract");
+  const [evaluationCaseId, setEvaluationCaseId] = useState("architecture-review");
+  const [evaluationExpectedTools, setEvaluationExpectedTools] = useState("");
+  const [evaluationExpectedApprovals, setEvaluationExpectedApprovals] = useState("");
+  const [evaluationObservedTools, setEvaluationObservedTools] = useState("");
+  const [evaluationObservedApprovals, setEvaluationObservedApprovals] = useState("");
+  const [evaluationAgentId, setEvaluationAgentId] = useState("");
+  const [evaluationEntityId, setEvaluationEntityId] = useState("TCK-1001");
+  const [deliveryTargets, setDeliveryTargets] = useState("Teams, Power Automate, Power Apps, Dataverse");
+  const [deliveryResult, setDeliveryResult] = useState<ConsultantDeliveryPlan | null>(null);
   const [message, setMessage] = useState("");
-  const [loadNotice, setLoadNotice] = useState("");
   const [loading, setLoading] = useState(false);
+  const [sectionStates, setSectionStates] = useState<SectionLoadStates>(INITIAL_SECTION_STATES);
+
+  const setSectionState = useCallback((section: ConsultantSection, state: SectionLoadState) => {
+    setSectionStates((current) => ({ ...current, [section]: state }));
+  }, []);
+
+  const loadBlueprints = useCallback(async () => {
+    setSectionState("blueprints", { status: "loading" });
+    try {
+      const result = await apiFetch<ConsultantBlueprint[]>("/consultant/blueprints");
+      const rows = Array.isArray(result) ? result : [];
+      setBlueprints(rows);
+      setSelectedId((currentSelectedId) => (
+        currentSelectedId && rows.some((row) => row.id === currentSelectedId)
+          ? currentSelectedId
+          : rows[0]?.id ?? null
+      ));
+      setArchitecture((currentArchitecture) => (
+        currentArchitecture && rows.some((row) => row.id === currentArchitecture.blueprint_id)
+          ? currentArchitecture
+          : null
+      ));
+      setSectionState("blueprints", { status: rows.length ? "ready" : "empty" });
+    } catch (error) {
+      setSectionState("blueprints", sectionStateForError(error));
+    }
+  }, [setSectionState]);
+
+  const loadUseCases = useCallback(async () => {
+    setSectionState("useCases", { status: "loading" });
+    try {
+      const result = await apiFetch<{ use_cases: ConsultantUseCase[] }>("/consultant/use-cases");
+      const rows = Array.isArray(result.use_cases) ? result.use_cases : [];
+      setUseCases(rows);
+      setSectionState("useCases", { status: rows.length ? "ready" : "empty" });
+    } catch (error) {
+      setSectionState("useCases", sectionStateForError(error));
+    }
+  }, [setSectionState]);
+
+  const loadMonitoring = useCallback(async () => {
+    setSectionState("monitoring", { status: "loading" });
+    try {
+      const result = await apiFetch<ConsultantMonitoring>("/consultant/monitoring/agents");
+      setMonitoring(result);
+      setSectionState("monitoring", { status: "ready" });
+    } catch (error) {
+      setSectionState("monitoring", sectionStateForError(error));
+    }
+  }, [setSectionState]);
+
+  const loadDiscoverySessions = useCallback(async () => {
+    setSectionState("discoverySessions", { status: "loading" });
+    try {
+      const result = await apiFetch<ConsultantDiscoverySession[]>("/consultant/discovery/sessions");
+      const rows = Array.isArray(result) ? result : [];
+      setDiscoverySessions(rows);
+      setSectionState("discoverySessions", { status: rows.length ? "ready" : "empty" });
+    } catch (error) {
+      setSectionState("discoverySessions", sectionStateForError(error));
+    }
+  }, [setSectionState]);
 
   const refresh = useCallback(async () => {
     setLoading(true);
     try {
-      const [blueprintsResult, useCasesResult, monitoringResult, sessionsResult] = await Promise.allSettled([
-        apiFetch<ConsultantBlueprint[]>("/consultant/blueprints"),
-        apiFetch<{ use_cases: ConsultantUseCase[] }>("/consultant/use-cases"),
-        apiFetch<ConsultantMonitoring>("/consultant/monitoring/agents"),
-        apiFetch<ConsultantDiscoverySession[]>("/consultant/discovery/sessions"),
-      ]);
-      const failedSections: string[] = [];
-      if (blueprintsResult.status === "fulfilled") {
-        setBlueprints(blueprintsResult.value);
-        setSelectedId((currentSelectedId) => (
-          currentSelectedId && blueprintsResult.value.some((row) => row.id === currentSelectedId)
-            ? currentSelectedId
-            : blueprintsResult.value[0]?.id ?? null
-        ));
-        setArchitecture((currentArchitecture) => (
-          currentArchitecture && blueprintsResult.value.some((row) => row.id === currentArchitecture.blueprint_id)
-            ? currentArchitecture
-            : null
-        ));
-      } else {
-        failedSections.push("blueprints");
-      }
-      if (useCasesResult.status === "fulfilled") {
-        setUseCases(useCasesResult.value.use_cases);
-      } else {
-        failedSections.push("use cases");
-      }
-      if (monitoringResult.status === "fulfilled") {
-        setMonitoring(monitoringResult.value);
-      } else {
-        failedSections.push("monitoring");
-      }
-      if (sessionsResult.status === "fulfilled") {
-        setDiscoverySessions(sessionsResult.value);
-      } else {
-        failedSections.push("discovery sessions");
-      }
-      setLoadNotice(failedSections.length > 0
-        ? `Some sections couldn't load: ${failedSections.join(", ")}.`
-        : "");
+      await Promise.all([loadBlueprints(), loadUseCases(), loadMonitoring(), loadDiscoverySessions()]);
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [loadBlueprints, loadDiscoverySessions, loadMonitoring, loadUseCases]);
 
   useEffect(() => {
     void refresh();
@@ -139,10 +286,28 @@ export function Consultant() {
 
   async function inspectBlueprint(blueprintId: string) {
     setSelectedId(blueprintId);
+    setSectionState("blueprintDetail", { status: "loading" });
+    setBlueprintDetail(null);
     setArchitecture(null);
     setFlowPlan(null);
+    setEnvironmentResult(null);
+    setGovernanceResult(null);
+    setEvaluationResult(null);
+    setDeliveryResult(null);
+    setSectionState("environment", { status: "empty" });
+    setSectionState("governance", { status: "empty" });
+    setSectionState("evaluations", { status: "empty" });
+    setSectionState("deliveryPlan", { status: "empty" });
     setMessage("");
     setPlaybookNotice("");
+    void apiFetch<ConsultantBlueprint>(
+      `/consultant/blueprints/${encodeURIComponent(blueprintId)}`,
+    ).then((result) => {
+      setBlueprintDetail(result);
+      setSectionState("blueprintDetail", { status: "ready" });
+    }).catch((error: unknown) => {
+      setSectionState("blueprintDetail", sectionStateForError(error));
+    });
     try {
       const result = await apiFetch<ConsultantArchitecture>(
         `/consultant/blueprints/${encodeURIComponent(blueprintId)}/architecture`
@@ -158,6 +323,156 @@ export function Consultant() {
       ));
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "Unable to build the architecture view.");
+    }
+  }
+
+  async function probeEnvironment() {
+    const clientId = currentClientId();
+    if (!clientId) {
+      setMessage("Select a blueprint or provide a tenant scope before probing the environment.");
+      return;
+    }
+    setSectionState("environment", { status: "loading" });
+    setEnvironmentResult(null);
+    setMessage("");
+    try {
+      const result = await apiFetch<ConsultantEnvironmentResult>("/consultant/environment-discovery", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ client_id: clientId, systems: ENVIRONMENT_SYSTEMS, probe: true }),
+      });
+      setEnvironmentResult(result);
+      setSectionState("environment", { status: result.systems.length ? "ready" : "empty" });
+    } catch (error) {
+      setSectionState("environment", sectionStateForError(error));
+    }
+  }
+
+  async function evaluateGovernance(event?: FormEvent<HTMLFormElement>) {
+    event?.preventDefault();
+    if (!architecture) {
+      setSectionState("governance", { status: "empty" });
+      return;
+    }
+    let connectorArtifacts: Record<string, unknown>[];
+    try {
+      connectorArtifacts = parseJsonArray(governanceArtifacts, "Connector artifacts");
+    } catch (error) {
+      setSectionState("governance", { status: "error", detail: error instanceof Error ? error.message : "Connector artifacts are invalid." });
+      return;
+    }
+    setSectionState("governance", { status: "loading" });
+    setGovernanceResult(null);
+    setMessage("");
+    try {
+      const result = await apiFetch<ConsultantGovernanceResult>("/consultant/governance/evaluate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ architecture, connector_artifacts: connectorArtifacts }),
+      });
+      setGovernanceResult(result);
+      setSectionState("governance", { status: "ready" });
+    } catch (error) {
+      setSectionState("governance", sectionStateForError(error));
+    }
+  }
+
+  async function runEvaluation(event?: FormEvent<HTMLFormElement>) {
+    event?.preventDefault();
+    const clientId = currentClientId();
+    const caseId = evaluationCaseId.trim();
+    if (!clientId || !caseId) {
+      setSectionState("evaluations", { status: "error", detail: "A tenant scope and evaluation case ID are required." });
+      return;
+    }
+    if (evaluationMode === "controlled" && !(authState === "demo" && writeHealth?.status === "blocked")) {
+      setSectionState("evaluations", { status: "error", detail: "Controlled local execution is available only in demo mode with Safe Mode writes disabled." });
+      return;
+    }
+    if (evaluationMode === "controlled" && (!evaluationAgentId.trim() || !evaluationEntityId.trim())) {
+      setSectionState("evaluations", { status: "error", detail: "A tenant-scoped agent ID and entity ID are required for controlled evaluation." });
+      return;
+    }
+    const testCase = {
+      id: caseId,
+      expected_tool_ids: splitList(evaluationExpectedTools),
+      forbidden_tool_ids: [],
+      expected_approval_tool_ids: splitList(evaluationExpectedApprovals),
+    };
+    const body: Record<string, unknown> = {
+      test_set: [testCase],
+      observations: {
+        [caseId]: {
+          tool_ids: splitList(evaluationObservedTools),
+          approval_tool_ids: splitList(evaluationObservedApprovals),
+          tenant_isolated: true,
+          prompt_injection_blocked: true,
+        },
+      },
+    };
+    if (evaluationMode === "controlled") {
+      body.execution = {
+        agent_id: evaluationAgentId.trim(),
+        entity_id: evaluationEntityId.trim(),
+        client_id: clientId,
+      };
+    }
+    setSectionState("evaluations", { status: "loading" });
+    setEvaluationResult(null);
+    setMessage("");
+    try {
+      const result = await apiFetch<ConsultantEvaluationResult>("/consultant/evaluations", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      setEvaluationResult(result);
+      setSectionState("evaluations", { status: "ready" });
+    } catch (error) {
+      setSectionState("evaluations", sectionStateForError(error));
+    }
+  }
+
+  async function buildDeliveryPlan(event?: FormEvent<HTMLFormElement>) {
+    event?.preventDefault();
+    const clientId = currentClientId();
+    const targets = splitList(deliveryTargets);
+    if (!clientId || !architecture || !governanceResult || !evaluationResult) {
+      setSectionState("deliveryPlan", { status: "error", detail: "Complete governance and evaluation review before creating the delivery plan." });
+      return;
+    }
+    if (!targets.length) {
+      setSectionState("deliveryPlan", { status: "error", detail: "At least one deployment target is required." });
+      return;
+    }
+    let connectorArtifacts: Record<string, unknown>[];
+    try {
+      connectorArtifacts = parseJsonArray(governanceArtifacts, "Connector artifacts");
+    } catch (error) {
+      setSectionState("deliveryPlan", { status: "error", detail: error instanceof Error ? error.message : "Connector artifacts are invalid." });
+      return;
+    }
+    setSectionState("deliveryPlan", { status: "loading" });
+    setDeliveryResult(null);
+    setMessage("");
+    try {
+      const result = await apiFetch<ConsultantDeliveryPlan>("/consultant/delivery-plan", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          client_id: clientId,
+          architecture,
+          evaluation: evaluationResult,
+          governance: governanceResult,
+          deployment_targets: targets,
+          connector_artifacts: connectorArtifacts,
+          review_artifacts: environmentResult ? [environmentResult] : [],
+        }),
+      });
+      setDeliveryResult(result);
+      setSectionState("deliveryPlan", { status: "ready" });
+    } catch (error) {
+      setSectionState("deliveryPlan", sectionStateForError(error));
     }
   }
 
@@ -476,11 +791,18 @@ export function Consultant() {
           <button className="icon-button" type="button" onClick={() => void refresh()} disabled={loading}>
             <RefreshCw size={16} aria-hidden="true" /> Refresh
           </button>
+          <Link className="inline-link" to="/consultant/solution-delivery">Solution delivery</Link>
         </div>
         {message ? <div className="notice danger" role="alert"><AlertTriangle size={16} aria-hidden="true" />{message}</div> : null}
         {playbookNotice ? <div className="notice success" role="status">{playbookNotice} <Link to="/playbooks">Playbooks</Link></div> : null}
-        {loadNotice ? <div className="notice danger" role="alert"><AlertTriangle size={16} aria-hidden="true" />{loadNotice}</div> : null}
-        {blueprints.length === 0 ? <p>No solution blueprints are available for this tenant.</p> : (
+        <SectionLoadNotice section="blueprints" state={sectionStates.blueprints} onRetry={() => void loadBlueprints()} />
+        {sectionStates.blueprints.status === "loading" && blueprints.length === 0 ? <p className="screen-note">Loading solution blueprints…</p> : null}
+        {sectionStates.blueprints.status !== "loading" && sectionStates.blueprints.status !== "gated" && sectionStates.blueprints.status !== "error" && blueprints.length === 0 ? (
+          <>
+            <p className="screen-note">No solution blueprints are available for this tenant.</p>
+            <p>No solution blueprints yet. Create one: run <a href="#solution-discovery">Solution discovery below</a>, then Promote the result to a blueprint.</p>
+          </>
+        ) : blueprints.length > 0 ? (
           <div className="consultant-blueprint-list">
             {blueprints.map((blueprint) => (
               <button
@@ -495,7 +817,45 @@ export function Consultant() {
               </button>
             ))}
           </div>
-        )}
+        ) : null}
+      </section>
+
+      {selected ? (
+        <section className="panel" aria-labelledby="blueprint-detail-heading">
+          <div className="panel-heading">
+            <div>
+              <h2 id="blueprint-detail-heading">Blueprint detail</h2>
+              <p className="screen-note">The saved blueprint record is the source artifact for the review chain.</p>
+            </div>
+            {blueprintDetail ? <StatusChip status="completed" /> : null}
+          </div>
+          <SectionLoadNotice section="blueprintDetail" state={sectionStates.blueprintDetail} onRetry={() => void inspectBlueprint(selected.id)} />
+          {sectionStates.blueprintDetail.status === "loading" ? <p className="screen-note">Loading blueprint detail…</p> : null}
+          {sectionStates.blueprintDetail.status === "empty" ? <p className="screen-note">Blueprint detail is not available yet.</p> : null}
+          {blueprintDetail ? <BlueprintDetailView blueprint={blueprintDetail} /> : null}
+        </section>
+      ) : null}
+
+      <section className="panel" aria-labelledby="environment-discovery-heading">
+        <div className="panel-heading">
+          <div>
+            <h2 id="environment-discovery-heading">Environment discovery</h2>
+            <p className="screen-note">Check the configured connector boundaries before architecture and delivery review.</p>
+          </div>
+          {environmentResult ? <StatusChip status={environmentResult.readiness} /> : null}
+        </div>
+        <div className="notice">
+          <strong>{writeHealth?.status === "blocked" ? "Safe Mode is active." : "Read-only probe."}</strong>{" "}
+          This checks configured connector health only; it does not write to an external system or deploy anything.
+        </div>
+        <button type="button" onClick={() => void probeEnvironment()} disabled={!canWrite || sectionStates.environment.status === "loading" || !currentClientId()}>
+          {sectionStates.environment.status === "loading" ? "Probing environment…" : "Probe environment"}
+        </button>
+        {!currentClientId() ? <p className="screen-note">Select a blueprint or provide a tenant scope in Solution discovery first.</p> : null}
+        {!canWrite ? <p className="screen-note">Technician access is required to probe environment evidence.</p> : null}
+        <SectionLoadNotice section="environment" state={sectionStates.environment} onRetry={() => void probeEnvironment()} />
+        {sectionStates.environment.status === "empty" && environmentResult === null && selected ? <p className="screen-note">Probe the environment to collect connector evidence for this blueprint.</p> : null}
+        {environmentResult ? <EnvironmentEvidence result={environmentResult} /> : null}
       </section>
 
       <section className="panel">
@@ -508,7 +868,7 @@ export function Consultant() {
         </div>
         <div className="notice">
           <strong>Local fixture only.</strong>{" "}
-          No Microsoft, PSA, RMM, documentation, Teams, live-provider, or deployment call is started. The walkthrough generates only local review manifests and a non-deployable package. It requires an existing tenant-scoped ticket and never seeds one.
+          No Microsoft, PSA, RMM, documentation, Teams, live-provider, or deployment call is started. The walkthrough generates only local review manifests and a non-deployable package. It requires an existing tenant-scoped ticket and never seeds one. You can start without a ticket in Solution discovery or blueprints.
         </div>
         <div className="grid">
           <label>
@@ -563,7 +923,7 @@ export function Consultant() {
         ) : null}
       </section>
 
-      <section className="panel">
+      <section className="panel" id="solution-discovery">
         <div className="panel-heading">
           <div>
             <h2>Solution discovery</h2>
@@ -654,6 +1014,9 @@ export function Consultant() {
             ) : null}
           </div>
         ) : null}
+        <SectionLoadNotice section="discoverySessions" state={sectionStates.discoverySessions} onRetry={() => void loadDiscoverySessions()} />
+        {sectionStates.discoverySessions.status === "loading" && discoverySessions.length === 0 ? <p className="screen-note">Loading saved guided discovery sessions…</p> : null}
+        {sectionStates.discoverySessions.status === "empty" ? <p className="screen-note">No saved guided discovery sessions yet.</p> : null}
         <div className="notice">
           <strong>Guided discovery</strong>{" "}
           <span>Answer one bounded evidence question at a time. The assistant records your answers and does not infer missing requirements.</span>
@@ -736,6 +1099,9 @@ export function Consultant() {
           </div>
           {monitoring ? <StatusChip status={monitoring.failed_runs ? "needs_review" : "completed"} /> : null}
         </div>
+        <SectionLoadNotice section="monitoring" state={sectionStates.monitoring} onRetry={() => void loadMonitoring()} />
+        {sectionStates.monitoring.status === "loading" && !monitoring ? <p className="screen-note">Loading agent monitoring…</p> : null}
+        {sectionStates.monitoring.status === "empty" ? <p className="screen-note">No agent monitoring data is available yet.</p> : null}
         {monitoring ? (
           <div className="flag-grid">
             <span><strong>{monitoring.agent_count}</strong><br />Agents in scope</span>
@@ -743,11 +1109,13 @@ export function Consultant() {
             <span><strong>{monitoring.failed_runs}</strong><br />Failed runs</span>
           </div>
         ) : null}
+        <SectionLoadNotice section="useCases" state={sectionStates.useCases} onRetry={() => void loadUseCases()} />
+        {sectionStates.useCases.status === "loading" && useCases.length === 0 ? <p className="screen-note">Loading Solutions Architect use cases…</p> : null}
         {useCases.length > 0 ? (
           <div className="consultant-component-list">
             {useCases.map((useCase) => <UseCaseCard useCase={useCase} key={useCase.id} />)}
           </div>
-        ) : <p>No Solutions Architect use cases are available.</p>}
+        ) : sectionStates.useCases.status !== "loading" && sectionStates.useCases.status !== "gated" && sectionStates.useCases.status !== "error" ? <p>No Solutions Architect use cases are available.</p> : null}
       </section>
 
       <section className="panel">
@@ -888,6 +1256,211 @@ export function Consultant() {
           </div>
         </section>
       ) : null}
+
+      {selected ? (
+        <section className="panel" aria-labelledby="evaluate-ship-heading">
+          <div className="panel-heading">
+            <div>
+              <h2 id="evaluate-ship-heading">Evaluate &amp; ship</h2>
+              <p className="screen-note">Move the selected blueprint through governance, agent evaluation, and a review-only delivery plan.</p>
+            </div>
+            {deliveryResult ? <StatusChip status={deliveryResult.production_readiness} /> : null}
+          </div>
+          {!architecture ? <p className="screen-note">Load the selected blueprint's architecture above to start this chain.</p> : null}
+          {architecture ? (
+            <div className="consultant-chain">
+              <article className="consultant-chain-card">
+                <div className="panel-heading">
+                  <div>
+                    <h3>1. Governance evaluate</h3>
+                    <p className="screen-note">Review architecture boundaries and optional connector artifacts for credentials, permissions, and approval requirements.</p>
+                  </div>
+                  {governanceResult ? <StatusChip status={governanceResult.status} /> : null}
+                </div>
+                <form className="draft-form" onSubmit={(event) => void evaluateGovernance(event)}>
+                  <label>
+                    Connector artifacts (JSON)
+                    <textarea rows={4} value={governanceArtifacts} onChange={(event) => setGovernanceArtifacts(event.target.value)} />
+                  </label>
+                  <button type="submit" disabled={!canWrite || sectionStates.governance.status === "loading"}>
+                    {sectionStates.governance.status === "loading" ? "Evaluating governance…" : "Evaluate governance"}
+                  </button>
+                  {!canWrite ? <p className="screen-note">Technician access is required to evaluate governance.</p> : null}
+                </form>
+                <SectionLoadNotice section="governance" state={sectionStates.governance} onRetry={() => void evaluateGovernance()} />
+                {sectionStates.governance.status === "empty" ? <p className="screen-note">No governance review is available yet. Submit the governance form to create one.</p> : null}
+                {governanceResult ? (
+                  <ReviewChecklist title="Governance checklist" checks={governanceResult.policy_mapping.map((item) => ({ label: item.policy_id, value: item.status }))} />
+                ) : null}
+                {governanceResult ? <p className="screen-note">{governanceResult.findings.length} finding{governanceResult.findings.length === 1 ? "" : "s"} recorded · high {governanceResult.finding_counts.high} · medium {governanceResult.finding_counts.medium}.</p> : null}
+              </article>
+
+              <article className="consultant-chain-card">
+                <div className="panel-heading">
+                  <div>
+                    <h3>2. Agent evaluations</h3>
+                    <p className="screen-note">Contract mode checks recorded observations. Controlled execution is available only in demo mode with Safe Mode writes disabled.</p>
+                  </div>
+                  {evaluationResult ? <StatusChip status={evaluationResult.production_readiness} /> : null}
+                </div>
+                <form className="draft-form" onSubmit={(event) => void runEvaluation(event)}>
+                  <div className="grid">
+                    <label>
+                      Evaluation mode
+                      <select value={evaluationMode} onChange={(event) => setEvaluationMode(event.target.value as "contract" | "controlled")}>
+                        <option value="contract">Contract review (no execution)</option>
+                        <option value="controlled" disabled={!(authState === "demo" && writeHealth?.status === "blocked")}>Controlled local execution (demo + Safe Mode only)</option>
+                      </select>
+                    </label>
+                    <label>
+                      Case ID
+                      <input value={evaluationCaseId} onChange={(event) => setEvaluationCaseId(event.target.value)} />
+                    </label>
+                    <label>
+                      Expected tools
+                      <input value={evaluationExpectedTools} onChange={(event) => setEvaluationExpectedTools(event.target.value)} placeholder="tool-id, another-tool" />
+                    </label>
+                    <label>
+                      Expected approval tools
+                      <input value={evaluationExpectedApprovals} onChange={(event) => setEvaluationExpectedApprovals(event.target.value)} placeholder="tool-id" />
+                    </label>
+                    <label>
+                      Observed tools
+                      <input value={evaluationObservedTools} onChange={(event) => setEvaluationObservedTools(event.target.value)} placeholder="tool-id, another-tool" />
+                    </label>
+                    <label>
+                      Observed approval tools
+                      <input value={evaluationObservedApprovals} onChange={(event) => setEvaluationObservedApprovals(event.target.value)} placeholder="tool-id" />
+                    </label>
+                  </div>
+                  {evaluationMode === "controlled" ? (
+                    <div className="grid">
+                      <label>
+                        Evaluation agent ID
+                        <input value={evaluationAgentId} onChange={(event) => setEvaluationAgentId(event.target.value)} placeholder="agent-id" required />
+                      </label>
+                      <label>
+                        Entity ID
+                        <input value={evaluationEntityId} onChange={(event) => setEvaluationEntityId(event.target.value)} required />
+                      </label>
+                    </div>
+                  ) : null}
+                  <button type="submit" disabled={!canWrite || sectionStates.evaluations.status === "loading"}>
+                    {sectionStates.evaluations.status === "loading" ? "Running evaluation…" : "Run agent evaluation"}
+                  </button>
+                  {!canWrite ? <p className="screen-note">Technician access is required to run an evaluation.</p> : null}
+                </form>
+                <SectionLoadNotice section="evaluations" state={sectionStates.evaluations} onRetry={() => void runEvaluation()} />
+                {sectionStates.evaluations.status === "empty" ? <p className="screen-note">No agent evaluation is available yet. Run the contract review to create one.</p> : null}
+                {evaluationResult ? (
+                  <ReviewChecklist
+                    title="Evaluation checklist"
+                    checks={Object.entries(evaluationResult.dimensions).map(([label, value]) => ({ label, value: String(value) + "%" }))}
+                  />
+                ) : null}
+                {evaluationResult ? <p className="screen-note">{evaluationResult.case_count} case{evaluationResult.case_count === 1 ? "" : "s"} · {evaluationResult.execution_mode === "controlled" ? "controlled local execution recorded" : "observation contract only"} · execution started: {evaluationResult.execution_started ? "yes" : "no"}.</p> : null}
+              </article>
+
+              <article className="consultant-chain-card">
+                <div className="panel-heading">
+                  <div>
+                    <h3>3. Delivery plan</h3>
+                    <p className="screen-note">The selected architecture, governance result, and evaluation result are included automatically.</p>
+                  </div>
+                  {deliveryResult ? <StatusChip status={deliveryResult.production_readiness} /> : null}
+                </div>
+                <form className="draft-form" onSubmit={(event) => void buildDeliveryPlan(event)}>
+                  <label>
+                    Deployment targets
+                    <input value={deliveryTargets} onChange={(event) => setDeliveryTargets(event.target.value)} placeholder="Teams, Power Automate" />
+                  </label>
+                  <button type="submit" disabled={!canWrite || sectionStates.deliveryPlan.status === "loading" || !governanceResult || !evaluationResult}>
+                    {sectionStates.deliveryPlan.status === "loading" ? "Building delivery plan…" : "Build delivery plan"}
+                  </button>
+                  {!governanceResult || !evaluationResult ? <p className="screen-note">Complete the governance and evaluation cards before building the delivery plan.</p> : null}
+                </form>
+                <SectionLoadNotice section="deliveryPlan" state={sectionStates.deliveryPlan} onRetry={() => void buildDeliveryPlan()} />
+                {sectionStates.deliveryPlan.status === "empty" ? <p className="screen-note">No delivery plan is available yet. Complete the two upstream reviews first.</p> : null}
+                {deliveryResult ? (
+                  <>
+                    <div className="notice">
+                      <strong>{deliveryResult.production_readiness === "pass" ? "Ready for review." : "More review is required."}</strong>{" "}
+                      {deliveryResult.delivery_bundle_status} handoff · deployment approval required: {deliveryResult.production_deployment_requires_approval ? "yes" : "no"} · execution started: {deliveryResult.execution_started ? "yes" : "no"}.
+                    </div>
+                    <ReviewChecklist title="Delivery checklist" checks={Object.entries(deliveryResult.checks).map(([label, value]) => ({ label, value: value ? "pass" : "needs review" }))} />
+                    <p className="screen-note">Targets: {deliveryResult.deployment_targets.join(", ")}. The package remains review-only and is not a deployable solution.</p>
+                  </>
+                ) : null}
+              </article>
+            </div>
+          ) : null}
+          <div className="notice consultant-delivery-link">
+            <strong>Ready to package?</strong> The Solution Delivery screen is not available in this checkout; complete the review-only chain here and hand off only after that surface is restored.
+          </div>
+        </section>
+      ) : null}
+    </div>
+  );
+}
+
+function BlueprintDetailView({ blueprint }: { blueprint: ConsultantBlueprint }) {
+  return (
+    <dl className="consultant-detail-grid">
+      <div><dt>Solution</dt><dd>{blueprint.solution.name}</dd></div>
+      <div><dt>Tenant</dt><dd>{blueprint.client_id}</dd></div>
+      <div><dt>Risk</dt><dd>{blueprint.risk}</dd></div>
+      <div><dt>Created by</dt><dd>{blueprint.created_by}</dd></div>
+      <div><dt>Agents</dt><dd>{blueprint.agents.length}</dd></div>
+      <div><dt>Workflows</dt><dd>{blueprint.workflows.length}</dd></div>
+    </dl>
+  );
+}
+
+function EnvironmentEvidence({ result }: { result: ConsultantEnvironmentResult }) {
+  return (
+    <div className="consultant-environment">
+      <p className="screen-note">
+        {result.probe_performed ? "Provider health evidence was returned for eligible configured connectors." : "No provider health response was returned; configuration is not authorization evidence."}
+        {" "}{result.systems.length} systems reviewed.
+      </p>
+      <div className="table-scroll">
+        <table className="consultant-environment-table">
+          <caption>Environment status matrix</caption>
+          <thead>
+            <tr><th scope="col">System</th><th scope="col">Status</th><th scope="col">Configured</th><th scope="col">Probe result</th></tr>
+          </thead>
+          <tbody>
+            {result.systems.map((system) => {
+              const configured = system.provider_status === "configured" || system.provider_status === "blocked" || system.provider_status === "ready";
+              const probe = system.probe?.status === "passed"
+                ? "Passed"
+                : system.probe?.status === "failed"
+                  ? "Failed" + (system.probe.layer !== "unknown" ? " · " + system.probe.layer : "")
+                  : "Not run";
+              return (
+                <tr key={system.id}>
+                  <th scope="row">{system.name}</th>
+                  <td><StatusChip status={system.status} /></td>
+                  <td>{configured ? "Yes" : "No"}</td>
+                  <td>{probe}{system.probe?.message ? <span className="screen-note"> · {system.probe.message}</span> : null}</td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+      {result.limitations.length ? <p className="screen-note">{result.limitations.length} limitation{result.limitations.length === 1 ? "" : "s"} remain explicit for review.</p> : null}
+    </div>
+  );
+}
+
+function ReviewChecklist({ title, checks }: { title: string; checks: Array<{ label: string; value: string }> }) {
+  return (
+    <div className="consultant-review-checklist" aria-label={title}>
+      <h4>{title}</h4>
+      <ul>
+        {checks.map((check) => <li key={check.label}><span>{humanizeName(check.label)}</span><StatusChip status={check.value} /></li>)}
+      </ul>
     </div>
   );
 }

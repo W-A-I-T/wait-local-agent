@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import math
 import time
 import uuid
@@ -34,6 +35,7 @@ MAX_PAGE_RETRIES = 3
 MAX_BACKOFF_SECONDS = 60.0
 DEFAULT_CONNECTOR_TIMEOUT_SECONDS = 20.0
 POLL_CURSOR_TYPE = "connector_poll"
+LOGGER = logging.getLogger(__name__)
 
 PollStatus = Literal["idle", "degraded", "failed", "skipped_locked"]
 
@@ -360,6 +362,18 @@ class IngestionPoller:
         return summary
 
     def _audit(self, connector_instance_id: str, summary: PollSummary) -> None:
+        log_data = {
+            "connector_instance_id": connector_instance_id,
+            "status": summary.status,
+            "reason": summary.reason,
+            "pages_fetched": summary.pages_fetched,
+            "written": summary.written,
+            "quarantined": summary.quarantined,
+        }
+        if summary.status in {"failed", "degraded"}:
+            LOGGER.warning("ingestion_poll_failed", extra=log_data)
+        else:
+            LOGGER.info("ingestion_poll_completed", extra=log_data)
         try:
             self.store.add_audit_event(
                 "ingestion.poll.completed",

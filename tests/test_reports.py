@@ -4,6 +4,7 @@ import json
 from dataclasses import replace
 from io import BytesIO
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 from fastapi.testclient import TestClient
@@ -143,10 +144,33 @@ def test_hardening_and_restore_reports_are_not_run_without_evidence(settings) ->
         metadata=restore_metadata,
     )
 
+    with pytest.raises(KeyError):
+        build_restore_evidence_report(store, run_id=999999)
+
     assert hardening.evidence_status == "not_run"
     assert restore.evidence_status == "not_run"
     assert json.loads(render_json(hardening))["evidence_status"] == "not_run"
     assert "Evidence status: `not_run`" in render_markdown(restore)
+
+
+def test_restore_report_rechecks_a_missing_run_before_listing_evidence() -> None:
+    class EventuallyAvailableStore:
+        calls = 0
+
+        def get_collector_run(self, run_id: int):
+            self.calls += 1
+            return None if self.calls == 1 else object()
+
+        def get_restore_exercise(self, run_id: int):
+            return None
+
+        def list_restore_exercises(self, run_id=None):
+            return []
+
+    sections, metadata = build_restore_evidence_report(EventuallyAvailableStore(), run_id=1)  # type: ignore[arg-type]
+
+    assert sections[0].summary == "0 restore exercises are attached to this run."
+    assert metadata["evidence_status"] == "no_evidence"
 
 
 def test_recurring_service_review_is_client_scoped_and_labels_missing_evidence(settings) -> None:
@@ -260,6 +284,8 @@ def test_render_report_dispatch_and_pdf_contains_report_content() -> None:
     assert "Audit" in "\n".join(page.extract_text() or "" for page in PdfReader(BytesIO(pdf)).pages)
     dispatched_pdf = render_report(report, ReportFormat.PDF)
     assert isinstance(dispatched_pdf, bytes) and dispatched_pdf.startswith(b"%PDF-")
+    with pytest.raises(ValueError, match="unsupported report format"):
+        render_report(report, SimpleNamespace(value="xml"))  # type: ignore[arg-type]
 
 
 def test_renders_never_include_secret_values() -> None:
@@ -322,12 +348,14 @@ def test_schema_validation_reports_problems() -> None:
             "report_type": "not-a-type",
             "title": "x",
             "created_at": "now",
+            "evidence_status": "not-a-status",
             "sections": [{"title": 5}, "not-an-object"],
         }
     )
 
     assert any("id" in problem for problem in problems)
     assert any("not-a-type" in problem for problem in problems)
+    assert any("not-a-status" in problem for problem in problems)
     assert any("sections[0].title" in problem for problem in problems)
     assert any("sections[0].summary" in problem for problem in problems)
     assert any("sections[1]" in problem for problem in problems)

@@ -32,6 +32,7 @@ Dashboard validation:
 cd ui
 npm install
 npm run test
+npm run test:coverage
 npm run build
 ```
 
@@ -39,8 +40,7 @@ Appliance validation:
 
 ```bash
 docker compose config
-docker compose up --build
-curl http://127.0.0.1:8788/health
+scripts/test_compose_integration.sh
 ```
 
 Demo validation:
@@ -58,7 +58,8 @@ pip-licenses --format=markdown
 Secret scan before release:
 
 ```bash
-gitleaks detect --source . --log-opts HEAD
+docker run --rm -v "$PWD:/repo:ro" zricethezav/gitleaks:latest detect \
+  --source=/repo --redact --gitleaks-ignore-path=/repo/.gitleaksignore
 ```
 
 ## Launch assets

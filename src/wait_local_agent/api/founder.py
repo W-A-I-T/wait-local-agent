@@ -304,7 +304,7 @@ def configure_founder(
     if not token.strip():
         raise ValueError("Launch Passport token must not be empty")
     token_ref = f"founder.lp.{uuid4().hex}"
-    SecretVault.initialize(settings.vault_path).set(token_ref, token)
+    SecretVault.initialize(settings.vault_path, demo_mode=settings.demo_mode).set(token_ref, token)
     store.save_founder_config(
         lp_base_url=normalized_base_url,
         lp_project_id=project_id.strip(),

@@ -155,9 +155,11 @@ class Settings:
     rate_limit_connector: str = "10/minute"
     update_channel_url: str = ""
     update_pubkeys: tuple[str, ...] = ()
+    update_allow_prerelease: bool = False
     mcp_allowed_origins: tuple[str, ...] = ()
     mcp_client_allowed_hosts: tuple[str, ...] = ()
     connector_instance_allowed_hosts: tuple[str, ...] = ()
+    trusted_hosts: tuple[str, ...] = ("127.0.0.1", "localhost", "api", "testserver")
     halopsa_base_url: str = ""
     halopsa_client_id: str = ""
     halopsa_client_secret: str = ""
@@ -500,6 +502,7 @@ def load_settings() -> Settings:
             for value in os.getenv("WAIT_UPDATE_PUBKEYS", "").split(",")
             if value.strip()
         ),
+        update_allow_prerelease=_bool_env("WAIT_UPDATE_ALLOW_PRERELEASE"),
         mcp_allowed_origins=tuple(
             value.strip().rstrip("/")
             for value in os.getenv("WAIT_MCP_ALLOWED_ORIGINS", "").split(",")
@@ -513,6 +516,13 @@ def load_settings() -> Settings:
         connector_instance_allowed_hosts=tuple(
             value.strip().casefold()
             for value in os.getenv("WAIT_CONNECTOR_INSTANCE_ALLOWED_HOSTS", "").split(",")
+            if value.strip()
+        ),
+        trusted_hosts=tuple(
+            value.strip()
+            for value in os.getenv(
+                "WAIT_TRUSTED_HOSTS", "127.0.0.1,localhost,api,testserver"
+            ).split(",")
             if value.strip()
         ),
         halopsa_base_url=_secret_value(

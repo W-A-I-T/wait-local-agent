@@ -1,5 +1,5 @@
-import { Activity, CheckCircle2, GitBranch, Workflow } from "lucide-react";
-import { useEffect, useState } from "react";
+import { Activity, CheckCircle2, GitBranch, Sparkles, Workflow } from "lucide-react";
+import { useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import { useDashboard } from "../app/DashboardContext";
 import { SetupStatus } from "../components/SetupStatus";
@@ -22,25 +22,23 @@ export function Overview() {
     roleResolved
   } = useDashboard();
   const [searchParams, setSearchParams] = useSearchParams();
-  const [showOnboarding, setShowOnboarding] = useState(false);
+  const [onboardingDismissed, setOnboardingDismissed] = useState(
+    () => window.localStorage.getItem(ONBOARDING_DISMISS_KEY) === "1"
+  );
+  const requestedOnboardingStep = Number.parseInt(searchParams.get("step") ?? "0", 10);
+  const onboardingStep = Number.isFinite(requestedOnboardingStep) ? requestedOnboardingStep : 0;
 
-  const shouldShowOnboarding = roleResolved && !configurationLoading && (searchParams.get("onboarding") === "1" || !isConfigured);
-
-  useEffect(() => {
-    if (!shouldShowOnboarding) {
-      setShowOnboarding(false);
-      return;
-    }
-    const dismissed = window.localStorage.getItem(ONBOARDING_DISMISS_KEY) === "1";
-    setShowOnboarding(!dismissed);
-  }, [shouldShowOnboarding]);
+  const explicitlyRequested = searchParams.get("onboarding") === "1";
+  const showOnboarding = roleResolved && !configurationLoading && (
+    explicitlyRequested || (!isConfigured && !onboardingDismissed)
+  );
 
   function dismissOnboarding() {
     window.localStorage.setItem(ONBOARDING_DISMISS_KEY, "1");
+    setOnboardingDismissed(true);
     const next = new URLSearchParams(searchParams);
     next.delete("onboarding");
     setSearchParams(next, { replace: true });
-    setShowOnboarding(false);
   }
 
   return (
@@ -48,7 +46,11 @@ export function Overview() {
       {showOnboarding ? (
         <section className="modal-backdrop">
           <div className="onboarding-modal">
-            <OnboardingWizard onDone={() => dismissOnboarding()} onDismiss={() => dismissOnboarding()} />
+            <OnboardingWizard
+              initialStep={onboardingStep}
+              onDone={() => dismissOnboarding()}
+              onDismiss={() => dismissOnboarding()}
+            />
           </div>
         </section>
       ) : null}
@@ -84,6 +86,20 @@ export function Overview() {
             <strong>{workflowRuns.length} workflow runs</strong>
             <span>Open the approval queue to review actions</span>
           </Link>
+          <section className="overview-card" aria-labelledby="automate-something-heading">
+            <Sparkles size={20} aria-hidden="true" />
+            <strong id="automate-something-heading">Automate something</strong>
+            <span>No ticket required</span>
+            <nav className="overview-automation-links" aria-label="No-ticket automation">
+              <Link to="/scheduled-jobs">On a schedule</Link>
+              <Link to="/automation/schedules">When an event happens</Link>
+              <Link to="/consultant">Design a solution</Link>
+            </nav>
+            <p className="overview-card-note">
+              Report-only playbooks (qbr-review, automation-opportunity-review, recurring-service-review) run with just a client via{" "}
+              <Link to="/playbooks">Playbooks</Link>.
+            </p>
+          </section>
         </div>
       </section>
 

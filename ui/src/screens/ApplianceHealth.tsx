@@ -18,18 +18,6 @@ const APPLIANCE_FLAGS: Array<{ key: keyof ApplianceHealthResponse; label: string
   { key: "scheduler_enabled", label: "Scheduler" }
 ];
 
-const CONNECTORS: Array<{ key: keyof ApplianceHealthResponse; label: string }> = [
-  { key: "halopsa_configured", label: "HaloPSA" },
-  { key: "hudu_configured", label: "Hudu" },
-  { key: "syncro_configured", label: "Syncro" },
-  { key: "servicenow_configured", label: "ServiceNow" },
-  { key: "autotask_configured", label: "Autotask" },
-  { key: "itglue_configured", label: "IT Glue" },
-  { key: "confluence_configured", label: "Confluence" },
-  { key: "sharepoint_configured", label: "SharePoint" },
-  { key: "m365_configured", label: "Microsoft 365" }
-];
-
 export function ApplianceHealth() {
   const { isAdmin, role, roleResolved } = useDashboard();
   const [health, setHealth] = useState<ApplianceHealthResponse | null>(null);
@@ -78,6 +66,7 @@ export function ApplianceHealth() {
 
   const latestHardeningRun = hardeningRuns[0];
   const accessRole = role ?? (isAdmin ? "admin" : "viewer");
+  const configuredConnectors = connectorEntries(health);
 
   return (
     <RoleGate
@@ -129,16 +118,15 @@ export function ApplianceHealth() {
         <section className="panel">
           <div className="panel-heading">
             <h2>Configured connectors</h2>
-            <span>{configuredConnectorCount(health)} of {CONNECTORS.length} configured</span>
+            <span>{configuredConnectors.filter(([, configured]) => configured).length} of {configuredConnectors.length} configured</span>
           </div>
           <div className="flag-grid">
-            {CONNECTORS.map(({ key, label }) => {
-              const configured = health ? Boolean(health[key]) : undefined;
+            {configuredConnectors.length === 0 ? <p className="screen-note">Connector configuration has not been returned yet.</p> : configuredConnectors.map(([key, configured]) => {
               return (
                 <div key={key}>
-                  <strong>{label}</strong>
-                  <span>{configured === undefined ? "Not loaded" : configured ? "Configured" : "Not configured"}</span>
-                  <StatusChip status={configured === undefined ? "unavailable" : configured ? "configured" : "not_configured"} />
+                  <strong>{connectorLabel(key)}</strong>
+                  <span>{configured ? "Configured" : "Not configured"}</span>
+                  <StatusChip status={configured ? "configured" : "not_configured"} />
                 </div>
               );
             })}
@@ -195,11 +183,31 @@ function formatBoolean(value: boolean): string {
   return value ? "Enabled" : "Disabled";
 }
 
-function configuredConnectorCount(health: ApplianceHealthResponse | null): number {
-  if (!health) {
-    return 0;
-  }
-  return CONNECTORS.filter(({ key }) => Boolean(health[key])).length;
+function connectorEntries(health: ApplianceHealthResponse | null): Array<[string, boolean]> {
+  if (!health) return [];
+  return Object.entries(health)
+    .filter(([key, value]) => key.endsWith("_configured") && typeof value === "boolean")
+    .sort(([left], [right]) => left.localeCompare(right)) as Array<[string, boolean]>;
+}
+
+function connectorLabel(key: string): string {
+  const knownLabels: Record<string, string> = {
+    halopsa_configured: "HaloPSA",
+    hudu_configured: "Hudu",
+    syncro_configured: "Syncro",
+    servicenow_configured: "ServiceNow",
+    autotask_configured: "Autotask",
+    itglue_configured: "IT Glue",
+    confluence_configured: "Confluence",
+    sharepoint_configured: "SharePoint",
+    m365_configured: "Microsoft 365"
+  };
+  if (knownLabels[key]) return knownLabels[key];
+  return key
+    .replace(/_configured$/, "")
+    .split("_")
+    .map((part) => part.toUpperCase() === "M365" ? "Microsoft 365" : part.charAt(0).toUpperCase() + part.slice(1))
+    .join(" ");
 }
 
 function sortLatest(runs: HardeningRun[]): HardeningRun[] {

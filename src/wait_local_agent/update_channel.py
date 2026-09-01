@@ -164,6 +164,17 @@ def check_for_updates(
         verify_update_signature(metadata, canonical_bytes, settings.update_pubkeys)
         remote_version = parse_semver(metadata.version)
         installed_version = parse_semver(current_version)
+        if remote_version.prerelease and not settings.update_allow_prerelease:
+            return UpdateStatus(
+                status="up_to_date",
+                current_version=current_version,
+                checked_at=checked_at,
+                detail="prerelease_ignored",
+                remote_version=metadata.version,
+                min_supported=metadata.min_supported,
+                notes_url=metadata.notes_url,
+                warning="prerelease updates are disabled; set WAIT_UPDATE_ALLOW_PRERELEASE=true to opt in",
+            )
         if installed_version < remote_version:
             return UpdateStatus(
                 status="update_available",

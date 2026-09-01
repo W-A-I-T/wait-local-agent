@@ -57,6 +57,47 @@ def test_check_for_updates_reports_available_for_trusted_newer_release(settings)
     assert status.notes_url == f"https://updates.wait.example.test/releases/{remote_version}"
 
 
+def test_stable_update_channel_ignores_prerelease_metadata_by_default(settings) -> None:
+    document = _signed_document(version="2.0.0-rc.2", private_key=PRIMARY_PRIVATE_KEY)
+    active_settings = settings.__class__(
+        **{
+            **settings.__dict__,
+            "update_channel_url": "https://updates.wait.example.test/channel.json",
+            "update_pubkeys": (PRIMARY_PUBLIC_KEY,),
+            "update_allow_prerelease": False,
+        }
+    )
+
+    status = check_for_updates(
+        active_settings,
+        transport=httpx.MockTransport(lambda request: httpx.Response(200, content=document)),
+    )
+
+    assert status.status == "up_to_date"
+    assert status.detail == "prerelease_ignored"
+    assert status.remote_version == "2.0.0-rc.2"
+
+
+def test_tester_can_opt_in_to_prerelease_updates(settings) -> None:
+    document = _signed_document(version="2.0.0-rc.2", private_key=PRIMARY_PRIVATE_KEY)
+    active_settings = settings.__class__(
+        **{
+            **settings.__dict__,
+            "update_channel_url": "https://updates.wait.example.test/channel.json",
+            "update_pubkeys": (PRIMARY_PUBLIC_KEY,),
+            "update_allow_prerelease": True,
+        }
+    )
+
+    status = check_for_updates(
+        active_settings,
+        transport=httpx.MockTransport(lambda request: httpx.Response(200, content=document)),
+    )
+
+    assert status.status == "update_available"
+    assert status.remote_version == "2.0.0-rc.2"
+
+
 def test_update_check_cli_invalid_signature_exits_zero_and_redacts_metadata(monkeypatch, tmp_path) -> None:
     base = json.loads(_signed_document(version="0.9.9", private_key=PRIMARY_PRIVATE_KEY).decode("utf-8"))
     base["notes_url"] = "https://updates.wait.example.test/releases/0.9.9-tampered"

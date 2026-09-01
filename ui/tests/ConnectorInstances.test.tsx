@@ -6,7 +6,8 @@ import { Sidebar } from "../src/app/Sidebar";
 
 const dashboard = vi.hoisted(() => ({
   role: "admin" as "admin" | "viewer",
-  roleResolved: true
+  roleResolved: true,
+  refresh: vi.fn()
 }));
 
 vi.mock("../src/app/DashboardContext", () => ({
@@ -96,6 +97,33 @@ describe("Connector Instances screen", () => {
     expect(screen.getByText("halo-company-99")).toBeInTheDocument();
     expect(fetchMock).toHaveBeenCalledWith("/client-connector-mappings?connector_instance_id=ci-halo-1", expect.anything());
     expect(fetchMock.mock.calls.every(([, init]) => !init || !("method" in init) || init.method === undefined || init.method === "GET")).toBe(true);
+  });
+
+  it("loads row detail and patches only changed connector fields", async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const path = String(input);
+      if (path === "/connector-instances") return jsonResponse(instances.slice(0, 1));
+      if (path === "/clients") return jsonResponse([{ client_id: "acme", name: "Acme", status: "active" }]);
+      if (path === "/connector-instances/ci-halo-1" && !init?.method) return jsonResponse(instances[0]);
+      if (path === "/connector-instances/ci-halo-1" && init?.method === "PATCH") {
+        return jsonResponse({ ...instances[0], display_name: "Acme Halo Updated" });
+      }
+      throw new Error(`Unexpected request: ${path}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(<ConnectorInstances />);
+
+    await screen.findByRole("heading", { name: "Configured instances" });
+    fireEvent.click(screen.getByRole("button", { name: "Edit" }));
+    fireEvent.change(await screen.findByLabelText("Edit connector display name"), { target: { value: "Acme Halo Updated" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save changes" }));
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
+      "/connector-instances/ci-halo-1",
+      expect.objectContaining({ method: "PATCH", body: JSON.stringify({ display_name: "Acme Halo Updated" }) })
+    ));
+    expect(fetchMock.mock.calls.some(([input, init]) => String(input) === "/connector-instances/ci-halo-1" && !init?.method)).toBe(true);
   });
 
   it("shows the read-only error state", async () => {

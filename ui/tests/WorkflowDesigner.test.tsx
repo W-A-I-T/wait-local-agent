@@ -94,4 +94,16 @@ describe("WorkflowDesigner", () => {
     expect(patchCall).toBeDefined();
     expect(JSON.parse(String(patchCall?.[1]?.body)).definition.nodes[1].label).toBe("Review ticket");
   });
+
+  it("shows loading and then explains when no local design exists", async () => {
+    const releases: Array<(response: Response) => void> = [];
+    vi.stubGlobal("fetch", vi.fn(() => new Promise<Response>((resolve) => { releases.push(resolve); })));
+    render(<MemoryRouter><WorkflowDesigner /></MemoryRouter>);
+
+    expect(screen.getByText("Loading workflow designs…")).toBeInTheDocument();
+    releases.forEach((resolve) => resolve(new Response(JSON.stringify([]), { status: 200 })));
+
+    expect(await screen.findByRole("heading", { name: "No design selected" })).toBeInTheDocument();
+    expect(screen.getByText("Create a local design from a reviewed template to begin.")).toBeInTheDocument();
+  });
 });

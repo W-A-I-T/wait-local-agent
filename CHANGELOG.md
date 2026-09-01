@@ -6,6 +6,9 @@ All notable changes to WAIT Local Agent will be documented in this file.
 
 ### Breaking
 
+- The external-tester milestone is `2.0.0-rc.1`; Python packaging uses the
+  normalized PEP 440 version `2.0.0rc1`.
+
 - Provider connector origins now require HTTPS by default. Set
   `WAIT_ALLOW_INSECURE_PROVIDER_TRANSPORT=true` only when plain HTTP is
   deliberately required for all provider origins on a trusted network.

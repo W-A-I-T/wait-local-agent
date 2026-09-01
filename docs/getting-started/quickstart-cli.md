@@ -13,8 +13,13 @@ wait-local-agent doctor
 The deterministic demo path is:
 
 ```bash
+export WAIT_DEMO_MODE=true
+export WAIT_ALLOW_WRITE_ACTIONS=false
 scripts/demo_appliance.sh
 ```
+
+The script calls the explicit `wait-local-agent demo seed` command. Demo data
+is never seeded merely because a process starts in a non-demo deployment.
 
 Representative local checks include:
 

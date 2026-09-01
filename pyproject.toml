@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "wait-local-agent"
-version = "2.0.0.dev0"
+version = "2.0.0rc1"
 description = "Local-first AI copilot runtime for MSPs and SMBs."
 readme = "README.md"
 requires-python = ">=3.12"
@@ -68,18 +68,20 @@ wait-local-agent = "wait_local_agent.cli:app"
 wait-local-agent-server = "wait_local_agent.api.server_entry:main"
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/wait_local_agent"]
+packages = ["src/wait_local_agent", "src/packs"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+pythonpath = ["tests"]
 addopts = "-q"
 
 [tool.coverage.run]
-source = ["wait_local_agent"]
+source = ["wait_local_agent", "packs"]
 branch = true
 
 [tool.coverage.report]
 show_missing = true
+precision = 2
 fail_under = 95
 
 [tool.ruff]
@@ -99,6 +101,8 @@ select = ["E", "F", "I", "UP", "B"]
 [tool.mypy]
 python_version = "3.12"
 files = ["src", "tests"]
+mypy_path = "tests"
+exclude = ["^tests/microsoft_admin_support\\.py$"]
 check_untyped_defs = true
 disable_error_code = ["no-untyped-def"]
 warn_unused_ignores = true

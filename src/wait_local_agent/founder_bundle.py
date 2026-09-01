@@ -12,6 +12,8 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from wait_local_agent import __version__
+
 
 class PrivacyViolation(ValueError):
     """Raised when a bundle contains data outside the public evidence contract."""
@@ -100,7 +102,7 @@ def build_founder_bundle(
     bundle: dict[str, Any] = {
         "schemaVersion": "collector_bundle_v1",
         "metadata": {
-            "collectorVersion": "wait-local-agent/1.1.1",
+            "collectorVersion": f"wait-local-agent/{__version__}",
             "collectedAt": datetime.now(UTC).isoformat(),
             "root": "[redacted]",
             "sourceCode": False,
@@ -304,7 +306,7 @@ def _normalize_contract_bundle(raw: dict[str, Any]) -> dict[str, Any]:
     if source_code is not False:
         raise PrivacyViolation("sourceCode must be false")
     normalized_metadata = {
-        "collectorVersion": _string_or(metadata.get("collectorVersion"), "wait-local-agent/1.1.1"),
+        "collectorVersion": _string_or(metadata.get("collectorVersion"), f"wait-local-agent/{__version__}"),
         "collectedAt": _string_or(metadata.get("collectedAt"), datetime.fromtimestamp(0, UTC).isoformat()),
         "root": "[redacted]",
         "sourceCode": False,

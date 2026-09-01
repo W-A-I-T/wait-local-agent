@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { Check, Copy, ExternalLink, ShieldCheck } from "lucide-react";
-import { ApiRequestError, apiFetch } from "../api/client";
+import { apiFetch } from "../api/client";
 import { useDashboard } from "../app/DashboardContext";
 import { RoleGate } from "../components/RoleGate";
 import { StatusChip } from "../components/StatusChip";
@@ -15,6 +15,11 @@ type McpHandshake = {
     description?: string;
   };
   instructions?: string;
+};
+
+type McpInitializeResponse = {
+  result?: McpHandshake;
+  error?: { message?: string };
 };
 
 type McpTool = {
@@ -32,7 +37,7 @@ const verifiedFallbackHandshake: McpHandshake = {
   capabilities: { tools: { listChanged: false } },
   serverInfo: {
     name: "wait-local-agent",
-    version: "2.0.0-dev.0",
+    version: "2.0.0-rc.1",
     description: "WAIT's tenant-scoped, approval-aware local agent tool server"
   },
   instructions: "Tool calls remain subject to WAIT tenant scope, RBAC, provider readiness, approval gates, audit logging, and output redaction."
@@ -85,21 +90,38 @@ function McpIntegrationContent() {
       setLoading(true);
       setError("");
       try {
-        const [handshakeResult, toolRows] = await Promise.all([
-          apiFetch<McpHandshake>("/mcp").catch((requestError: unknown) => {
-            if (requestError instanceof ApiRequestError && requestError.status === 405) {
-              return null;
-            }
-            throw requestError;
+        const [handshakeResult, toolResult] = await Promise.allSettled([
+          apiFetch<McpInitializeResponse>("/mcp", {
+            method: "POST",
+            headers: { "Content-Type": "application/json", Accept: "application/json" },
+            body: JSON.stringify({
+              jsonrpc: "2.0",
+              id: 1,
+              method: "initialize",
+              params: {
+                protocolVersion: verifiedFallbackHandshake.protocolVersion,
+                capabilities: {},
+                clientInfo: { name: "wait-local-agent-ui", version: "2.0.0-rc.1" }
+              }
+            })
           }),
           apiFetch<McpTool[]>("/tools")
         ]);
         if (!active) {
           return;
         }
-        setHandshake(handshakeResult ?? verifiedFallbackHandshake);
-        setHandshakeNote(handshakeResult ? "Handshake details loaded from the appliance." : "This appliance exposes the MCP handshake through POST /mcp; GET /mcp confirms the endpoint is POST-only.");
-        setTools(Array.isArray(toolRows) ? toolRows : []);
+        if (handshakeResult.status === "fulfilled" && handshakeResult.value.result) {
+          setHandshake(handshakeResult.value.result);
+          setHandshakeNote("Live handshake details loaded from the appliance.");
+        } else {
+          setHandshake(verifiedFallbackHandshake);
+          setHandshakeNote("Static capability summary (live handshake unavailable).");
+        }
+        if (toolResult.status === "fulfilled") {
+          setTools(Array.isArray(toolResult.value) ? toolResult.value : []);
+        } else {
+          throw toolResult.reason;
+        }
       } catch (requestError) {
         if (!active) {
           return;

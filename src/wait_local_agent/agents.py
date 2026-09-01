@@ -50,6 +50,7 @@ SUPPORTED_EVENT_TYPES = frozenset(
     {
         "ticket.created",
         "ticket.updated",
+        "ticket.unassigned",
         "ticket.priority_changed",
         "ticket.status_changed",
         "ticket.closed",

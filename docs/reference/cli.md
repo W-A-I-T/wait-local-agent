@@ -11,6 +11,7 @@ path.
 | `knowledge` | Local knowledge operations; `knowledge ingest`. |
 | `connectors` | Connector status, reads, drafts, and executions; `connectors list`, `connectors validate halopsa`. |
 | `workflows` | Templates, runs, and gallery; `workflows templates`, `workflows run ...`. |
+| `demo` | Explicit demo-only fixture seeding; `demo seed`. |
 | `consultant` | Local-first consultant commands. |
 | `consultant blueprints` | Inspectable blueprints; `consultant blueprints ...`. |
 | `microsoft` | Microsoft platform preparation commands. |
@@ -33,7 +34,7 @@ path.
 | `backup` | SQLite backup/restore. |
 | `hardening` | Appliance hardening checks. |
 | `support` | Allowlisted diagnostics and local support archives; `support doctor`, `support bundle --preview`, `support bundle --output PATH`, `support upload --consent`. |
-| `secrets` | Local Fernet vault operations; `secrets init`, `secrets list`. |
+| `secrets` | Local Fernet vault operations; `secrets init`, `secrets list`, and explicit `secrets migrate-external-key`. |
 | `update` | Signed update-channel operations; `update check`. |
 | `packs` | Installed pack operations; `packs status`. |
 | `founder` | Founder-surface commands. |

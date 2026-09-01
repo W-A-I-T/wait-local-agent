@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from cryptography.fernet import Fernet
 from fastapi.testclient import TestClient
 
 import wait_local_agent.api.app as app_module
@@ -36,9 +37,28 @@ def test_sidecar_ops_routes_wrap_existing_logic(settings, tmp_path: Path) -> Non
     )
 
     assert packs.status_code == 200
-    assert packs.json() == []
+    assert packs.json() == [
+        {
+            "name": "microsoft-admin",
+            "version": "0.1.0",
+            "locked": False,
+            "requires_license": False,
+        }
+    ]
     assert pack_status.status_code == 200
-    assert pack_status.json() == []
+    assert pack_status.json() == [
+        {
+            "name": "microsoft-admin",
+            "version": "0.1.0",
+            "locked": False,
+            "requires_license": False,
+            "cli_available": True,
+            "router_available": True,
+            "mounted_cli": False,
+            "mounted_router": True,
+            "error": None,
+        }
+    ]
     assert update_check.status_code == 200
     assert update_check.json()["status"] == "unknown"
     assert update_check.json()["detail"] == "disabled"
@@ -141,7 +161,8 @@ def test_pack_install_route_returns_safe_install_result(settings, tmp_path: Path
     assert "secret-license" not in response.text
 
 
-def test_sidecar_write_routes_require_admin(settings, tmp_path: Path) -> None:
+def test_sidecar_write_routes_require_admin(settings, tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setenv("WAIT_VAULT_KEY", Fernet.generate_key().decode("utf-8"))
     secure_settings = settings.__class__(
         **{
             **settings.__dict__,

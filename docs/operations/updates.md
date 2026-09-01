@@ -6,6 +6,7 @@ The public repo implements a signed update-channel client only. It checks for a 
 
 - `WAIT_UPDATE_CHANNEL_URL`: HTTPS URL for the release metadata document. Default empty string disables update checks.
 - `WAIT_UPDATE_PUBKEYS`: comma-separated list of pinned Ed25519 public keys encoded as unpadded base64url. Any listed key may verify a release, which is the supported key-rotation mechanism.
+- `WAIT_UPDATE_ALLOW_PRERELEASE`: defaults to `false`; stable installations ignore signed prerelease metadata unless a tester explicitly opts in with `true`.
 
 ## Metadata Format
 

@@ -2,7 +2,7 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { Settings } from "../src/screens/Settings";
-import { Knowledge } from "../src/screens/Knowledge";
+import { Knowledge, parserPayload } from "../src/screens/Knowledge";
 import { FounderJourney } from "../src/surfaces/founder/FounderJourney";
 import { OnboardingWizard } from "../src/surfaces/onboarding/OnboardingWizard";
 
@@ -16,6 +16,13 @@ afterEach(() => {
 });
 
 describe("wla-04 onboarding and parity surfaces", () => {
+  it("normalizes the UI parser names to the backend parser contract", () => {
+    expect(parserPayload("auto")).toBe("");
+    expect(parserPayload("plain")).toBe("basic");
+    expect(parserPayload("markdown")).toBe("basic");
+    expect(parserPayload("pdf")).toBe("pypdf");
+  });
+
   it("maps every knowledge parser option to the backend parser contract", async () => {
     const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
       if (String(input) === "/knowledge/documents") return jsonResponse([]);
@@ -26,7 +33,7 @@ describe("wla-04 onboarding and parity surfaces", () => {
 
     render(<Knowledge />);
     const parser = await screen.findByRole("combobox");
-    expect(Array.from(parser.querySelectorAll("option")).map((option) => option.value)).toEqual(["auto", "basic", "pypdf"]);
+    expect(Array.from(parser.querySelectorAll("option")).map((option) => option.value)).toEqual(["auto", "plain", "markdown", "pdf"]);
 
     fireEvent.change(screen.getByPlaceholderText("/path/to/docs"), { target: { value: "/workspace/knowledge" } });
     fireEvent.click(screen.getByRole("button", { name: "Run ingest" }));
@@ -38,7 +45,7 @@ describe("wla-04 onboarding and parity surfaces", () => {
     ));
   });
 
-  it("progresses through onboarding steps and runs the ingest and demo summary calls", async () => {
+  it("guides onboarding through real configuration screens before optional ingest and demo calls", async () => {
     const onDone = vi.fn();
     const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
       const path = String(input);
@@ -64,22 +71,27 @@ describe("wla-04 onboarding and parity surfaces", () => {
       </MemoryRouter>
     );
 
-    expect(screen.getByText("Choose your primary service connector")).toBeInTheDocument();
+    expect(screen.getByText("Create a client")).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Open client configuration" })).toHaveAttribute("href", "/clients?onboarding=1&step=0");
+    fireEvent.click(screen.getByRole("button", { name: "Next" }));
+    expect(await screen.findByRole("link", { name: "Open connector instance configuration" })).toHaveAttribute("href", "/integrations/connector-instances?onboarding=1&step=1");
+
+    fireEvent.click(screen.getByRole("button", { name: "Next" }));
+    expect(await screen.findByRole("link", { name: "Open mapping verification" })).toHaveAttribute("href", "/integrations/connector-instances?onboarding=1&step=2#connector-mappings-heading");
+
     fireEvent.click(screen.getByRole("button", { name: "Next" }));
     expect(await screen.findByPlaceholderText("/path/to/knowledge")).toBeInTheDocument();
     fireEvent.change(screen.getByPlaceholderText("/path/to/knowledge"), { target: { value: "/workspace/knowledge" } });
 
     fireEvent.click(screen.getByRole("button", { name: "Next" }));
-    expect(await screen.findByText("Ready to ingest from /workspace/knowledge")).toBeInTheDocument();
-
-    fireEvent.click(screen.getByRole("button", { name: "Next" }));
     expect(await screen.findByLabelText("Demo ticket id")).toBeInTheDocument();
 
+    fireEvent.click(screen.getByRole("button", { name: "Run ticket summary" }));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith("/tickets/TCK-1001/summary", expect.anything()));
     fireEvent.click(screen.getByRole("button", { name: "Complete" }));
     await waitFor(() => expect(onDone).toHaveBeenCalledOnce());
 
     expect(fetchMock).toHaveBeenCalledWith("/knowledge/ingest", expect.objectContaining({ method: "POST" }));
-    expect(fetchMock).toHaveBeenCalledWith("/tickets/TCK-1001/summary", expect.anything());
     expect(fetchMock).toHaveBeenCalledWith("/knowledge/ingest", expect.objectContaining({
       body: JSON.stringify({ path: "/workspace/knowledge", parser: "basic" })
     }));
@@ -88,11 +100,10 @@ describe("wla-04 onboarding and parity surfaces", () => {
   it("links connector setup to the real connector surface", async () => {
     render(
       <MemoryRouter>
-        <OnboardingWizard onDone={vi.fn()} onDismiss={vi.fn()} />
+        <OnboardingWizard initialStep={1} onDone={vi.fn()} onDismiss={vi.fn()} />
       </MemoryRouter>
     );
-    fireEvent.change(screen.getByRole("combobox"), { target: { value: "connectwise" } });
-    expect(screen.getByRole("link", { name: "Open connector configuration" })).toHaveAttribute("href", "/connectors");
+    expect(screen.getByRole("link", { name: "Open connector instance configuration" })).toHaveAttribute("href", "/integrations/connector-instances?onboarding=1&step=1");
   });
 
   it("renders the friendly Founder Pack install state for a 501 response", async () => {

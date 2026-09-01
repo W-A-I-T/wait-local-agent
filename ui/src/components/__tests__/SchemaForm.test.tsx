@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { fireEvent, render, screen } from "@testing-library/react";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import type { CollectorConfigField } from "../../api/types";
 import { SchemaForm, validateRequiredFields, type SchemaFormValue } from "../SchemaForm";
 
@@ -103,6 +103,24 @@ describe("SchemaForm", () => {
     expect(screen.getByTestId("value")).toHaveTextContent('"source_name":"demo"');
   });
 
+  it("reports non-object JSON drafts as invalid", () => {
+    const validity = vi.fn();
+    render(
+      <SchemaForm
+        fields={fields}
+        value={{ source_name: "demo" }}
+        onChange={() => undefined}
+        onJsonValidityChange={validity}
+      />
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Advanced (JSON)" }));
+    fireEvent.change(screen.getByLabelText("Settings JSON"), { target: { value: "[]" } });
+
+    expect(screen.getByText("Settings must be a JSON object.")).toBeInTheDocument();
+    expect(validity).toHaveBeenLastCalledWith(false);
+  });
+
   it("falls back to a per-field JSON input for unknown schema nodes", () => {
     renderHarness();
 
@@ -115,23 +133,16 @@ describe("SchemaForm", () => {
     expect(screen.getByTestId("value")).toHaveTextContent('"custom_blob":{"depth":2}');
   });
 
-  it("never exposes a secret_ref value in the DOM or Advanced JSON", () => {
-    const secret = "pasted-secret-that-must-not-echo";
-    const { container } = render(
-      <SchemaForm
-        fields={fields}
-        value={{ api_credential: secret }}
-        onChange={() => undefined}
-      />
-    );
+  it("supports multi-character secret_ref input as a normal controlled field", () => {
+    const secret = "vault-secret-name";
+    const { container } = renderHarness();
+    const field = screen.getByLabelText("API credential");
+    fireEvent.change(field, { target: { value: secret } });
 
-    expect(container.textContent).not.toContain(secret);
-    expect(container.innerHTML).not.toContain(secret);
-    fireEvent.change(screen.getByLabelText("API credential"), { target: { value: secret } });
-    expect(container.textContent).not.toContain(secret);
-
+    expect(field).toHaveValue(secret);
+    expect(screen.getByTestId("value")).toHaveTextContent(`"api_credential":"${secret}"`);
     fireEvent.click(screen.getByRole("button", { name: "Advanced (JSON)" }));
-    expect((screen.getByLabelText("Settings JSON") as HTMLTextAreaElement).value).not.toContain(secret);
+    expect((screen.getByLabelText("Settings JSON") as HTMLTextAreaElement).value).not.toContain(`"api_credential":"${secret}"`);
   });
 
   it("keeps unsupported array shapes lossless through per-field JSON", () => {

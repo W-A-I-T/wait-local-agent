@@ -1,9 +1,11 @@
-import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
+import { Fragment, useCallback, useEffect, useRef, useState, type FormEvent } from "react";
 import { apiFetch } from "../api/client";
 import type { ClientConnectorMapping, ClientDirectoryEntry, ConnectorInstance, PollSummary } from "../api/types";
 import { useDashboard } from "../app/DashboardContext";
 import { RoleGate } from "../components/RoleGate";
 import { StatusChip } from "../components/StatusChip";
+import { EmptyState } from "../components/EmptyState";
+import { LoadingState } from "../components/LoadingState";
 
 type ConnectorType = "halopsa" | "connectwise";
 
@@ -33,6 +35,14 @@ type ConnectForm = {
   connectWiseClientId: string;
 };
 
+type InstanceEditDraft = {
+  connectorType: string;
+  displayName: string;
+  clientId: string;
+  configJson: string;
+  status: string;
+};
+
 const initialConnectForm: ConnectForm = {
   connectorType: "halopsa",
   displayName: "",
@@ -49,6 +59,7 @@ const initialConnectForm: ConnectForm = {
 };
 
 const demoSecretStorageNotice = "Secret storage is unavailable in demo mode — credentials can't be saved here. In a real deployment this stores the credential in the local vault.";
+const credentialFieldHelp = "The value entered here is the credential. It is stored encrypted and never displayed again.";
 const noCompaniesNotice = "No companies returned — the provider may not be configured yet; you can enter a company ID manually below.";
 
 const initialMappingForm: MappingForm = {
@@ -58,11 +69,17 @@ const initialMappingForm: MappingForm = {
 };
 
 export function ConnectorInstances() {
-  const { role, roleResolved } = useDashboard();
+  const { role, roleResolved, refresh, refreshConfiguration = refresh } = useDashboard();
   const canView = roleResolved && role === "admin";
   const [instances, setInstances] = useState<ConnectorInstance[]>([]);
   const [waitClients, setWaitClients] = useState<ClientDirectoryEntry[]>([]);
   const [selectedInstanceId, setSelectedInstanceId] = useState<string | null>(null);
+  const [selectedInstance, setSelectedInstance] = useState<ConnectorInstance | null>(null);
+  const [instanceEditDrafts, setInstanceEditDrafts] = useState<Record<string, InstanceEditDraft>>({});
+  const [editingInstanceId, setEditingInstanceId] = useState<string | null>(null);
+  const [instanceEditErrors, setInstanceEditErrors] = useState<Record<string, string>>({});
+  const [loadingInstanceDetailId, setLoadingInstanceDetailId] = useState<string | null>(null);
+  const [savingInstanceId, setSavingInstanceId] = useState<string | null>(null);
   const [mappings, setMappings] = useState<ClientConnectorMapping[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -92,7 +109,6 @@ export function ConnectorInstances() {
     mappingRequestId.current += 1;
     setLoading(true);
     setError("");
-    setSelectedInstanceId(null);
     setMappings([]);
     setMappingsError("");
     setDiscoveredCompanies([]);
@@ -139,6 +155,7 @@ export function ConnectorInstances() {
   const selectInstance = useCallback(async (instance: ConnectorInstance) => {
     const requestId = ++mappingRequestId.current;
     setSelectedInstanceId(instance.connector_instance_id);
+    setSelectedInstance(instance);
     setMappings([]);
     setMappingsError("");
     setMappingForm(initialMappingForm);
@@ -149,12 +166,16 @@ export function ConnectorInstances() {
     setDiscoverError("");
     setMappingsLoading(true);
     try {
-      const result = await apiFetch<ClientConnectorMapping[]>(
-        `/client-connector-mappings?connector_instance_id=${encodeURIComponent(instance.connector_instance_id)}`
-      );
+      const [detail, result] = await Promise.all([
+        Promise.resolve().then(() => apiFetch<ConnectorInstance>(`/connector-instances/${encodeURIComponent(instance.connector_instance_id)}`)).catch(() => instance),
+        apiFetch<ClientConnectorMapping[]>(
+          `/client-connector-mappings?connector_instance_id=${encodeURIComponent(instance.connector_instance_id)}`
+        )
+      ]);
       if (requestId !== mappingRequestId.current) {
         return;
       }
+      setSelectedInstance(detail);
       if (!Array.isArray(result)) {
         throw new Error("The appliance returned invalid connector mapping data.");
       }
@@ -170,7 +191,83 @@ export function ConnectorInstances() {
     }
   }, []);
 
-  const selectedInstance = instances.find((instance) => instance.connector_instance_id === selectedInstanceId);
+  async function editInstance(instance: ConnectorInstance) {
+    if (loadingInstanceDetailId || savingInstanceId) return;
+    setLoadingInstanceDetailId(instance.connector_instance_id);
+    setInstanceEditErrors((current) => ({ ...current, [instance.connector_instance_id]: "" }));
+    try {
+      const detail = await apiFetch<ConnectorInstance>(`/connector-instances/${encodeURIComponent(instance.connector_instance_id)}`);
+      setInstanceEditDrafts((current) => ({ ...current, [instance.connector_instance_id]: editDraftFromInstance(detail) }));
+      setEditingInstanceId(instance.connector_instance_id);
+    } catch (requestError) {
+      setInstanceEditErrors((current) => ({
+        ...current,
+        [instance.connector_instance_id]: requestError instanceof Error ? requestError.message : "Unable to load connector instance details."
+      }));
+    } finally {
+      setLoadingInstanceDetailId(null);
+    }
+  }
+
+  function updateInstanceDraft(instanceId: string, changes: Partial<InstanceEditDraft>) {
+    setInstanceEditDrafts((current) => ({ ...current, [instanceId]: { ...current[instanceId], ...changes } }));
+    setInstanceEditErrors((current) => ({ ...current, [instanceId]: "" }));
+  }
+
+  async function saveInstance(instance: ConnectorInstance) {
+    if (savingInstanceId) return;
+    const draft = instanceEditDrafts[instance.connector_instance_id];
+    if (!draft) return;
+    const configJson = draft.configJson.trim();
+    if (!draft.displayName.trim() || !configJson) {
+      setInstanceEditErrors((current) => ({ ...current, [instance.connector_instance_id]: "Display name and configuration are required." }));
+      return;
+    }
+    try {
+      const parsedConfig = JSON.parse(configJson);
+      if (!parsedConfig || typeof parsedConfig !== "object" || Array.isArray(parsedConfig)) {
+        throw new Error("Configuration must be a JSON object.");
+      }
+    } catch (error) {
+      setInstanceEditErrors((current) => ({
+        ...current,
+        [instance.connector_instance_id]: error instanceof Error ? error.message : "Configuration must be valid JSON."
+      }));
+      return;
+    }
+    const body: Record<string, unknown> = {};
+    if (draft.connectorType !== instance.connector_type) body.connector_type = draft.connectorType;
+    if (draft.displayName.trim() !== instance.display_name) body.display_name = draft.displayName.trim();
+    if (draft.clientId.trim() !== (instance.client_id ?? "")) body.client_id = draft.clientId.trim() || null;
+    if (configJson !== instance.config_json) body.config_json = configJson;
+    if (draft.status !== instance.status) body.status = draft.status;
+    if (Object.keys(body).length === 0) {
+      setInstanceEditErrors((current) => ({ ...current, [instance.connector_instance_id]: "Change at least one field before saving." }));
+      return;
+    }
+    setSavingInstanceId(instance.connector_instance_id);
+    setInstanceEditErrors((current) => ({ ...current, [instance.connector_instance_id]: "" }));
+    try {
+      const updated = await apiFetch<ConnectorInstance>(`/connector-instances/${encodeURIComponent(instance.connector_instance_id)}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body)
+      });
+      setInstances((current) => current.map((item) => item.connector_instance_id === updated.connector_instance_id ? updated : item));
+      if (selectedInstanceId === updated.connector_instance_id) setSelectedInstance(updated);
+      setEditingInstanceId(null);
+      await refreshConfiguration();
+    } catch (requestError) {
+      setInstanceEditErrors((current) => ({
+        ...current,
+        [instance.connector_instance_id]: requestStatus(requestError) === 409
+          ? "This connector instance conflicts with another configured instance. Review the values and try again."
+          : requestError instanceof Error ? requestError.message : "Unable to save connector instance changes."
+      }));
+    } finally {
+      setSavingInstanceId(null);
+    }
+  }
 
   const discoverPath = selectedInstance ? discoveryPath(selectedInstance) : null;
 
@@ -224,7 +321,7 @@ export function ConnectorInstances() {
     setMappingError("");
     setMappingNotice("");
     try {
-      await apiFetch<ClientConnectorMapping>("/client-connector-mappings", {
+      const createdMapping = await apiFetch<ClientConnectorMapping>("/client-connector-mappings", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -234,9 +331,13 @@ export function ConnectorInstances() {
           client_id: clientId
         })
       });
-      await selectInstance(selectedInstance);
+      setMappings((current) => [
+        ...current.filter((mapping) => mapping.mapping_id !== createdMapping.mapping_id),
+        createdMapping
+      ]);
       setMappingForm(initialMappingForm);
       setMappingNotice("Mapping created.");
+      await refreshConfiguration();
     } catch (requestError) {
       setMappingError(requestError instanceof Error ? requestError.message : "Unable to create the connector mapping.");
     } finally {
@@ -252,11 +353,14 @@ export function ConnectorInstances() {
     setMappingError("");
     setMappingNotice("");
     try {
-      await apiFetch<ClientConnectorMapping>(`/client-connector-mappings/${encodeURIComponent(mappingId)}/verify`, {
+      const verifiedMapping = await apiFetch<ClientConnectorMapping>(`/client-connector-mappings/${encodeURIComponent(mappingId)}/verify`, {
         method: "POST"
       });
-      await selectInstance(selectedInstance);
+      setMappings((current) => current.map((mapping) => (
+        mapping.mapping_id === verifiedMapping.mapping_id ? verifiedMapping : mapping
+      )));
       setMappingNotice("Mapping verified.");
+      await refreshConfiguration();
     } catch (requestError) {
       setMappingError(requestError instanceof Error ? requestError.message : "Unable to verify the connector mapping.");
     } finally {
@@ -368,20 +472,21 @@ export function ConnectorInstances() {
       });
     } catch (requestError) {
       const message = requestError instanceof Error ? requestError.message : "Unable to create the connector instance.";
-      setConnectError(`The credential was stored in the vault but the connector instance could not be created: ${message}. Retry to create it (a new credential will be stored).`);
+      setConnectError(`The credential was stored in the vault but the connector instance could not be created: ${message}. Stored under reference ${credentialRef}; it is unused until an instance references it. Retry to create it (a new credential will be stored).`);
       connectBusyRef.current = false;
       setConnectBusy(false);
       return;
     }
 
     try {
-      const refreshedInstances = await loadInstances();
-      const instanceToSelect = refreshedInstances.find((instance) => instance.connector_instance_id === createdInstance.connector_instance_id);
-      if (instanceToSelect) {
-        await selectInstance(instanceToSelect);
-      }
+      setInstances((current) => [
+        ...current.filter((instance) => instance.connector_instance_id !== createdInstance.connector_instance_id),
+        createdInstance
+      ]);
+      await selectInstance(createdInstance);
       setConnectForm((current) => ({ ...initialConnectForm, connectorType: current.connectorType }));
       setConnectNotice(`Connected ${displayName}. Verify it with 'Sync now' / map its companies below.`);
+      await refreshConfiguration();
     } catch (requestError) {
       setConnectError(requestError instanceof Error ? requestError.message : "Unable to create the connector instance.");
     } finally {
@@ -416,15 +521,16 @@ export function ConnectorInstances() {
           <button className="icon-button" type="button" onClick={() => void loadInstances()} disabled={loading}>
             {loading ? "Loading…" : "Refresh"}
           </button>
+          <a className="secondary-button" href={`/?onboarding=1&step=${selectedInstance ? 2 : 1}`}>Return to setup</a>
         </section>
 
         <section className="panel" aria-labelledby="connect-system-heading">
           <div className="panel-heading">
             <div>
-              <h2 id="connect-system-heading">Connect a system</h2>
+              <h2 id="connect-system-heading">Connect a system (credentials are encrypted into the local vault under a generated reference)</h2>
               <span>Administrator setup</span>
             </div>
-            <span>Credential vaulting</span>
+            <span>Per-client instance</span>
           </div>
           <p className="screen-note">Connect a supported PSA or ticketing system. More providers are browse-only for now.</p>
           {connectNotice ? <div className="notice" role="status">{connectNotice}</div> : null}
@@ -477,29 +583,36 @@ export function ConnectorInstances() {
             {connectForm.connectorType === "halopsa" ? (
               <>
                 <label htmlFor="halopsa-client-id">Client ID
-                  <input id="halopsa-client-id" value={connectForm.haloClientId} onChange={(event) => updateConnectForm("haloClientId", event.target.value)} required />
+                  <input id="halopsa-client-id" aria-describedby="halopsa-client-id-help" value={connectForm.haloClientId} onChange={(event) => updateConnectForm("haloClientId", event.target.value)} required />
                 </label>
+                <span id="halopsa-client-id-help" className="field-help">{credentialFieldHelp}</span>
                 <label htmlFor="halopsa-client-secret">Client secret
-                  <input id="halopsa-client-secret" type="password" value={connectForm.clientSecret} onChange={(event) => updateConnectForm("clientSecret", event.target.value)} required />
+                  <input id="halopsa-client-secret" aria-describedby="halopsa-client-secret-help" type="password" value={connectForm.clientSecret} onChange={(event) => updateConnectForm("clientSecret", event.target.value)} required />
                 </label>
+                <span id="halopsa-client-secret-help" className="field-help">{credentialFieldHelp}</span>
                 <label htmlFor="halopsa-tenant">Tenant
-                  <input id="halopsa-tenant" value={connectForm.tenant} onChange={(event) => updateConnectForm("tenant", event.target.value)} required />
+                  <input id="halopsa-tenant" aria-describedby="halopsa-tenant-help" value={connectForm.tenant} onChange={(event) => updateConnectForm("tenant", event.target.value)} required />
                 </label>
+                <span id="halopsa-tenant-help" className="field-help">{credentialFieldHelp}</span>
               </>
             ) : (
               <>
                 <label htmlFor="connectwise-company">Company
-                  <input id="connectwise-company" value={connectForm.company} onChange={(event) => updateConnectForm("company", event.target.value)} required />
+                  <input id="connectwise-company" aria-describedby="connectwise-company-help" value={connectForm.company} onChange={(event) => updateConnectForm("company", event.target.value)} required />
                 </label>
+                <span id="connectwise-company-help" className="field-help">{credentialFieldHelp}</span>
                 <label htmlFor="connectwise-public-key">Public key
-                  <input id="connectwise-public-key" value={connectForm.publicKey} onChange={(event) => updateConnectForm("publicKey", event.target.value)} required />
+                  <input id="connectwise-public-key" aria-describedby="connectwise-public-key-help" value={connectForm.publicKey} onChange={(event) => updateConnectForm("publicKey", event.target.value)} required />
                 </label>
+                <span id="connectwise-public-key-help" className="field-help">{credentialFieldHelp}</span>
                 <label htmlFor="connectwise-private-key">Private key
-                  <input id="connectwise-private-key" type="password" value={connectForm.privateKey} onChange={(event) => updateConnectForm("privateKey", event.target.value)} required />
+                  <input id="connectwise-private-key" aria-describedby="connectwise-private-key-help" type="password" value={connectForm.privateKey} onChange={(event) => updateConnectForm("privateKey", event.target.value)} required />
                 </label>
+                <span id="connectwise-private-key-help" className="field-help">{credentialFieldHelp}</span>
                 <label htmlFor="connectwise-client-id">Client ID
-                  <input id="connectwise-client-id" value={connectForm.connectWiseClientId} onChange={(event) => updateConnectForm("connectWiseClientId", event.target.value)} required />
+                  <input id="connectwise-client-id" aria-describedby="connectwise-client-id-help" value={connectForm.connectWiseClientId} onChange={(event) => updateConnectForm("connectWiseClientId", event.target.value)} required />
                 </label>
+                <span id="connectwise-client-id-help" className="field-help">{credentialFieldHelp}</span>
               </>
             )}
 
@@ -514,16 +627,7 @@ export function ConnectorInstances() {
           </div>
         ) : null}
 
-        {loading ? (
-          <section className="panel" aria-busy="true">
-            <p className="screen-note">Loading Connector Instances…</p>
-          </section>
-        ) : instances.length === 0 ? (
-          <section className="panel empty-state">
-            <h3>No connector instances are configured.</h3>
-            <p>Configured connector instances will appear here for administrator review.</p>
-          </section>
-        ) : (
+        {loading ? <LoadingState label="Loading Connector Instances…" /> : instances.length === 0 ? <EmptyState title="No connector instances are configured." why="Configured connector instances will appear here for administrator review." /> : (
           <section className="panel" aria-labelledby="connector-instances-heading">
             <div className="panel-heading">
               <div>
@@ -541,12 +645,14 @@ export function ConnectorInstances() {
                     <th scope="col">Status</th>
                     <th scope="col">Owning client</th>
                     <th scope="col">Credential</th>
+                    <th scope="col">Actions</th>
                   </tr>
                 </thead>
                 <tbody>
                   {instances.map((instance) => {
                     const selected = instance.connector_instance_id === selectedInstanceId;
                     return (
+                      <Fragment key={instance.connector_instance_id}>
                       <tr key={instance.connector_instance_id}>
                         <td>
                           <button
@@ -563,7 +669,52 @@ export function ConnectorInstances() {
                         <td><StatusChip status={instance.status} /></td>
                         <td>{instance.client_id || "Unassigned"}</td>
                         <td><PresenceBadge configured={Boolean(instance.credential_ref)} /></td>
+                        <td>
+                          <button className="icon-button" type="button" onClick={() => void editInstance(instance)} disabled={loadingInstanceDetailId === instance.connector_instance_id || savingInstanceId !== null}>
+                            {loadingInstanceDetailId === instance.connector_instance_id ? "Loading…" : "Edit"}
+                          </button>
+                        </td>
                       </tr>
+                      {editingInstanceId === instance.connector_instance_id && instanceEditDrafts[instance.connector_instance_id] ? (
+                        <tr key={`${instance.connector_instance_id}-edit`}>
+                          <td colSpan={6}>
+                            <form className="playbook-edit-form" onSubmit={(event) => { event.preventDefault(); void saveInstance(instance); }}>
+                              <div className="grid">
+                                <label>Connector type
+                                  <input value={instanceEditDrafts[instance.connector_instance_id].connectorType} onChange={(event) => updateInstanceDraft(instance.connector_instance_id, { connectorType: event.target.value })} />
+                                </label>
+                                <label>Display name
+                                  <input aria-label="Edit connector display name" value={instanceEditDrafts[instance.connector_instance_id].displayName} onChange={(event) => updateInstanceDraft(instance.connector_instance_id, { displayName: event.target.value })} />
+                                </label>
+                                <label>WAIT client (optional)
+                                  <select value={instanceEditDrafts[instance.connector_instance_id].clientId} onChange={(event) => updateInstanceDraft(instance.connector_instance_id, { clientId: event.target.value })}>
+                                    <option value="">No WAIT client association</option>
+                                    {waitClients.map((client) => <option key={client.client_id} value={client.client_id}>{client.name} ({client.client_id})</option>)}
+                                  </select>
+                                </label>
+                                <label>Status
+                                  <select value={instanceEditDrafts[instance.connector_instance_id].status} onChange={(event) => updateInstanceDraft(instance.connector_instance_id, { status: event.target.value })}>
+                                    <option value="active">Active</option>
+                                    <option value="inactive">Inactive</option>
+                                    <option value="disabled">Disabled</option>
+                                    {instance.status === "error" ? <option value="error">Error</option> : null}
+                                  </select>
+                                </label>
+                              </div>
+                              <label>Configuration JSON
+                                <textarea rows={5} value={instanceEditDrafts[instance.connector_instance_id].configJson} onChange={(event) => updateInstanceDraft(instance.connector_instance_id, { configJson: event.target.value })} spellCheck={false} />
+                              </label>
+                              <p className="screen-note">Credential references are never editable or displayed here. Store a replacement credential separately before changing its reference.</p>
+                              {instanceEditErrors[instance.connector_instance_id] ? <p className="inline-error" role="alert">{instanceEditErrors[instance.connector_instance_id]}</p> : null}
+                              <div className="template-actions">
+                                <button type="submit" disabled={savingInstanceId === instance.connector_instance_id}>{savingInstanceId === instance.connector_instance_id ? "Saving…" : "Save changes"}</button>
+                                <button type="button" className="icon-button" disabled={savingInstanceId === instance.connector_instance_id} onClick={() => setEditingInstanceId(null)}>Cancel</button>
+                              </div>
+                            </form>
+                          </td>
+                        </tr>
+                      ) : null}
+                      </Fragment>
                     );
                   })}
                 </tbody>
@@ -589,6 +740,12 @@ export function ConnectorInstances() {
               </button>
             ) : <span>No instance selected</span>}
           </div>
+          {selectedInstance ? <div className="event-row" aria-label="Connector instance detail">
+            <span><strong>{selectedInstance.connector_type}</strong> · {selectedInstance.connector_instance_id}</span>
+            <span>Status: {selectedInstance.status}</span>
+            <span>Client: {selectedInstance.client_id || "Unassigned"}</span>
+            <span>Credential: {selectedInstance.credential_ref ? "Configured" : "Not configured"}</span>
+          </div> : null}
 
           {!selectedInstance ? (
             <p className="screen-note">Select a connector instance above to load its external-company to WAIT-client mappings.</p>
@@ -762,6 +919,16 @@ function slug(value: string): string {
 
 function PresenceBadge({ configured }: { configured: boolean }) {
   return <span className={`status-chip ${configured ? "ok" : "neutral"}`}>{configured ? "Configured" : "Not configured"}</span>;
+}
+
+function editDraftFromInstance(instance: ConnectorInstance): InstanceEditDraft {
+  return {
+    connectorType: instance.connector_type,
+    displayName: instance.display_name,
+    clientId: instance.client_id ?? "",
+    configJson: instance.config_json,
+    status: instance.status
+  };
 }
 
 function VerificationBadge({ verified }: { verified: boolean }) {

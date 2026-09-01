@@ -66,6 +66,11 @@ describe("App", () => {
     renderApp();
 
     expect(await screen.findByRole("heading", { name: "WAIT AI Solutions Architect" })).toBeInTheDocument();
+    expect(await screen.findByText("Local mode · full access")).toBeInTheDocument();
+    expect(screen.getByLabelText(/API token/)).toHaveAttribute("placeholder", "Paste token");
+    fireEvent.click(screen.getByRole("button", { name: "Explain local mode" }));
+    expect(screen.getByText(/no API token configured/i)).toBeInTheDocument();
+    expect(screen.getByText("WAIT_ADMIN_TOKEN")).toBeInTheDocument();
     expect(screen.getByText("Local-first solution design, governed execution, and MSP operations.")).toBeInTheDocument();
     expect(screen.getByDisplayValue("local-appliance")).toHaveAttribute("autocomplete", "username");
     expect((await screen.findAllByText("HALO-1")).length).toBeGreaterThan(0);
@@ -173,6 +178,7 @@ describe("App", () => {
   });
 
   it("does not present onboarding as demo-ready when dashboard access is denied", async () => {
+    window.localStorage.setItem("wait-local-agent-api-token", "rejected-token");
     vi.stubGlobal("fetch", vi.fn(() => new Response(JSON.stringify({ detail: "invalid token" }), {
       status: 401,
       headers: { "Content-Type": "application/json" }
@@ -180,6 +186,10 @@ describe("App", () => {
 
     renderApp();
 
+    expect(await screen.findByText("Token rejected")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Explain rejected token" }));
+    expect(screen.getByText("The saved token was not accepted. Clear Token resets it.")).toBeInTheDocument();
+    expect(screen.queryByText("rejected-token")).not.toBeInTheDocument();
     expect(await screen.findByRole("status")).toHaveTextContent("You do not have permission to do that.");
     expect(screen.getByText("access unavailable")).toBeInTheDocument();
     expect(screen.queryByText("demo-ready")).not.toBeInTheDocument();
@@ -208,6 +218,16 @@ describe("App", () => {
     expect(authRoleCall).toBeDefined();
     expect(new Headers(authRoleCall?.[1]?.headers).get("Authorization")).toBe("Bearer viewer-token");
   });
+
+  it("reports the resolved role after saving a token", async () => {
+    renderApp();
+
+    const tokenInput = await screen.findByLabelText(/API token/);
+    fireEvent.change(tokenInput, { target: { value: "new-token" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save Token" }));
+
+    expect(await screen.findByRole("status")).toHaveTextContent("API token saved. Access resolved as admin.");
+  });
 });
 
 function renderApp() {
@@ -225,7 +245,7 @@ async function mockFetch(
 ): Promise<Response> {
   const path = String(input);
   if (path === "/auth/role") {
-    return json({ role, api_auth_required: false, demo_mode: true });
+    return json({ role, api_auth_required: role !== "admin", demo_mode: false });
   }
   if (path === "/connectors") {
     return json([

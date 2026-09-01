@@ -19,6 +19,19 @@ an existing vault that was created with a local key file unless that vault has
 been explicitly migrated to the external key; otherwise the existing entries
 will not decrypt.
 
+To migrate an existing local-key vault, set the externally managed key and run
+the explicit migration command. It decrypts the existing payload, re-encrypts
+it with `WAIT_VAULT_KEY`, and retains `vault.key` so old key material is never
+silently deleted or overwritten:
+
+```bash
+export WAIT_VAULT_KEY='[operator-supplied Fernet key]'
+wait-local-agent secrets migrate-external-key
+```
+
+The command prompts for the existing key without echoing it. Back up both key
+materials before migration and verify `secrets list` afterward.
+
 Encrypted backups require a vault-backed `WAIT_BACKUP_FERNET_KEY`:
 
 ```bash

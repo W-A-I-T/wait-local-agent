@@ -47,6 +47,7 @@ def test_audit_export_cli_json_and_csv(monkeypatch, tmp_path) -> None:
 
 def test_secret_vault_cli_commands(monkeypatch, tmp_path) -> None:
     monkeypatch.setenv("WAIT_VAULT_PATH", str(tmp_path / "vault"))
+    monkeypatch.setenv("WAIT_DEMO_MODE", "true")
     runner = CliRunner()
 
     initialized = runner.invoke(app, ["secrets", "init"])

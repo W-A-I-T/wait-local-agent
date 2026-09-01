@@ -2,7 +2,9 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useRef, use
 import { apiFetch } from "../api/client";
 import {
   loadStoredApiToken,
-  persistApiToken
+  loadStoredSelectedClientId,
+  persistApiToken,
+  persistSelectedClientId
 } from "../api/headers";
 import type {
   ApprovalRequest,
@@ -33,6 +35,57 @@ const defaultWriteHealth: HaloReadResult = {
   message: "Loading HaloPSA write health.",
   count: 0
 };
+const failedWriteHealth: HaloReadResult = {
+  status: "failed",
+  message: "Unable to verify HaloPSA write health.",
+  count: 0
+};
+
+export type WriteHealthPosture = {
+  label: string;
+  tone: "neutral" | "warning" | "success";
+  icon: "info" | "warning" | "success";
+};
+
+export function getWriteHealthPosture(
+  status: string | null | undefined,
+  resolved: boolean
+): WriteHealthPosture {
+  if (!resolved) {
+    return { label: "Checking write status…", tone: "neutral", icon: "info" };
+  }
+  if (status === "ready") {
+    return { label: "Live writes ready", tone: "success", icon: "success" };
+  }
+  if (status === "not_configured") {
+    return { label: "No PSA write path configured", tone: "neutral", icon: "info" };
+  }
+  if (status === "failed") {
+    return { label: "Write path error", tone: "warning", icon: "warning" };
+  }
+  if (status === "blocked") {
+    return { label: "Safe Mode · writes disabled", tone: "neutral", icon: "info" };
+  }
+  return { label: "Write path error", tone: "warning", icon: "warning" };
+}
+
+export type CapabilityGrantView = {
+  capability_key: string;
+  client_id: string | null;
+};
+
+export type AuthState = "local-open" | "demo" | "authenticated" | "invalid-token";
+
+type AuthRefreshResult = {
+  authState: AuthState | null;
+  role: AuthRoleResponse["role"] | null;
+};
+
+type EffectiveCapabilityResponse = {
+  principal_id: string | null;
+  supported_capabilities: string[];
+  grants: CapabilityGrantView[];
+};
 
 type DashboardContextValue = {
   actionTypes: string[];
@@ -41,10 +94,16 @@ type DashboardContextValue = {
   selectedClientId: string;
   clients: ClientDirectoryEntry[];
   role: AuthRoleResponse["role"];
+  endUserSupportEnabled: boolean;
+  authState: AuthState | null;
+  capabilityGrants: CapabilityGrantView[];
+  capabilityResolved: boolean;
+  capabilityError: string;
   connectors: ConnectorStatus[];
   haloConnector?: ConnectorStatus;
   huduConnector?: ConnectorStatus;
   writeHealth: HaloReadResult;
+  writeHealthResolved: boolean;
   liveWritesReady: boolean;
   haloTickets: HaloTicket[];
   approvalRequests: ApprovalRequest[];
@@ -66,7 +125,8 @@ type DashboardContextValue = {
   configurationSteps: ReadinessStep[];
   setApiToken: (token: string) => void;
   setSelectedClientId: (clientId: string) => void;
-  refresh: () => Promise<void>;
+  refresh: () => Promise<AuthRefreshResult | null>;
+  refreshConfiguration: () => Promise<void>;
   saveApiToken: () => Promise<void>;
   clearApiToken: () => Promise<void>;
   selectTicket: (ticketId: string) => void;
@@ -91,6 +151,12 @@ export function executeEndpointFor(actionType: string): string | null {
   if (actionType.startsWith("m365.")) {
     return "/connectors/m365/approval-requests/{id}/execute";
   }
+  if (actionType === "power_platform.solution_stage") {
+    return "/consultant/solutions/deployment-approvals/{id}/execute";
+  }
+  if (actionType === "power_platform.solution_rollback") {
+    return "/consultant/solutions/rollback-approvals/{id}/execute";
+  }
   return null;
 }
 
@@ -99,12 +165,18 @@ const DashboardContext = createContext<DashboardContextValue | undefined>(undefi
 export function DashboardProvider({ children }: { children: ReactNode }) {
   const [apiToken, setApiToken] = useState(() => loadStoredApiToken());
   const [role, setRole] = useState<AuthRoleResponse["role"]>("viewer");
+  const [endUserSupportEnabled, setEndUserSupportEnabled] = useState(false);
+  const [authState, setAuthState] = useState<AuthState | null>(null);
   const [clientId, setClientId] = useState("");
-  const [selectedClientId, setSelectedClientId] = useState("");
+  const [selectedClientId, setSelectedClientIdState] = useState(() => loadStoredSelectedClientId());
   const [clients, setClients] = useState<ClientDirectoryEntry[]>([]);
   const [roleResolved, setRoleResolved] = useState(false);
+  const [capabilityGrants, setCapabilityGrants] = useState<CapabilityGrantView[]>([]);
+  const [capabilityResolved, setCapabilityResolved] = useState(false);
+  const [capabilityError, setCapabilityError] = useState("");
   const [connectors, setConnectors] = useState<ConnectorStatus[]>([]);
   const [writeHealth, setWriteHealth] = useState<HaloReadResult>(defaultWriteHealth);
+  const [writeHealthResolved, setWriteHealthResolved] = useState(false);
   const [haloTickets, setHaloTickets] = useState<HaloTicket[]>([]);
   const [approvalRequests, setApprovalRequests] = useState<ApprovalRequest[]>([]);
   const [eventDeliveries, setEventDeliveries] = useState<EventDelivery[]>([]);
@@ -124,16 +196,28 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
     selectedTicketIdRef.current = selectedTicketId;
   }, [selectedTicketId]);
 
-  const refresh = useCallback(async () => {
+  const setSelectedClientId = useCallback((nextClientId: string) => {
+    const normalized = nextClientId.trim();
+    setSelectedClientIdState(normalized);
+    persistSelectedClientId(normalized);
+  }, []);
+
+  const refresh = useCallback(async (): Promise<AuthRefreshResult | null> => {
     setRefreshNonce((nonce) => nonce + 1);
     const roleRequestId = ++roleRequestIdRef.current;
     setLoading(true);
     setRole("viewer");
+    setEndUserSupportEnabled(false);
+    setAuthState(null);
     setRoleResolved(false);
+    setCapabilityGrants([]);
+    setCapabilityResolved(false);
+    setCapabilityError("");
+    setWriteHealthResolved(false);
     try {
       const auth = await apiFetch<AuthRoleResponse>("/auth/role");
       if (roleRequestId !== roleRequestIdRef.current) {
-        return;
+        return null;
       }
       const results = await Promise.allSettled([
         apiFetch<ConnectorStatus[]>("/connectors"),
@@ -143,27 +227,46 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
         apiFetch<EventDelivery[]>("/automation/event-deliveries"),
         apiFetch<EventHistory[]>("/event-history"),
         apiFetch<WorkflowRun[]>("/workflow-runs"),
-        apiFetch<ClientDirectoryEntry[]>("/clients")
+        apiFetch<ClientDirectoryEntry[]>("/clients"),
+        apiFetch<EffectiveCapabilityResponse>("/packs/microsoft-admin/access/effective")
       ]);
       const errors = results
+        .slice(0, 8)
         .filter((result): result is PromiseRejectedResult => result.status === "rejected")
         .map((result) => result.reason instanceof Error ? result.reason.message : "Dashboard data unavailable.");
       const connectorRows = settledValue(results[0] as PromiseSettledResult<ConnectorStatus[]>, []);
-      const writeState = settledValue(results[1] as PromiseSettledResult<HaloReadResult>, defaultWriteHealth);
+      const writeState = settledValue(results[1] as PromiseSettledResult<HaloReadResult>, failedWriteHealth);
       const ticketResponse = settledValue(results[2] as PromiseSettledResult<HaloTicketsResponse>, {
         result: { status: "blocked", message: "Tickets unavailable.", count: 0 },
         items: []
       });
       const clientRows = settledValue(results[7] as PromiseSettledResult<ClientDirectoryEntry[]>, []);
+      const capabilityResult = results[8] as PromiseSettledResult<EffectiveCapabilityResponse>;
 
       if (roleRequestId !== roleRequestIdRef.current) {
-        return;
+        return null;
       }
+      const nextAuthState = deriveAuthState(auth, loadStoredApiToken());
       setRole(auth.role);
+      setEndUserSupportEnabled(auth.end_user_support_enabled === true);
+      setAuthState(nextAuthState);
       setClientId(auth.client_id ?? "");
       setRoleResolved(true);
+      if (capabilityResult.status === "fulfilled") {
+        setCapabilityGrants(Array.isArray(capabilityResult.value?.grants) ? capabilityResult.value.grants : []);
+        setCapabilityError("");
+      } else {
+        setCapabilityGrants([]);
+        setCapabilityError(
+          capabilityResult.reason instanceof Error
+            ? capabilityResult.reason.message
+            : "Microsoft Admin access could not be verified."
+        );
+      }
+      setCapabilityResolved(true);
       setConnectors(asArray(connectorRows));
       setWriteHealth(writeState);
+      setWriteHealthResolved(true);
       setHaloTickets(asArray(ticketResponse.items));
       setApprovalRequests(asArray(settledValue(results[3] as PromiseSettledResult<ApprovalRequest[]>, [])));
       setEventDeliveries(asArray(settledValue(results[4] as PromiseSettledResult<EventDelivery[]>, [])));
@@ -175,13 +278,21 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
       if (!selectedTicketIdRef.current && ticketResponse.items[0]) {
         setSelectedTicketId(ticketResponse.items[0].id);
       }
+      return { authState: nextAuthState, role: auth.role };
     } catch (error) {
       if (roleRequestId !== roleRequestIdRef.current) {
-        return;
+        return null;
       }
       setRole("viewer");
+      setEndUserSupportEnabled(false);
       setRoleResolved(false);
+      const nextAuthState = hasStoredApiToken() && isUnauthorized(error) ? "invalid-token" : null;
+      setAuthState(nextAuthState);
+      setCapabilityGrants([]);
+      setCapabilityResolved(false);
+      setCapabilityError("");
       setStatusMessage(error instanceof Error ? error.message : "Unable to refresh dashboard.");
+      return { authState: nextAuthState, role: null };
     } finally {
       if (roleRequestId === roleRequestIdRef.current) {
         setLoading(false);
@@ -195,8 +306,16 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
 
   const saveApiToken = useCallback(async () => {
     persistApiToken(apiToken);
+    const result = await refresh();
+    if (result?.authState === "invalid-token") {
+      setStatusMessage("Token rejected. Clear Token resets it.");
+      return;
+    }
+    if (result?.role) {
+      setStatusMessage(`API token saved. Access resolved as ${result.role}.`);
+      return;
+    }
     setStatusMessage("API token saved for dashboard requests.");
-    await refresh();
   }, [apiToken, refresh]);
 
   const clearApiToken = useCallback(async () => {
@@ -318,10 +437,16 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
       selectedClientId,
       clients,
       role,
+      endUserSupportEnabled,
+      authState,
+      capabilityGrants,
+      capabilityResolved,
+      capabilityError,
       connectors,
       haloConnector,
       huduConnector,
       writeHealth,
+      writeHealthResolved,
       liveWritesReady: writeHealth.status === "ready",
       haloTickets,
       approvalRequests,
@@ -336,14 +461,15 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
       roleResolved,
       busyId,
       selectedTicketId,
-      canWrite: roleResolved && role !== "viewer",
-      isAdmin: roleResolved && role === "admin",
+      canWrite: roleResolved && (authState === "local-open" || role !== "viewer"),
+      isAdmin: roleResolved && (authState === "local-open" || role === "admin"),
       isConfigured: configuration.isConfigured,
       configurationLoading: configuration.loading,
       configurationSteps: configuration.steps,
       setApiToken,
       setSelectedClientId,
       refresh,
+      refreshConfiguration: configuration.refresh,
       saveApiToken,
       clearApiToken,
       selectTicket,
@@ -361,10 +487,14 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
     };
   }, [
     apiToken,
+    authState,
     clientId,
     clients,
     approvalRequests,
     busyId,
+    capabilityError,
+    capabilityGrants,
+    capabilityResolved,
     clearApiToken,
     configuration.isConfigured,
     configuration.loading,
@@ -375,6 +505,7 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
     eventHistory,
     executeApproval,
     eventDeliveries,
+    endUserSupportEnabled,
     haloTickets,
     loading,
     refreshNonce,
@@ -392,7 +523,8 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
     statusMessage,
     updateApproval,
     workflowRuns,
-    writeHealth
+    writeHealth,
+    writeHealthResolved
   ]);
 
   return <DashboardContext.Provider value={value}>{children}</DashboardContext.Provider>;
@@ -412,6 +544,27 @@ function settledValue<T>(result: PromiseSettledResult<T>, fallback: T): T {
 
 function asArray<T>(value: T[] | unknown): T[] {
   return Array.isArray(value) ? value : [];
+}
+
+function hasStoredApiToken(): boolean {
+  return loadStoredApiToken().trim().length > 0;
+}
+
+function isUnauthorized(error: unknown): boolean {
+  return typeof error === "object"
+    && error !== null
+    && "status" in error
+    && error.status === 401;
+}
+
+function deriveAuthState(auth: AuthRoleResponse, storedToken: string): AuthState | null {
+  if (auth.demo_mode === true) {
+    return "demo";
+  }
+  if (auth.api_auth_required === false) {
+    return "local-open";
+  }
+  return storedToken.trim() ? "authenticated" : null;
 }
 
 export { defaultFieldText };

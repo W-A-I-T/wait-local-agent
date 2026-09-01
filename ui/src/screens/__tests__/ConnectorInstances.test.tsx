@@ -9,7 +9,7 @@ vi.mock("../../api/client", () => ({
 }));
 
 vi.mock("../../app/DashboardContext", () => ({
-  useDashboard: () => ({ role: "admin", roleResolved: true })
+  useDashboard: () => ({ role: "admin", roleResolved: true, refresh: vi.fn() })
 }));
 
 const mockedApiFetch = vi.mocked(apiFetch);
@@ -208,8 +208,8 @@ describe("ConnectorInstances company mappings", () => {
       external_company_name: "Acme Provider",
       client_id: "acme"
     });
-    expect(await screen.findByText("Acme Provider")).toBeInTheDocument();
-    expect(mappingListCalls).toBeGreaterThan(1);
+    expect(screen.getAllByText("Acme Provider").length).toBeGreaterThan(0);
+    expect(mappingListCalls).toBe(1);
   });
 
   it("verifies an unverified mapping and shows the verified status chip", async () => {
@@ -242,7 +242,7 @@ describe("ConnectorInstances company mappings", () => {
 
     expect(await screen.findByText("Verified")).toBeInTheDocument();
     expect(mockedApiFetch).toHaveBeenCalledWith("/client-connector-mappings/mapping-1/verify", { method: "POST" });
-    expect(mappingListCalls).toBeGreaterThan(1);
+    expect(mappingListCalls).toBe(1);
   });
 
   it("uses the ConnectWise endpoint and hides discovery for unsupported connector types", async () => {
@@ -293,7 +293,7 @@ describe("ConnectorInstances connect flow", () => {
   });
 
   async function selectConnectWise() {
-    await screen.findByRole("heading", { name: "Connect a system" });
+    await screen.findByRole("heading", { name: /Connect a system/ });
     fireEvent.change(screen.getByLabelText("Provider"), { target: { value: "connectwise" } });
   }
 
@@ -312,6 +312,7 @@ describe("ConnectorInstances connect flow", () => {
     render(<ConnectorInstances />);
 
     expect(await screen.findByLabelText("Client secret")).toHaveAttribute("type", "password");
+    expect(screen.getAllByText("The value entered here is the credential. It is stored encrypted and never displayed again.")).toHaveLength(3);
     expect(screen.getByLabelText("Base URL")).toBeInTheDocument();
     expect(screen.queryByLabelText(/^API version/)).not.toBeInTheDocument();
     expect(screen.queryByLabelText("Private key")).not.toBeInTheDocument();
@@ -430,7 +431,7 @@ describe("ConnectorInstances connect flow", () => {
     fireEvent.click(screen.getByRole("button", { name: "Connect system" }));
 
     expect(await screen.findByRole("alert")).toHaveTextContent(
-      "The credential was stored in the vault but the connector instance could not be created: instance creation failed. Retry to create it (a new credential will be stored)."
+      "The credential was stored in the vault but the connector instance could not be created: instance creation failed. Stored under reference connector:halopsa:orphan-halo:123e4567-e89b-12d3-a456-426614174001; it is unused until an instance references it. Retry to create it (a new credential will be stored)."
     );
     expect(mockedApiFetch.mock.calls.filter(([path, init]) => path === "/secrets" && init?.method === "POST")).toHaveLength(1);
     expect(mockedApiFetch.mock.calls.filter(([path, init]) => path === "/connector-instances" && init?.method === "POST")).toHaveLength(1);

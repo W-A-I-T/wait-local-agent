@@ -1,4 +1,4 @@
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { ApiRequestError, apiFetch } from "../../api/client";
 import {
@@ -19,6 +19,7 @@ const steps: WizardStep[] = [
   { id: "scan", title: "Scan your project" },
   { id: "preview", title: "Review what is shared" },
   { id: "upload", title: "Confirm upload" },
+  { id: "launch", title: "Launch scan" },
   { id: "results", title: "View results" }
 ];
 
@@ -34,6 +35,10 @@ export function FounderJourney() {
   const [preview, setPreview] = useState<FounderUploadPreview | null>(null);
   const [launchPassport, setLaunchPassport] = useState<LaunchPassportStatus | null>(null);
   const [results, setResults] = useState<FounderResults | null>(null);
+  const [preflight, setPreflight] = useState<unknown>(null);
+  const [vaultState, setVaultState] = useState<unknown>(null);
+  const [launchResult, setLaunchResult] = useState<Record<string, unknown> | null>(null);
+  const [confirmingLaunch, setConfirmingLaunch] = useState(false);
   const [connectionNotConfigured, setConnectionNotConfigured] = useState(false);
   const [missingPack, setMissingPack] = useState(false);
   const accessRole = role ?? (isAdmin ? "admin" : "viewer");
@@ -45,6 +50,10 @@ export function FounderJourney() {
     setPreviewedArtifactId("");
     setLaunchPassport(null);
     setResults(null);
+    setPreflight(null);
+    setVaultState(null);
+    setLaunchResult(null);
+    setConfirmingLaunch(false);
     setConnectionNotConfigured(false);
     setMissingPack(false);
   }, []);
@@ -74,6 +83,16 @@ export function FounderJourney() {
     if (/not configured/.test(message)) {
       setConnectionNotConfigured(true);
       setStatusMessage("Launch Passport is not connected. This is optional; connect a project in Settings when the connection service is available.");
+      return;
+    }
+    if (/insufficient_credits|402|credit/.test(message)) {
+      setStatusMessage("Launch scan needs more Launch Passport credits. Add credits there, then try again.");
+      setStep(3);
+      return;
+    }
+    if (/rate_limited|429|rate limit/.test(message)) {
+      setStatusMessage("Launch scan is temporarily rate limited. Wait a moment, then try again.");
+      setStep(3);
       return;
     }
     if (/preview|required|stale/.test(message)) {
@@ -176,13 +195,46 @@ export function FounderJourney() {
         request<unknown>("/founder/lp-status"),
         request<unknown>("/founder/results")
       ]);
-      const status = projectLaunchPassportStatus(statusBody);
-      const latestResults = projectFounderResults(resultsBody);
-      setLaunchPassport(status);
-      setResults(latestResults);
+      setLaunchPassport(projectLaunchPassportStatus(statusBody));
+      setResults(projectFounderResults(resultsBody));
+      setLaunchResult(null);
       setConnectionNotConfigured(false);
       setStatusMessage(`Upload ${uploadProgressLabel(uploaded.status)}. Your latest result is ready to review.`);
       setStep(3);
+    } finally {
+      setIsBusy(false);
+    }
+  }
+
+  useEffect(() => {
+    if (step !== 3) return;
+    let cancelled = false;
+    setIsBusy(true);
+    void Promise.all([
+      request<unknown>("/founder/preflight/latest"),
+      request<unknown>("/founder/vault")
+    ]).then(([latestPreflight, latestVault]) => {
+      if (cancelled) return;
+      setPreflight(latestPreflight);
+      setVaultState(latestVault);
+    }).finally(() => {
+      if (!cancelled) setIsBusy(false);
+    });
+    return () => { cancelled = true; };
+  }, [step]);
+
+  async function launchScan(): Promise<void> {
+    setConfirmingLaunch(false);
+    setIsBusy(true);
+    try {
+      const body = await request<unknown>("/founder/launch-scan", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(artifactId ? { artifact_id: artifactId } : {})
+      });
+      if (!body || typeof body !== "object" || Array.isArray(body)) return;
+      setLaunchResult(body as Record<string, unknown>);
+      setStatusMessage("Launch scan request accepted. Continue to results when the latest state is ready.");
     } finally {
       setIsBusy(false);
     }
@@ -199,6 +251,16 @@ export function FounderJourney() {
     }
     if (step === 2) {
       await submitUpload();
+      return;
+    }
+    if (step === 3 && launchResult) {
+      const [statusBody, resultsBody] = await Promise.all([
+        request<unknown>("/founder/lp-status"),
+        request<unknown>("/founder/results")
+      ]);
+      setLaunchPassport(projectLaunchPassportStatus(statusBody));
+      setResults(projectFounderResults(resultsBody));
+      setStep(4);
     }
   }
 
@@ -222,8 +284,8 @@ export function FounderJourney() {
 
         <Wizard
           activeStep={step}
-          canContinue={!isBusy && (step !== 1 || previewedArtifactId === artifactId) && (step !== 2 || previewedArtifactId === artifactId)}
-          canSubmit={step === 3 && !isBusy}
+          canContinue={!isBusy && (step !== 1 || previewedArtifactId === artifactId) && (step !== 2 || previewedArtifactId === artifactId) && (step !== 3 || launchResult !== null)}
+          canSubmit={step === 4 && !isBusy}
           isBusy={isBusy}
           onBack={() => setStep((current) => Math.max(0, current - 1))}
           onNext={() => void handleNext()}
@@ -240,7 +302,7 @@ export function FounderJourney() {
           progressLabel={statusMessage}
           steps={steps}
           title="Prepare your Launch Passport upload"
-          nextLabel={step === 1 ? "Continue to confirmation" : step === 2 ? "Upload reviewed package" : "Next"}
+          nextLabel={step === 1 ? "Continue to confirmation" : step === 2 ? "Upload reviewed package" : step === 3 ? "Continue to results" : "Next"}
           submitLabel="Finish"
         >
           {step === 0 ? (
@@ -295,6 +357,41 @@ export function FounderJourney() {
 
           {step === 3 ? (
             <div className="draft-form">
+              <h3>Launch scan</h3>
+              <p>Review the latest preflight and vault state before asking Launch Passport to start a scan.</p>
+              <div className="smart-action-schema-grid">
+                <section>
+                  <h4>Latest preflight</h4>
+                  {preflight === null ? <p className="screen-note">Preflight state is not available yet.</p> : <pre className="smart-action-code"><code>{JSON.stringify(safeFounderState(preflight), null, 2)}</code></pre>}
+                </section>
+                <section>
+                  <h4>Vault state</h4>
+                  {vaultState === null ? <p className="screen-note">Vault state is not available yet.</p> : <pre className="smart-action-code"><code>{JSON.stringify(safeFounderState(vaultState), null, 2)}</code></pre>}
+                </section>
+              </div>
+              {launchResult ? <div className="connection-state" role="status"><strong>Launch result</strong><pre className="smart-action-code"><code>{JSON.stringify(launchResult, null, 2)}</code></pre></div> : null}
+              {results ? (
+                <section aria-labelledby="founder-current-results-heading">
+                  <h3 id="founder-current-results-heading">Results</h3>
+                  <StatusChip status={launchPassport?.status} />
+                  {results.latest_report.available ? <p>Your latest report reference is available for this project.</p> : <p className="screen-note">No latest report reference was returned yet.</p>}
+                  <p className="screen-note">{results.scans.count} scan record{results.scans.count === 1 ? "" : "s"} available.</p>
+                </section>
+              ) : null}
+              {confirmingLaunch ? (
+                <div className="notice confirm-panel" role="alertdialog" aria-label="Confirm launch scan">
+                  <p>Run the Launch Passport scan for this reviewed project package?</p>
+                  <div className="row-actions">
+                    <button type="button" onClick={() => void launchScan()}>Yes, run launch scan</button>
+                    <button type="button" className="icon-button" onClick={() => setConfirmingLaunch(false)}>Cancel</button>
+                  </div>
+                </div>
+              ) : <button type="button" onClick={() => setConfirmingLaunch(true)} disabled={isBusy}>{isBusy ? "Checking…" : "Run launch scan"}</button>}
+            </div>
+          ) : null}
+
+          {step === 4 ? (
+            <div className="draft-form">
               <h3>Results</h3>
               <StatusChip status={launchPassport?.status} />
               {results?.latest_report.available ? <p>Your latest report reference is available for this project.</p> : <p className="screen-note">No latest report reference was returned yet.</p>}
@@ -322,4 +419,15 @@ export function uploadProgressLabel(status: string): string {
     return "not completed";
   }
   return "not completed";
+}
+
+function safeFounderState(value: unknown, key = ""): unknown {
+  if (/token|secret|password|api[_-]?key|credential/i.test(key) && typeof value === "string") {
+    return "[redacted]";
+  }
+  if (Array.isArray(value)) return value.map((item) => safeFounderState(item));
+  if (value && typeof value === "object") {
+    return Object.fromEntries(Object.entries(value).map(([entryKey, entryValue]) => [entryKey, safeFounderState(entryValue, entryKey)]));
+  }
+  return value;
 }

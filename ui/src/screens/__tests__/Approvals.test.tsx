@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { Approvals } from "../Approvals";
 import { useDashboard } from "../../app/DashboardContext";
@@ -18,47 +18,201 @@ function approval(overrides: Partial<ApprovalRequest> = {}): ApprovalRequest {
     action_type: "m365.user.disable",
     status: "approved",
     comment: "",
-    execution_status: "pending",
+    execution_status: "not_started",
     execution_message: "",
     can_execute: true,
     ...overrides
   };
 }
 
-function renderApproval(request: ReturnType<typeof approval>, liveWritesReady = false) {
+function renderApproval(
+  request: ReturnType<typeof approval>,
+  options: { canWrite?: boolean; liveWritesReady?: boolean; isAdmin?: boolean } = {}
+) {
+  const executeApproval = vi.fn().mockResolvedValue(undefined);
+  const refresh = vi.fn().mockResolvedValue(undefined);
   mockedUseDashboard.mockReturnValue({
     approvalRequests: [request],
     pendingApprovals: [],
-    canWrite: true,
+    canWrite: options.canWrite ?? true,
+    isAdmin: options.isAdmin ?? true,
     busyId: null,
     updateApproval: vi.fn(),
-    executeApproval: vi.fn(),
+    executeApproval,
     savePayloadFields: vi.fn(),
     workflowFor: () => undefined,
-    liveWritesReady
+    refresh,
+    liveWritesReady: options.liveWritesReady ?? false
   } as never);
 
   render(<Approvals />);
-  return screen.getByRole("button", { name: "Execute" });
+  return {
+    executeButton: screen.getByRole("button", { name: "Execute" }),
+    executeApproval,
+    refresh
+  };
 }
 
 describe("Approvals execute button", () => {
   beforeEach(() => {
     mockedUseDashboard.mockReset();
+    vi.unstubAllGlobals();
+  });
+
+  it("distinguishes a pending approval fetch from an empty queue", () => {
+    const dashboard = {
+      approvalRequests: [],
+      pendingApprovals: [],
+      canWrite: false,
+      isAdmin: false,
+      busyId: null,
+      updateApproval: vi.fn(),
+      executeApproval: vi.fn(),
+      savePayloadFields: vi.fn(),
+      workflowFor: () => undefined,
+      refresh: vi.fn(),
+      loading: true
+    };
+    mockedUseDashboard.mockReturnValue(dashboard as never);
+    const view = render(<Approvals />);
+
+    expect(screen.getByText("Loading approval requests…")).toBeInTheDocument();
+
+    mockedUseDashboard.mockReturnValue({ ...dashboard, loading: false } as never);
+    view.rerender(<Approvals />);
+
+    expect(screen.getByText("No approval requests yet.")).toBeInTheDocument();
+    expect(screen.getByText("Approval requests appear here when a governed action needs review.")).toBeInTheDocument();
   });
 
   it.each(["m365.user.disable", "teams.message.send"])(
     "enables %s when approved and executable even if Halo writes are not ready",
     (actionType) => {
-      expect(renderApproval(approval({ action_type: actionType }))).toBeEnabled();
+      expect(renderApproval(approval({ action_type: actionType })).executeButton).toBeEnabled();
     }
   );
 
   it.each([
     ["connectwise.x", false, "approved"],
-    ["smart_action:foo", true, "approved"],
     ["m365.user.disable", true, "pending"]
   ])("disables %s when the approval cannot be explicitly executed", (actionType, canExecute, status) => {
-    expect(renderApproval(approval({ action_type: actionType, can_execute: canExecute, status }))).toBeDisabled();
+    expect(renderApproval(approval({ action_type: actionType, can_execute: canExecute, status })).executeButton).toBeDisabled();
+  });
+
+  it("explains why an unmapped action has no manual execute button", () => {
+    mockedUseDashboard.mockReturnValue({
+      approvalRequests: [approval({ action_type: "smart_action:foo" })],
+      pendingApprovals: [],
+      canWrite: true,
+      isAdmin: true,
+      busyId: null,
+      updateApproval: vi.fn(),
+      executeApproval: vi.fn(),
+      savePayloadFields: vi.fn(),
+      workflowFor: () => undefined,
+      refresh: vi.fn(),
+      liveWritesReady: false
+    } as never);
+    render(<Approvals />);
+
+    expect(screen.queryByRole("button", { name: "Execute" })).not.toBeInTheDocument();
+    expect(screen.getByText("Executed from its own workflow after approval — no manual execute here.")).toBeInTheDocument();
+  });
+
+  it("explains the technician requirement for mapped execute actions", () => {
+    const { executeButton } = renderApproval(approval(), { canWrite: false });
+
+    expect(executeButton).toBeDisabled();
+    expect(executeButton).toHaveAttribute("title", "Requires technician access");
+    expect(screen.queryByRole("button", { name: "Approve" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Reject" })).not.toBeInTheDocument();
+  });
+
+  it("explains HaloPSA Safe Mode when it gates an approved execution", () => {
+    const { executeButton } = renderApproval(
+      approval({ action_type: "halopsa.add_note", can_execute: false }),
+      { liveWritesReady: false }
+    );
+
+    expect(executeButton).toBeDisabled();
+    expect(executeButton).toHaveAttribute("title", "Writes are in Safe Mode — see the write-gate indicator");
+  });
+
+  it("renders the backend block reason for Power Platform approvals", () => {
+    const reason = "Power Platform deployment is blocked until WAIT_ALLOW_POWER_PLATFORM_DEPLOYMENT=true.";
+    const { executeButton } = renderApproval(approval({
+      action_type: "power_platform.solution_stage",
+      can_execute: false,
+      block_reason: reason
+    }));
+
+    expect(executeButton).toBeDisabled();
+    expect(executeButton).toHaveAttribute("title", reason);
+    expect(screen.getByText(reason)).toBeInTheDocument();
+    expect(screen.queryByText("Executed from its own workflow after approval — no manual execute here.")).not.toBeInTheDocument();
+  });
+
+  it("enables approved Microsoft runbooks only for administrators", () => {
+    const request = approval({ action_type: "microsoft_admin.powershell_runbook", can_execute: false });
+    expect(renderApproval(request, { isAdmin: true }).executeButton).toBeEnabled();
+  });
+
+  it("keeps digest-bound Microsoft runbook plans immutable", () => {
+    const request = approval({ action_type: "microsoft_admin.powershell_runbook", can_execute: false });
+    renderApproval(request, { isAdmin: true });
+
+    expect(screen.getByText("Digest-bound plan")).toBeInTheDocument();
+    expect(screen.getByText(/Runbook parameters cannot be edited/)).toBeInTheDocument();
+    expect(screen.queryByLabelText("Draft Fields")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Save Fields" })).not.toBeInTheDocument();
+  });
+
+  it("keeps Microsoft runbook execution disabled for technicians", () => {
+    const request = approval({ action_type: "microsoft_admin.powershell_runbook", can_execute: false });
+    expect(renderApproval(request, { isAdmin: false }).executeButton).toBeDisabled();
+    expect(screen.getByText("PowerShell runbook execution requires administrator access.")).toBeInTheDocument();
+  });
+
+  it("does not allow a Microsoft runbook approval to be replayed", () => {
+    const request = approval({
+      action_type: "microsoft_admin.powershell_runbook",
+      execution_status: "succeeded",
+      can_execute: false
+    });
+    expect(renderApproval(request, { isAdmin: true }).executeButton).toBeDisabled();
+  });
+
+  it("executes a Microsoft runbook through the pack endpoint and refreshes the queue", async () => {
+    const request = approval({ action_type: "microsoft_admin.powershell_runbook", id: 42, can_execute: false });
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      approval: { ...request, execution_status: "succeeded" },
+      result: { status: "succeeded", message: "PowerShell runbook completed." }
+    }), { status: 200 })));
+    const { executeButton, executeApproval, refresh } = renderApproval(request, { isAdmin: true });
+
+    fireEvent.click(executeButton);
+
+    expect(await screen.findByRole("status")).toHaveTextContent("PowerShell runbook completed.");
+    expect(fetch).toHaveBeenCalledWith(
+      "/packs/microsoft-admin/runbooks/approvals/42/execute",
+      expect.objectContaining({ method: "POST" })
+    );
+    expect(executeApproval).not.toHaveBeenCalled();
+    await waitFor(() => expect(refresh).toHaveBeenCalledTimes(1));
+  });
+
+  it("shows a bounded execution error without refreshing", async () => {
+    const request = approval({ action_type: "microsoft_admin.powershell_runbook", id: 42, can_execute: false });
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      detail: "PowerShell runtime is unavailable."
+    }), { status: 409 })));
+    const { executeButton, refresh } = renderApproval(request, { isAdmin: true });
+
+    fireEvent.click(executeButton);
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "That action conflicts with the appliance's current state. Refresh and try again."
+    );
+    expect(refresh).not.toHaveBeenCalled();
   });
 });

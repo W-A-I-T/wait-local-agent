@@ -6,10 +6,11 @@ import { useDashboard } from "../app/DashboardContext";
 import { RoleGate } from "../components/RoleGate";
 import { StatusChip } from "../components/StatusChip";
 import { type LaunchPassportStatus, type PackInfo, type ProviderHealth, type ProviderSettings, type SecretRecord, type SecuritySettings, type UpdateStatus } from "../api/types";
+import { connectorSetupEnvVarNames } from "../lib/connectorSetup";
 
 export function Settings() {
-  const { isAdmin, loading, role } = useDashboard();
-  const accessRole = role ?? (isAdmin ? "admin" : "viewer");
+  const { authState, isAdmin, loading, role } = useDashboard();
+  const accessRole = authState === "local-open" ? "admin" : role ?? (isAdmin ? "admin" : "viewer");
   const canViewLaunchPassport = !loading && accessRole === "admin";
   const [providers, setProviders] = useState<ProviderSettings | null>(null);
   const [providerHealth, setProviderHealth] = useState<ProviderHealth | null>(null);
@@ -63,12 +64,16 @@ export function Settings() {
       setStatusMessage("Settings loaded.");
     } catch (error) {
       if (error instanceof ApiRequestError && error.status === 403) {
-        setStatusMessage("Insufficient role for admin settings.");
+        setStatusMessage(
+          authState === "invalid-token"
+            ? "Token rejected. Clear Token and save a valid token to continue."
+            : `Administrator role required for admin settings. Current role: ${accessRole}.`
+        );
         return;
       }
       setStatusMessage(error instanceof Error ? error.message : "Unable to load settings.");
     }
-  }, [canViewLaunchPassport]);
+  }, [accessRole, authState, canViewLaunchPassport]);
 
   useEffect(() => {
     void refresh();
@@ -179,7 +184,7 @@ export function Settings() {
       <section className="panel settings-panel">
         <div className="panel-heading">
           <h2>Admin Settings</h2>
-          <span>{isAdmin ? "admin mode" : "viewer mode"}</span>
+          <span>{authState === "local-open" ? "local mode · full access" : isAdmin ? "admin mode" : "viewer mode"}</span>
         </div>
         <div className="row-actions">
           <Link className="icon-button" to="/?onboarding=1">Launch onboarding</Link>
@@ -187,12 +192,24 @@ export function Settings() {
         </div>
 
         {statusMessage ? <div className="notice">{statusMessage}</div> : null}
-        {!isAdmin ? <div className="notice danger">Administrator role required for write controls.</div> : null}
+        {!isAdmin ? (
+          <div className="notice danger">
+            {authState === "invalid-token"
+              ? "Token rejected. Clear Token resets it before you save another token."
+              : `Administrator role required for write controls. Current role: ${accessRole}.`}
+          </div>
+        ) : null}
 
         <div className="table-list settings-list">
           <div>
             <dt>Write health</dt>
-            <dd>{security?.api_token_configured ? "API token saved" : "No API token"}</dd>
+            <dd>
+              {security?.api_token_configured
+                ? "API token saved"
+                : authState === "local-open"
+                  ? "Not required in local mode"
+                  : "No API token configured"}
+            </dd>
           </div>
           <div>
             <dt>Update check</dt>
@@ -229,6 +246,30 @@ export function Settings() {
           <div>
             <dt>Demo mode</dt>
             <dd>{security ? (security.demo_mode ? "enabled" : "disabled") : "unknown"}</dd>
+          </div>
+          <div>
+            <dt>Model input cost</dt>
+            <dd>{providers?.model_input_cost_usd_per_million_tokens ?? "n/a"} USD per million tokens</dd>
+          </div>
+          <div>
+            <dt>Model output cost</dt>
+            <dd>{providers?.model_output_cost_usd_per_million_tokens ?? "n/a"} USD per million tokens</dd>
+          </div>
+          <div>
+            <dt>Embedding provider</dt>
+            <dd>{providers?.embedding_provider || "n/a"}</dd>
+          </div>
+          <div>
+            <dt>Embedding model</dt>
+            <dd>{providers?.embedding_model || "n/a"}</dd>
+          </div>
+          <div>
+            <dt>Document parser</dt>
+            <dd>{providers?.document_parser || "n/a"}</dd>
+          </div>
+          <div>
+            <dt>OCR</dt>
+            <dd>{providers ? (providers.ocr_enabled ? "enabled" : "disabled") : "unknown"}</dd>
           </div>
         </div>
       </section>
@@ -423,9 +464,16 @@ export function Settings() {
 
       <section className="panel">
         <div className="panel-heading">
-          <h2>Secrets</h2>
+          <h2>Vault (advanced)</h2>
           <span>{secrets.length} keys</span>
         </div>
+        <p className="screen-note">
+          The vault stores credentials referenced by Connector Instances. Environment-provider settings are read from
+          the vault only when <code>WAIT_SECRETS_BACKEND=fernet</code>, and the vault key must exactly match the
+          <code> WAIT_*</code> variable name. With the default env backend, this form does not configure environment
+          providers; set those values in the server environment (.env) and restart the appliance instead.
+        </p>
+        <p className="screen-note">CLI-only maintenance commands: <code>secrets init</code>, <code>migrate-external-key</code>, and <code>doctor</code>.</p>
         <div className="table-list">
           {secrets.map((secret) => (
             <div className="table-row" key={secret.key}>
@@ -440,8 +488,18 @@ export function Settings() {
             <h3>Add secret</h3>
             <label>
               Secret name
-              <input autoComplete="off" name="secret-name" value={secretName} onChange={(event) => setSecretName(event.target.value)} />
+              <input
+                autoComplete="off"
+                list="connector-secret-names"
+                name="secret-name"
+                value={secretName}
+                onChange={(event) => setSecretName(event.target.value)}
+              />
             </label>
+            <datalist id="connector-secret-names">
+              {connectorSetupEnvVarNames.map((envVar) => <option key={envVar} value={envVar} />)}
+            </datalist>
+            <p className="field-help">For an environment-backed provider, use the exact WAIT_* name shown on Connectors. Other secret names remain allowed for advanced integrations.</p>
             <label>
               Secret value
               <input autoComplete="new-password" name="new-password" type="password" value={secretValue} onChange={(event) => setSecretValue(event.target.value)} />

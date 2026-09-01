@@ -10,7 +10,7 @@
   <a href="https://github.com/W-A-I-T/wait-local-agent/actions/workflows/test.yml"><img src="https://github.com/W-A-I-T/wait-local-agent/actions/workflows/test.yml/badge.svg" alt="CI status"></a>
   <a href="LICENSE"><img src="https://img.shields.io/github/license/W-A-I-T/wait-local-agent" alt="AGPL-3.0-only license"></a>
   <a href="pyproject.toml"><img src="https://img.shields.io/badge/python-3.12%2B-3776AB?logo=python&amp;logoColor=white" alt="Python 3.12 or newer"></a>
-  <a href="CHANGELOG.md"><img src="https://img.shields.io/badge/version-2.0.0--dev.0-4c1" alt="Version 2.0.0 development"></a>
+  <a href="CHANGELOG.md"><img src="https://img.shields.io/badge/version-2.0.0--rc.1-4c1" alt="Version 2.0.0 RC 1"></a>
   <a href="docs/README.md"><img src="https://img.shields.io/badge/docs-read_the_docs-536DFE" alt="Documentation"></a>
 </p>
 
@@ -18,12 +18,120 @@
 
 ## What is WAIT Local Agent?
 
-WAIT Local Agent runs on your own hardware, where your business data and
-operational decisions can stay close to you. It connects to the business
-systems you already use, including ticketing, documentation, and Microsoft
-365. AI can help draft work from local context, while deterministic policy
+WAIT Local Agent is one local-first, governed AI runtime with **three primary
+product streams**: MSP / IT Operations, AI Solutions Architect, and Founder /
+Engineering with Launch Passport.
+
+It runs on your own hardware, where your business data and operational
+decisions can stay close to you. The streams share the same policy, tenant
+scope, RBAC, approval, connector, execution, evidence, and audit boundaries.
+AI can help interpret evidence and draft work, while deterministic policy
 controls what may happen next. Nothing writes to a live system without
 explicit human approval. [Learn the architecture](docs/concepts/architecture.md).
+
+## Three product streams, one governed runtime
+
+WAIT Local Agent is not three unrelated applications. Each stream serves a
+different job and audience, but all three reuse the same local runtime and
+safety model.
+
+| Stream | Primary users | Typical flow |
+| --- | --- | --- |
+| **1. MSP / IT Operations** | Internal IT, technicians, MSPs and MSSPs | Ticket or operational signal → local context → triage / plan → bounded action or workflow → approval when required → execution → audit evidence |
+| **2. AI Solutions Architect** | Consultants, architects and technical teams | Business problem → guided discovery → provider-neutral blueprint → architecture decision → implementation target → governance / evaluation → delivery handoff |
+| **3. Founder / Engineering + Launch Passport** | Founders and engineering teams | Local project → local scan → review the evidence package → explicit upload confirmation → Launch Passport handoff → results |
+
+```mermaid
+flowchart TB
+  MSP["MSP / IT Operations\nTickets · RMM · M365 · workflows"]
+  Architect["AI Solutions Architect\nDiscovery · blueprints · architecture"]
+  Founder["Founder / Engineering\nProject evidence · Launch Passport handoff"]
+
+  Runtime["WAIT Local Agent runtime"]
+  Guardrails["Policy · tenant scope · RBAC · approvals"]
+  Services["Connectors · execution · evidence · audit"]
+
+  MSP --> Runtime
+  Architect --> Runtime
+  Founder --> Runtime
+  Runtime --> Guardrails
+  Guardrails --> Services
+```
+
+### 1. MSP / IT Operations
+
+Use WAIT as an AI-assisted technician and automation workspace. Start with a
+ticket or client-scoped operational task, bring in bounded context from the
+configured PSA, RMM, documentation, Microsoft 365, and local knowledge
+surfaces, then review a proposed plan before choosing a supported Smart Action,
+workflow, playbook, or agent run. Higher-risk mutations remain behind the
+shared approval and write gates, and executions leave local audit evidence.
+
+A typical technician path is:
+
+```text
+Ticket → Technician Chat → triage / proposed plan → bounded next step
+       → approval when required → execution → audit evidence
+```
+
+[Follow the five-minute technician quickstart](docs/getting-started/technician-quickstart.md).
+
+### 2. AI Solutions Architect
+
+Use WAIT to turn a business problem into an inspectable technology plan. The
+Solutions Architect stream is **provider-neutral**: guided discovery produces
+blueprints and architecture decisions first, then maps components to the most
+appropriate implementation target, which may include WAIT-native automation,
+Microsoft 365 / Power Platform, MCP, PSA, RMM, APIs, or a human process.
+
+```text
+Business problem
+      ↓
+Guided discovery
+      ↓
+Solution Blueprint
+      ↓
+Architecture decision
+      ↓
+WAIT-native | Microsoft | MCP | PSA | RMM | API | human process
+      ↓
+Governance / evaluation / delivery handoff
+```
+
+Microsoft and Power Platform are implementation targets, not the identity of
+this stream. Generated source packages and plans remain reviewable artifacts;
+they are not automatically evidence of provider import or deployment.
+
+[Explore the Solutions Architect documentation](docs/consultant/README.md).
+
+### 3. Founder / Engineering + Launch Passport
+
+Use the founder workflow to inspect a local project and prepare a controlled
+handoff to Launch Passport. The journey scans locally, prepares an evidence
+package, shows what would be shared, and requires explicit confirmation before
+that reviewed package is uploaded. The current UI states that source files are
+not uploaded and environment values are excluded; configuration key names may
+be included in the reviewed evidence package.
+
+```text
+Local project → local scan → review what will be shared
+              → explicit confirmation → Launch Passport → results
+```
+
+The Launch Passport connection is optional to the base appliance, and the
+founder journey may depend on the separately installed Founder Pack. Without
+that connection or pack, the local runtime remains usable for its other
+streams. See the [Founder / Engineering roadmap](ROADMAP.md#founder--engineering-vertical)
+for the product boundary and direction.
+
+### Why these streams belong together
+
+The shared runtime is the product foundation. An MSP technician, a solutions
+architect, and a founder may start from different problems, but each path
+needs the same core controls: identity, tenant or client scope, deterministic
+policy, approvals, bounded connectors, execution records, evidence, and audit.
+Keeping those controls in one runtime avoids creating separate tool engines or
+separate safety models for each workflow.
 
 ## Who can use WAIT Local Agent?
 
@@ -39,7 +147,7 @@ Community and commercial-use guide](docs/legal/community-vs-commercial-use.md).
 | <img src="docs/media/dashboard.png" alt="WAIT Local Agent dashboard showing local tickets, workflows, and audit activity" width="100%"> | <img src="docs/media/connectors.png" alt="WAIT Local Agent connectors view showing bounded provider surfaces and action controls" width="100%"> |
 | Local operations stay visible in one reviewable workspace. | Inspect connector readiness and keep proposed changes behind the approval boundary. |
 
-## Technician ticket-resolution workflow
+## Technician ticket-resolution workflow example
 
 Open a ticket, start a client-scoped Technician Chat session, review a bounded
 plan, and inspect the resulting execution and audit evidence. [Follow the
@@ -54,13 +162,13 @@ five-minute technician quickstart](docs/getting-started/technician-quickstart.md
 | | |
 | --- | --- |
 | 🔒 **Local-first**: SQLite, your hardware, and no cloud dependency. [Get started](docs/getting-started/local-demo.md) | ✅ **Approval-gated writes**: review a draft before a live mutation. [See the write gates](docs/concepts/approvals-and-write-gates.md) |
-| 🔌 **14 connector entries**: bounded PSA, RMM, documentation, and Microsoft surfaces. [View the matrix](docs/connectors/README.md) | 🏢 **Microsoft 365 and Power Platform consultant lane**: source packages and reviewable plans, not provider deployment. [Explore the lane](docs/consultant/README.md) |
+| 🔌 **14 connector entries**: bounded PSA, RMM, documentation, and Microsoft surfaces. [View the matrix](docs/connectors/README.md) | 🧭 **AI Solutions Architect**: provider-neutral discovery, blueprints, architecture, governance, and implementation planning. [Explore the stream](docs/consultant/README.md) |
 | 🧾 **Audit trail and evidence export**: preserve what happened and why. [Read the security model](docs/concepts/security-model.md) | 👥 **RBAC and tenant scoping**: keep operator permissions and client boundaries explicit. [Read the security model](docs/concepts/security-model.md) |
 | 🖥️ **Desktop app, Docker, and CLI**: choose the local surface that fits your team. [Choose an install path](docs/getting-started/quickstart-docker.md) | 🧩 **Commercial packs**: extend the public runtime with separately licensed capabilities. [Understand editions and packs](docs/concepts/open-core-boundary.md) |
 
 ## Architecture
 
-The operator surfaces share one API and one policy path. Connectors do not
+The three product streams share one API and one policy path. Connectors do not
 become a second execution engine: policy checks scope, role, approval, and
 outbound settings before a provider call, then records a bounded result.
 
@@ -157,7 +265,20 @@ an external system is unavailable or rejects the request.
 
 ## Quickstart
 
-### Docker
+### Production (image, recommended for MSP operation)
+
+The published production appliance serves the compiled dashboard and API from
+one versioned image. It is the recommended MSP path and requires Linux, Docker,
+and Compose v2, but no Git or Node.js.
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/W-A-I-T/wait-local-agent/main/scripts/install.sh \
+  | bash -s -- --version stable
+```
+
+See the [production installation guide](docs/getting-started/production-install.md).
+
+### Development (source and Vite, contributors)
 
 ```bash
 git clone https://github.com/W-A-I-T/wait-local-agent.git
@@ -171,18 +292,18 @@ docker compose up --build
 
 - Dashboard: `http://127.0.0.1:5173`
 - API: `http://127.0.0.1:8788`
-- The dashboard is a Vite dev server that proxies API traffic to the API container.
+- The dashboard is a Vite development server that proxies API traffic to the API container.
 - Persistent SQLite state lives in the `wait-local-agent-data` Docker volume.
-- `scripts/install.sh` generates `.env` from `.env.example` when it is missing.
 - The shipped `.env.example` keeps demo mode off. Set `WAIT_DEMO_MODE=true`
   explicitly for the bounded local walkthrough, or configure an admin token.
 - Linux collectors are container-scoped by default. Host collection is an explicit, security-sensitive opt-in; see [host-collection.md](docs/operations/host-collection.md).
 
-### Desktop
+### Desktop (non-MSP surface)
 
 Download the installer for your operating system from [GitHub
 Releases](https://github.com/W-A-I-T/wait-local-agent/releases). The desktop
-bundle runs the dashboard with a local server sidecar. [Full guide
+bundle runs the dashboard with a local server sidecar for individual local use;
+it is not the MSP production appliance. [Full guide
 →](docs/getting-started/desktop-install.md)
 
 ### CLI
@@ -274,7 +395,8 @@ Community remains a real route: AGPL-3.0-only permits commercial use subject to 
 - [Approvals and write gates](docs/concepts/approvals-and-write-gates.md): draft, review, approval, execution, and audit.
 - [Security model](docs/concepts/security-model.md): safe defaults, tenancy, redaction, and threat boundaries.
 - [Connector matrix](docs/connectors/README.md): IDs, read surfaces, writes, and evidence limits.
-- [Consultant lane](docs/consultant/README.md): discovery, blueprints, governance, and Microsoft targets.
+- [Solutions Architect](docs/consultant/README.md): discovery, blueprints, architecture, governance, and Microsoft targets.
+- [Founder / Engineering roadmap](ROADMAP.md#founder--engineering-vertical): project inspection, evidence collection, and Launch Passport handoff.
 - [Operations](docs/README.md#operations): backups, scheduling, updates, host collection, and packs.
 - [Reference](docs/README.md#development-and-reference): API, CLI, environment variables, and MCP boundaries.
 

@@ -236,6 +236,14 @@ def test_invalid_timeout_env_falls_back_to_default(monkeypatch) -> None:
     assert settings.local_model_timeout_seconds == 20.0
 
 
+def test_invalid_integer_env_falls_back_to_default(monkeypatch) -> None:
+    monkeypatch.setenv("WAIT_HUDU_PAGE_SIZE", "not-an-integer")
+
+    settings = load_settings()
+
+    assert settings.hudu_page_size == 25
+
+
 def test_model_cost_rates_are_optional_and_reject_negative_values(monkeypatch) -> None:
     monkeypatch.setenv("WAIT_MODEL_INPUT_COST_USD_PER_MILLION_TOKENS", "1.25")
     monkeypatch.setenv("WAIT_MODEL_OUTPUT_COST_USD_PER_MILLION_TOKENS", "4.5")

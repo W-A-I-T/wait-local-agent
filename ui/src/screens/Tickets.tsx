@@ -2,6 +2,8 @@ import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "re
 import { Send } from "lucide-react";
 import { ApiRequestError, apiFetch } from "../api/client";
 import { defaultFieldText, useDashboard } from "../app/DashboardContext";
+import { EmptyState } from "../components/EmptyState";
+import { LoadingState } from "../components/LoadingState";
 import { parseFields } from "../lib/fields";
 import type {
   EndUserMessage,
@@ -13,6 +15,8 @@ import type {
 } from "../api/types";
 
 type TicketTab = "summary" | "notes" | "status-history" | "context";
+type DraftProvider = "halopsa" | "connectwise";
+const connectWiseActionTypes = ["update_status", "assign_technician", "update_ticket_fields"];
 const tabs: Array<{ id: TicketTab; label: string }> = [
   { id: "summary", label: "Summary" },
   { id: "notes", label: "Notes" },
@@ -94,6 +98,8 @@ export function Tickets() {
   const ticketId = selectedTicket?.id || selectedTicketId;
   const [manualTicketId, setManualTicketId] = useState("");
   const actionTicketId = ticketId || manualTicketId.trim();
+  const [draftProvider, setDraftProvider] = useState<DraftProvider>("halopsa");
+  const [draftStatus, setDraftStatus] = useState("");
 
   const loadTab = useCallback(async (tab: TicketTab, options: { force?: boolean } = {}) => {
     if (!ticketId) return;
@@ -242,7 +248,25 @@ export function Tickets() {
       return;
     }
     setValidationMessage("");
-    void createDraft(actionTicketId, actionType, parseFields(fieldText));
+    setDraftStatus("");
+    if (draftProvider === "connectwise") {
+      void createConnectWiseDraft(actionTicketId, actionType, parseFields(fieldText));
+    } else {
+      void createDraft(actionTicketId, actionType, parseFields(fieldText));
+    }
+  }
+
+  async function createConnectWiseDraft(ticketIdValue: string, selectedActionType: string, fields: Record<string, string>) {
+    try {
+      const draft = await apiFetch<{ approval_request_id: number }>(`/connectors/connectwise/tickets/${encodeURIComponent(ticketIdValue)}/drafts`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action_type: selectedActionType, fields })
+      });
+      setDraftStatus(`ConnectWise approval draft ${draft.approval_request_id} created. Review it before execution.`);
+    } catch (error) {
+      setValidationMessage(error instanceof Error ? error.message : "ConnectWise draft creation failed.");
+    }
   }
 
   async function postTicketTriage() {
@@ -306,7 +330,7 @@ export function Tickets() {
         <div className="panel-heading"><div><p className="eyebrow">Operations</p><h2>Tickets</h2></div><span>{tickets.length} visible</span></div>
         <p className="screen-note">Review tickets from every connected provider in the selected client scope.</p>
         {listError ? <div className="notice danger" role="alert">{listError}</div> : null}
-        {listLoading ? <p className="screen-note" aria-busy="true">Loading tickets…</p> : tickets.length === 0 ? <div className="empty-state"><h3>No tickets are visible.</h3><p>There are no tickets in the current client scope.</p></div> : (
+        {listLoading ? <LoadingState label="Loading tickets…" /> : tickets.length === 0 ? <EmptyState title="No tickets are visible." why={<><span>There are no tickets in the current client scope.</span><span>For demo evaluation only, with writes disabled, seed a client and sample data using <code className="copyable-command">wait-local-agent demo seed --client-id demo</code>. This requires <code>WAIT_DEMO_MODE=true</code> and writes disabled.</span></>} /> : (
           <div className="clients-table-wrap"><table className="clients-table"><thead><tr><th scope="col">Ticket</th><th scope="col">Client</th><th scope="col">Status</th><th scope="col">Priority</th><th scope="col">Source</th><th scope="col">External ID</th></tr></thead><tbody>
             {tickets.map((ticket) => <tr key={ticket.id} className={ticket.id === selectedTicketId ? "selected" : undefined}><td><button className="table-link" type="button" onClick={() => selectTicket(ticket.id)}>{displayValue(ticket.summary || ticket.subject, "Untitled ticket")}</button><div className="screen-note">{ticket.id}</div></td><td>{clientNames.get(ticket.client_id ?? "") || displayValue(ticket.client_id, "Current scope")}</td><td>{displayValue(ticket.status, "Unknown")}</td><td>{displayValue(ticket.priority, "Unprioritized")}</td><td>{displayValue(ticket.source_system, "Local")}</td><td><code>{displayValue(ticket.external_id, "—")}</code></td></tr>)}
           </tbody></table></div>
@@ -332,7 +356,23 @@ export function Tickets() {
       <section className="panel">
           <div className="panel-heading"><h2>Actions</h2><span>{canWrite ? "approval drafts enabled" : "read-only"}</span></div>
           {validationMessage ? <div className="notice danger" role="alert">{validationMessage}</div> : null}
-          <form className="draft-form" onSubmit={handleSubmit}><label>Ticket ID<input placeholder="EUS-..." value={manualTicketId || ticketId} onChange={(event) => setManualTicketId(event.target.value)} /></label><label>Action<select value={actionType} onChange={(event) => setActionType(event.target.value)}>{actionTypes.map((action) => <option key={action} value={action}>{action}</option>)}</select></label><label>Draft payload<textarea value={fieldText} onChange={(event) => setFieldText(event.target.value)} rows={4} /></label><button disabled={!actionTicketId || !canWrite || busyId === "draft"} type="submit"><Send size={17} aria-hidden="true" />{busyId === "draft" ? "Creating…" : "Create draft"}</button></form>
+          {draftStatus ? <div className="notice" role="status">{draftStatus}</div> : null}
+          <form className="draft-form" onSubmit={handleSubmit}>
+            <label>Ticket ID<input placeholder="EUS-..." value={manualTicketId || ticketId} onChange={(event) => setManualTicketId(event.target.value)} /></label>
+            <label>Draft provider
+              <select value={draftProvider} onChange={(event) => {
+                const provider = event.target.value as DraftProvider;
+                setDraftProvider(provider);
+                setActionType(provider === "connectwise" ? connectWiseActionTypes[0] : (actionTypes[0] ?? "add_note"));
+              }}>
+                <option value="halopsa">HaloPSA</option>
+                <option value="connectwise">ConnectWise</option>
+              </select>
+            </label>
+            <label>Action<select value={actionType} onChange={(event) => setActionType(event.target.value)}>{(draftProvider === "connectwise" ? connectWiseActionTypes : actionTypes).map((action) => <option key={action} value={action}>{action}</option>)}</select></label>
+            <label>Draft payload<textarea value={fieldText} onChange={(event) => setFieldText(event.target.value)} rows={4} /></label>
+            <button disabled={!actionTicketId || !canWrite || busyId === "draft"} type="submit"><Send size={17} aria-hidden="true" />{busyId === "draft" ? "Creating…" : "Create draft"}</button>
+          </form>
           <div className="draft-form"><h3>Triage</h3><div className="row-actions"><select aria-label="Triage status" value={approvalStatus} onChange={(event) => setApprovalStatus(event.target.value)}><option value="approved">approved</option><option value="rejected">rejected</option><option value="pending">pending</option></select><button type="button" disabled={!canWrite} onClick={() => void postTicketTriage()}>Post triage</button></div><label>Triage comment<textarea value={approvalComment} onChange={(event) => setApprovalComment(event.target.value)} rows={3} /></label></div>
           <div className="draft-form"><h3>End-user messages</h3><button type="button" onClick={() => void loadEndUserMessages()}>Load conversation</button>{endUserMessageStatus ? <div className="notice" role="status">{endUserMessageStatus}</div> : null}{haloSyncStatus ? <div className="notice" role="status">{haloSyncStatus}</div> : null}{endUserMessageError ? <div className="notice danger" role="alert">{endUserMessageError}</div> : null}{endUserMessages.length ? <div className="end-user-messages operator-messages">{endUserMessages.map((item) => <p key={item.id}><strong>{item.role === "support" ? "Support" : "Requester"}</strong><span>{item.body}</span></p>)}</div> : <p className="screen-note">Load the local requester conversation. Internal notes are in the Notes tab.</p>}<form className="draft-form" onSubmit={(event) => void sendEndUserReply(event)}><label>Reply to requester<textarea required maxLength={10000} rows={3} value={endUserReply} onChange={(event) => setEndUserReply(event.target.value)} placeholder="Write a response for the local end-user portal" /></label><button type="submit" disabled={!canWrite || endUserMessageBusy || !endUserReply.trim()}>{endUserMessageBusy ? "Sending…" : "Add support reply"}</button></form>{endUserMessages.length ? <form className="draft-form" onSubmit={(event) => void draftHaloSync(event)}><label>HaloPSA ticket ID<input value={haloSyncTicketId} onChange={(event) => setHaloSyncTicketId(event.target.value)} placeholder="Provider ticket ID" /></label><label>Message to sync<select value={haloSyncMessageId} onChange={(event) => setHaloSyncMessageId(event.target.value)}><option value="">Choose a local message</option>{endUserMessages.map((item) => <option key={item.id} value={item.id}>{item.id}: {item.role === "support" ? "Support" : "Requester"}</option>)}</select></label><button type="submit" disabled={!canWrite || haloSyncBusy || !haloSyncTicketId.trim() || !haloSyncMessageId}>{haloSyncBusy ? "Preparing…" : "Prepare HaloPSA approval"}</button><p className="screen-note">The configured tenant mapping is checked before an approval draft is created.</p></form> : null}</div>
         </section>
