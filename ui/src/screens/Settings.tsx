@@ -274,6 +274,14 @@ export function Settings() {
             <dd>{providers ? (providers.ocr_enabled ? "enabled" : "disabled") : "unknown"}</dd>
           </div>
         </div>
+        {security?.demo_mode ? (
+          <div className="panel-subsection">
+            <h3>Demo mode is active.</h3>
+            <p className="screen-note">Write actions and Power Platform deployment are disabled while demo mode is on, regardless of any other configuration.</p>
+            <p className="screen-note">Other actions may also be unavailable if their own <code>WAIT_ALLOW_*</code> setting isn't configured on this appliance — that's separate from demo mode.</p>
+            <p className="screen-note">There is no in-app switch for this — <code>WAIT_DEMO_MODE</code> is read once when the appliance starts, so changing it requires editing the environment configuration and restarting the appliance.</p>
+          </div>
+        ) : null}
       </section>
 
       <section className="panel">
