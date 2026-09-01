@@ -1,11 +1,21 @@
 from __future__ import annotations
 
+import sqlite3
 from dataclasses import replace
 
+import pytest
+from fastapi import HTTPException
 from fastapi.testclient import TestClient
+from starlette.requests import Request
 
 from wait_local_agent.api.app import create_app
-from wait_local_agent.rbac import resolve_auth_context
+from wait_local_agent.api.auth_routes import (
+    PrincipalPatchRequest,
+    _credential_created_at,
+    _principal_view_by_id,
+    _store,
+)
+from wait_local_agent.rbac import AuthContext, Role, resolve_auth_context
 from wait_local_agent.store import Store, hash_credential
 
 
@@ -21,6 +31,68 @@ def _seed_operator(store: Store, principal_id: str = "operator", token: str = "o
     store.create_principal(principal_id, kind="staff", display_name="Operator")
     store.add_principal_credential(principal_id, token)
     store.add_principal_global_role(principal_id)
+
+
+def _route_endpoint(application, path: str, method: str):
+    from fastapi import routing as fastapi_routing
+    from fastapi.routing import APIRoute
+    from starlette.routing import Mount, Route
+
+    included_router_type = getattr(fastapi_routing, "_IncludedRouter", None)
+
+    def join_path(prefix: str, route_path: str) -> str:
+        if not prefix:
+            return route_path
+        return f"{prefix.rstrip('/')}/{route_path.lstrip('/')}"
+
+    def visit(routes, path_prefix: str = ""):
+        for route in routes:
+            if included_router_type is not None and isinstance(route, included_router_type):
+                for route_context in route.effective_route_contexts():
+                    original_route = route_context.original_route
+                    if not isinstance(original_route, (APIRoute, Route)):
+                        continue
+                    full_path = join_path(path_prefix, route_context.path)
+                    if full_path == path and method in (route_context.methods or set()):
+                        return original_route.endpoint
+                continue
+            if isinstance(route, Mount):
+                endpoint = visit(route.routes, join_path(path_prefix, route.path))
+                if endpoint is not None:
+                    return endpoint
+                continue
+            if not isinstance(route, (APIRoute, Route)):
+                continue
+            if join_path(path_prefix, route.path) == path and method in (route.methods or set()):
+                return route.endpoint
+        return None
+
+    endpoint = visit(application.routes)
+    if endpoint is not None:
+        return endpoint
+    raise AssertionError(f"route not found: {method} {path}")
+
+
+def _request_for(application) -> Request:
+    return Request(
+        {
+            "type": "http",
+            "app": application,
+            "method": "GET",
+            "path": "/",
+            "headers": [],
+            "query_string": b"",
+        }
+    )
+
+
+def _operator_context() -> AuthContext:
+    return AuthContext(
+        role=Role.ADMIN,
+        presented_token="operator-secret",
+        principal_id="operator",
+        is_msp_admin=True,
+    )
 
 
 def test_principal_management_crud_credentials_roles_and_audit(settings) -> None:
@@ -164,3 +236,246 @@ def test_principal_management_refuses_all_writes_in_demo_mode(settings) -> None:
                 else getattr(client, method)(path)
             )
         assert response.status_code == 403, (method, path, response.text)
+
+
+def test_principal_management_maps_store_errors_and_unusual_ids(settings, monkeypatch) -> None:
+    secure = _secure(settings)
+    store = Store(secure.data_path)
+    store.create_client("alpha", "Alpha")
+    _seed_operator(store)
+    store.create_principal("target", kind="staff", display_name="Target")
+    store.create_principal("inactive", kind="staff", display_name="Inactive")
+    store.set_principal_active("inactive", False)
+    client = TestClient(create_app(secure))
+
+    def fail_create_value(self, *args, **kwargs):
+        raise ValueError("invalid principal")
+
+    monkeypatch.setattr(Store, "create_principal", fail_create_value)
+    value_create = client.post(
+        "/auth/principals",
+        headers=_auth("operator-secret"),
+        json={"principal_id": "value", "kind": "staff", "display_name": "Value"},
+    )
+    assert value_create.status_code == 422
+
+    def fail_create_integrity(self, *args, **kwargs):
+        raise sqlite3.IntegrityError("duplicate")
+
+    monkeypatch.setattr(Store, "create_principal", fail_create_integrity)
+    duplicate_create = client.post(
+        "/auth/principals",
+        headers=_auth("operator-secret"),
+        json={"principal_id": "duplicate", "kind": "staff", "display_name": "Duplicate"},
+    )
+    assert duplicate_create.status_code == 409
+
+    no_patch_fields = client.patch(
+        "/auth/principals/target",
+        headers=_auth("operator-secret"),
+        json={},
+    )
+    assert no_patch_fields.status_code == 422
+
+    update_application = create_app(secure)
+    update_endpoint = _route_endpoint(update_application, "/auth/principals/{principal_id}", "PATCH")
+    with pytest.raises(HTTPException) as blank_id:
+        update_endpoint(
+            "",
+            PrincipalPatchRequest(active=True),
+            _request_for(update_application),
+            _operator_context(),
+        )
+    assert blank_id.value.status_code == 404
+
+    def fail_active_key(self, *args, **kwargs):
+        raise KeyError("target")
+
+    monkeypatch.setattr(Store, "set_principal_active", fail_active_key)
+    key_update = client.patch(
+        "/auth/principals/target",
+        headers=_auth("operator-secret"),
+        json={"active": True},
+    )
+    assert key_update.status_code == 404
+
+    def fail_display_value(self, *args, **kwargs):
+        raise ValueError("invalid display name")
+
+    monkeypatch.setattr(Store, "set_principal_display_name", fail_display_value)
+    value_update = client.patch(
+        "/auth/principals/target",
+        headers=_auth("operator-secret"),
+        json={"display_name": "Renamed"},
+    )
+    assert value_update.status_code == 422
+
+    assert client.post(
+        "/auth/principals/missing/credentials",
+        headers=_auth("operator-secret"),
+    ).status_code == 404
+    assert client.post(
+        "/auth/principals/inactive/credentials",
+        headers=_auth("operator-secret"),
+    ).status_code == 409
+
+    target_hash = store.add_principal_credential("target", "target-secret")
+    foreign_hash = hash_credential("operator-secret")
+    assert client.post(
+        "/auth/principals/missing/credentials/revoke",
+        headers=_auth("operator-secret"),
+        json={"credential_hash": target_hash},
+    ).status_code == 404
+    assert client.post(
+        "/auth/principals/target/credentials/revoke",
+        headers=_auth("operator-secret"),
+        json={"credential_hash": foreign_hash},
+    ).status_code == 404
+
+    def fail_revoke_key(self, *args, **kwargs):
+        raise KeyError("credential")
+
+    monkeypatch.setattr(Store, "revoke_principal_credential", fail_revoke_key)
+    key_revoke = client.post(
+        "/auth/principals/target/credentials/revoke",
+        headers=_auth("operator-secret"),
+        json={"credential_hash": target_hash},
+    )
+    assert key_revoke.status_code == 404
+
+
+def test_principal_management_maps_role_errors_and_missing_resources(settings, monkeypatch) -> None:
+    secure = _secure(settings)
+    store = Store(secure.data_path)
+    store.create_client("alpha", "Alpha")
+    _seed_operator(store)
+    store.create_principal("target", kind="staff", display_name="Target")
+    client = TestClient(create_app(secure))
+    headers = _auth("operator-secret")
+
+    assert client.post(
+        "/auth/principals/missing/client-roles",
+        headers=headers,
+        json={"client_id": "alpha", "role": "viewer"},
+    ).status_code == 404
+    for client_id in (" ", "__quarantine__"):
+        assert client.post(
+            "/auth/principals/target/client-roles",
+            headers=headers,
+            json={"client_id": client_id, "role": "viewer"},
+        ).status_code == 404
+    assert client.post(
+        "/auth/principals/target/client-roles",
+        headers=headers,
+        json={"client_id": "missing", "role": "viewer"},
+    ).status_code == 404
+
+    store.add_principal_client_role("target", "alpha", "viewer")
+    assert client.post(
+        "/auth/principals/target/client-roles",
+        headers=headers,
+        json={"client_id": "alpha", "role": "viewer"},
+    ).status_code == 409
+
+    def fail_client_role_value(self, *args, **kwargs):
+        raise ValueError("unsupported client role")
+
+    monkeypatch.setattr(Store, "add_principal_client_role", fail_client_role_value)
+    value_client_role = client.post(
+        "/auth/principals/target/client-roles",
+        headers=headers,
+        json={"client_id": "alpha", "role": "technician"},
+    )
+    assert value_client_role.status_code == 422
+
+    assert client.request(
+        "DELETE",
+        "/auth/principals/missing/client-roles",
+        headers=headers,
+        json={"client_id": "alpha", "role": "viewer"},
+    ).status_code == 404
+    assert client.request(
+        "DELETE",
+        "/auth/principals/target/client-roles",
+        headers=headers,
+        json={"client_id": "missing", "role": "viewer"},
+    ).status_code == 404
+    assert client.request(
+        "DELETE",
+        "/auth/principals/target/client-roles",
+        headers=headers,
+        json={"client_id": " ", "role": "viewer"},
+    ).status_code == 422
+
+    assert client.post(
+        "/auth/principals/missing/global-roles",
+        headers=headers,
+        json={"role": "msp_admin"},
+    ).status_code == 404
+    store.add_principal_global_role("target")
+    assert client.post(
+        "/auth/principals/target/global-roles",
+        headers=headers,
+        json={"role": "msp_admin"},
+    ).status_code == 409
+
+    def fail_global_role_value(self, *args, **kwargs):
+        raise ValueError("unsupported global role")
+
+    with monkeypatch.context() as patch:
+        patch.setattr(Store, "add_principal_global_role", fail_global_role_value)
+        value_global_role = client.post(
+            "/auth/principals/target/global-roles",
+            headers=headers,
+            json={"role": "msp_admin"},
+        )
+    assert value_global_role.status_code == 422
+
+    assert client.request(
+        "DELETE",
+        "/auth/principals/missing/global-roles",
+        headers=headers,
+        json={"role": "msp_admin"},
+    ).status_code == 404
+
+    assert client.request(
+        "DELETE",
+        "/auth/principals/target/global-roles",
+        headers=headers,
+        json={"role": "msp_admin"},
+    ).status_code == 200
+    assert client.request(
+        "DELETE",
+        "/auth/principals/target/global-roles",
+        headers=headers,
+        json={"role": "msp_admin"},
+    ).status_code == 404
+
+    def fail_remove_global_value(self, *args, **kwargs):
+        raise ValueError("unsupported global role")
+
+    monkeypatch.setattr(Store, "remove_principal_global_role", fail_remove_global_value)
+    value_remove_global = client.request(
+        "DELETE",
+        "/auth/principals/target/global-roles",
+        headers=headers,
+        json={"role": "msp_admin"},
+    )
+    assert value_remove_global.status_code == 422
+
+
+def test_principal_auth_defensive_helpers_report_unavailable_state(settings) -> None:
+    secure = _secure(settings)
+    application = create_app(secure)
+    application.state.store = object()
+    with pytest.raises(HTTPException) as unavailable:
+        _store(_request_for(application))
+    assert unavailable.value.status_code == 503
+
+    store = Store(secure.data_path)
+    with pytest.raises(HTTPException) as missing_view:
+        _principal_view_by_id(store, "missing")
+    assert missing_view.value.status_code == 404
+
+    with pytest.raises(RuntimeError, match="credential was not persisted"):
+        _credential_created_at(store, "missing", "credential-hash")

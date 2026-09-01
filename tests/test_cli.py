@@ -2347,6 +2347,123 @@ def test_cli_error_edges_for_new_commands(monkeypatch, tmp_path) -> None:
     assert "not a ConnectWise" in pending_connectwise_execute.output
 
 
+def test_principal_cli_commands_round_trip_and_enforce_management_gate(monkeypatch, tmp_path) -> None:
+    data_path = tmp_path / "state.db"
+    monkeypatch.setenv("WAIT_DATA_PATH", str(data_path))
+    monkeypatch.setenv("WAIT_DEMO_MODE", "false")
+    monkeypatch.setenv("WAIT_ADMIN_TOKEN", "admin-token")
+    monkeypatch.setenv("WAIT_CLIENT_ID", "alpha")
+    store = Store(data_path)
+    ensure_test_client(store, "alpha")
+    runner = CliRunner()
+
+    created = runner.invoke(
+        app,
+        [
+            "principals",
+            "create",
+            "tech",
+            "--kind",
+            "staff",
+            "--display-name",
+            "Technician",
+            "--token",
+            "admin-token",
+        ],
+    )
+    assert created.exit_code == 0, created.output
+    assert json.loads(created.output) == {"principal_id": "tech"}
+
+    listed = runner.invoke(app, ["principals", "list", "--token", "admin-token"])
+    assert listed.exit_code == 0, listed.output
+    assert json.loads(listed.output)[0]["principal_id"] == "tech"
+
+    issued = runner.invoke(app, ["principals", "issue-credential", "tech", "--token", "admin-token"])
+    assert issued.exit_code == 0, issued.output
+    assert "shown once" in issued.output
+    credential_hash = next(
+        line.split("=", 1)[1] for line in issued.output.splitlines() if line.startswith("credential_hash=")
+    )
+
+    added_client_role = runner.invoke(
+        app,
+        [
+            "principals",
+            "add-role",
+            "tech",
+            "technician",
+            "--client-id",
+            "alpha",
+            "--token",
+            "admin-token",
+        ],
+    )
+    added_global_role = runner.invoke(
+        app,
+        ["principals", "add-role", "tech", "msp_admin", "--global", "--token", "admin-token"],
+    )
+    assert added_client_role.exit_code == 0, added_client_role.output
+    assert added_client_role.output.strip() == "role_added=tech:alpha:technician"
+    assert added_global_role.exit_code == 0, added_global_role.output
+    assert added_global_role.output.strip() == "role_added=tech"
+
+    removed_client_role = runner.invoke(
+        app,
+        [
+            "principals",
+            "remove-role",
+            "tech",
+            "technician",
+            "--client-id",
+            "alpha",
+            "--token",
+            "admin-token",
+        ],
+    )
+    removed_global_role = runner.invoke(
+        app,
+        ["principals", "remove-role", "tech", "msp_admin", "--global", "--token", "admin-token"],
+    )
+    revoked = runner.invoke(
+        app,
+        ["principals", "revoke-credential", "tech", credential_hash, "--token", "admin-token"],
+    )
+    assert removed_client_role.exit_code == 0, removed_client_role.output
+    assert removed_client_role.output.strip() == "role_removed=tech:alpha:technician"
+    assert removed_global_role.exit_code == 0, removed_global_role.output
+    assert removed_global_role.output.strip() == "role_removed=tech"
+    assert revoked.exit_code == 0, revoked.output
+    assert revoked.output.strip() == f"revoked={credential_hash[:12]}"
+
+    duplicate = runner.invoke(
+        app,
+        ["principals", "create", "tech", "--token", "admin-token"],
+    )
+    invalid_kind = runner.invoke(
+        app,
+        ["principals", "create", "invalid", "--kind", "unknown", "--token", "admin-token"],
+    )
+    assert duplicate.exit_code != 0
+    assert "principal already exists" in duplicate.output
+    assert invalid_kind.exit_code != 0
+    assert "principal kind must be customer or staff" in invalid_kind.output
+
+
+def test_principal_cli_mutations_are_refused_in_demo_mode(monkeypatch, tmp_path) -> None:
+    monkeypatch.setenv("WAIT_DATA_PATH", str(tmp_path / "state.db"))
+    result = CliRunner().invoke(app, ["principals", "create", "demo-principal"])
+
+    assert result.exit_code != 0
+    assert "principal management cannot be changed in demo mode" in result.output
+
+
+def test_teams_client_factory_is_reachable(monkeypatch) -> None:
+    sentinel = object()
+    monkeypatch.setattr(cli_module, "TeamsGraphClient", lambda settings: sentinel)
+
+    assert cli_module._teams_client() is sentinel  # noqa: SLF001
+
+
 def test_smart_action_cli_requires_rbac_for_invoke_and_approval(monkeypatch, tmp_path) -> None:
     data_path = tmp_path / "state.db"
     monkeypatch.setenv("WAIT_DATA_PATH", str(data_path))

@@ -65,3 +65,12 @@ HTTP test client, then complete the required read-only cross-family review and
 human merge gate.
 
 Resolved the gitleaks false positives for the principals UI fixture and diagnostics placeholders.
+
+## CI Coverage Follow-Up
+
+- Classified all `/auth/principals` HTTP routes and `principals` CLI commands in
+  the runtime surface manifest as admin-gated surfaces.
+- Added API error/guard coverage and `CliRunner` coverage for the principal
+  management paths. Local pytest remains intentionally unrun because the
+  installed Starlette/TestClient runtime hangs before route dispatch; Claude
+  should perform the authoritative CI verification.
