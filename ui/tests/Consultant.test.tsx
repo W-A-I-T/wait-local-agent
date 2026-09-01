@@ -5,11 +5,12 @@ import { Consultant } from "../src/screens/Consultant";
 
 const dashboard = vi.hoisted(() => ({
   clientId: "acme",
+  selectedClientId: "",
   clients: [{ client_id: "acme", name: "Acme Support", status: "active" }]
 }));
 
 vi.mock("../src/app/DashboardContext", () => ({
-  useDashboard: () => ({ canWrite: true, clientId: dashboard.clientId })
+  useDashboard: () => ({ canWrite: true, clientId: dashboard.clientId, selectedClientId: dashboard.selectedClientId })
 }));
 
 describe("Consultant", () => {
@@ -20,6 +21,7 @@ describe("Consultant", () => {
     noBlueprints = false;
     blueprintListCalls = 0;
     dashboard.clientId = "acme";
+    dashboard.selectedClientId = "";
     vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
       const path = String(input);
       if (path === "/consultant/blueprints") {

@@ -13,7 +13,7 @@ export function parserPayload(parser: KnowledgeParser): "" | "basic" | "pypdf" {
 }
 
 export function Knowledge() {
-  const { clients = [], isAdmin, canWrite } = useDashboard();
+  const { clients = [], isAdmin, canWrite, selectedClientId, setSelectedClientId } = useDashboard();
   const [documents, setDocuments] = useState<KnowledgeDocument[]>([]);
   const [chunks, setChunks] = useState<KnowledgeChunk[]>([]);
   const [path, setPath] = useState("");
@@ -45,13 +45,17 @@ export function Knowledge() {
       setStatusMessage("Set a path before ingesting documents.");
       return;
     }
+    if (!selectedClientId) {
+      setStatusMessage("Select a client from the top bar before ingesting documents.");
+      return;
+    }
     setIsLoading(true);
     setStatusMessage("Ingesting documents...");
     try {
       const result = await apiFetch<KnowledgeDocument[]>("/knowledge/ingest", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ path, parser: parserPayload(parser), ocr })
+        body: JSON.stringify({ path, parser: parserPayload(parser), ocr, client_id: selectedClientId })
       });
       setDocuments((current) => [
         ...result,
@@ -117,8 +121,10 @@ export function Knowledge() {
               />
               OCR documents
             </label>
+            <ClientIdSelect label="Client ID" value={selectedClientId} onChange={setSelectedClientId} clients={clients} required id="knowledge-ingest-client-id" />
           </div>
-          <button type="submit" disabled={isLoading || !path || !canWrite}>
+          {!selectedClientId ? <p className="screen-note">Select a client from the top bar before running ingest.</p> : null}
+          <button type="submit" disabled={isLoading || !path || !canWrite || !selectedClientId} title={!selectedClientId ? "Select a client from the top bar first" : undefined}>
             {isLoading ? "Ingesting..." : "Run ingest"}
           </button>
         </form>

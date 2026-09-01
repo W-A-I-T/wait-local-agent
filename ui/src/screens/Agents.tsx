@@ -41,7 +41,7 @@ function renderDiffValue(value: unknown): string {
 }
 
 export function Agents() {
-  const { canWrite, clients = [], connectors = [] } = useDashboard();
+  const { canWrite, clients = [], connectors = [], selectedClientId } = useDashboard();
   const [agents, setAgents] = useState<AgentDefinition[]>([]);
   const [tools, setTools] = useState<AgentTool[]>([]);
   const [loading, setLoading] = useState(true);
@@ -67,6 +67,10 @@ export function Agents() {
   const [diffs, setDiffs] = useState<Record<string, AgentRevisionDiff>>({});
   const [revisionSelections, setRevisionSelections] = useState<Record<string, RevisionSelection>>({});
   const [confirmingRestore, setConfirmingRestore] = useState<RestoreRequest | null>(null);
+
+  useEffect(() => {
+    if (!editingAgentId) setClientId(selectedClientId);
+  }, [editingAgentId, selectedClientId]);
 
   const refresh = useCallback(async () => {
     setLoading(true);

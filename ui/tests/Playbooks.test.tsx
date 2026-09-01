@@ -3,12 +3,15 @@ import { MemoryRouter } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { Playbooks } from "../src/screens/Playbooks";
 
+const dashboard = vi.hoisted(() => ({ canWrite: true, clientId: "auth-tenant", selectedClientId: "acme", selectedTicketId: "" }));
+
 vi.mock("../src/app/DashboardContext", () => ({
-  useDashboard: () => ({ canWrite: true, clientId: "acme", selectedTicketId: "" })
+  useDashboard: () => dashboard
 }));
 
 describe("Playbooks", () => {
   beforeEach(() => {
+    dashboard.selectedClientId = "acme";
     vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
       const path = String(input);
       if (path === "/msp/playbooks") {
@@ -37,6 +40,15 @@ describe("Playbooks", () => {
       }
       throw new Error(`Unexpected request: ${path}`);
     }));
+  });
+
+  it("gates scoped actions until a top-bar client is selected", async () => {
+    dashboard.selectedClientId = "";
+    render(<MemoryRouter><Playbooks /></MemoryRouter>);
+
+    expect(await screen.findByText("Select a client from the top bar to run or publish a playbook.")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Preview" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Run" })).toBeDisabled();
   });
 
   it("renders the library and wires preview and run to the MSP playbook routes", async () => {

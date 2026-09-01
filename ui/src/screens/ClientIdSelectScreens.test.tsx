@@ -50,6 +50,8 @@ const dashboard = {
   authState: "authenticated",
   canWrite: true,
   clientId: "acme",
+  selectedClientId: "acme",
+  setSelectedClientId: vi.fn(),
   clients,
   connectors: [],
   executeApproval: vi.fn(),
@@ -114,7 +116,7 @@ describe("ClientIdSelect screen rollout", () => {
     ["Collectors", <Collectors />, "collector-client-id", false],
     ["Agents", <Agents />, "agent-client-id", false],
     ["Reports", <Reports />, "report-client-id", false],
-    ["TechnicianChat", <TechnicianChat />, "technician-client-id", false],
+    ["TechnicianChat", <TechnicianChat />, "technician-client-id", true],
     ["Knowledge", <Knowledge />, "knowledge-search-client-id", false],
     ["Analytics", <Analytics />, "analytics-client-id", false],
     ["Audit", <Audit />, "audit-client-id", false],
@@ -123,7 +125,7 @@ describe("ClientIdSelect screen rollout", () => {
 
     await waitFor(() => expect(document.getElementById(controlId)).toBeInTheDocument());
     const control = document.getElementById(controlId);
-    expect(control).toHaveValue(required ? "acme" : "");
+    expect(control).toHaveValue(required || _name === "Agents" ? "acme" : "");
     if (required) {
       expect(control).toBeRequired();
     } else {

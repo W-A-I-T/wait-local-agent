@@ -6,10 +6,9 @@ import { ClientIdSelect } from "../components/ClientIdSelect";
 import type { SmartActionRun, TechnicianChatResponse, TechnicianChatSession } from "../api/types";
 
 export function TechnicianChat() {
-  const { canWrite, clients = [] } = useDashboard();
+  const { canWrite, clients = [], selectedClientId, setSelectedClientId } = useDashboard();
   const [sessions, setSessions] = useState<TechnicianChatSession[]>([]);
   const [activeSession, setActiveSession] = useState<TechnicianChatSession | null>(null);
-  const [clientId, setClientId] = useState("");
   const [ticketId, setTicketId] = useState("");
   const [draft, setDraft] = useState("");
   const [message, setMessage] = useState("");
@@ -89,6 +88,10 @@ export function TechnicianChat() {
 
   async function createSession(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    if (!selectedClientId) {
+      setError("Select a client from the top bar before starting a chat session.");
+      return;
+    }
     setBusy("create");
     setError("");
     setMessage("");
@@ -98,7 +101,7 @@ export function TechnicianChat() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          client_id: clientId.trim() || undefined,
+          client_id: selectedClientId,
           ticket_id: ticketId.trim() || undefined
         })
       });
@@ -168,7 +171,7 @@ export function TechnicianChat() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          client_id: clientId.trim() || undefined,
+          client_id: selectedClientId || undefined,
           payload: {
             channel: notificationChannel,
             recipient: notificationRecipient.trim(),
@@ -203,10 +206,11 @@ export function TechnicianChat() {
         {plan ? <div className="technician-plan" role="status"><strong>Bounded plan preview · {plan.status}</strong>{plan.blocked_reason ? <p>{plan.blocked_reason}</p> : null}{plan.steps.length ? <ol>{plan.steps.map((step) => <li key={`${step.index}-${step.tool_id}`}><strong>{step.name}</strong><span>{step.reason} · {step.approval_required ? "approval required" : "read-only or deterministic"}</span></li>)}</ol> : <p>No approved steps were selected.</p>}</div> : null}
         <form className="draft-form" onSubmit={(event) => void createSession(event)}>
           <div className="grid">
-            <ClientIdSelect label="Client id (optional for a scoped technician token)" value={clientId} onChange={setClientId} clients={clients} id="technician-client-id" />
+            <ClientIdSelect label="Client ID (required)" value={selectedClientId} onChange={setSelectedClientId} clients={clients} required id="technician-client-id" />
             <label>Ticket id (optional)<input value={ticketId} onChange={(event) => setTicketId(event.target.value)} placeholder="TCK-1001" /></label>
           </div>
-          <button type="submit" disabled={busy !== null}><Plus size={17} aria-hidden="true" />{busy === "create" ? "Starting…" : "New chat session"}</button>
+          {!selectedClientId ? <p className="screen-note">Select a client from the top bar before starting a chat session.</p> : null}
+          <button type="submit" disabled={busy !== null || !selectedClientId} title={!selectedClientId ? "Select a client from the top bar first" : undefined}><Plus size={17} aria-hidden="true" />{busy === "create" ? "Starting…" : "New chat session"}</button>
         </form>
         <form className="draft-form" onSubmit={(event) => void prepareNotification(event)}>
           <div className="panel-heading"><div><h3>Technician notification</h3><p className="screen-note">Prepare a Teams or Slack notification through the existing approval-gated communication action.</p></div></div>
@@ -216,7 +220,7 @@ export function TechnicianChat() {
             <label>Subject (optional)<input maxLength={500} value={notificationSubject} onChange={(event) => setNotificationSubject(event.target.value)} placeholder="Ticket needs review" /></label>
           </div>
           <label>Notification message<textarea required maxLength={10000} rows={3} value={notificationBody} onChange={(event) => setNotificationBody(event.target.value)} placeholder="A bounded update for the configured technician channel" /></label>
-          <button type="submit" disabled={notificationBusy || !notificationRecipient.trim() || !notificationBody.trim()}>{notificationBusy ? "Preparing…" : "Prepare notification approval"}</button>
+          <button type="submit" disabled={notificationBusy || !selectedClientId || !notificationRecipient.trim() || !notificationBody.trim()} title={!selectedClientId ? "Select a client from the top bar first" : undefined}>{notificationBusy ? "Preparing…" : "Prepare notification approval"}</button>
         </form>
         <section className="notification-activity" aria-labelledby="notification-activity-heading">
           <div className="panel-heading">

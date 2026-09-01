@@ -167,6 +167,7 @@ export function Consultant() {
     canWrite,
     clients = [],
     clientId: scopedClientId,
+    selectedClientId,
     authState,
     writeHealth,
   } = useDashboard();
@@ -693,7 +694,7 @@ export function Consultant() {
   }
 
   async function promoteDiscovery() {
-    const clientId = resolveClientId(selected?.client_id, scopedClientId, discoveryClientId, blueprints[0]?.client_id);
+    const clientId = resolveClientId(selected?.client_id, scopedClientId, selectedClientId, discoveryClientId || blueprints[0]?.client_id);
     if (!clientId || !discoveryResult || discoveryResult.readiness !== "ready_for_architecture") {
       setMessage("Complete the required discovery evidence before saving a solution blueprint.");
       return;
@@ -766,7 +767,7 @@ export function Consultant() {
   }
 
   async function runEmployeeOnboardingDemo() {
-    const clientId = resolveClientId(selected?.client_id, scopedClientId, discoveryClientId, blueprints[0]?.client_id);
+    const clientId = resolveClientId(selected?.client_id, scopedClientId, selectedClientId, discoveryClientId || blueprints[0]?.client_id);
     if (!selected || !clientId || !employeeOnboardingEntityId.trim()) {
       setMessage("Select a saved blueprint and provide an existing tenant-scoped ticket before running the local walkthrough.");
       return;
@@ -795,7 +796,7 @@ export function Consultant() {
   const workflowComponents = architecture?.components.filter((component) => component.kind === "workflow") ?? [];
 
   function currentClientId() {
-    return selected?.client_id?.trim() || scopedClientId.trim() || discoveryClientId.trim() || blueprints[0]?.client_id?.trim() || "";
+    return selected?.client_id?.trim() || scopedClientId.trim() || selectedClientId?.trim() || discoveryClientId.trim() || blueprints[0]?.client_id?.trim() || "";
   }
 
   return (
@@ -953,7 +954,7 @@ export function Consultant() {
           <div className="grid">
             <ClientIdSelect
               label="Customer workspace ID"
-              value={discoveryClientId || selected?.client_id || scopedClientId || blueprints[0]?.client_id || ""}
+              value={discoveryClientId || selected?.client_id || scopedClientId || selectedClientId || blueprints[0]?.client_id || ""}
               onChange={setDiscoveryClientId}
               clients={clients}
               required

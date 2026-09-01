@@ -4,7 +4,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { WorkflowDesigner } from "../src/screens/WorkflowDesigner";
 
 vi.mock("../src/app/DashboardContext", () => ({
-  useDashboard: () => ({ canWrite: true, isAdmin: true })
+  useDashboard: () => ({ canWrite: true, isAdmin: true, selectedClientId: "acme" })
 }));
 
 describe("WorkflowDesigner", () => {
@@ -92,7 +92,10 @@ describe("WorkflowDesigner", () => {
     const calls = (vi.mocked(fetch) as unknown as { mock: { calls: Array<[RequestInfo | URL, RequestInit?]> } }).mock.calls;
     const patchCall = calls.find(([input, init]) => String(input).endsWith("/gallery-acme") && init?.method === "PATCH");
     expect(patchCall).toBeDefined();
+    expect(JSON.parse(String(patchCall?.[1]?.body)).client_id).toBe("acme");
     expect(JSON.parse(String(patchCall?.[1]?.body)).definition.nodes[1].label).toBe("Review ticket");
+    const createCall = calls.find(([input, init]) => String(input) === "/workflow-templates/gallery" && init?.method === "POST");
+    expect(JSON.parse(String(createCall?.[1]?.body)).client_id).toBe("acme");
   });
 
   it("shows loading and then explains when no local design exists", async () => {

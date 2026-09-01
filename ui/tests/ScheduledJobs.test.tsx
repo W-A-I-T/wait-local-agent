@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ScheduledJobs } from "../src/screens/ScheduledJobs";
 
 vi.mock("../src/app/DashboardContext", () => ({
-  useDashboard: () => ({ canWrite: true })
+  useDashboard: () => ({ canWrite: true, clients: [{ client_id: "acme", name: "Acme Support", status: "active" }], selectedClientId: "acme", setSelectedClientId: vi.fn() })
 }));
 
 const jobs = vi.fn();
@@ -57,9 +57,7 @@ describe("ScheduledJobs", () => {
 
     await screen.findByText("Scheduled Jobs");
     fireEvent.change(screen.getByLabelText("Schedule type"), { target: { value: "report" } });
-    fireEvent.change(screen.getByLabelText("Params JSON"), {
-      target: { value: '{"client_id":"acme","period_days":90}' }
-    });
+    fireEvent.change(screen.getByLabelText("Params JSON"), { target: { value: '{"period_days":90}' } });
     fireEvent.click(screen.getByRole("button", { name: "Create schedule" }));
 
     await waitFor(() => expect(jobs).toHaveBeenCalledWith(
@@ -82,9 +80,7 @@ describe("ScheduledJobs", () => {
     await screen.findByText("Scheduled Jobs");
     fireEvent.change(screen.getByLabelText("Schedule type"), { target: { value: "report" } });
     fireEvent.change(screen.getByLabelText("Report"), { target: { value: "recurring_service_review" } });
-    fireEvent.change(screen.getByLabelText("Params JSON"), {
-      target: { value: '{"client_id":"acme","period_days":30,"follow_up_after_days":14}' }
-    });
+    fireEvent.change(screen.getByLabelText("Params JSON"), { target: { value: '{"period_days":30,"follow_up_after_days":14}' } });
     fireEvent.click(screen.getByRole("button", { name: "Create schedule" }));
 
     await waitFor(() => expect(jobs).toHaveBeenCalledWith(
@@ -106,9 +102,7 @@ describe("ScheduledJobs", () => {
     await screen.findByText("Scheduled Jobs");
     fireEvent.change(screen.getByLabelText("Schedule type"), { target: { value: "playbook" } });
     fireEvent.change(screen.getByLabelText("Playbook"), { target: { value: "ticket-intake-review" } });
-    fireEvent.change(screen.getByLabelText("Params JSON"), {
-      target: { value: '{"client_id":"acme","ticket_id":"T-1","input":{"priority":"high"}}' }
-    });
+    fireEvent.change(screen.getByLabelText("Params JSON"), { target: { value: '{"ticket_id":"T-1","input":{"priority":"high"}}' } });
     fireEvent.click(screen.getByRole("button", { name: "Create schedule" }));
 
     await waitFor(() => expect(jobs).toHaveBeenCalledWith(

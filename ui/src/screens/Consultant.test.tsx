@@ -6,6 +6,7 @@ import { Consultant } from "./Consultant";
 const dashboard = vi.hoisted(() => ({
   canWrite: true,
   clientId: "acme",
+  selectedClientId: "acme",
   clients: [{ client_id: "acme", name: "Acme Support", status: "active" }],
   authState: "authenticated",
   writeHealth: { status: "blocked" },
