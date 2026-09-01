@@ -32,6 +32,7 @@ from starlette.types import Scope
 
 from wait_local_agent import __version__
 from wait_local_agent.agents import AgentDefinitionError, AgentService
+from wait_local_agent.api.auth_routes import create_auth_router
 from wait_local_agent.api.founder import (
     FounderNotConfiguredError,
     FounderPackContractError,
@@ -1109,6 +1110,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         route_dependencies=[Depends(require_role(Role.VIEWER))],
     )
     app.include_router(create_founder_router())
+    app.include_router(create_auth_router())
 
     @app.get("/health")
     @limiter.exempt

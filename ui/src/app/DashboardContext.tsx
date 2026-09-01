@@ -94,6 +94,7 @@ type DashboardContextValue = {
   selectedClientId: string;
   clients: ClientDirectoryEntry[];
   role: AuthRoleResponse["role"];
+  isMspAdmin: boolean;
   endUserSupportEnabled: boolean;
   authState: AuthState | null;
   capabilityGrants: CapabilityGrantView[];
@@ -165,6 +166,7 @@ const DashboardContext = createContext<DashboardContextValue | undefined>(undefi
 export function DashboardProvider({ children }: { children: ReactNode }) {
   const [apiToken, setApiToken] = useState(() => loadStoredApiToken());
   const [role, setRole] = useState<AuthRoleResponse["role"]>("viewer");
+  const [isMspAdmin, setIsMspAdmin] = useState(false);
   const [endUserSupportEnabled, setEndUserSupportEnabled] = useState(false);
   const [authState, setAuthState] = useState<AuthState | null>(null);
   const [clientId, setClientId] = useState("");
@@ -207,6 +209,7 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
     const roleRequestId = ++roleRequestIdRef.current;
     setLoading(true);
     setRole("viewer");
+    setIsMspAdmin(false);
     setEndUserSupportEnabled(false);
     setAuthState(null);
     setRoleResolved(false);
@@ -248,6 +251,7 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
       }
       const nextAuthState = deriveAuthState(auth, loadStoredApiToken());
       setRole(auth.role);
+      setIsMspAdmin(auth.is_msp_admin === true);
       setEndUserSupportEnabled(auth.end_user_support_enabled === true);
       setAuthState(nextAuthState);
       setClientId(auth.client_id ?? "");
@@ -284,6 +288,7 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
         return null;
       }
       setRole("viewer");
+      setIsMspAdmin(false);
       setEndUserSupportEnabled(false);
       setRoleResolved(false);
       const nextAuthState = hasStoredApiToken() && isUnauthorized(error) ? "invalid-token" : null;
@@ -437,6 +442,7 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
       selectedClientId,
       clients,
       role,
+      isMspAdmin,
       endUserSupportEnabled,
       authState,
       capabilityGrants,

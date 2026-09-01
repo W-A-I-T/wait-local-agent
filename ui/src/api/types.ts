@@ -1700,6 +1700,26 @@ export type AuthRoleResponse = {
   principal_id?: string | null;
 };
 
+export type PrincipalClientRole = "end_user" | "viewer" | "technician" | "admin";
+
+export type PrincipalCredential = {
+  credential_hash_prefix: string;
+  active: boolean;
+  created_at: string;
+};
+
+export type PrincipalAdminView = {
+  principal_id: string;
+  kind: "customer" | "staff";
+  display_name: string;
+  active: boolean;
+  created_at: string;
+  client_roles: Array<[string, PrincipalClientRole]>;
+  global_roles: string[];
+  credential_count: number;
+  credentials: PrincipalCredential[];
+};
+
 export type FounderUploadPreview = {
   artifact_id: string;
   project_id?: string;
