@@ -69,6 +69,7 @@ def test_store_migrations_are_idempotent_and_connection_pragmas_are_safe(tmp_pat
             (9, "principal_identities"),
             (10, "client_candidates"),
             (11, "client_baselines"),
+            (12, "commercial_activations"),
         ]
         assert connection.execute("pragma foreign_keys").fetchone()[0] == 1
         assert connection.execute("pragma journal_mode").fetchone()[0].lower() == "wal"

@@ -40,6 +40,7 @@ from wait_local_agent.models import (
     ClientConnectorMapping,
     CollectorRun,
     CollectorSource,
+    CommercialActivation,
     ConfigDiff,
     ConfigSnapshot,
     ConnectorInstance,
@@ -333,6 +334,7 @@ class Store:
             Migration(9, "principal_identities", self._apply_principal_identities_migration),
             Migration(10, "client_candidates", self._apply_client_candidates_migration),
             Migration(11, "client_baselines", self._apply_client_baselines_migration),
+            Migration(12, "commercial_activations", self._apply_commercial_activations_migration),
         )
 
     def _apply_principals_migration(self, connection: sqlite3.Connection) -> None:
@@ -830,6 +832,20 @@ class Store:
             """
             create index if not exists idx_client_baselines_client_version
             on client_baselines(client_id, version desc)
+            """
+        )
+
+    @staticmethod
+    def _apply_commercial_activations_migration(connection: sqlite3.Connection) -> None:
+        """Store commercial-pack bookkeeping without changing client behavior."""
+
+        connection.execute(
+            """
+            create table if not exists commercial_activations (
+                client_id text primary key references clients(client_id) on delete cascade,
+                activated_at text not null,
+                activated_by text not null
+            )
             """
         )
 
@@ -1843,6 +1859,60 @@ class Store:
                 client_params,
             ).fetchall()
         return [_client_from_row(row) for row in rows]
+
+    def list_commercial_activations(self, scope: ClientScope) -> list[CommercialActivation]:
+        client_predicate, client_params = _client_scope_predicate(scope, "commercial_activations.client_id")
+        with self._connect() as connection:
+            rows = connection.execute(
+                f"""
+                select commercial_activations.*
+                from commercial_activations
+                join clients on clients.client_id = commercial_activations.client_id
+                where {client_predicate}
+                order by commercial_activations.client_id
+                """,  # nosec B608: predicate is fixed internal SQL; client IDs are parameterized
+                client_params,
+            ).fetchall()
+        return [_commercial_activation_from_row(row) for row in rows]
+
+    def activate_commercial_client(
+        self,
+        scope: ClientScope,
+        client_id: str,
+        activated_by: str,
+        *,
+        now: str | None = None,
+    ) -> CommercialActivation | None:
+        normalized_id = _normalize_client_id(client_id)
+        normalized_actor = _redact_text(activated_by.strip())
+        if normalized_id is None:
+            return None
+        if not normalized_actor:
+            raise ValueError("activated_by must be non-empty")
+        if self.get_client(scope, normalized_id) is None:
+            return None
+        with self._connect() as connection:
+            connection.execute(
+                """
+                insert or ignore into commercial_activations (client_id, activated_at, activated_by)
+                values (?, ?, ?)
+                """,
+                (normalized_id, now or utc_now(), normalized_actor),
+            )
+            row = connection.execute(
+                "select * from commercial_activations where client_id = ?", (normalized_id,)
+            ).fetchone()
+        return _commercial_activation_from_row(row) if row else None
+
+    def deactivate_commercial_client(self, scope: ClientScope, client_id: str) -> bool:
+        normalized_id = _normalize_client_id(client_id)
+        if normalized_id is None or self.get_client(scope, normalized_id) is None:
+            return False
+        with self._connect() as connection:
+            cursor = connection.execute(
+                "delete from commercial_activations where client_id = ?", (normalized_id,)
+            )
+        return cursor.rowcount > 0
 
     def get_client(self, scope: ClientScope, client_id: str) -> Client | None:
         normalized_id = _normalize_client_id(client_id)
@@ -10941,6 +11011,10 @@ def _table_has_column(connection: sqlite3.Connection, table_name: str, column_na
 
 def _client_from_row(row: sqlite3.Row) -> Client:
     return Client(**dict(row))
+
+
+def _commercial_activation_from_row(row: sqlite3.Row) -> CommercialActivation:
+    return CommercialActivation(**dict(row))
 
 
 def _connector_instance_from_row(row: sqlite3.Row) -> ConnectorInstance:

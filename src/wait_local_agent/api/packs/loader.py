@@ -19,6 +19,7 @@ import typer
 from fastapi import APIRouter, FastAPI
 
 from wait_local_agent.config import Settings
+from wait_local_agent.license_v2 import verify_license_v2
 from wait_local_agent.vault import SecretVault
 
 LOGGER = logging.getLogger(__name__)
@@ -50,6 +51,31 @@ class PackRegistry:
 
     def get_pack(self, name: str) -> LoadedPack | None:
         return self.loaded.get(name)
+
+
+def get_entitlement_status(registry: PackRegistry) -> dict[str, Any] | None:
+    """Return the first loaded commercial pack's self-described status."""
+
+    for status in registry.statuses:
+        if status.locked or not status.requires_license:
+            continue
+        loaded = registry.get_pack(status.name)
+        if loaded is None:
+            continue
+        factory = loaded.manifest.get("entitlement_status_factory")
+        if factory is None:
+            continue
+        try:
+            resolved = _resolve_dotted_ref(factory)
+            if not callable(resolved):
+                raise TypeError("entitlement_status_factory must resolve to a callable")
+            value = resolved()
+            if not isinstance(value, dict):
+                raise TypeError("entitlement_status_factory must return a dict")
+            return dict(value)
+        except Exception as exc:  # noqa: BLE001
+            LOGGER.warning("Unable to read entitlement status for pack %s: %s", status.name, exc)
+    return None
 
 
 @dataclass(frozen=True)
@@ -336,6 +362,9 @@ def _validate_manifest(manifest: dict[str, Any]) -> None:
         value = manifest.get(key)
         if value is not None and not isinstance(value, str):
             raise ValueError(f"PACK_MANIFEST[{key!r}] must be a string or None")
+    entitlement_factory = manifest.get("entitlement_status_factory")
+    if entitlement_factory is not None and not isinstance(entitlement_factory, str):
+        raise ValueError("PACK_MANIFEST['entitlement_status_factory'] must be a string or None")
 
 
 def _pack_enabled(pack_name: str, settings: Settings) -> bool:
@@ -343,6 +372,20 @@ def _pack_enabled(pack_name: str, settings: Settings) -> bool:
         pack_keys = importlib.import_module("packs.license.keys")
     except ImportError:
         return False
+    pack_enabled_v2 = getattr(pack_keys, "pack_enabled_v2", None)
+    if callable(pack_enabled_v2):
+        def verifier(payload_b64: str, sig_b64: str, pubkeys: Iterable[str] | None = None) -> dict[str, Any]:
+            return verify_license_v2(
+                payload_b64,
+                sig_b64,
+                settings.license_pubkeys if pubkeys is None else pubkeys,
+            )
+
+        try:
+            if bool(pack_enabled_v2(pack_name, settings.license_key or None, verifier=verifier)):
+                return True
+        except Exception as exc:  # noqa: BLE001
+            LOGGER.warning("License v2 validation failed for pack %s: %s", pack_name, exc)
     try:
         pack_enabled = pack_keys.pack_enabled
         return bool(pack_enabled(pack_name, settings.license_key or None))

@@ -55,6 +55,7 @@ from wait_local_agent.api.founder import (
 from wait_local_agent.api.packs.loader import (
     PackInstallError,
     configure_pack_routes,
+    get_entitlement_status,
     install_pack_tarball,
 )
 from wait_local_agent.autotask import AutotaskClient, AutotaskReadResponse
@@ -1430,6 +1431,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         registry = app.state.pack_registry
         return [{**asdict(status), "signature_status": "not_recorded"} for status in registry.statuses]
 
+    @app.get("/entitlement")
+    def entitlement(_: ViewerAccess) -> dict[str, object | None]:
+        return {"commercial": get_entitlement_status(app.state.pack_registry)}
+
     @app.post("/packs/install")
     def pack_install(payload: PackInstallRequest, _: AdminAccess) -> dict[str, object]:
         try:
@@ -1461,6 +1466,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     def clients(context: ViewerAccess, client_id: str | None = None) -> list[dict[str, object]]:
         scope = resolve_client_scope(context, client_id, allow_all=True)
         return [asdict(client) for client in store.list_clients(scope)]
+
+    @app.get("/clients/commercial-activations")
+    def commercial_activations(context: AdminAccess) -> list[dict[str, object]]:
+        _require_commercial_activation_access(context)
+        return [asdict(activation) for activation in store.list_commercial_activations(AllClients())]
 
     def _discovery_summary() -> dict[str, int]:
         counts = store.count_client_candidates()
@@ -1692,6 +1702,45 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         if client is None:
             raise HTTPException(status_code=404, detail="client not found")
         return asdict(client)
+
+    @app.post("/clients/{client_id}/commercial-activation")
+    def activate_commercial_client(client_id: str, context: AdminAccess) -> dict[str, object]:
+        _require_commercial_activation_access(context)
+        scope = _resolve_client_target_scope(context, client_id)
+        try:
+            activation = store.activate_commercial_client(
+                scope,
+                client_id,
+                context.approver_id or "admin",
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        if activation is None:
+            raise HTTPException(status_code=404, detail="client not found")
+        store.add_audit_event(
+            "commercial.client_activated",
+            activation.client_id,
+            "commercial managed-client bookkeeping activated",
+            client_id=activation.client_id,
+            approver_id=context.approver_id,
+        )
+        return asdict(activation)
+
+    @app.delete("/clients/{client_id}/commercial-activation")
+    def deactivate_commercial_client(client_id: str, context: AdminAccess) -> dict[str, object]:
+        _require_commercial_activation_access(context)
+        scope = _resolve_client_target_scope(context, client_id)
+        if store.get_client(scope, client_id) is None:
+            raise HTTPException(status_code=404, detail="client not found")
+        store.deactivate_commercial_client(scope, client_id)
+        store.add_audit_event(
+            "commercial.client_deactivated",
+            client_id,
+            "commercial managed-client bookkeeping deactivated",
+            client_id=client_id,
+            approver_id=context.approver_id,
+        )
+        return {"client_id": client_id.strip(), "commercial_managed": False}
 
     @app.post("/clients/{client_id}/baselines", status_code=201)
     def create_client_baseline(client_id: str, context: AdminAccess) -> dict[str, object]:
@@ -8575,6 +8624,12 @@ def _require_msp_operator(context: AuthContext) -> None:
 
     if not context.demo_mode and not context.is_msp_admin:
         raise HTTPException(status_code=403, detail="msp operator access required")
+
+
+def _require_commercial_activation_access(context: AuthContext) -> None:
+    if context.demo_mode:
+        raise HTTPException(status_code=403, detail="commercial activation is unavailable in demo mode")
+    _require_msp_operator(context)
 
 
 def _request_correlation_id(request: Request) -> str | None:

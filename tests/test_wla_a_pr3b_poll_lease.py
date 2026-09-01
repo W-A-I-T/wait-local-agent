@@ -43,6 +43,7 @@ def test_v6_registers_additive_lease_columns_and_preserves_foreign_keys(tmp_path
             (9, "principal_identities"),
             (10, "client_candidates"),
             (11, "client_baselines"),
+            (12, "commercial_activations"),
         ]
         assert {str(row[1]) for row in connection.execute("pragma table_info(sync_cursors)")} >= {
             "lease_token",

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState, type FormEvent, type KeyboardEvent } from "react";
 import { ApiRequestError, apiFetch } from "../api/client";
-import type { BaselineFinding, Client, ClientBaseline, ClientConnectorMapping, ClientDirectoryEntry, ClientDrift, ClientGraph, M365InventorySyncResult, MappingVerifyResult, RmmInventorySyncResult } from "../api/types";
+import type { BaselineFinding, Client, ClientBaseline, ClientConnectorMapping, ClientDirectoryEntry, ClientDrift, ClientGraph, CommercialActivation, M365InventorySyncResult, MappingVerifyResult, RmmInventorySyncResult } from "../api/types";
 import { useDashboard } from "../app/DashboardContext";
 import { EmptyState } from "../components/EmptyState";
 import { LoadingState } from "../components/LoadingState";
@@ -46,8 +46,16 @@ function isStale(lastSeen?: string): boolean {
 }
 
 export function Clients() {
-  const { role, roleResolved, refresh, refreshConfiguration = refresh } = useDashboard();
+  const {
+    role,
+    roleResolved,
+    isMspAdmin = false,
+    commercialEntitlement = null,
+    refresh,
+    refreshConfiguration = refresh
+  } = useDashboard();
   const canMutate = roleResolved && role === "admin";
+  const canManageCommercial = roleResolved && isMspAdmin && commercialEntitlement !== null;
   const [clients, setClients] = useState<ClientDirectoryEntry[]>([]);
   const [selectedClientId, setSelectedClientId] = useState<string | null>(null);
   const [selectedClient, setSelectedClient] = useState<Client | null>(null);
@@ -83,6 +91,9 @@ export function Clients() {
   const [baselineLoading, setBaselineLoading] = useState(false);
   const [baselineError, setBaselineError] = useState("");
   const [baselineBusy, setBaselineBusy] = useState(false);
+  const [commercialActivations, setCommercialActivations] = useState<CommercialActivation[]>([]);
+  const [commercialActivationBusy, setCommercialActivationBusy] = useState<string | null>(null);
+  const [commercialActivationError, setCommercialActivationError] = useState("");
 
   const loadClients = useCallback(async () => {
     setLoading(true);
@@ -104,6 +115,51 @@ export function Clients() {
       .then((result) => setDeploymentMode(result.mode))
       .catch(() => setDeploymentMode(null));
   }, []);
+
+  const loadCommercialActivations = useCallback(async () => {
+    if (!canManageCommercial) {
+      setCommercialActivations([]);
+      setCommercialActivationError("");
+      return;
+    }
+    setCommercialActivationError("");
+    try {
+      const result = await apiFetch<CommercialActivation[]>("/clients/commercial-activations");
+      setCommercialActivations(Array.isArray(result) ? result : []);
+    } catch (requestError) {
+      setCommercialActivations([]);
+      setCommercialActivationError(requestError instanceof Error ? requestError.message : "Unable to load commercial client status.");
+    }
+  }, [canManageCommercial]);
+
+  useEffect(() => { void loadCommercialActivations(); }, [loadCommercialActivations]);
+
+  const toggleCommercialActivation = useCallback(async (clientId: string) => {
+    if (!canManageCommercial) return;
+    const active = commercialActivations.some((activation) => activation.client_id === clientId);
+    setCommercialActivationBusy(clientId);
+    setCommercialActivationError("");
+    try {
+      if (active) {
+        await apiFetch(`/clients/${encodeURIComponent(clientId)}/commercial-activation`, { method: "DELETE" });
+        setCommercialActivations((current) => current.filter((activation) => activation.client_id !== clientId));
+        setStatusMessage("Commercial client status set to unmanaged.");
+      } else {
+        const activation = await apiFetch<CommercialActivation>(
+          `/clients/${encodeURIComponent(clientId)}/commercial-activation`,
+          { method: "POST" }
+        );
+        setCommercialActivations((current) => current.some((item) => item.client_id === activation.client_id)
+          ? current
+          : [...current, activation].sort((left, right) => left.client_id.localeCompare(right.client_id)));
+        setStatusMessage("Commercial client status set to managed.");
+      }
+    } catch (requestError) {
+      setCommercialActivationError(requestError instanceof Error ? requestError.message : "Unable to update commercial client status.");
+    } finally {
+      setCommercialActivationBusy(null);
+    }
+  }, [canManageCommercial, commercialActivations]);
 
   const selectClient = useCallback(async (clientId: string) => {
     setSelectedClientId(clientId);
@@ -395,6 +451,7 @@ export function Clients() {
 
       {error ? <div className="notice danger" role="alert"><span>{error}</span><button className="secondary-button" type="button" onClick={() => void loadClients()} disabled={loading}>Try again</button></div> : null}
       {statusMessage ? <div className="notice success" role="status">{statusMessage}</div> : null}
+      {commercialActivationError ? <div className="notice danger" role="alert">{commercialActivationError}</div> : null}
 
       <RoleGate role={role} resolved={roleResolved} allowed={["admin"]}>
         <section className="panel" aria-labelledby="client-form-heading">
@@ -411,7 +468,7 @@ export function Clients() {
         </section>
       </RoleGate>
 
-      {loading ? <LoadingState label="Loading Clients…" /> : clients.length === 0 ? <EmptyState title="No clients are visible." why={<><span>The appliance has not returned any clients for this scope.</span><span>For demo evaluation only, with writes disabled, seed a client using <code className="copyable-command">wait-local-agent demo seed --client-id demo</code>. This requires <code>WAIT_DEMO_MODE=true</code> and writes disabled.</span></>} /> : <section className="panel" aria-labelledby="clients-list-heading"><div className="panel-heading"><div><h2 id="clients-list-heading">Client directory</h2><span>{clients.length} client{clients.length === 1 ? "" : "s"}</span></div><span>Select a client for details</span></div><div className="clients-table-wrap"><table className="clients-table"><thead><tr><th scope="col">Name</th><th scope="col">Client ID</th><th scope="col">Status</th></tr></thead><tbody>{clients.map((client) => <tr key={client.client_id}><td><button className="table-link" type="button" onClick={() => void selectClient(client.client_id)}>{client.name}</button></td><td><code>{client.client_id}</code></td><td><StatusChip status={client.status} /></td></tr>)}</tbody></table></div></section>}
+      {loading ? <LoadingState label="Loading Clients…" /> : clients.length === 0 ? <EmptyState title="No clients are visible." why={<><span>The appliance has not returned any clients for this scope.</span><span>For demo evaluation only, with writes disabled, seed a client using <code className="copyable-command">wait-local-agent demo seed --client-id demo</code>. This requires <code>WAIT_DEMO_MODE=true</code> and writes disabled.</span></>} /> : <section className="panel" aria-labelledby="clients-list-heading"><div className="panel-heading"><div><h2 id="clients-list-heading">Client directory</h2><span>{clients.length} client{clients.length === 1 ? "" : "s"}</span></div><span>Select a client for details</span></div><div className="clients-table-wrap"><table className="clients-table"><thead><tr><th scope="col">Name</th><th scope="col">Client ID</th><th scope="col">Status</th>{canManageCommercial ? <th scope="col">Commercial</th> : null}</tr></thead><tbody>{clients.map((client) => { const managed = commercialActivations.some((activation) => activation.client_id === client.client_id); return <tr key={client.client_id}><td><button className="table-link" type="button" onClick={() => void selectClient(client.client_id)}>{client.name}</button></td><td><code>{client.client_id}</code></td><td><StatusChip status={client.status} /></td>{canManageCommercial ? <td><div className="row-actions"><span className="status-chip neutral">Commercial: {managed ? "managed" : "unmanaged"}</span><button className="secondary-button" type="button" onClick={() => void toggleCommercialActivation(client.client_id)} disabled={commercialActivationBusy !== null}>{commercialActivationBusy === client.client_id ? "Saving…" : managed ? "Set unmanaged" : "Set managed"}</button></div></td> : null}</tr>; })}</tbody></table></div></section>}
 
       {selectedClientId && activeDetailTab === "graph" ? (
         <section className="panel" aria-labelledby="environment-sync-heading">
