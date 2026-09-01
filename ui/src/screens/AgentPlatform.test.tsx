@@ -240,6 +240,18 @@ describe("AgentPlatform", () => {
     });
   });
 
+  it("shows a recoverable error when scoped memory cannot be loaded", async () => {
+    mockedApiFetch.mockImplementation(async (path: string) => {
+      if (path === "/packs/agent-platform/memories") throw new Error("memory unavailable");
+      return responseFor(path) as never;
+    });
+
+    render(<AgentPlatform />);
+
+    expect(await screen.findByRole("status")).toHaveTextContent("memory unavailable");
+    expect(screen.getByRole("heading", { name: "No durable memory is available" })).toBeInTheDocument();
+  });
+
   it("reports invalid memory input without sending a failed save", async () => {
     render(<AgentPlatform />);
 
