@@ -6,12 +6,21 @@ from collections.abc import Callable
 from dataclasses import asdict
 from typing import Annotated, Literal
 
-from fastapi import APIRouter, Depends, HTTPException, Request, Response
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
+from fastapi.responses import RedirectResponse
 from pydantic import BaseModel, ConfigDict, Field
 from slowapi import Limiter
 
 from wait_local_agent.client_scope import AllClients
 from wait_local_agent.config import Settings
+from wait_local_agent.oidc import (
+    OIDC_CLIENT_SECRET_KEY,
+    OidcConfig,
+    build_oauth_client,
+    load_oidc_config,
+    resolve_identity,
+    validate_next_path,
+)
 from wait_local_agent.rbac import AuthContext, Role, require_role, resolve_auth_context
 from wait_local_agent.sessions import (
     CSRF_HEADER,
@@ -21,6 +30,7 @@ from wait_local_agent.sessions import (
     session_expiries,
 )
 from wait_local_agent.store import PrincipalDetails, Store, hash_credential
+from wait_local_agent.vault import SecretVault, SecretVaultError
 
 AdminAccess = Annotated[AuthContext, Depends(require_role(Role.ADMIN))]
 _CLIENT_ROLES = Literal["end_user", "viewer", "technician", "admin"]
@@ -62,6 +72,28 @@ class GlobalRoleRequest(BaseModel):
 
 class LocalLoginRequest(BaseModel):
     token: str = Field(min_length=1, max_length=4096)
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class OidcConfigRequest(BaseModel):
+    enabled: bool = False
+    tenant_id: str = Field(default="", max_length=320)
+    client_id: str = Field(default="", max_length=320)
+    public_base_url: str = Field(default="", max_length=512)
+    auto_provision_enabled: bool = False
+    auto_provision_tenant_id: str = Field(default="", max_length=320)
+    auto_provision_client_id: str = Field(default="", max_length=128)
+    auto_provision_role: Literal["viewer"] = "viewer"
+    client_secret: str = Field(default="", max_length=4096)
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class PrincipalIdentityRequest(BaseModel):
+    issuer: str | None = Field(default=None, max_length=512)
+    subject: str = Field(min_length=1, max_length=512)
+    subject_kind: Literal["oid", "email"]
 
     model_config = ConfigDict(extra="forbid")
 
@@ -111,28 +143,13 @@ def create_auth_router(limiter: Limiter | None = None) -> APIRouter:
         if principal is None or context.principal_id is None:
             return {"session_created": False}
 
-        session_token = generate_session_token()
-        session_token_hash = hash_session_token(session_token)
-        idle_expires_at, absolute_expires_at = session_expiries(
-            idle_ttl_minutes=settings.session_idle_ttl_minutes,
-            absolute_ttl_minutes=settings.session_absolute_ttl_minutes,
-        )
-        store.create_auth_session(
-            session_token_hash,
+        _, absolute_expires_at = _create_browser_session(
+            store,
+            settings,
+            response,
             principal.principal_id,
-            idle_expires_at=idle_expires_at,
-            absolute_expires_at=absolute_expires_at,
             auth_method="local",
             user_agent=request.headers.get("user-agent", ""),
-        )
-        response.set_cookie(
-            SESSION_COOKIE_NAME,
-            session_token,
-            max_age=settings.session_absolute_ttl_minutes * 60,
-            secure=settings.session_cookie_secure,
-            httponly=True,
-            samesite="lax",
-            path="/",
         )
         return {
             "session_created": True,
@@ -143,6 +160,126 @@ def create_auth_router(limiter: Limiter | None = None) -> APIRouter:
                 expires_at=absolute_expires_at,
             ),
         }
+
+    @router.get("/oidc/status")
+    @limit_login
+    def oidc_status(request: Request) -> dict[str, bool]:
+        config = _oidc_config(request)
+        return {"enabled": config.enabled}
+
+    @router.get("/oidc/login")
+    @limit_login
+    async def oidc_login(
+        request: Request,
+        next_path: str | None = Query(default=None, alias="next", max_length=4096),
+    ) -> Response:
+        config = _oidc_config(request)
+        if not config.enabled:
+            raise HTTPException(status_code=404, detail="OIDC sign-in is not enabled")
+        try:
+            validated_next = validate_next_path(next_path)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail="invalid next path") from exc
+        request.session["oidc_next"] = validated_next
+        try:
+            client = build_oauth_client(config)
+            return await client.authorize_redirect(request, config.redirect_uri)
+        except Exception as exc:  # noqa: BLE001 - provider details must not reach logs or clients
+            raise HTTPException(status_code=502, detail="Microsoft sign-in is unavailable") from exc
+
+    @router.get("/oidc/callback")
+    @limit_login
+    async def oidc_callback(request: Request) -> Response:
+        config = _oidc_config(request)
+        if not config.enabled:
+            raise HTTPException(status_code=404, detail="OIDC sign-in is not enabled")
+        try:
+            token = await build_oauth_client(config).authorize_access_token(request)
+        except Exception as exc:  # noqa: BLE001 - Authlib/provider errors can contain token material
+            if exc.__class__.__name__ == "MismatchingStateError":
+                raise HTTPException(status_code=400, detail="invalid sign-in transaction") from exc
+            raise HTTPException(status_code=400, detail="Microsoft sign-in could not be completed") from exc
+        claims = token.get("userinfo") if isinstance(token, dict) else None
+        if not isinstance(claims, dict):
+            raise HTTPException(status_code=400, detail="Microsoft sign-in returned no identity")
+        if claims.get("tid") != config.tenant_id or claims.get("iss") not in {None, config.issuer}:
+            raise HTTPException(status_code=403, detail="Microsoft tenant is not allowed")
+        principal_id = resolve_identity(_store(request), claims, config)
+        if principal_id is None:
+            return RedirectResponse(url="/#/login?error=not_provisioned", status_code=303)
+        response = RedirectResponse(
+            url=validate_next_path(request.session.pop("oidc_next", "/")),
+            status_code=303,
+        )
+        _create_browser_session(
+            _store(request),
+            request.app.state.settings,
+            response,
+            principal_id,
+            auth_method="oidc",
+            user_agent=request.headers.get("user-agent", ""),
+        )
+        return response
+
+    @router.get("/oidc/config")
+    def get_oidc_config(request: Request, context: AdminAccess) -> dict[str, object]:
+        _require_msp_operator(context)
+        config = _oidc_config(request)
+        return _oidc_config_view(config)
+
+    @router.put("/oidc/config")
+    def put_oidc_config(
+        payload: OidcConfigRequest,
+        request: Request,
+        context: AdminAccess,
+    ) -> dict[str, object]:
+        _require_management_access(context)
+        store = _store(request)
+        settings = request.app.state.settings
+        current = _oidc_config(request)
+        secret = payload.client_secret.strip() or current.client_secret
+        allowed_tenant = (payload.auto_provision_tenant_id.strip() or payload.tenant_id.strip())
+        allowed_client = payload.auto_provision_client_id.strip() or settings.client_id.strip()
+        candidate = OidcConfig(
+            tenant_id=payload.tenant_id.strip(),
+            client_id=payload.client_id.strip(),
+            public_base_url=payload.public_base_url.strip().rstrip("/"),
+            client_secret=secret,
+            enabled=payload.enabled,
+            auto_provision_enabled=payload.auto_provision_enabled,
+            auto_provision_tenant_id=allowed_tenant,
+            auto_provision_client_id=allowed_client,
+        )
+        if payload.enabled and (
+            not candidate.complete
+            or (payload.auto_provision_enabled and not allowed_tenant)
+        ):
+            raise HTTPException(status_code=422, detail="enabled OIDC configuration is incomplete")
+        try:
+            if payload.client_secret.strip():
+                vault = _vault(request)
+                if not vault.is_initialized():
+                    vault = SecretVault.initialize(settings.vault_path, demo_mode=settings.demo_mode)
+                    request.app.state.vault = vault
+                vault.set(OIDC_CLIENT_SECRET_KEY, payload.client_secret.strip())
+            actor_id = _actor_id(context)
+            for key, value in (
+                ("oidc.enabled", "true" if payload.enabled else "false"),
+                ("oidc.tenant_id", candidate.tenant_id),
+                ("oidc.client_id", candidate.client_id),
+                ("oidc.public_base_url", candidate.public_base_url),
+                ("oidc.auto_provision_enabled", "true" if payload.auto_provision_enabled else "false"),
+                ("oidc.auto_provision_tenant_id", allowed_tenant),
+                ("oidc.auto_provision_client_id", allowed_client),
+                ("oidc.auto_provision_role", "viewer"),
+            ):
+                store.set_app_config(key, value, updated_by=actor_id)
+        except (SecretVaultError, ValueError, RuntimeError) as exc:
+            raise HTTPException(status_code=400, detail="OIDC configuration could not be stored") from exc
+        store.add_audit_event(
+            "auth.oidc.config.updated", "oidc", "configuration updated", approver_id=_actor_id(context)
+        )
+        return _oidc_config_view(_oidc_config(request))
 
     @router.post("/logout")
     def logout(request: Request, response: Response) -> dict[str, object]:
@@ -400,6 +537,69 @@ def create_auth_router(limiter: Limiter | None = None) -> APIRouter:
         )
         return _principal_view_by_id(store, normalized_id)
 
+    @router.post("/principals/{principal_id}/identities")
+    def add_identity(
+        principal_id: str,
+        payload: PrincipalIdentityRequest,
+        request: Request,
+        context: AdminAccess,
+    ) -> dict[str, object]:
+        _require_management_access(context)
+        store = _store(request)
+        principal = _find_principal(store, principal_id)
+        if principal is None:
+            raise HTTPException(status_code=404, detail="principal not found")
+        config = _oidc_config(request)
+        issuer = (payload.issuer or config.issuer).strip().rstrip("/")
+        if issuer != config.issuer:
+            raise HTTPException(status_code=422, detail="identity issuer must match configured Microsoft tenant")
+        try:
+            store.add_principal_identity(
+                principal.principal_id,
+                issuer,
+                payload.subject,
+                payload.subject_kind,
+            )
+        except sqlite3.IntegrityError as exc:
+            raise HTTPException(status_code=409, detail="identity is already linked") from exc
+        except (KeyError, ValueError) as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        store.add_audit_event(
+            "principal.identity.added",
+            f"{principal.principal_id}:{payload.subject_kind}",
+            "identity linked",
+            approver_id=_actor_id(context),
+        )
+        return _principal_view_by_id(store, principal.principal_id)
+
+    @router.delete("/principals/{principal_id}/identities")
+    def remove_identity(
+        principal_id: str,
+        payload: PrincipalIdentityRequest,
+        request: Request,
+        context: AdminAccess,
+    ) -> dict[str, object]:
+        _require_management_access(context)
+        store = _store(request)
+        principal = _find_principal(store, principal_id)
+        if principal is None:
+            raise HTTPException(status_code=404, detail="principal not found")
+        config = _oidc_config(request)
+        issuer = (payload.issuer or config.issuer).strip().rstrip("/")
+        if issuer != config.issuer:
+            raise HTTPException(status_code=422, detail="identity issuer must match configured Microsoft tenant")
+        try:
+            store.remove_principal_identity(principal.principal_id, issuer, payload.subject, payload.subject_kind)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail="identity link not found") from exc
+        store.add_audit_event(
+            "principal.identity.removed",
+            f"{principal.principal_id}:{payload.subject_kind}",
+            "identity unlinked",
+            approver_id=_actor_id(context),
+        )
+        return _principal_view_by_id(store, principal.principal_id)
+
     return router
 
 
@@ -408,6 +608,66 @@ def _store(request: Request) -> Store:
     if not isinstance(store, Store):
         raise HTTPException(status_code=503, detail="Local authorization store is unavailable.")
     return store
+
+
+def _vault(request: Request) -> SecretVault:
+    vault = getattr(request.app.state, "vault", None)
+    if isinstance(vault, SecretVault):
+        return vault
+    return SecretVault(request.app.state.settings.vault_path)
+
+
+def _oidc_config(request: Request) -> OidcConfig:
+    return load_oidc_config(request.app.state.settings, _store(request), _vault(request))
+
+
+def _oidc_config_view(config: OidcConfig) -> dict[str, object]:
+    return {
+        "enabled": config.enabled,
+        "tenant_id": config.tenant_id,
+        "client_id": config.client_id,
+        "public_base_url": config.public_base_url,
+        "auto_provision_enabled": config.auto_provision_enabled,
+        "auto_provision_tenant_id": config.auto_provision_tenant_id,
+        "auto_provision_client_id": config.auto_provision_client_id,
+        "auto_provision_role": config.auto_provision_role,
+        "client_secret_configured": config.client_secret_configured,
+    }
+
+
+def _create_browser_session(
+    store: Store,
+    settings: Settings,
+    response: Response,
+    principal_id: str,
+    *,
+    auth_method: Literal["local", "oidc"],
+    user_agent: str,
+) -> tuple[str, str]:
+    session_token = generate_session_token()
+    session_token_hash = hash_session_token(session_token)
+    idle_expires_at, absolute_expires_at = session_expiries(
+        idle_ttl_minutes=settings.session_idle_ttl_minutes,
+        absolute_ttl_minutes=settings.session_absolute_ttl_minutes,
+    )
+    store.create_auth_session(
+        session_token_hash,
+        principal_id,
+        idle_expires_at=idle_expires_at,
+        absolute_expires_at=absolute_expires_at,
+        auth_method=auth_method,
+        user_agent=user_agent,
+    )
+    response.set_cookie(
+        SESSION_COOKIE_NAME,
+        session_token,
+        max_age=settings.session_absolute_ttl_minutes * 60,
+        secure=settings.session_cookie_secure,
+        httponly=True,
+        samesite="lax",
+        path="/",
+    )
+    return session_token_hash, absolute_expires_at
 
 
 def _require_msp_operator(context: AuthContext) -> None:
@@ -469,6 +729,16 @@ def _principal_view(store: Store, principal: PrincipalDetails) -> dict[str, obje
         "global_roles": principal.global_roles,
         "credential_count": principal.credential_count,
         "credentials": [asdict(credential) for credential in store.list_principal_credentials(principal.principal_id)],
+        "identities": [
+            {
+                "issuer": identity.issuer,
+                "subject": identity.subject,
+                "subject_kind": identity.subject_kind,
+                "created_at": identity.created_at,
+                "last_login_at": identity.last_login_at,
+            }
+            for identity in store.list_principal_identities(principal.principal_id)
+        ],
     }
 
 
