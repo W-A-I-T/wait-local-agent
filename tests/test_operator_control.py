@@ -328,6 +328,7 @@ def test_identity_lifecycle_updates_roles_and_rejects_unsafe_shapes(settings) ->
         "unified_activity": True,
     }
     assert api.get("/packs/operator-control/principals", headers=_auth("bootstrap-admin")).json() == []
+    assert api.get("/packs/operator-control/principals/missing", headers=_auth("bootstrap-admin")).status_code == 404
     principal, _ = create_principal(
         store,
         principal_id="staff-alpha",
