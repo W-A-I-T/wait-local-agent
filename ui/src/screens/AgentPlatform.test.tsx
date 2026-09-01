@@ -158,6 +158,28 @@ describe("AgentPlatform", () => {
     expect(screen.getByText("blocked")).toBeInTheDocument();
   });
 
+  it("explains an unavailable client label and empty action catalog", async () => {
+    mockedUseDashboard.mockReturnValue({
+      canWrite: true,
+      role: "admin",
+      clients: [],
+      selectedClientId: "acme",
+      liveWritesReady: true,
+      writeHealthResolved: true
+    } as unknown as ReturnType<typeof useDashboard>);
+    mockedApiFetch.mockImplementation(async (path: string) => {
+      if (path === "/smart-actions") return [] as never;
+      return responseFor(path) as never;
+    });
+
+    render(<AgentPlatform />);
+
+    expect(await screen.findByText(/Client scope: Selected client \(acme\)/)).toBeInTheDocument();
+    expect(screen.getAllByText("ready", { exact: true })).toHaveLength(2);
+    fireEvent.click(screen.getByRole("tab", { name: "Skills" }));
+    expect(await screen.findByText("No Smart Actions are available in the current catalog.")).toBeInTheDocument();
+  });
+
   it("requires an explicit client scope before loading pack data", async () => {
     mockedUseDashboard.mockReturnValue({
       canWrite: true,
