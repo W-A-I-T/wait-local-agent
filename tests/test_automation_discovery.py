@@ -138,6 +138,37 @@ def test_mapping_readiness_reports_cross_system_families(settings) -> None:
     assert families["security"]["verified"] == 1
 
 
+def test_historical_discovery_reports_unclassified_recurring_subjects(settings, tmp_path) -> None:
+    store = Store(settings.data_path)
+    client_id = ensure_test_client(store)
+    tickets = [
+        {
+            "id": f"VPN-{index}",
+            "client": "Acme",
+            "subject": "VPN timeout issue",
+            "body": "Remote access stops after the connection is established.",
+            "priority": "high",
+            "status": "open",
+        }
+        for index in range(1, 4)
+    ]
+    source = tmp_path / "unclassified-tickets.json"
+    source.write_text(json.dumps(tickets), encoding="utf-8")
+    store.ingest_ticket_file(source, client_id=client_id)
+
+    report = build_historical_discovery(store, client_id=client_id, days=60, min_tickets=3)
+
+    recurring = next(item for item in report["opportunities"] if item["category_id"] == "recurring:vpn-timeout-issue")
+    assert recurring["label"] == "Recurring ticket family: vpn timeout issue"
+    assert recurring["ticket_count"] == 3
+    assert recurring["resolved_or_closed"] == 0
+    assert recurring["readiness"] == "needs_workflow_design"
+    assert recurring["workflow_matches"] == []
+    assert recurring["playbook_matches"] == []
+    assert recurring["source_ticket_ids"] == ["VPN-1", "VPN-2", "VPN-3"]
+    assert recurring["source_ticket_ids_truncated"] is False
+
+
 def test_discovery_routes_are_scoped_and_import_only_permitted_evidence(settings, tmp_path) -> None:
     store = Store(settings.data_path)
     client_id = ensure_test_client(store)
