@@ -4,6 +4,8 @@ import csv
 import json
 import logging
 import os
+import secrets
+import sqlite3
 from collections.abc import Iterable
 from dataclasses import asdict, replace
 from pathlib import Path
@@ -254,6 +256,7 @@ smart_actions_app = typer.Typer(help="Smart action commands.")
 executions_app = typer.Typer(help="Execution observability commands.")
 analytics_app = typer.Typer(help="Execution analytics commands.")
 agents_app = typer.Typer(help="Bounded agent definition commands.")
+principals_app = typer.Typer(help="MSP principal and bearer credential commands.")
 app.add_typer(tickets_app, name="tickets")
 app.add_typer(audit_app, name="audit")
 app.add_typer(knowledge_app, name="knowledge")
@@ -294,6 +297,7 @@ app.add_typer(smart_actions_app, name="smart-actions")
 app.add_typer(executions_app, name="executions")
 app.add_typer(analytics_app, name="analytics")
 app.add_typer(agents_app, name="agents")
+app.add_typer(principals_app, name="principals")
 
 
 def _store() -> Store:
@@ -367,6 +371,193 @@ def sync_pack_cli(candidate_module_names: Iterable[str] | None = None) -> None:
     _PACK_CLI_NAMES.clear()
     registry = configure_pack_cli(app, load_settings(), candidate_module_names)
     _PACK_CLI_NAMES.update(status.name for status in registry.statuses if status.mounted_cli)
+
+
+def _principal_cli_context(token: str | None, *, mutation: bool):
+    settings = load_settings()
+    context = _cli_access(settings, token, Role.ADMIN)
+    if not context.demo_mode and not context.is_msp_admin:
+        raise typer.BadParameter("msp operator access required")
+    if mutation and context.demo_mode:
+        raise typer.BadParameter("principal management cannot be changed in demo mode")
+    return settings, context
+
+
+@principals_app.command("create")
+def create_principal_command(
+    principal_id: str,
+    kind: Annotated[str, typer.Option("--kind")] = "staff",
+    display_name: Annotated[str, typer.Option("--display-name")] = "",
+    token: Annotated[str | None, typer.Option("--token", envvar="WAIT_CLI_TOKEN")] = None,
+) -> None:
+    settings, context = _principal_cli_context(token, mutation=True)
+    store = Store(settings.data_path)
+    try:
+        created_id = store.create_principal(principal_id, kind=kind, display_name=display_name or principal_id)
+    except sqlite3.IntegrityError as exc:
+        raise typer.BadParameter("principal already exists") from exc
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc)) from exc
+    store.add_audit_event("principal.created", created_id, "succeeded", approver_id=context.approver_id)
+    typer.echo(json.dumps({"principal_id": created_id}, sort_keys=True))
+
+
+@principals_app.command("list")
+def list_principals_command(
+    token: Annotated[str | None, typer.Option("--token", envvar="WAIT_CLI_TOKEN")] = None,
+) -> None:
+    settings, _ = _principal_cli_context(token, mutation=False)
+    store = Store(settings.data_path)
+    typer.echo(
+        json.dumps(
+            [
+                {
+                    "principal_id": principal.principal_id,
+                    "kind": principal.principal_kind,
+                    "display_name": principal.display_name,
+                    "active": principal.active,
+                    "created_at": principal.created_at,
+                    "client_roles": principal.client_roles,
+                    "global_roles": principal.global_roles,
+                    "credential_count": principal.credential_count,
+                    "credentials": [
+                        asdict(credential)
+                        for credential in store.list_principal_credentials(principal.principal_id)
+                    ],
+                }
+                for principal in store.list_principals_with_details()
+            ],
+            sort_keys=True,
+        )
+    )
+
+
+@principals_app.command("issue-credential")
+def issue_principal_credential_command(
+    principal_id: str,
+    token: Annotated[str | None, typer.Option("--token", envvar="WAIT_CLI_TOKEN")] = None,
+) -> None:
+    settings, context = _principal_cli_context(token, mutation=True)
+    store = Store(settings.data_path)
+    principal = next(
+        (item for item in store.list_principals_with_details() if item.principal_id == principal_id.strip()),
+        None,
+    )
+    if principal is None:
+        raise typer.BadParameter("principal not found")
+    if not principal.active:
+        raise typer.BadParameter("credentials require an active principal")
+    raw_token = secrets.token_urlsafe(32)
+    credential_hash = store.add_principal_credential(principal.principal_id, raw_token)
+    store.add_audit_event(
+        "principal.credential.issued",
+        principal.principal_id,
+        "succeeded",
+        approver_id=context.approver_id,
+    )
+    typer.echo("WARNING: this bearer token is shown once; store it securely and do not share it.")
+    typer.echo(raw_token)
+    typer.echo(f"credential_hash={credential_hash}")
+
+
+@principals_app.command("revoke-credential")
+def revoke_principal_credential_command(
+    principal_id: str,
+    credential_hash: str,
+    token: Annotated[str | None, typer.Option("--token", envvar="WAIT_CLI_TOKEN")] = None,
+) -> None:
+    settings, context = _principal_cli_context(token, mutation=True)
+    store = Store(settings.data_path)
+    if not any(
+        credential.credential_hash_prefix == credential_hash.strip()[:12]
+        for credential in store.list_principal_credentials(principal_id)
+    ):
+        raise typer.BadParameter("credential not found")
+    try:
+        store.revoke_principal_credential(credential_hash)
+    except (KeyError, ValueError) as exc:
+        raise typer.BadParameter("credential not found") from exc
+    store.add_audit_event(
+        "principal.credential.revoked",
+        principal_id.strip(),
+        "succeeded",
+        approver_id=context.approver_id,
+    )
+    typer.echo(f"revoked={credential_hash.strip()[:12]}")
+
+
+@principals_app.command("add-role")
+def add_principal_role_command(
+    principal_id: str,
+    role: str,
+    client_id: Annotated[str | None, typer.Option("--client-id")] = None,
+    global_role: Annotated[bool, typer.Option("--global")] = False,
+    token: Annotated[str | None, typer.Option("--token", envvar="WAIT_CLI_TOKEN")] = None,
+) -> None:
+    settings, context = _principal_cli_context(token, mutation=True)
+    store = Store(settings.data_path)
+    normalized_id = principal_id.strip()
+    if global_role:
+        if role.strip().lower() != "msp_admin" or client_id is not None:
+            raise typer.BadParameter("global role must be msp_admin and cannot include --client-id")
+        try:
+            store.add_principal_global_role(normalized_id)
+        except sqlite3.IntegrityError as exc:
+            raise typer.BadParameter("global role already exists") from exc
+        except (KeyError, ValueError) as exc:
+            raise typer.BadParameter(str(exc)) from exc
+        event_type = "principal.global_role.added"
+        subject_id = normalized_id
+    else:
+        if client_id is None:
+            raise typer.BadParameter("--client-id is required for a client role")
+        if store.get_client(AllClients(), client_id.strip()) is None:
+            raise typer.BadParameter("client not found")
+        try:
+            store.add_principal_client_role(normalized_id, client_id, role)
+        except sqlite3.IntegrityError as exc:
+            raise typer.BadParameter("client role already exists") from exc
+        except (KeyError, ValueError) as exc:
+            raise typer.BadParameter(str(exc)) from exc
+        event_type = "principal.client_role.added"
+        subject_id = f"{normalized_id}:{client_id.strip()}:{role.strip().lower()}"
+    store.add_audit_event(event_type, subject_id, "succeeded", approver_id=context.approver_id)
+    typer.echo(f"role_added={subject_id}")
+
+
+@principals_app.command("remove-role")
+def remove_principal_role_command(
+    principal_id: str,
+    role: str,
+    client_id: Annotated[str | None, typer.Option("--client-id")] = None,
+    global_role: Annotated[bool, typer.Option("--global")] = False,
+    token: Annotated[str | None, typer.Option("--token", envvar="WAIT_CLI_TOKEN")] = None,
+) -> None:
+    settings, context = _principal_cli_context(token, mutation=True)
+    store = Store(settings.data_path)
+    normalized_id = principal_id.strip()
+    if global_role:
+        if role.strip().lower() != "msp_admin" or client_id is not None:
+            raise typer.BadParameter("global role must be msp_admin and cannot include --client-id")
+        if context.principal_id == normalized_id:
+            raise typer.BadParameter("you cannot remove your own msp_admin role")
+        try:
+            store.remove_principal_global_role(normalized_id)
+        except (KeyError, ValueError) as exc:
+            raise typer.BadParameter(str(exc)) from exc
+        event_type = "principal.global_role.removed"
+        subject_id = normalized_id
+    else:
+        if client_id is None:
+            raise typer.BadParameter("--client-id is required for a client role")
+        try:
+            store.remove_principal_client_role(normalized_id, client_id, role)
+        except (KeyError, ValueError) as exc:
+            raise typer.BadParameter(str(exc)) from exc
+        event_type = "principal.client_role.removed"
+        subject_id = f"{normalized_id}:{client_id.strip()}:{role.strip().lower()}"
+    store.add_audit_event(event_type, subject_id, "succeeded", approver_id=context.approver_id)
+    typer.echo(f"role_removed={subject_id}")
 
 
 @app.command()

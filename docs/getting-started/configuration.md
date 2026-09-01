@@ -43,3 +43,13 @@ separate fixed-scope token and client/user mapping.
 Outbound connector calls require `WAIT_ALLOW_HTTP_PROBING=true`. Live
 mutations also require `WAIT_ALLOW_WRITE_ACTIONS=true`, a supported action, and
 the relevant approval gate.
+
+## Microsoft sign-in
+
+Microsoft Entra OIDC is configured from **Settings → People & Access**. The
+optional first-boot defaults are `WAIT_OIDC_TENANT_ID`,
+`WAIT_OIDC_CLIENT_ID`, `WAIT_OIDC_PUBLIC_BASE_URL`, and
+`WAIT_OIDC_AUTO_PROVISION_CLIENT_ID`; saved database values take precedence.
+The client secret is entered through the dashboard and stored only in the
+Fernet vault. See the [Entra OIDC walkthrough](entra-oidc.md) for app
+registration, redirect URI, and trusted-host requirements.

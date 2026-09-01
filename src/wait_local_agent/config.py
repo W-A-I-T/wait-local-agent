@@ -85,6 +85,13 @@ class Settings:
     end_user_client_id: str = ""
     end_user_user_id: str = ""
     end_user_support_enabled: bool = False
+    session_cookie_secure: bool = True
+    session_idle_ttl_minutes: int = 12 * 60
+    session_absolute_ttl_minutes: int = 7 * 24 * 60
+    oidc_tenant_id: str = ""
+    oidc_client_id: str = ""
+    oidc_public_base_url: str = ""
+    oidc_auto_provision_client_id: str = ""
     end_user_brand_name: str = "WAIT Support"
     end_user_brand_tagline: str = "Private help desk"
     end_user_brand_logo_data_uri: str = ""
@@ -267,6 +274,13 @@ def load_settings() -> Settings:
         end_user_client_id=os.getenv("WAIT_END_USER_CLIENT_ID", "").strip(),
         end_user_user_id=os.getenv("WAIT_END_USER_USER_ID", "").strip(),
         end_user_support_enabled=_bool_env("WAIT_END_USER_SUPPORT_ENABLED"),
+        session_cookie_secure=_bool_env("WAIT_SESSION_COOKIE_SECURE", True),
+        session_idle_ttl_minutes=_int_env("WAIT_SESSION_IDLE_TTL_MINUTES", 12 * 60),
+        session_absolute_ttl_minutes=_int_env("WAIT_SESSION_ABSOLUTE_TTL_MINUTES", 7 * 24 * 60),
+        oidc_tenant_id=os.getenv("WAIT_OIDC_TENANT_ID", "").strip(),
+        oidc_client_id=os.getenv("WAIT_OIDC_CLIENT_ID", "").strip(),
+        oidc_public_base_url=os.getenv("WAIT_OIDC_PUBLIC_BASE_URL", "").strip(),
+        oidc_auto_provision_client_id=os.getenv("WAIT_OIDC_AUTO_PROVISION_CLIENT_ID", "").strip(),
         end_user_brand_name=os.getenv("WAIT_END_USER_BRAND_NAME", "WAIT Support").strip()
         or "WAIT Support",
         end_user_brand_tagline=os.getenv(

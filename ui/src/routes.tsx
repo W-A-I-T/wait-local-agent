@@ -32,9 +32,11 @@ import { Schedules } from "./screens/Schedules";
 import { ConnectorInstances } from "./screens/ConnectorInstances";
 import { SyncReconciliation } from "./screens/SyncReconciliation";
 import { Clients } from "./screens/Clients";
+import { Login } from "./screens/Login";
 import { M365Actions } from "./screens/M365Actions";
 import { MicrosoftAdmin } from "./screens/MicrosoftAdmin";
 import { MicrosoftAdminAccess } from "./screens/MicrosoftAdminAccess";
+import { PrincipalsAdmin } from "./screens/PrincipalsAdmin";
 import { MicrosoftAdminCapabilityGate } from "./components/MicrosoftAdminCapabilityGate";
 import { RoleGate } from "./components/RoleGate";
 import { useDashboard } from "./app/DashboardContext";
@@ -71,9 +73,30 @@ function MicrosoftAdminAccessRoute() {
   );
 }
 
+function PrincipalsAdminRoute() {
+  const { role, roleResolved, isMspAdmin } = useDashboard();
+  const allowed = roleResolved && isMspAdmin;
+  return (
+    <RoleGate
+      role={role}
+      resolved={allowed}
+      allowed={["admin"]}
+      fallback={(
+        <section className="panel" role="alert">
+          <h2>MSP administrator access required</h2>
+          <p className="screen-note">Only MSP administrators can manage people, roles, and bearer credentials.</p>
+        </section>
+      )}
+    >
+      <PrincipalsAdmin />
+    </RoleGate>
+  );
+}
+
 export function AppRoutes() {
   return (
     <Routes>
+      <Route path="login" element={<Login />} />
       <Route index element={<Overview />} />
       <Route path="clients" element={<Clients />} />
       <Route path="connectors" element={<Connectors />} />
@@ -97,6 +120,7 @@ export function AppRoutes() {
         )}
       />
       <Route path="microsoft-admin/access" element={<MicrosoftAdminAccessRoute />} />
+      <Route path="settings/access" element={<PrincipalsAdminRoute />} />
       <Route path="knowledge" element={<Knowledge />} />
       <Route path="workflows" element={<AutomationsShell><Workflows /></AutomationsShell>} />
       <Route path="automation/events" element={<ActivityShell><Events /></ActivityShell>} />

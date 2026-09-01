@@ -3,6 +3,7 @@ from __future__ import annotations
 import csv
 import io
 import json
+import os
 import re
 import shutil
 import sqlite3
@@ -24,10 +25,15 @@ from slowapi.errors import RateLimitExceeded
 from slowapi.extension import _rate_limit_exceeded_handler
 from slowapi.middleware import SlowAPIMiddleware
 from slowapi.util import get_remote_address
+from starlette.exceptions import HTTPException as StarletteHTTPException
+from starlette.middleware.sessions import SessionMiddleware
 from starlette.middleware.trustedhost import TrustedHostMiddleware
+from starlette.staticfiles import StaticFiles
+from starlette.types import Scope
 
 from wait_local_agent import __version__
 from wait_local_agent.agents import AgentDefinitionError, AgentService
+from wait_local_agent.api.auth_routes import create_auth_router
 from wait_local_agent.api.founder import (
     FounderNotConfiguredError,
     FounderPackContractError,
@@ -188,6 +194,7 @@ from wait_local_agent.observability import (
     TICKET_METRICS_DERIVATION,
     build_analytics_summary,
 )
+from wait_local_agent.oidc import get_or_create_session_signing_key
 from wait_local_agent.operational_graph import OperationalGraphService
 from wait_local_agent.power_apps import (
     PowerAppsPlanError,
@@ -959,6 +966,30 @@ class QuarantineReclassificationRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
+class SPAStaticFiles(StaticFiles):
+    """Serve compiled assets and fall back to the dashboard entrypoint."""
+
+    def __init__(self, *, directory: Path) -> None:
+        super().__init__(directory=directory)
+        self.index_path = directory / "index.html"
+
+    async def get_response(self, path: str, scope: Scope) -> Response:
+        # The API is intentionally not mounted below /api today, but reserve
+        # that namespace so a future API route cannot be hidden by the SPA.
+        reserved_prefixes = ("api", "docs", "packs")
+        reserved = path == "openapi.json" or any(
+            path == prefix or path.startswith(f"{prefix}/") for prefix in reserved_prefixes
+        )
+
+        try:
+            return await super().get_response(path, scope)
+        except StarletteHTTPException as exc:
+            if exc.status_code != 404 or scope["method"] not in {"GET", "HEAD"} or reserved:
+                raise
+
+        return FileResponse(self.index_path, media_type="text/html")
+
+
 def create_app(settings: Settings | None = None) -> FastAPI:
     active_settings = settings or load_settings()
     if active_settings.demo_mode:
@@ -968,6 +999,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             allow_power_platform_deployment=False,
         )
     store = Store(active_settings.data_path)
+    vault = SecretVault(active_settings.vault_path)
+    session_signing_key = get_or_create_session_signing_key(active_settings, vault)
     if not active_settings.demo_mode and not admin_credential_configured(active_settings, store):
         raise RuntimeError(
             "refusing non-demo startup without an admin credential; configure WAIT_ADMIN_TOKEN or "
@@ -1054,6 +1087,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     )
     app.state.settings = active_settings
     app.state.store = store
+    app.state.vault = vault
     app.state.scheduler = scheduler
     app.state.limiter = limiter
     app.state.update_status_cache = update_status_cache
@@ -1074,6 +1108,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         TrustedHostMiddleware,
         allowed_hosts=list(active_settings.trusted_hosts),
     )
+    app.add_middleware(
+        SessionMiddleware,
+        secret_key=session_signing_key,
+        session_cookie="wait_oidc_txn",
+        max_age=600,
+        same_site="lax",
+        https_only=active_settings.session_cookie_secure,
+    )
     app.add_middleware(SlowAPIMiddleware)
     configure_pack_routes(
         app,
@@ -1081,6 +1123,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         route_dependencies=[Depends(require_role(Role.VIEWER))],
     )
     app.include_router(create_founder_router())
+    app.include_router(create_auth_router(limiter))
 
     @app.get("/health")
     @limiter.exempt
@@ -1127,6 +1170,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             "m365_configured": bool(active_settings.m365_graph_base_url and active_settings.m365_access_token),
         }
 
+    @app.get("/healthz", include_in_schema=False)
+    @limiter.exempt
+    def healthz() -> dict[str, str]:
+        return {"status": "ok"}
+
     @app.get("/auth/role")
     def auth_role(context: ViewerAccess) -> dict[str, object]:
         return {
@@ -1134,6 +1182,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             "client_id": context.client_id,
             "client_ids": sorted(context.client_ids),
             "principal_id": context.principal_id,
+            "auth_method": context.auth_method,
             "is_msp_admin": context.is_msp_admin,
             "api_auth_required": auth_required(active_settings),
             "demo_mode": active_settings.demo_mode,
@@ -7021,6 +7070,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             "params": _safe_json_object(job.params_json),
         }
 
+    ui_dist_value = os.getenv("WAIT_UI_DIST", "").strip()
+    if ui_dist_value:
+        ui_dist = Path(ui_dist_value)
+        if ui_dist.is_dir() and (ui_dist / "index.html").is_file():
+            app.mount("/", SPAStaticFiles(directory=ui_dist), name="ui")
+
     return app
 
 
@@ -7982,6 +8037,8 @@ def _request_validation_error_handler(request: Request, exc: Exception) -> JSONR
     sensitive_fields: set[str]
     if request.url.path == "/secrets":
         sensitive_fields = {"value"}
+    elif request.url.path == "/auth/login/local":
+        sensitive_fields = {"token"}
     elif request.url.path == "/packs/install":
         sensitive_fields = {"license", "license_key"}
     else:

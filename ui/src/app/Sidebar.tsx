@@ -30,6 +30,7 @@ type NavItem = {
   label: string;
   icon: LucideIcon;
   adminOnly?: boolean;
+  mspAdminOnly?: boolean;
   microsoftAdminCapability?: boolean;
   endUserSupport?: boolean;
 };
@@ -90,6 +91,7 @@ const advancedNavigation: NavItem[] = [
   { to: "/founder", label: "Launch Passport", icon: Sparkles },
   { to: "/integrations/connector-instances", label: "Connector Instances", icon: Database, adminOnly: true },
   { to: "/microsoft-admin/access", label: "Microsoft Admin Access", icon: ShieldCheck, adminOnly: true },
+  { to: "/settings/access", label: "People & Access", icon: Users, mspAdminOnly: true },
   { to: "/settings", label: "Settings", icon: Activity },
   { to: "/operations/reconciliation", label: "Sync / Reconciliation", icon: Database, adminOnly: true },
   { to: "/system/appliance-health", label: "Appliance Health", icon: ShieldCheck, adminOnly: true },
@@ -112,7 +114,7 @@ function SidebarLink({ item }: { item: NavItem }) {
 }
 
 export function Sidebar() {
-  const { role, roleResolved, endUserSupportEnabled, configurationSteps, configurationLoading, isConfigured } = useDashboard();
+  const { role, roleResolved, isMspAdmin, endUserSupportEnabled, configurationSteps, configurationLoading, isConfigured } = useDashboard();
   const microsoftAdmin = useMicrosoftAdminAccess();
   const requiredSteps = (configurationSteps ?? []).filter((step) => step.required);
   const completedSteps = requiredSteps.filter((step) => step.status === "done").length;
@@ -125,6 +127,9 @@ export function Sidebar() {
       return null;
     }
     if (item.microsoftAdminCapability && (!microsoftAdmin.resolved || !microsoftAdmin.navAllowed)) {
+      return null;
+    }
+    if (item.mspAdminOnly && (!roleResolved || !isMspAdmin)) {
       return null;
     }
     const link = <SidebarLink key={item.to} item={item} />;

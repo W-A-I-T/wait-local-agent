@@ -17,6 +17,7 @@ describe("selected client API scope header", () => {
     expect(loadStoredSelectedClientId()).toBe("alpha");
     expect(window.localStorage.getItem(selectedClientStorageKey)).toBe("alpha");
     expect(buildApiHeaders()).toMatchObject({ "X-WAIT-Client-ID": "alpha" });
+    expect(buildApiHeaders()).toMatchObject({ "X-WAIT-CSRF": "1" });
   });
 
   it("removes the header when no client is selected", () => {
