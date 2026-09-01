@@ -63,7 +63,7 @@ describe("AgentPlatform", () => {
       selectedClientId: "acme",
       liveWritesReady: false,
       writeHealthResolved: true
-    } as ReturnType<typeof useDashboard>);
+    } as unknown as ReturnType<typeof useDashboard>);
     mockedApiFetch.mockImplementation(async (path: string) => responseFor(path) as never);
   });
 
@@ -127,6 +127,30 @@ describe("AgentPlatform", () => {
     expect(screen.queryByRole("heading", { name: "Agent Platform" })).not.toBeInTheDocument();
   });
 
+  it("shows blocked and initializing status while capability checks are unresolved", async () => {
+    mockedApiFetch.mockImplementation(async (path: string) => {
+      if (path === "/packs/agent-platform/status") {
+        return { ...responseFor(path) as object, initialized: false } as never;
+      }
+      return responseFor(path) as never;
+    });
+
+    mockedUseDashboard.mockReturnValue({
+      canWrite: true,
+      role: "admin",
+      clients: [{ client_id: "acme", name: "Acme Support", status: "active" }],
+      selectedClientId: "acme",
+      liveWritesReady: false,
+      writeHealthResolved: false
+    } as unknown as ReturnType<typeof useDashboard>);
+
+    render(<AgentPlatform />);
+
+    expect(await screen.findByText("initializing")).toBeInTheDocument();
+    expect(screen.getByText("checking")).toBeInTheDocument();
+    expect(screen.getByText("blocked")).toBeInTheDocument();
+  });
+
   it("requires an explicit client scope and reports invalid memory input", async () => {
     mockedUseDashboard.mockReturnValue({
       canWrite: true,
@@ -135,7 +159,7 @@ describe("AgentPlatform", () => {
       selectedClientId: "",
       liveWritesReady: false,
       writeHealthResolved: true
-    } as ReturnType<typeof useDashboard>);
+    } as unknown as ReturnType<typeof useDashboard>);
 
     render(<AgentPlatform />);
 
@@ -147,5 +171,9 @@ describe("AgentPlatform", () => {
 
     expect(await screen.findByRole("status")).toHaveTextContent("Memory value must be valid JSON");
     expect(mockedApiFetch).not.toHaveBeenCalledWith("/packs/agent-platform/memories", expect.anything());
+
+    fireEvent.change(screen.getByLabelText("JSON value"), { target: { value: "[]" } });
+    fireEvent.click(screen.getByRole("button", { name: "Store revision" }));
+    expect(await screen.findByRole("status")).toHaveTextContent("Memory value must be a JSON object");
   });
 });
