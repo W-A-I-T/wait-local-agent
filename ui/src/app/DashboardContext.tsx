@@ -11,6 +11,7 @@ import type {
   AuthRoleResponse,
   ClientDirectoryEntry,
   ConnectorStatus,
+  EntitlementResponse,
   EventDelivery,
   EventHistory,
   HaloReadResult,
@@ -97,6 +98,7 @@ type DashboardContextValue = {
   clientId: string;
   selectedClientId: string;
   clients: ClientDirectoryEntry[];
+  commercialEntitlement: EntitlementResponse["commercial"];
   role: AuthRoleResponse["role"];
   isMspAdmin: boolean;
   endUserSupportEnabled: boolean;
@@ -181,6 +183,7 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
   const [clientId, setClientId] = useState("");
   const [selectedClientId, setSelectedClientIdState] = useState(() => loadStoredSelectedClientId());
   const [clients, setClients] = useState<ClientDirectoryEntry[]>([]);
+  const [commercialEntitlement, setCommercialEntitlement] = useState<EntitlementResponse["commercial"]>(null);
   const [roleResolved, setRoleResolved] = useState(false);
   const [capabilityGrants, setCapabilityGrants] = useState<CapabilityGrantView[]>([]);
   const [capabilityResolved, setCapabilityResolved] = useState(false);
@@ -228,6 +231,7 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
     setCapabilityGrants([]);
     setCapabilityResolved(false);
     setCapabilityError("");
+    setCommercialEntitlement(null);
     setWriteHealthResolved(false);
     try {
       let auth: AuthRoleResponse;
@@ -256,7 +260,8 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
         apiFetch<EventHistory[]>("/event-history"),
         apiFetch<WorkflowRun[]>("/workflow-runs"),
         apiFetch<ClientDirectoryEntry[]>("/clients"),
-        apiFetch<EffectiveCapabilityResponse>("/packs/microsoft-admin/access/effective")
+        apiFetch<EffectiveCapabilityResponse>("/packs/microsoft-admin/access/effective"),
+        apiFetch<EntitlementResponse>("/entitlement")
       ]);
       const errors = results
         .slice(0, 8)
@@ -270,6 +275,7 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
       });
       const clientRows = settledValue(results[7] as PromiseSettledResult<ClientDirectoryEntry[]>, []);
       const capabilityResult = results[8] as PromiseSettledResult<EffectiveCapabilityResponse>;
+      const entitlementResult = results[9] as PromiseSettledResult<EntitlementResponse>;
 
       if (roleRequestId !== roleRequestIdRef.current) {
         return null;
@@ -296,6 +302,17 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
         );
       }
       setCapabilityResolved(true);
+      if (entitlementResult.status === "fulfilled" && entitlementResult.value?.commercial !== undefined) {
+        setCommercialEntitlement(
+          entitlementResult.value.commercial !== null &&
+          typeof entitlementResult.value.commercial === "object" &&
+          !Array.isArray(entitlementResult.value.commercial)
+            ? entitlementResult.value.commercial
+            : null
+        );
+      } else {
+        setCommercialEntitlement(null);
+      }
       setConnectors(asArray(connectorRows));
       setWriteHealth(writeState);
       setWriteHealthResolved(true);
@@ -327,6 +344,7 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
       setCapabilityGrants([]);
       setCapabilityResolved(false);
       setCapabilityError("");
+      setCommercialEntitlement(null);
       setStatusMessage(error instanceof Error ? error.message : "Unable to refresh dashboard.");
       return { authState: nextAuthState, role: null };
     } finally {
@@ -488,6 +506,7 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
       clientId,
       selectedClientId,
       clients,
+      commercialEntitlement,
       role,
       isMspAdmin,
       endUserSupportEnabled,
@@ -548,6 +567,7 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
     authState,
     clientId,
     clients,
+    commercialEntitlement,
     approvalRequests,
     busyId,
     capabilityError,

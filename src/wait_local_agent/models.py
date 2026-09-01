@@ -103,6 +103,13 @@ class Client:
 
 
 @dataclass(frozen=True)
+class CommercialActivation:
+    client_id: str
+    activated_at: str
+    activated_by: str
+
+
+@dataclass(frozen=True)
 class ConnectorInstance:
     connector_instance_id: str
     connector_type: str
