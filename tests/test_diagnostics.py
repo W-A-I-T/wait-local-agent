@@ -43,7 +43,6 @@ from wait_local_agent.structured_logging import (
 )
 from wait_local_agent.workflows import run_workflow_template
 
-
 # Assembled at runtime so the AWS-style literal never appears in source, where
 # secret scanners (gitleaks aws-access-token) would flag it as a real key.
 FAKE_AWS_KEY = "AKIA" + "ABCDEFGHIJKLMNOP"
