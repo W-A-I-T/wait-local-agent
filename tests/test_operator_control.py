@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import replace
 from types import SimpleNamespace
+from typing import cast
 
 import pytest
 from fastapi.testclient import TestClient
@@ -250,7 +251,7 @@ def test_unified_activity_projects_all_sources_and_deduplicates_canonical_runs()
             trigger_source="manual",
         )
 
-    store = SimpleNamespace(
+    store = cast(Store, SimpleNamespace(
         list_execution_runs=lambda scope: [
             execution("agent", 1, 10, "alpha", "2026-08-30T10:00:00Z"),
             execution("", None, 11, "alpha", "2026-08-30T09:00:00Z"),
@@ -294,7 +295,7 @@ def test_unified_activity_projects_all_sources_and_deduplicates_canonical_runs()
                 created_at="2026-08-30T03:00:00Z", updated_at="", client_id="alpha",
             ),
         ],
-    )
+    ))
 
     rows = list_activity(store, scope=BoundClients(frozenset({"alpha"})))
 
