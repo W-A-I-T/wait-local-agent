@@ -96,6 +96,79 @@ schema is wrong.
 - **Recommendation: GO, first, before anything else.** This is the cheapest,
   highest-information action available and it is mostly not code.
 
+#### P0 result — structural half complete, and it failed
+
+The structural half was run without a tenant, by generating a package from the
+employee-onboarding demo and checking it against the published requirements.
+
+What holds up: the manifests sit under `solutions/<name>/`, so format detection
+will not fall back to XML; every path declared in `solutioncomponents.yml`
+resolves to an emitted directory, so the silent-omission trap is not triggered;
+and `publisher.yml` closely matches the documented minimal structure. The
+Dataverse entity layer looks sound.
+
+What does not: **the emitted flow source is not a cloud flow definition.** A
+solution-aware flow is a `workflow` row requiring `category: 5`, `type: 1`,
+`primaryentity: "none"`, and a `clientdata` string containing a [Logic Apps
+definition](https://learn.microsoft.com/en-us/power-automate/manage-flows-with-code)
+— `$schema: …/workflowdefinition.json#`, `connectionReferences`, a **named map**
+of `triggers` with `type: "Request"`, and a **named map** of `actions` carrying
+`runAfter` dependencies and `type: "OpenApiConnection"` inputs (`host.apiId`,
+`host.connectionName`, `host.operationId`).
+
+What is emitted is `ModernFlow: {Trigger, Steps, ApprovalRequired}` — an ordered
+*list* of steps keyed by internal `ToolId` values, with a `Type:
+manual_review_trigger` that is not a Power Automate trigger type. Nothing beyond
+the display name corresponds. Note that the earlier fix which stopped the
+trigger and steps being silently dropped was a real defect fix, but it made the
+file faithfully carry WAIT's *design* data — it did not make it importable.
+
+`"deployable": true` was also a hardcoded literal, not a computed value, on a
+package that drops both the canvas app and the Copilot Studio plan into
+`unsupported/`. That claim is being corrected to a per-component computation in
+its own packet, so a package reports which component classes will actually
+import and which are design-only.
+
+**Still outstanding**: the live `pac solution pack` and `pac solution import`
+against the development tenant. That remains required — a structural review
+predicts pack behaviour, it does not prove import success. It should be run once
+S0 below has produced a flow definition worth importing.
+
+### S0 — Emit real cloud flow definitions
+
+Promoted to first slice by the P0 result. Replace the design-document flow
+source with a genuine `clientdata` payload: a Logic Apps definition carrying
+`$schema`, `contentVersion`, the `$connections` and `$authentication`
+parameters, a named `triggers` map, and a named `actions` map whose entries use
+`runAfter` for ordering and `OpenApiConnection` inputs for connector calls.
+
+The hard part is not the envelope, it is the mapping. Every action needs a real
+`host.apiId`, `host.connectionName` and `host.operationId` — for example
+`/providers/Microsoft.PowerApps/apis/shared_commondataserviceforapps` with
+`operationId: ListRecords`. WAIT has no such catalogue today; its workflow steps
+carry internal `tool_id` values like `m365_user_create` that correspond to
+nothing on the Power Platform side. A bounded, explicit mapping table from
+supported WAIT tool identifiers to connector operations is the substance of this
+slice, and it should refuse to emit rather than guess at an unmapped operation.
+
+- **Effort**: large, and the largest single piece of the epic.
+- **Unblocks**: everything downstream that claims a working automation. Without
+  it the pipeline can deploy Dataverse tables but never a flow that runs, which
+  is most of the product's value.
+- **Subsumes S4a.** `connectionReferences` live inside the same `clientdata`
+  payload, so connection references stop being a separate emission problem.
+- **Honesty constraint**: a flow that imports is still not a flow that runs.
+  Until an operation is in the mapping table and its connector is bound, the
+  package must continue to report that step as design-only rather than emit a
+  plausible-looking action that fails at runtime. Partial coverage is fine;
+  silent guessing is not.
+- **Risk / why NO**: this is real, ongoing surface area — connector operation
+  identifiers are Microsoft's to change. Scope the first cut to a deliberately
+  small set of operations (Dataverse row create/list, Entra user create, licence
+  assign, Teams message) rather than attempting general coverage.
+- **Recommendation: GO, first.** The alternative is verifying, connecting and
+  binding a pipeline whose central artifact cannot run.
+
 ### S1 — `pac` read-back verification of imports
 
 After a zero-return import, run `pac solution list --environment <url>` through
@@ -179,8 +252,13 @@ package would produce a near-empty file. Per the Microsoft reference,
 - **Honesty constraint**: a connection reference is a name, not a connection.
   `credentials_included: false` stays true and gains a sibling such as
   `bindings_resolved: false`.
-- **Recommendation: GO, paired with P0.** They answer the same schema question,
-  and doing S4a before P0 is guesswork.
+- **Superseded by S0 for flows.** Flow `connectionReferences` live inside the
+  `clientdata` payload S0 produces, so S0 absorbs that half. What remains here is
+  the standalone `environmentvariabledefinitions/` and
+  `environment_variable_values.json` emission, which is still needed for S4b and
+  is still credential-free. Scope S4a to environment variables only once S0 is
+  underway.
+- **Recommendation: GO, reduced to environment variables, after S0.**
 
 ### S4b — Settings-file binding at import
 
@@ -248,17 +326,25 @@ burden against a format WAIT does not control.
 
 ## Recommended order (if approved)
 
-1. **P0** — pack and import proof. Everything else is conditional on it.
-2. **S1** — read-back verification. No new credentials; closes the largest
-   honesty gap in the product.
-3. **S2** — the Microsoft connection. Run **S4a** and **S6** in parallel here
-   under different owners; they share no files.
-4. **S3** — environment discovery and role binding.
-5. **S4b** — settings-file binding.
-6. **S5** — Dataverse verification, superseding S1's evidence quality.
-7. **S7** — no.
+Revised after the P0 result.
 
-Genuinely parallel: S1, S4a, S6. Strictly sequential: S2 → S3 → {S4b, S5}.
+1. **S0** — emit real cloud flow definitions. Promoted to first: without it the
+   pipeline's central artifact cannot run, and every later slice would be
+   verifying, connecting and binding a flow that Power Automate rejects.
+2. **P0 (live half)** — `pac solution pack` and `pac solution import` against the
+   development tenant, once S0 has produced something worth importing. The
+   structural half is done and its findings are recorded above.
+3. **S1** — read-back verification. No new credentials; closes the largest
+   remaining honesty gap.
+4. **S2** — the Microsoft connection. Run **S6** in parallel here under a
+   different owner; they share no files.
+5. **S3** — environment discovery and role binding.
+6. **S4a** (environment variables only) then **S4b** — settings-file binding.
+7. **S5** — Dataverse verification, superseding S1's evidence quality.
+8. **S7** — no.
+
+Genuinely parallel: S6 with anything, and S1 with S2. Strictly sequential:
+S0 → P0 live half → S1; and S2 → S3 → {S4b, S5}.
 
 ### Explicitly not recommended
 
