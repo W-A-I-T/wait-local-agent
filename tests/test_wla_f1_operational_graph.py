@@ -12,10 +12,22 @@ from fastapi.routing import APIRoute
 
 from wait_local_agent.api.app import create_app
 from wait_local_agent.client_scope import AllClients, BoundClients
-from wait_local_agent.models import CanonicalAsset, Ticket
+from wait_local_agent.m365_graph import (
+    M365GraphManagedDevice,
+    M365GraphManagedDeviceReadResponse,
+    M365GraphReadProvider,
+    M365GraphReadResponse,
+    M365GraphUser,
+)
+from wait_local_agent.models import CanonicalAsset, ConnectorReadResult, Ticket
 from wait_local_agent.operational_graph import OperationalGraphService
 from wait_local_agent.rbac import AuthContext, Role, resolve_auth_context
-from wait_local_agent.rmm import RmmAlert, RmmDevice, RmmInventoryProvider
+from wait_local_agent.rmm import (
+    RmmAlert,
+    RmmDevice,
+    RmmInventoryProvider,
+    RmmProviderResolutionError,
+)
 from wait_local_agent.store import Store
 
 
@@ -30,6 +42,28 @@ class _FakeRmmProvider:
             RmmAlert("alert-1", "device-1", "high", "Disk full"),
             RmmAlert("alert-missing", "missing-device", "low", "Unknown device"),
         ]
+
+
+class _FakeM365Provider:
+    connection = SimpleNamespace(profile_id="m365-profile-1")
+
+    def list_users(self, *, page_size: int = 200) -> M365GraphReadResponse:
+        return M365GraphReadResponse(
+            ConnectorReadResult("ready", "ok", 1),
+            [M365GraphUser("oid-1", "Alex User", "alex@example.test", "", True, "", "")],
+        )
+
+    def list_managed_devices(self, *, page_size: int = 200) -> M365GraphManagedDeviceReadResponse:
+        return M365GraphManagedDeviceReadResponse(
+            ConnectorReadResult("ready", "ok", 1),
+            [
+                M365GraphManagedDevice(
+                    "device-1", "oid-1", "Alex Laptop", "company", "", "2026-08-31T00:00:00Z",
+                    "Windows", "compliant", "mdm", "11", True, "", False, "oid-1@example.test",
+                    "Alex User", "Laptop", "Acme",
+                )
+            ],
+        )
 
 
 def _seed_clients(store: Store) -> None:
@@ -73,8 +107,8 @@ def test_v7_operational_graph_is_additive_idempotent_and_fk_clean(tmp_path: Path
             for table in ("clients", "tickets", "canonical_assets")
         }
         assert after_counts == before_counts
-        assert connection.execute("select count(*) from external_entity_refs").fetchone()[0] == 0
-        assert connection.execute("select count(*) from entity_links").fetchone()[0] == 0
+        assert connection.execute("select count(*) from external_entity_refs").fetchone()[0] == 2
+        assert connection.execute("select count(*) from entity_links").fetchone()[0] == 1
         assert connection.execute("pragma foreign_keys").fetchone()[0] == 1
         assert connection.execute("pragma foreign_key_check").fetchall() == []
         assert connection.execute("pragma integrity_check").fetchone()[0] == "ok"
@@ -482,6 +516,170 @@ def test_rmm_inventory_provider_failure_is_non_raising(tmp_path: Path) -> None:
     assert summary == {"devices": 0, "alerts": 2, "links": 0, "errors": ["device inventory unavailable"]}
 
 
+def test_rmm_alert_inventory_failure_is_non_raising(tmp_path: Path) -> None:
+    class FailingAlertsProvider(_FakeRmmProvider):
+        def list_alerts(self, client_id: str | None = None) -> list[RmmAlert]:
+            raise RuntimeError("alert provider unavailable")
+
+    store = Store(tmp_path / "state.db")
+    store.create_client("client-a", "Acme")
+    summary = OperationalGraphService(
+        store, rmm_provider=cast(RmmInventoryProvider, FailingAlertsProvider())
+    ).seed_rmm_inventory("client-a")
+    assert summary == {"devices": 1, "alerts": 0, "links": 0, "errors": ["alert inventory unavailable"]}
+
+
+def test_rmm_inventory_without_provider_is_non_raising(tmp_path: Path) -> None:
+    store = Store(tmp_path / "state.db")
+    store.create_client("client-a", "Acme")
+    assert OperationalGraphService(store).seed_rmm_inventory("client-a") == {
+        "devices": 0,
+        "alerts": 0,
+        "links": 0,
+        "errors": ["rmm provider unavailable"],
+    }
+
+
+def test_m365_inventory_handles_unavailable_and_empty_payload_edges(tmp_path: Path) -> None:
+    class PartialM365Provider:
+        connection = SimpleNamespace(profile_id=" ")
+
+        def list_users(self, *, page_size: int = 200) -> M365GraphReadResponse:
+            return M365GraphReadResponse(ConnectorReadResult("failed", "users unavailable", 0), [])
+
+        def list_managed_devices(self, *, page_size: int = 200) -> M365GraphManagedDeviceReadResponse:
+            return M365GraphManagedDeviceReadResponse(
+                ConnectorReadResult("ready", "ok", 2),
+                [
+                    M365GraphManagedDevice(
+                        " ", "", "ignored", "", "", "", "", "", "", "", False, "", False, "", "", "", ""
+                    ),
+                    M365GraphManagedDevice(
+                        "device-2", "missing-user", "", "", "", "", "", "", "", "", False, "", False, "", "", "", ""
+                    ),
+                ],
+            )
+
+    store = Store(tmp_path / "state.db")
+    store.create_client("client-a", "Acme")
+    assert OperationalGraphService(store).seed_m365_inventory("client-a") == {
+        "users": 0,
+        "devices": 0,
+        "links": 0,
+        "errors": ["microsoft 365 provider unavailable"],
+    }
+    graph = OperationalGraphService(
+        store, m365_client=cast(M365GraphReadProvider, PartialM365Provider())
+    )
+    summary = graph.seed_m365_inventory("client-a")
+    assert summary == {
+        "users": 0,
+        "devices": 1,
+        "links": 0,
+        "errors": ["user inventory unavailable: users unavailable"],
+    }
+    device = store.find_entity_ref("client-a", "device", "m365", "device-2")
+    assert device is not None
+    assert device.display_name == "device-2"
+
+    class UserPayloadProvider(PartialM365Provider):
+        def list_users(self, *, page_size: int = 200) -> M365GraphReadResponse:
+            return M365GraphReadResponse(
+                ConnectorReadResult("ready", "ok", 2),
+                [
+                    M365GraphUser(" ", "ignored", "", "", None, "", ""),
+                    M365GraphUser("user-1", "", "", "", True, "", ""),
+                ],
+            )
+
+    user_graph = OperationalGraphService(
+        store, m365_client=cast(M365GraphReadProvider, UserPayloadProvider())
+    )
+    assert user_graph.seed_m365_inventory("client-a")["users"] == 1
+    user_ref = store.find_entity_ref("client-a", "user", "m365", "user-1")
+    assert user_ref is not None
+    assert user_ref.display_name == "user-1"
+
+
+def test_m365_inventory_reports_device_status_and_combined_sync(tmp_path: Path) -> None:
+    class DeviceFailureProvider(_FakeM365Provider):
+        def list_managed_devices(self, *, page_size: int = 200) -> M365GraphManagedDeviceReadResponse:
+            return M365GraphManagedDeviceReadResponse(
+                ConnectorReadResult("failed", "devices unavailable", 0), []
+            )
+
+    store = Store(tmp_path / "state.db")
+    store.create_client("client-a", "Acme")
+    graph = OperationalGraphService(
+        store,
+        rmm_provider=cast(RmmInventoryProvider, _FakeRmmProvider()),
+        m365_client=cast(M365GraphReadProvider, DeviceFailureProvider()),
+    )
+    summary = graph.seed_client_inventory("client-a")
+    assert summary["rmm"]["devices"] == 1
+    assert summary["m365"] == {
+        "users": 1,
+        "devices": 0,
+        "links": 0,
+        "errors": ["device inventory unavailable: devices unavailable"],
+    }
+
+
+def test_m365_inventory_is_metadata_only_scoped_and_idempotent(tmp_path: Path) -> None:
+    store = Store(tmp_path / "state.db")
+    _seed_clients(store)
+    graph = OperationalGraphService(store, m365_client=cast(M365GraphReadProvider, _FakeM365Provider()))
+
+    first = graph.seed_m365_inventory("client-a")
+    second = graph.seed_m365_inventory("client-a")
+
+    assert first == {"users": 1, "devices": 1, "links": 1, "errors": []}
+    assert second == first
+    refs = store.list_entity_refs("client-a")
+    assert {(ref.entity_type, ref.source_system, ref.external_id) for ref in refs} == {
+        ("m365_account", "m365", "m365-profile-1"),
+        ("user", "m365", "oid-1"),
+        ("device", "m365", "device-1"),
+    }
+    device_ref = store.find_entity_ref("client-a", "device", "m365", "device-1")
+    assert device_ref is not None
+    assert "message" not in device_ref.attributes_json.lower()
+    assert len(store.list_entity_links("client-a", refs[1].id)) == 1
+    assert len(store.list_entity_refs("client-b")) == 0
+
+
+def test_client_graph_pagination_filters_and_has_more_are_accurate(tmp_path: Path) -> None:
+    store = Store(tmp_path / "state.db")
+    _seed_clients(store)
+    refs = [
+        store.upsert_entity_ref(
+            "client-a",
+            entity_type="device" if index else "user",
+            source_system="m365" if index < 2 else "local",
+            external_id=f"ref-{index}",
+            provenance="test",
+        )
+        for index in range(3)
+    ]
+    store.upsert_entity_link(
+        "client-a", from_ref_id=refs[0].id, to_ref_id=refs[1].id,
+        link_type="owns_device", provenance="test",
+    )
+    graph = OperationalGraphService(store)
+
+    page = graph.client_graph("client-a", source_system="m365", offset=0, limit=1)
+    assert [ref.external_id for ref in page.refs] == ["ref-0"]
+    assert page.total_refs == 2
+    assert page.total_links == 1
+    assert page.has_more is True
+    assert page.entity_type_counts == {"device": 2, "user": 1}
+    filtered = graph.client_graph("client-a", entity_type="device", link_type="owns_device", limit=1)
+    assert [ref.external_id for ref in filtered.refs] == ["ref-1"]
+    assert filtered.total_refs == 1
+    assert filtered.total_links == 1
+    assert filtered.has_more is False
+
+
 def test_context_endpoint_returns_404_for_ticket_outside_principal_scope(settings) -> None:
     store = Store(settings.data_path)
     _seed_clients(store)
@@ -563,3 +761,76 @@ def test_client_graph_endpoints_are_fail_closed_and_operator_gated(settings, mon
     assert "credentials" not in str(result).lower()
     graph = graph_route.endpoint("client-a", viewer)
     assert len(graph["refs"]) == 3
+
+
+def test_m365_graph_endpoint_is_operator_and_probing_gated(settings, monkeypatch) -> None:
+    import wait_local_agent.api.app as app_module
+
+    class FakeM365GraphClient(_FakeM365Provider):
+        def __init__(self, _settings, **kwargs) -> None:
+            self.connection = kwargs.get("connection", self.connection)
+
+    store = Store(settings.data_path)
+    _seed_clients(store)
+    monkeypatch.setattr(app_module, "M365GraphClient", FakeM365GraphClient)
+    monkeypatch.setattr(
+        app_module.M365ConnectionResolver,
+        "resolve",
+        lambda _resolver, _client_id=None: SimpleNamespace(profile_id="m365-profile-1"),
+    )
+    active_settings = replace(settings, allow_http_probing=True)
+    app = create_app(active_settings)
+    route = next(
+        route
+        for route in app.routes
+        if isinstance(route, APIRoute) and route.path == "/clients/{client_id}/graph/sync-m365"
+    )
+    operator = AuthContext(
+        role=Role.ADMIN,
+        presented_token="operator",
+        client_ids=frozenset(),
+        is_msp_admin=True,
+        demo_mode=False,
+    )
+
+    result = route.endpoint("client-a", operator)
+    assert result["users"] == 1
+    assert result["devices"] == 1
+    assert "credentials" not in str(result).lower()
+
+    blocked_app = create_app(replace(active_settings, allow_http_probing=False))
+    blocked_route = next(
+        route
+        for route in blocked_app.routes
+        if isinstance(route, APIRoute) and route.path == "/clients/{client_id}/graph/sync-m365"
+    )
+    with pytest.raises(HTTPException, match="probing is disabled") as error:
+        blocked_route.endpoint("client-a", operator)
+    assert error.value.status_code == 409
+
+
+def test_scheduled_graph_sync_runner_guards(settings, monkeypatch) -> None:
+    import wait_local_agent.api.app as app_module
+
+    app = create_app(settings)
+    store = app.state.store
+    store.create_client("client-a", "Acme")
+    runner = app.state.scheduler._graph_sync_runner  # noqa: SLF001
+    assert runner is not None
+
+    store.set_client_status(AllClients(), "client-a", "archived")
+    with pytest.raises(ValueError, match="client must be active"):
+        runner("client-a")
+
+    store.set_client_status(AllClients(), "client-a", "active")
+
+    def raise_resolution_error(*_args) -> object:
+        raise RmmProviderResolutionError("ambiguous RMM provider")
+
+    monkeypatch.setattr(app_module, "rmm_provider_from_settings", raise_resolution_error)
+    with pytest.raises(ValueError, match="ambiguous RMM provider"):
+        runner("client-a")
+
+    monkeypatch.setattr(app_module, "rmm_provider_from_settings", lambda *_args: _FakeRmmProvider())
+    with pytest.raises(ValueError, match="RMM read probing is disabled"):
+        runner("client-a")

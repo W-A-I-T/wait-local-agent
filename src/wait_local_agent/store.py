@@ -3830,6 +3830,7 @@ class Store:
             effective_ticket = replace(ticket, client_id=normalized_client_id, source_system="local")
             with self._connect() as connection:
                 self._write_ingested_ticket(connection, effective_ticket)
+            self._seed_ticket_graph(normalized_client_id, effective_ticket.id)
             written += 1
         return IngestSummary(written=written, quarantined=0)
 
@@ -3846,6 +3847,7 @@ class Store:
             raise ValueError("connector_instance_id must be non-empty")
         written = 0
         quarantined = 0
+        graph_seeds: list[tuple[str, str]] = []
         with self._connect() as connection:
             connection.execute("begin immediate")
             instance = connection.execute(
@@ -3954,6 +3956,7 @@ class Store:
                         changed_at=record.updated_at.strip() or record.created_at.strip() or utc_now(),
                         source="ticket_ingest",
                     )
+                graph_seeds.append((resolved_client_id, persisted_id))
                 self._add_audit_event(
                     connection,
                     "ticket.ingested",
@@ -3962,7 +3965,16 @@ class Store:
                     client_id=resolved_client_id,
                 )
                 written += 1
+        for resolved_client_id, ticket_id in graph_seeds:
+            self._seed_ticket_graph(resolved_client_id, ticket_id)
         return IngestSummary(written=written, quarantined=quarantined)
+
+    def _seed_ticket_graph(self, client_id: str, ticket_id: str) -> None:
+        # Keep the graph service import local: Store owns the persistence layer
+        # and operational_graph depends on Store for its idempotent writes.
+        from wait_local_agent.operational_graph import OperationalGraphService
+
+        OperationalGraphService(self).seed_ticket_requester(client_id, ticket_id)
 
     def _upsert_provider_ticket(
         self,
@@ -8205,6 +8217,14 @@ class Store:
                 completed_at=exercise.completed_at,
                 client_id=client_id,
             )
+        # Collector runs may be host-scoped and therefore have no client.  Do
+        # not let a result asset's optional ownership turn that into a graph
+        # write: graph refs require a real, singular client scope.
+        normalized_client_id = _normalize_client_id(client_id)
+        if normalized_client_id is not None and self.get_client(AllClients(), normalized_client_id) is not None:
+            from wait_local_agent.operational_graph import OperationalGraphService
+
+            OperationalGraphService(self).seed_canonical_assets(normalized_client_id)
 
     def upsert_canonical_asset(
         self,
@@ -8529,20 +8549,108 @@ class Store:
         scope: ClientScope | str | None,
         *,
         entity_type: str | None = None,
+        source_system: str | None = None,
+        link_type: str | None = None,
+        offset: int = 0,
+        limit: int | None = None,
     ) -> list[EntityRef]:
         normalized_entity_type = _validated_entity_type(entity_type) if entity_type is not None else None
+        normalized_source_system = (
+            _required_graph_text(source_system, "source_system") if source_system is not None else None
+        )
+        normalized_link_type = _validated_link_type(link_type) if link_type is not None else None
+        _validate_graph_paging(offset, limit)
         client_predicate, client_params = _client_scope_predicate(scope)
         clauses = [client_predicate]
         params: list[object] = list(client_params)
         if normalized_entity_type is not None:
             clauses.append("entity_type = ?")
             params.append(normalized_entity_type)
+        if normalized_source_system is not None:
+            clauses.append("source_system = ?")
+            params.append(normalized_source_system)
+        if normalized_link_type is not None:
+            clauses.append(
+                "exists ("
+                "select 1 from entity_links l "
+                "where l.client_id = external_entity_refs.client_id "
+                "and (l.from_ref_id = external_entity_refs.id or l.to_ref_id = external_entity_refs.id) "
+                "and l.link_type = ?"
+                ")"
+            )
+            params.append(normalized_link_type)
+        paging = ""
+        if limit is not None:
+            paging = " limit ? offset ?"
+            params.extend((limit, offset))
+        elif offset:
+            paging = " limit -1 offset ?"
+            params.append(offset)
         with self._connect() as connection:
             rows = connection.execute(
-                f"select * from external_entity_refs where {' and '.join(clauses)} order by id",  # nosec B608: predicates are fixed internal strings; tenant values are parameterized
+                f"select * from external_entity_refs where {' and '.join(clauses)} order by id{paging}",  # nosec B608: predicates are fixed internal strings; tenant values are parameterized
                 params,
             ).fetchall()
         return [EntityRef(**dict(row)) for row in rows]
+
+    def count_entity_refs(
+        self,
+        scope: ClientScope | str | None,
+        *,
+        entity_type: str | None = None,
+        source_system: str | None = None,
+        link_type: str | None = None,
+    ) -> int:
+        normalized_entity_type = _validated_entity_type(entity_type) if entity_type is not None else None
+        normalized_source_system = (
+            _required_graph_text(source_system, "source_system") if source_system is not None else None
+        )
+        normalized_link_type = _validated_link_type(link_type) if link_type is not None else None
+        client_predicate, client_params = _client_scope_predicate(scope)
+        clauses = [client_predicate]
+        params: list[object] = list(client_params)
+        if normalized_entity_type is not None:
+            clauses.append("entity_type = ?")
+            params.append(normalized_entity_type)
+        if normalized_source_system is not None:
+            clauses.append("source_system = ?")
+            params.append(normalized_source_system)
+        if normalized_link_type is not None:
+            clauses.append(
+                "exists ("
+                "select 1 from entity_links l "
+                "where l.client_id = external_entity_refs.client_id "
+                "and (l.from_ref_id = external_entity_refs.id or l.to_ref_id = external_entity_refs.id) "
+                "and l.link_type = ?"
+                ")"
+            )
+            params.append(normalized_link_type)
+        with self._connect() as connection:
+            row = connection.execute(
+                f"select count(*) from external_entity_refs where {' and '.join(clauses)}",  # nosec B608
+                params,
+            ).fetchone()
+        return int(row[0]) if row is not None else 0
+
+    def count_entity_refs_by_type(
+        self, scope: ClientScope | str | None, *, source_system: str | None = None
+    ) -> dict[str, int]:
+        normalized_source_system = (
+            _required_graph_text(source_system, "source_system") if source_system is not None else None
+        )
+        client_predicate, client_params = _client_scope_predicate(scope)
+        clauses = [client_predicate]
+        params: list[object] = list(client_params)
+        if normalized_source_system is not None:
+            clauses.append("source_system = ?")
+            params.append(normalized_source_system)
+        with self._connect() as connection:
+            rows = connection.execute(
+                f"select entity_type, count(*) from external_entity_refs "
+                f"where {' and '.join(clauses)} group by entity_type",  # nosec B608
+                params,
+            ).fetchall()
+        return {str(row[0]): int(row[1]) for row in rows}
 
     def upsert_entity_link(
         self,
@@ -8652,6 +8760,108 @@ class Store:
                 params,
             ).fetchall()
         return [EntityLink(**dict(row)) for row in rows]
+
+    def list_entity_links_page(
+        self,
+        scope: ClientScope | str | None,
+        *,
+        entity_type: str | None = None,
+        source_system: str | None = None,
+        link_type: str | None = None,
+        offset: int = 0,
+        limit: int = 200,
+    ) -> list[EntityLink]:
+        normalized_entity_type = _validated_entity_type(entity_type) if entity_type is not None else None
+        normalized_source_system = (
+            _required_graph_text(source_system, "source_system") if source_system is not None else None
+        )
+        normalized_link_type = _validated_link_type(link_type) if link_type is not None else None
+        _validate_graph_paging(offset, limit)
+        link_predicate, link_params = _client_scope_predicate(scope, "l.client_id")
+        from_predicate, from_params = _client_scope_predicate(scope, "f.client_id")
+        to_predicate, to_params = _client_scope_predicate(scope, "t.client_id")
+        clauses = [link_predicate, from_predicate, to_predicate]
+        params: list[object] = [*link_params, *from_params, *to_params]
+        if normalized_entity_type is not None and normalized_source_system is not None:
+            clauses.append(
+                "((f.entity_type = ? and f.source_system = ?) "
+                "or (t.entity_type = ? and t.source_system = ?))"
+            )
+            params.extend(
+                (normalized_entity_type, normalized_source_system, normalized_entity_type, normalized_source_system)
+            )
+        elif normalized_entity_type is not None:
+            clauses.append("(f.entity_type = ? or t.entity_type = ?)")
+            params.extend((normalized_entity_type, normalized_entity_type))
+        elif normalized_source_system is not None:
+            clauses.append("(f.source_system = ? or t.source_system = ?)")
+            params.extend((normalized_source_system, normalized_source_system))
+        if normalized_link_type is not None:
+            clauses.append("l.link_type = ?")
+            params.append(normalized_link_type)
+        params.extend((limit, offset))
+        with self._connect() as connection:
+            rows = connection.execute(
+                f"""
+                select l.*
+                from entity_links l
+                join external_entity_refs f on f.id = l.from_ref_id
+                join external_entity_refs t on t.id = l.to_ref_id
+                where {' and '.join(clauses)}
+                order by l.id
+                limit ? offset ?
+                """,  # nosec B608: predicates are fixed internal strings; tenant values are parameterized
+                params,
+            ).fetchall()
+        return [EntityLink(**dict(row)) for row in rows]
+
+    def count_entity_links(
+        self,
+        scope: ClientScope | str | None,
+        *,
+        entity_type: str | None = None,
+        source_system: str | None = None,
+        link_type: str | None = None,
+    ) -> int:
+        normalized_entity_type = _validated_entity_type(entity_type) if entity_type is not None else None
+        normalized_source_system = (
+            _required_graph_text(source_system, "source_system") if source_system is not None else None
+        )
+        normalized_link_type = _validated_link_type(link_type) if link_type is not None else None
+        link_predicate, link_params = _client_scope_predicate(scope, "l.client_id")
+        from_predicate, from_params = _client_scope_predicate(scope, "f.client_id")
+        to_predicate, to_params = _client_scope_predicate(scope, "t.client_id")
+        clauses = [link_predicate, from_predicate, to_predicate]
+        params: list[object] = [*link_params, *from_params, *to_params]
+        if normalized_entity_type is not None and normalized_source_system is not None:
+            clauses.append(
+                "((f.entity_type = ? and f.source_system = ?) "
+                "or (t.entity_type = ? and t.source_system = ?))"
+            )
+            params.extend(
+                (normalized_entity_type, normalized_source_system, normalized_entity_type, normalized_source_system)
+            )
+        elif normalized_entity_type is not None:
+            clauses.append("(f.entity_type = ? or t.entity_type = ?)")
+            params.extend((normalized_entity_type, normalized_entity_type))
+        elif normalized_source_system is not None:
+            clauses.append("(f.source_system = ? or t.source_system = ?)")
+            params.extend((normalized_source_system, normalized_source_system))
+        if normalized_link_type is not None:
+            clauses.append("l.link_type = ?")
+            params.append(normalized_link_type)
+        with self._connect() as connection:
+            row = connection.execute(
+                f"""
+                select count(*)
+                from entity_links l
+                join external_entity_refs f on f.id = l.from_ref_id
+                join external_entity_refs t on t.id = l.to_ref_id
+                where {' and '.join(clauses)}
+                """,  # nosec B608: predicates are fixed internal strings; tenant values are parameterized
+                params,
+            ).fetchone()
+        return int(row[0]) if row is not None else 0
 
     def neighbors(
         self, scope: ClientScope | str | None, ref_id: int
@@ -10401,6 +10611,13 @@ def _validated_entity_type(entity_type: str) -> str:
     if normalized not in _ENTITY_TYPES:
         raise ValueError(f"unsupported entity_type: {normalized}")
     return normalized
+
+
+def _validate_graph_paging(offset: int, limit: int | None) -> None:
+    if isinstance(offset, bool) or not isinstance(offset, int) or offset < 0:
+        raise ValueError("offset must be a non-negative integer")
+    if limit is not None and (isinstance(limit, bool) or not isinstance(limit, int) or limit < 1):
+        raise ValueError("limit must be a positive integer")
 
 
 def _validated_link_type(link_type: str) -> str:
