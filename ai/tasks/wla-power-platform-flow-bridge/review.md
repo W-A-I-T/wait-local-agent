@@ -1,15 +1,15 @@
 # Review — wla-power-platform-flow-bridge
 
-Status: pending implementation.
+Status: pending required cross-family review and final gate.
 
 ## Cross-family review (kimi, read-only)
 
-Pending. If the provider is unavailable, record the failure here and hand back to the
-orchestrator rather than substituting another provider.
+Pending. No substitute reviewer was used. The implementation is ready for the
+orchestrator to dispatch the required read-only Kimi review.
 
 ## Final gate (claude)
 
-Pending. Must confirm:
+Pending. Claude must confirm:
 
 - The regression test genuinely feeds `build_power_automate_flow_plan` output verbatim into the
   packager — not a hand-written fixture.

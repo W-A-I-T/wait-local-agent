@@ -1,5 +1,5 @@
 import { fireEvent, render, screen } from "@testing-library/react";
-import { MemoryRouter } from "react-router-dom";
+import { MemoryRouter, Route, Routes, useLocation } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { Consultant } from "../src/screens/Consultant";
 
@@ -12,6 +12,10 @@ const dashboard = vi.hoisted(() => ({
 vi.mock("../src/app/DashboardContext", () => ({
   useDashboard: () => ({ canWrite: true, clientId: dashboard.clientId, selectedClientId: dashboard.selectedClientId })
 }));
+
+function HandoffProbe() {
+  return <pre data-testid="handoff-state">{JSON.stringify(useLocation().state)}</pre>;
+}
 
 describe("Consultant", () => {
   let noBlueprints = false;
@@ -325,6 +329,43 @@ describe("Consultant", () => {
     expect(promotionCall?.[1]).toMatchObject({
       body: expect.stringContaining('"solution_name":"Employee onboarding review"'),
     });
+  });
+
+  it("hands Power Apps and Power Automate artifacts to Solution delivery in order", async () => {
+    render(
+      <MemoryRouter initialEntries={["/consultant"]}>
+        <Routes>
+          <Route path="/consultant" element={<Consultant />} />
+          <Route path="/consultant/solution-delivery" element={<HandoffProbe />} />
+        </Routes>
+      </MemoryRouter>,
+    );
+
+    expect(await screen.findByRole("heading", { name: "Solutions Architect blueprints" })).toBeInTheDocument();
+    fireEvent.click(await screen.findByRole("button", { name: /Employee onboarding/ }));
+    expect(await screen.findByRole("heading", { name: "Employee onboarding" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Add step" }));
+    fireEvent.click(screen.getByRole("button", { name: "Prepare Power Automate plan" }));
+    expect(await screen.findByText(/Power Automate plan ready for review/i)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Build local artifact" }));
+    expect(await screen.findByText(/Power Apps artifact ready for review/i)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Send to Solution delivery" }));
+
+    const state = await screen.findByTestId("handoff-state");
+    expect(state).toHaveTextContent("wait-local-agent.power-apps-artifact");
+    expect(state).toHaveTextContent("wait-local-agent.power-automate-flow-plan");
+    expect(state).toHaveTextContent("manual_review_trigger");
+    expect(state).toHaveTextContent('"clientId":"acme"');
+    expect(state.textContent?.indexOf("wait-local-agent.power-apps-artifact")).toBeLessThan(
+      state.textContent?.indexOf("wait-local-agent.power-automate-flow-plan") ?? -1,
+    );
+  });
+
+  it("keeps the Solution delivery handoff disabled until an artifact exists", async () => {
+    render(<MemoryRouter><Consultant /></MemoryRouter>);
+
+    expect(await screen.findByRole("heading", { name: "Solutions Architect blueprints" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Send to Solution delivery" })).toBeDisabled();
   });
 
   it("starts guided discovery from the authenticated tenant when no blueprint exists", async () => {
