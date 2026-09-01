@@ -65,8 +65,12 @@ def test_v3_is_additive_idempotent_and_fk_clean(tmp_path: Path) -> None:
 
     Store(tmp_path / "state.db")
     with store._connect() as connection:  # noqa: SLF001
+        declared_migrations = store._declared_migrations()  # noqa: SLF001
         assert connection.execute("select max(version) from schema_migrations").fetchone()[0] == (
             latest_declared_schema_version(store)
+        )
+        assert connection.execute("select count(*) from schema_migrations").fetchone()[0] == len(
+            declared_migrations
         )
         assert connection.execute("pragma foreign_key_check").fetchall() == []
 

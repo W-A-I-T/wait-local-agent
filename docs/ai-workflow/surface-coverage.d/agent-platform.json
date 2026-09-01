@@ -1,0 +1,44 @@
+{
+  "classes": [
+    "admin",
+    "embedded",
+    "exposed",
+    "hidden-by-design"
+  ],
+  "surfaces": {
+    "fastapi_routes": {
+      "DELETE /packs/agent-platform/memories/{memory_id}": "exposed",
+      "GET /packs/agent-platform/context": "exposed",
+      "GET /packs/agent-platform/iterations": "exposed",
+      "GET /packs/agent-platform/iterations/{session_id}": "exposed",
+      "GET /packs/agent-platform/memories": "exposed",
+      "GET /packs/agent-platform/memories/{memory_id}": "exposed",
+      "GET /packs/agent-platform/skills": "exposed",
+      "GET /packs/agent-platform/skills/{skill_id}": "exposed",
+      "GET /packs/agent-platform/skills/{skill_id}/revisions": "exposed",
+      "GET /packs/agent-platform/skills/{skill_id}/tests": "exposed",
+      "GET /packs/agent-platform/status": "exposed",
+      "GET /packs/agent-platform/technicians": "exposed",
+      "GET /packs/agent-platform/tickets/{ticket_id}/attachments": "exposed",
+      "GET /packs/agent-platform/tickets/{ticket_id}/attachments/analyses": "exposed",
+      "GET /packs/agent-platform/tickets/{ticket_id}/context": "exposed",
+      "PATCH /packs/agent-platform/iterations/{session_id}/steps/{step_index}": "exposed",
+      "POST /packs/agent-platform/iterations": "exposed",
+      "POST /packs/agent-platform/iterations/{session_id}/continue": "exposed",
+      "POST /packs/agent-platform/iterations/{session_id}/finish": "exposed",
+      "POST /packs/agent-platform/iterations/{session_id}/restart": "exposed",
+      "POST /packs/agent-platform/memories": "exposed",
+      "POST /packs/agent-platform/memories/{memory_id}/pin": "exposed",
+      "POST /packs/agent-platform/memories/{memory_id}/restore": "exposed",
+      "POST /packs/agent-platform/skills": "exposed",
+      "POST /packs/agent-platform/skills/{skill_id}/archive": "exposed",
+      "POST /packs/agent-platform/skills/{skill_id}/tests": "exposed",
+      "POST /packs/agent-platform/technicians/recommend": "exposed",
+      "POST /packs/agent-platform/technicians/{technician_id}/workloads": "exposed",
+      "POST /packs/agent-platform/tickets/{ticket_id}/attachments": "exposed",
+      "POST /packs/agent-platform/tickets/{ticket_id}/attachments/{attachment_id}/analyze": "exposed",
+      "PUT /packs/agent-platform/skills/{skill_id}": "exposed",
+      "PUT /packs/agent-platform/technicians/{technician_id}": "exposed"
+    }
+  }
+}

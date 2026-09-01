@@ -1,6 +1,6 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { MemoryRouter } from "react-router-dom";
+import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { SolutionDelivery } from "./SolutionDelivery";
 import { useDashboard } from "../app/DashboardContext";
 import type { ApprovalRequest } from "../api/types";
@@ -139,5 +139,74 @@ describe("SolutionDelivery", () => {
       rollback_artifact_path: "/workspace/employee_onboarding/employee_onboarding.zip",
       rollback_evidence: { available: true, strategy: "reimport_previous_package", artifact_digest: "sha256:artifact" },
     });
+  });
+
+  it("prefills a Solutions Architect handoff and preserves hand-edited artifacts", async () => {
+    mockedUseDashboard.mockReturnValue(dashboard() as never);
+    const artifact = {
+      format: "wait-local-agent.power-apps-artifact",
+      client_id: "acme",
+      credentials_included: false,
+    };
+    const packageArtifact = {
+      format: "wait-local-agent.power-platform.deployable-source",
+      format_version: 1,
+      client_id: "acme",
+      solution: { unique_name: "employee_onboarding" },
+      output_directory: "/workspace/employee_onboarding",
+      files: [],
+      file_count: 0,
+      deployable: true,
+      package_status: "deployable_source",
+      credentials_included: false,
+      execution_started: false,
+      deployment_started: false,
+      package_digest: "sha256:package",
+    };
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify(packageArtifact), { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+    render(
+      <MemoryRouter initialEntries={[{
+        pathname: "/consultant/solution-delivery",
+        state: { source: "solutions-architect", clientId: "acme", artifacts: [artifact] },
+      }]}>
+        <Routes>
+          <Route path="/consultant/solution-delivery" element={<SolutionDelivery />} />
+        </Routes>
+      </MemoryRouter>,
+    );
+
+    expect(screen.getByRole("status")).toHaveTextContent(/1 artifact received from Solutions Architect/);
+    const artifacts = screen.getByLabelText("Artifacts (JSON array)");
+    expect(artifacts).toHaveValue(JSON.stringify([artifact], null, 2));
+
+    fireEvent.click(screen.getByRole("button", { name: "Build package" }));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
+    expect(JSON.parse(fetchMock.mock.calls[0][1].body)).toMatchObject({ artifacts: [artifact], client_id: "acme" });
+
+    fireEvent.change(artifacts, { target: { value: "[]" } });
+    fireEvent.click(screen.getByRole("button", { name: "Build package" }));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+    expect(JSON.parse(fetchMock.mock.calls[1][1].body)).toMatchObject({ artifacts: [], client_id: "acme" });
+  });
+
+  it("ignores malformed handoff state without weakening materialization gates", () => {
+    mockedUseDashboard.mockReturnValue(dashboard({ isAdmin: false }) as never);
+    vi.stubGlobal("fetch", vi.fn());
+    render(
+      <MemoryRouter initialEntries={[{
+        pathname: "/consultant/solution-delivery",
+        state: { source: "solutions-architect", clientId: "acme", artifacts: [null] },
+      }]}>
+        <Routes>
+          <Route path="/consultant/solution-delivery" element={<SolutionDelivery />} />
+        </Routes>
+      </MemoryRouter>,
+    );
+
+    expect(screen.getByLabelText("Artifacts (JSON array)")).toHaveValue("[]");
+    expect(screen.queryByText(/received from Solutions Architect/)).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Materialize source" })).toBeDisabled();
+    expect(screen.getByText("Administrator access is required to materialize source files.")).toBeInTheDocument();
   });
 });

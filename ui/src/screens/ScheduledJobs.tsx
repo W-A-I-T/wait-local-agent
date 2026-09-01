@@ -14,7 +14,7 @@ export function ScheduledJobs() {
   const [playbooks, setPlaybooks] = useState<MspPlaybook[]>([]);
   const [loading, setLoading] = useState(true);
   const hasLoadedRef = useRef(false);
-  const [scheduleKind, setScheduleKind] = useState<"workflow" | "playbook" | "agent" | "report">("workflow");
+  const [scheduleKind, setScheduleKind] = useState<"workflow" | "playbook" | "agent" | "report" | "graph_sync">("workflow");
   const [templateId, setTemplateId] = useState("");
   const [reportType, setReportType] = useState<"qbr" | "automation_opportunity" | "recurring_service_review">("qbr");
   const [agentId, setAgentId] = useState("");
@@ -69,7 +69,7 @@ export function ScheduledJobs() {
       setMessage("An entity ID is required for agent schedules.");
       return;
     }
-    const requiresClientScope = scheduleKind === "playbook" || scheduleKind === "report";
+    const requiresClientScope = scheduleKind === "playbook" || scheduleKind === "report" || scheduleKind === "graph_sync";
     if (requiresClientScope && !selectedClientId) {
       setMessage("Select a client from the top bar before creating this schedule.");
       return;
@@ -90,7 +90,9 @@ export function ScheduledJobs() {
     if (requiresClientScope) params = { ...params, client_id: selectedClientId };
 
     try {
-      const body: ScheduledJobRequestBody = scheduleKind === "playbook"
+      const body: ScheduledJobRequestBody = scheduleKind === "graph_sync"
+        ? { job_kind: "graph_sync", graph_sync: true, entity_id: selectedClientId!, cron, timezone: timezone.trim(), params }
+        : scheduleKind === "playbook"
         ? { playbook_id: playbookId, cron, timezone: timezone.trim(), params }
         : scheduleKind === "agent"
         ? { agent_id: agentId, entity_id: entityId.trim(), cron, timezone: timezone.trim(), params }
@@ -141,11 +143,12 @@ export function ScheduledJobs() {
           <div className="grid">
             <label>
               Schedule type
-              <select value={scheduleKind} onChange={(event) => setScheduleKind(event.target.value as "workflow" | "playbook" | "agent" | "report")}>
+              <select value={scheduleKind} onChange={(event) => setScheduleKind(event.target.value as "workflow" | "playbook" | "agent" | "report" | "graph_sync")}>
                 <option value="workflow">Workflow template</option>
                 <option value="playbook">MSP playbook</option>
                 <option value="agent">Agent definition</option>
                 <option value="report">Client report</option>
+                <option value="graph_sync">Environment sync</option>
               </select>
             </label>
             {scheduleKind === "workflow" ? (
@@ -199,7 +202,7 @@ export function ScheduledJobs() {
                 ) : null}
               </>
             )}
-            {scheduleKind === "playbook" || scheduleKind === "report" ? <ClientIdSelect label="Client ID" value={selectedClientId} onChange={setSelectedClientId} clients={clients} required id="scheduled-job-client-id" /> : null}
+            {scheduleKind === "playbook" || scheduleKind === "report" || scheduleKind === "graph_sync" ? <ClientIdSelect label="Client ID" value={selectedClientId} onChange={setSelectedClientId} clients={clients} required id="scheduled-job-client-id" /> : null}
             {scheduleKind === "playbook" ? <span className="field-help">The selected client is added automatically; params may include ticket_id and input.</span> : null}
             <label>
               Cron
@@ -221,11 +224,11 @@ export function ScheduledJobs() {
             </label>
           </div>
           {(scheduleKind === "playbook" || scheduleKind === "report") && !selectedClientId ? <p className="screen-note">Select a client from the top bar before creating this schedule.</p> : null}
-          <button type="submit" disabled={!canWrite || ((scheduleKind === "playbook" || scheduleKind === "report") && !selectedClientId)} title={!canWrite ? "Requires technician access" : (scheduleKind === "playbook" || scheduleKind === "report") && !selectedClientId ? "Select a client from the top bar first" : undefined}>Create schedule</button>
+          <button type="submit" disabled={!canWrite || ((scheduleKind === "playbook" || scheduleKind === "report" || scheduleKind === "graph_sync") && !selectedClientId)} title={!canWrite ? "Requires technician access" : (scheduleKind === "playbook" || scheduleKind === "report" || scheduleKind === "graph_sync") && !selectedClientId ? "Select a client from the top bar first" : undefined}>Create schedule</button>
         </form>
 
-        {message ? <div className="notice">{message}</div> : null}
-        {loading ? <LoadingState label="Loading scheduled jobs…" /> : jobs.length === 0 ? <EmptyState title="No scheduled jobs yet" why="Scheduled jobs appear after you create a workflow, agent, or report schedule above." action={{ label: "Create a schedule above", to: "#scheduled-job-form" }} /> : <div className="table-list">
+          {message ? <div className="notice">{message}</div> : null}
+        {loading ? <LoadingState label="Loading scheduled jobs…" /> : jobs.length === 0 ? <EmptyState title="No scheduled jobs yet" why="Scheduled jobs appear after you create a workflow, agent, report, or environment sync schedule above." action={{ label: "Create a schedule above", to: "#scheduled-job-form" }} /> : <div className="table-list">
           {jobs.map((job) => (
             <article className="table-row" key={job.id}>
               <div>
@@ -268,6 +271,7 @@ export function ScheduledJobs() {
 }
 
 function jobTargetLabel(job: ScheduledJob): string {
+  if (job.job_kind === "graph_sync") return `Environment sync for ${job.client_id ?? job.entity_id}`;
   if (job.job_kind === "agent") return `Agent ${job.agent_id}`;
   if (job.job_kind === "report") return `Report ${job.template_id}`;
   if (job.job_kind === "playbook") return `Playbook ${job.playbook_id ?? job.template_id}`;

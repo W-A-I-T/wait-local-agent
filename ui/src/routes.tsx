@@ -1,8 +1,10 @@
-import { lazy, Suspense } from "react";
+import { lazy, Suspense, type ReactNode } from "react";
 import { Route, Routes } from "react-router-dom";
 import { Approvals } from "./screens/Approvals";
 import { Analytics } from "./screens/Analytics";
 import { Agents } from "./screens/Agents";
+import { AgentPlatform } from "./screens/AgentPlatform";
+import { ActivityRuns } from "./screens/ActivityRuns";
 import { Backfills } from "./screens/Backfills";
 import { Executions } from "./screens/Executions";
 import { Connectors } from "./screens/Connectors";
@@ -10,6 +12,7 @@ import { Consultant } from "./screens/Consultant";
 import { SolutionDelivery } from "./screens/SolutionDelivery";
 import { Collectors } from "./screens/Collectors";
 import { FounderJourney } from "./surfaces/founder/FounderJourney";
+import { IdentityAccess } from "./screens/IdentityAccess";
 import { Knowledge } from "./screens/Knowledge";
 import { Overview } from "./screens/Overview";
 import { Audit } from "./screens/Audit";
@@ -32,6 +35,7 @@ import { Schedules } from "./screens/Schedules";
 import { ConnectorInstances } from "./screens/ConnectorInstances";
 import { SyncReconciliation } from "./screens/SyncReconciliation";
 import { Clients } from "./screens/Clients";
+import { ClientDiscovery } from "./screens/ClientDiscovery";
 import { Login } from "./screens/Login";
 import { M365Actions } from "./screens/M365Actions";
 import { DiagnosticsSupport } from "./screens/DiagnosticsSupport";
@@ -75,6 +79,25 @@ function MicrosoftAdminAccessRoute() {
   );
 }
 
+function MspAdminRoute({ children, description }: { children: ReactNode; description: string }) {
+  const { role, roleResolved, isMspAdmin } = useDashboard();
+  return (
+    <RoleGate
+      role={role}
+      resolved={roleResolved && isMspAdmin}
+      allowed={["admin"]}
+      fallback={(
+        <section className="panel" role="alert">
+          <h2>MSP administrator access required</h2>
+          <p className="screen-note">{description}</p>
+        </section>
+      )}
+    >
+      {children}
+    </RoleGate>
+  );
+}
+
 function PrincipalsAdminRoute() {
   const { role, roleResolved, isMspAdmin } = useDashboard();
   const allowed = roleResolved && isMspAdmin;
@@ -101,6 +124,7 @@ export function AppRoutes() {
       <Route path="login" element={<Login />} />
       <Route index element={<Overview />} />
       <Route path="clients" element={<Clients />} />
+      <Route path="client-discovery" element={<ClientDiscovery />} />
       <Route path="connectors" element={<Connectors />} />
       <Route path="m365-actions" element={<M365Actions />} />
       <Route
@@ -127,6 +151,7 @@ export function AppRoutes() {
       <Route path="workflows" element={<AutomationsShell><Workflows /></AutomationsShell>} />
       <Route path="automation/events" element={<ActivityShell><Events /></ActivityShell>} />
       <Route path="automation/schedules" element={<ActivityShell><Schedules /></ActivityShell>} />
+      <Route path="activity/runs" element={<ActivityShell><ActivityRuns /></ActivityShell>} />
       <Route path="workflow-designer" element={<AutomationsShell><WorkflowDesigner /></AutomationsShell>} />
       <Route path="templates" element={<AutomationsShell><Templates /></AutomationsShell>} />
       <Route path="playbooks" element={<AutomationsShell><Playbooks /></AutomationsShell>} />
@@ -141,6 +166,7 @@ export function AppRoutes() {
       <Route path="approvals" element={<Approvals />} />
       <Route path="analytics" element={<Analytics />} />
       <Route path="agents" element={<Agents />} />
+      <Route path="agent-platform" element={<AgentPlatform />} />
       <Route path="technician-chat" element={<TechnicianChat />} />
       <Route path="technician-path" element={<TechnicianPath />} />
       <Route path="backfills" element={<ActivityShell><Backfills /></ActivityShell>} />
@@ -149,6 +175,7 @@ export function AppRoutes() {
       <Route path="system/appliance-health" element={<ApplianceHealth />} />
       <Route path="system/diagnostics" element={<DiagnosticsSupport />} />
       <Route path="system/extensions" element={<ExtensionsPacks />} />
+      <Route path="system/identity-access" element={<MspAdminRoute description="Only MSP administrators can provision principals and credentials."><IdentityAccess /></MspAdminRoute>} />
       <Route path="integrations/mcp" element={<McpIntegration />} />
       <Route path="integrations/connector-instances" element={<ConnectorInstances />} />
       <Route path="integrations/smart-actions" element={<AutomationsShell><SmartActionCatalog /></AutomationsShell>} />

@@ -67,15 +67,20 @@ def test_store_migrations_are_idempotent_and_connection_pragmas_are_safe(tmp_pat
             (7, "operational_graph"),
             (8, "auth_sessions_and_config"),
             (9, "principal_identities"),
+            (10, "client_candidates"),
         ]
         assert connection.execute("pragma foreign_keys").fetchone()[0] == 1
         assert connection.execute("pragma journal_mode").fetchone()[0].lower() == "wal"
         assert connection.execute("pragma busy_timeout").fetchone()[0] >= 3000
 
     store = Store(path)
+    declared_migrations = store._declared_migrations()  # noqa: SLF001
     with sqlite3.connect(path) as connection:
         assert connection.execute("select max(version) from schema_migrations").fetchone()[0] == (
             latest_declared_schema_version(store)
+        )
+        assert connection.execute("select count(*) from schema_migrations").fetchone()[0] == len(
+            declared_migrations
         )
 
 

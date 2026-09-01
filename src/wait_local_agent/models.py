@@ -117,6 +117,23 @@ class ClientConnectorMapping:
 
 
 @dataclass(frozen=True)
+class ClientCandidate:
+    candidate_id: str
+    connector_instance_id: str
+    provider: str
+    external_id: str
+    display_name: str
+    domains_json: str
+    provenance: str
+    first_seen: str
+    last_seen: str
+    match_state: str
+    matched_client_id: str | None
+    match_reason: str
+    confidence: float
+
+
+@dataclass(frozen=True)
 class Ticket:
     id: str
     client: str
@@ -803,8 +820,19 @@ class EntityLink:
 
 @dataclass(frozen=True)
 class SubGraph:
+    """A graph page plus filtered totals and an overall type summary.
+
+    ``total_refs``, ``total_links``, and ``has_more`` describe the active
+    page filters. ``entity_type_counts`` is an overall summary for the
+    client's graph and is intentionally not narrowed by those filters.
+    """
+
     refs: tuple[EntityRef, ...]
     links: tuple[EntityLink, ...]
+    total_refs: int = 0
+    total_links: int = 0
+    has_more: bool = False
+    entity_type_counts: dict[str, int] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)

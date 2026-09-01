@@ -11,6 +11,7 @@ import pytest
 
 import wait_local_agent.power_platform_package as package_module
 from wait_local_agent.delivery_plan import DeliveryPlanError, build_consultant_delivery_plan
+from wait_local_agent.power_automate import build_power_automate_flow_plan
 from wait_local_agent.power_platform_deployment import (
     PowerPlatformDeploymentError,
     build_power_platform_source_pack_plan,
@@ -62,8 +63,20 @@ def _artifacts(client_id: str = "acme") -> list[dict[str, object]]:
             "client_id": client_id,
             "workflow_id": "employee_onboarding",
             "workflow_name": "Employee onboarding",
-            "trigger": "HR request",
-            "steps": [{"id": "review", "name": "Review", "kind": "approval"}],
+            "power_automate": {
+                "trigger": {"type": "manual_review_trigger", "name": "HR request"},
+                "actions": [
+                    {
+                        "id": "review",
+                        "name": "Review",
+                        "kind": "approval",
+                        "type": "Approval",
+                        "tool_id": None,
+                        "method": "GET",
+                        "approval_required": True,
+                    }
+                ],
+            },
             "requires_approval": True,
             "credentials_included": False,
             "execution_started": False,
@@ -167,8 +180,10 @@ def test_yaml_sources_preserve_empty_collections_and_quote_yaml_boolean_words(tm
         [
             {
                 **_artifacts()[1],
-                "trigger": "on",
-                "steps": [],
+                "power_automate": {
+                    "trigger": {"type": "manual_review_trigger", "name": "on"},
+                    "actions": cast(dict[str, object], _artifacts()[1]["power_automate"])["actions"],
+                },
             }
         ],
     )
@@ -180,8 +195,137 @@ def test_yaml_sources_preserve_empty_collections_and_quote_yaml_boolean_words(tm
             if item["path"] == "modernflows/employee_onboarding/flow.yml"
         ),
     )
-    assert 'Trigger: "on"' in flow_content
-    assert "Steps: []" in flow_content
+    assert 'Name: "on"' in flow_content
+    assert "Steps:" in flow_content
+
+
+def test_real_flow_plan_output_survives_into_the_emitted_flow_source(tmp_path: Path) -> None:
+    flow_plan = build_power_automate_flow_plan(
+        client_id="acme",
+        workflow_id="employee_onboarding",
+        workflow_name="Employee onboarding",
+        trigger="HR onboarding request",
+        steps=[
+            {"id": "validate_manager", "name": "Validate manager", "kind": "condition"},
+            {
+                "id": "prepare_identity",
+                "name": "Prepare Entra identity",
+                "tool_id": "m365_user_create",
+                "method": "POST",
+                "approval_required": True,
+            },
+            {
+                "id": "assign_license",
+                "name": "Assign Microsoft 365 license",
+                "tool_id": "m365_license_assign",
+                "method": "POST",
+                "approval_required": True,
+            },
+            {
+                "id": "notify_manager",
+                "name": "Notify manager in Teams",
+                "tool_id": "m365_teams_message",
+                "method": "POST",
+                "approval_required": True,
+            },
+        ],
+    )
+    first = _package(tmp_path, [flow_plan])
+    second = _package(tmp_path, [flow_plan])
+    files = cast(list[dict[str, object]], first["files"])
+    content = cast(
+        str,
+        next(item["content"] for item in files if item["path"] == "modernflows/employee_onboarding/flow.yml"),
+    )
+    ids = ["validate_manager", "prepare_identity", "assign_license", "notify_manager"]
+    assert 'Name: "HR onboarding request"' in content
+    assert "Type: manual_review_trigger" in content
+    assert "Steps: []" not in content
+    assert 'Trigger: ""' not in content
+    for action_id in ids:
+        assert f"UniqueName: {action_id}" in content
+    for tool_id in ("m365_user_create", "m365_license_assign", "m365_teams_message"):
+        assert f"ToolId: {tool_id}" in content
+    assert "ApprovalRequired: true" in content
+    positions = [content.index(f"UniqueName: {action_id}") for action_id in ids]
+    assert positions == sorted(positions)
+    assert first["package_digest"] == second["package_digest"]
+
+
+def test_flow_artifact_rejects_malformed_or_legacy_trigger_and_action_shapes(tmp_path: Path) -> None:
+    valid = _artifacts()[1]
+    valid_payload = cast(dict[str, object], valid["power_automate"])
+    valid_actions = cast(list[dict[str, object]], valid_payload["actions"])
+
+    def flow_with(actions: object, trigger: object = valid_payload["trigger"]) -> dict[str, object]:
+        return {**valid, "power_automate": {"trigger": trigger, "actions": actions}}
+
+    cases: list[tuple[dict[str, object], str]] = [
+        ({**valid, "power_automate": None, "trigger": "HR request", "steps": []}, "flat trigger/steps shape"),
+        ({key: value for key, value in valid.items() if key != "power_automate"}, "requires a power_automate object"),
+        ({**valid, "power_automate": "invalid"}, "requires a power_automate object"),
+        ({**valid, "power_automate": {}}, "requires a power_automate.trigger object"),
+        (flow_with(valid_actions, "invalid"), "requires a power_automate.trigger object"),
+        (flow_with(valid_actions, {"type": "manual_review_trigger"}), "power_automate.trigger.name"),
+        (flow_with(valid_actions, {"type": "not-valid", "name": "HR request"}), "power_automate.trigger.type"),
+        (flow_with([]), "requires 1-32 power_automate.actions"),
+        (flow_with("invalid"), "requires 1-32 power_automate.actions"),
+        (flow_with(valid_actions * 33), "requires 1-32 power_automate.actions"),
+        (flow_with([None]), "actions must contain objects"),
+        (flow_with([valid_actions[0], {**valid_actions[0]}]), "duplicate power_automate.action id"),
+        *[
+            (
+                {
+                    **valid,
+                    "power_automate": {
+                        "trigger": valid_payload["trigger"],
+                        "actions": [{key: value for key, value in valid_actions[0].items() if key != field}],
+                    },
+                },
+                f"power_automate.action.{field}",
+            )
+            for field in ("name", "kind", "type", "method")
+        ],
+        (flow_with([{**valid_actions[0], "approval_required": "yes"}]), "approval_required must be boolean"),
+        (flow_with([{**valid_actions[0], "tool_id": "not-valid"}]), "power_automate.action.tool_id"),
+        ({**valid, "requires_approval": "yes"}, "requires_approval must be boolean"),
+        ({**valid, "workflow_name": 42}, "workflow_name must be non-empty text"),
+    ]
+    for candidate, message in cases:
+        with pytest.raises(PowerPlatformPackageError, match=message):
+            _package(tmp_path, [candidate])
+
+    without_tool_ids = {
+        **valid,
+        "power_automate": {
+            "trigger": valid_payload["trigger"],
+            "actions": [{**action, "tool_id": None} for action in valid_actions],
+        },
+    }
+    package = _package(tmp_path, [without_tool_ids])
+    flow_content = cast(
+        str,
+        next(
+            item["content"]
+            for item in cast(list[dict[str, object]], package["files"])
+            if item["path"] == "modernflows/employee_onboarding/flow.yml"
+        ),
+    )
+    assert "ToolId:" in flow_content
+
+    action_approval_only = {
+        key: value for key, value in valid.items() if key != "requires_approval"
+    }
+    package = _package(tmp_path, [action_approval_only])
+    flow_content = cast(
+        str,
+        next(
+            item["content"]
+            for item in cast(list[dict[str, object]], package["files"])
+            if item["path"] == "modernflows/employee_onboarding/flow.yml"
+        ),
+    )
+    assert "ApprovalRequired: true" in flow_content
 
 
 def test_package_validation_rederives_file_and_package_digests(tmp_path: Path) -> None:

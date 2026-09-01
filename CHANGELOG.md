@@ -6,6 +6,10 @@ All notable changes to WAIT Local Agent will be documented in this file.
 
 ### Breaking
 
+- Power Automate source packaging now rejects flat `trigger`/`steps` flow
+  artifacts with an explicit error; trigger and actions must be nested under
+  `power_automate`.
+
 - The external-tester milestone is `2.0.0-rc.1`; Python packaging uses the
   normalized PEP 440 version `2.0.0rc1`.
 
@@ -50,6 +54,10 @@ All notable changes to WAIT Local Agent will be documented in this file.
   ticket identifier.
 
 ### Fixed
+
+- Packaged `flow.yml` now records the real trigger and action sequence instead
+  of an empty trigger and empty step list; package digests for flow-bearing
+  solutions change accordingly.
 
 - The Solutions Architect screen now loads each section independently, so a
   failed `/consultant/*` sub-request does not blank the blueprint list or

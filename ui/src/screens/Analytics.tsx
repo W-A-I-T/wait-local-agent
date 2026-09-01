@@ -4,6 +4,7 @@ import { apiFetch } from "../api/client";
 import { useDashboard } from "../app/DashboardContext";
 import { ClientIdSelect } from "../components/ClientIdSelect";
 import { type AnalyticsSummary } from "../api/types";
+import { AutomationDiscoveryPanel } from "../components/AutomationDiscoveryPanel";
 
 const EMPTY_SUMMARY: AnalyticsSummary = {
   range: { from: null, to: null },
@@ -121,6 +122,8 @@ export function Analytics() {
         </div>
         <p className="screen-note">Model cost is an estimate from provider-reported tokens and rates configured by the operator. Missing pricing or usage stays unpriced.</p>
       </section>
+
+      <AutomationDiscoveryPanel clients={clients} />
 
       <section className="panel analytics-filter-panel">
         <div className="panel-heading">

@@ -47,6 +47,37 @@ export type Client = {
 
 export type ClientDirectoryEntry = Pick<Client, "client_id" | "name" | "status">;
 
+export type DeploymentMode = "msp" | "smb";
+
+export type ClientCandidate = {
+  candidate_id: string;
+  connector_instance_id: string;
+  provider: string;
+  external_id: string;
+  display_name: string;
+  domains_json: string;
+  provenance: string;
+  first_seen: string;
+  last_seen: string;
+  match_state: "verified" | "proposed" | "ambiguous" | "unmatched" | "conflicting" | "dismissed";
+  matched_client_id: string | null;
+  match_reason: string;
+  confidence: number;
+};
+
+export type DiscoveryResponse = {
+  items: ClientCandidate[];
+  page: number;
+  page_size: number;
+  summary: {
+    discovered: number;
+    reconciled: number;
+    need_confirmation: number;
+    unmatched: number;
+    conflicts: number;
+  };
+};
+
 export type EntityRef = {
   id: number;
   client_id: string;
@@ -55,6 +86,9 @@ export type EntityRef = {
   external_id: string;
   display_name: string;
   provenance: string;
+  attributes_json?: string;
+  first_seen?: string;
+  last_seen?: string;
 };
 
 export type EntityLink = {
@@ -69,11 +103,22 @@ export type EntityLink = {
 export type ClientGraph = {
   refs: EntityRef[];
   links: EntityLink[];
+  total_refs: number;
+  total_links: number;
+  has_more: boolean;
+  entity_type_counts?: Record<string, number>;
 };
 
 export type RmmInventorySyncResult = {
   devices: number;
   alerts: number;
+  links: number;
+  errors: string[];
+};
+
+export type M365InventorySyncResult = {
+  users: number;
+  devices: number;
   links: number;
   errors: string[];
 };
@@ -1310,7 +1355,7 @@ export type AuditExportResponse = {
 
 export type ScheduledJob = {
   id: number;
-  job_kind: "workflow" | "playbook" | "agent" | "report";
+  job_kind: "workflow" | "playbook" | "agent" | "report" | "connector_poll" | "graph_sync";
   template_id: string | null;
   playbook_id: string | null;
   agent_id: string | null;
@@ -1335,6 +1380,8 @@ export type ScheduledJobRequestBody = {
   report_type?: "qbr" | "automation_opportunity" | "recurring_service_review";
   agent_id?: string;
   entity_id?: string;
+  job_kind?: "graph_sync";
+  graph_sync?: boolean;
   cron: string;
   schedule_type?: "cron" | "interval" | "once";
   interval_seconds?: number;

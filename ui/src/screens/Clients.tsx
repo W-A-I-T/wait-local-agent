@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState, type FormEvent, type KeyboardEvent } from "react";
 import { ApiRequestError, apiFetch } from "../api/client";
-import type { Client, ClientConnectorMapping, ClientDirectoryEntry, ClientGraph, MappingVerifyResult, RmmInventorySyncResult } from "../api/types";
+import type { Client, ClientConnectorMapping, ClientDirectoryEntry, ClientGraph, M365InventorySyncResult, MappingVerifyResult, RmmInventorySyncResult } from "../api/types";
 import { useDashboard } from "../app/DashboardContext";
 import { EmptyState } from "../components/EmptyState";
 import { LoadingState } from "../components/LoadingState";
@@ -12,7 +12,7 @@ type ClientDetailTab = "details" | "graph";
 
 const detailTabs: Array<{ id: ClientDetailTab; label: string }> = [
   { id: "details", label: "Details" },
-  { id: "graph", label: "Operational graph" }
+  { id: "graph", label: "Environment" }
 ];
 
 function isNotFoundError(error: unknown): boolean {
@@ -28,6 +28,22 @@ function groupGraphRefs(refs: ClientGraph["refs"]): ClientGraph["refs"] {
   );
 }
 
+function graphPath(clientId: string, entityType: string, sourceSystem: string, linkType: string, offset: number): string {
+  const params = new URLSearchParams();
+  if (entityType) params.set("entity_type", entityType);
+  if (sourceSystem) params.set("source_system", sourceSystem);
+  if (linkType) params.set("link_type", linkType);
+  if (offset > 0) params.set("offset", String(offset));
+  const query = params.toString();
+  return `/clients/${encodeURIComponent(clientId)}/graph${query ? `?${query}` : ""}`;
+}
+
+function isStale(lastSeen?: string): boolean {
+  if (!lastSeen) return false;
+  const timestamp = Date.parse(lastSeen);
+  return Number.isFinite(timestamp) && Date.now() - timestamp > 7 * 24 * 60 * 60 * 1000;
+}
+
 export function Clients() {
   const { role, roleResolved, refresh, refreshConfiguration = refresh } = useDashboard();
   const canMutate = roleResolved && role === "admin";
@@ -41,6 +57,13 @@ export function Clients() {
   const [rmmSyncLoading, setRmmSyncLoading] = useState(false);
   const [rmmSyncResult, setRmmSyncResult] = useState<RmmInventorySyncResult | null>(null);
   const [rmmSyncError, setRmmSyncError] = useState("");
+  const [m365SyncLoading, setM365SyncLoading] = useState(false);
+  const [m365SyncResult, setM365SyncResult] = useState<M365InventorySyncResult | null>(null);
+  const [m365SyncError, setM365SyncError] = useState("");
+  const [graphEntityType, setGraphEntityType] = useState("");
+  const [graphSourceSystem, setGraphSourceSystem] = useState("");
+  const [graphLinkType, setGraphLinkType] = useState("");
+  const [graphOffset, setGraphOffset] = useState(0);
   const [mappings, setMappings] = useState<ClientConnectorMapping[]>([]);
   const [loading, setLoading] = useState(true);
   const [detailLoading, setDetailLoading] = useState(false);
@@ -53,6 +76,7 @@ export function Clients() {
   const [mutationBusy, setMutationBusy] = useState(false);
   const [verifyingMappingId, setVerifyingMappingId] = useState<string | null>(null);
   const [formError, setFormError] = useState("");
+  const [deploymentMode, setDeploymentMode] = useState<string | null>(null);
 
   const loadClients = useCallback(async () => {
     setLoading(true);
@@ -69,6 +93,11 @@ export function Clients() {
   }, []);
 
   useEffect(() => { void loadClients(); }, [loadClients]);
+  useEffect(() => {
+    void apiFetch<{ mode: string | null }>("/setup/mode")
+      .then((result) => setDeploymentMode(result.mode))
+      .catch(() => setDeploymentMode(null));
+  }, []);
 
   const selectClient = useCallback(async (clientId: string) => {
     setSelectedClientId(clientId);
@@ -78,6 +107,12 @@ export function Clients() {
     setGraphError("");
     setRmmSyncResult(null);
     setRmmSyncError("");
+    setM365SyncResult(null);
+    setM365SyncError("");
+    setGraphEntityType("");
+    setGraphSourceSystem("");
+    setGraphLinkType("");
+    setGraphOffset(0);
     setMappings([]);
     setDetailLoading(true);
     setDetailError("");
@@ -121,30 +156,39 @@ export function Clients() {
     setGraphLoading(true);
     setGraphError("");
     setClientGraph(null);
-    void apiFetch<ClientGraph>(`/clients/${encodeURIComponent(selectedClientId)}/graph`)
+    void apiFetch<ClientGraph>(graphPath(selectedClientId, graphEntityType, graphSourceSystem, graphLinkType, graphOffset))
       .then((result) => {
         if (!cancelled) {
-          if (!Array.isArray(result.refs) || !Array.isArray(result.links)) throw new Error("The appliance returned invalid operational-graph data.");
-          setClientGraph(result);
+          if (!Array.isArray(result.refs) || !Array.isArray(result.links)) throw new Error("The appliance returned invalid environment data.");
+          setClientGraph({
+            ...result,
+            total_refs: result.total_refs ?? result.refs.length,
+            total_links: result.total_links ?? result.links.length,
+            has_more: result.has_more ?? false,
+          });
         }
       })
       .catch((requestError: unknown) => {
         if (cancelled) return;
         setGraphError(isNotFoundError(requestError)
-          ? "This client's operational graph is no longer available. Refresh the client list and try again."
-          : requestError instanceof Error ? requestError.message : "Unable to load the operational graph.");
+          ? "This client's environment is no longer available. Refresh the client list and try again."
+          : requestError instanceof Error ? requestError.message : "Unable to load the environment.");
       })
       .finally(() => {
         if (!cancelled) setGraphLoading(false);
       });
     return () => { cancelled = true; };
-  }, [activeDetailTab, selectedClientId]);
+  }, [activeDetailTab, graphEntityType, graphLinkType, graphOffset, graphSourceSystem, selectedClientId]);
 
   const refsById = new Map((clientGraph?.refs ?? []).map((ref) => [ref.id, ref]));
   const entityName = (refId: number) => {
     const ref = refsById.get(refId);
     return ref ? ref.display_name || ref.external_id : String(refId);
   };
+  const entityTypeCounts = clientGraph?.entity_type_counts ?? (clientGraph?.refs ?? []).reduce<Record<string, number>>((counts, ref) => {
+    counts[ref.entity_type] = (counts[ref.entity_type] ?? 0) + 1;
+    return counts;
+  }, {});
 
   const syncRmmGraph = useCallback(async () => {
     if (!selectedClientId) return;
@@ -157,7 +201,7 @@ export function Clients() {
         { method: "POST" }
       );
       setRmmSyncResult(result);
-      const graph = await apiFetch<ClientGraph>(`/clients/${encodeURIComponent(selectedClientId)}/graph`);
+      const graph = await apiFetch<ClientGraph>(graphPath(selectedClientId, graphEntityType, graphSourceSystem, graphLinkType, graphOffset));
       setClientGraph(graph);
     } catch (requestError) {
       setRmmSyncError(requestError instanceof ApiRequestError && requestError.status === 409
@@ -166,7 +210,29 @@ export function Clients() {
     } finally {
       setRmmSyncLoading(false);
     }
-  }, [selectedClientId]);
+  }, [graphEntityType, graphLinkType, graphOffset, graphSourceSystem, selectedClientId]);
+
+  const syncM365Graph = useCallback(async () => {
+    if (!selectedClientId) return;
+    setM365SyncLoading(true);
+    setM365SyncError("");
+    setM365SyncResult(null);
+    try {
+      const result = await apiFetch<M365InventorySyncResult>(
+        `/clients/${encodeURIComponent(selectedClientId)}/graph/sync-m365`,
+        { method: "POST" }
+      );
+      setM365SyncResult(result);
+      const graph = await apiFetch<ClientGraph>(graphPath(selectedClientId, graphEntityType, graphSourceSystem, graphLinkType, graphOffset));
+      setClientGraph(graph);
+    } catch (requestError) {
+      setM365SyncError(requestError instanceof ApiRequestError && requestError.status === 409
+        ? "Microsoft 365 sync is unavailable. Approved read access may be disabled or the tenant profile may be unavailable."
+        : requestError instanceof Error ? requestError.message : "Unable to sync the Microsoft 365 inventory.");
+    } finally {
+      setM365SyncLoading(false);
+    }
+  }, [graphEntityType, graphLinkType, graphOffset, graphSourceSystem, selectedClientId]);
 
   const submitForm = useCallback(async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -249,6 +315,7 @@ export function Clients() {
         </div>
         <div className="analytics-filter-actions">
           <a className="secondary-button" href="/?onboarding=1&step=0">Return to setup</a>
+          {deploymentMode !== "smb" ? <a className="secondary-button" href="/client-discovery">Discover clients</a> : null}
           <RoleGate role={role} resolved={roleResolved} allowed={["admin"]}>
             <button className="secondary-button" type="button" onClick={beginCreate}>New client</button>
           </RoleGate>
@@ -277,16 +344,21 @@ export function Clients() {
       {loading ? <LoadingState label="Loading Clients…" /> : clients.length === 0 ? <EmptyState title="No clients are visible." why={<><span>The appliance has not returned any clients for this scope.</span><span>For demo evaluation only, with writes disabled, seed a client using <code className="copyable-command">wait-local-agent demo seed --client-id demo</code>. This requires <code>WAIT_DEMO_MODE=true</code> and writes disabled.</span></>} /> : <section className="panel" aria-labelledby="clients-list-heading"><div className="panel-heading"><div><h2 id="clients-list-heading">Client directory</h2><span>{clients.length} client{clients.length === 1 ? "" : "s"}</span></div><span>Select a client for details</span></div><div className="clients-table-wrap"><table className="clients-table"><thead><tr><th scope="col">Name</th><th scope="col">Client ID</th><th scope="col">Status</th></tr></thead><tbody>{clients.map((client) => <tr key={client.client_id}><td><button className="table-link" type="button" onClick={() => void selectClient(client.client_id)}>{client.name}</button></td><td><code>{client.client_id}</code></td><td><StatusChip status={client.status} /></td></tr>)}</tbody></table></div></section>}
 
       {selectedClientId && activeDetailTab === "graph" ? (
-        <section className="panel" aria-labelledby="rmm-sync-heading">
+        <section className="panel" aria-labelledby="environment-sync-heading">
           <div className="panel-heading">
             <div>
-              <h2 id="rmm-sync-heading">RMM inventory</h2>
-              <span>Sync devices and alerts into this client graph</span>
+              <h2 id="environment-sync-heading">Environment inventory</h2>
+              <span>Sync device and identity metadata for this client</span>
             </div>
             <RoleGate role={role} resolved={roleResolved} allowed={["admin"]}>
-              <button className="secondary-button" type="button" onClick={() => void syncRmmGraph()} disabled={rmmSyncLoading}>
+              <div className="row-actions">
+              <button className="secondary-button" type="button" onClick={() => void syncRmmGraph()} disabled={rmmSyncLoading || m365SyncLoading}>
                 {rmmSyncLoading ? "Syncing…" : "Sync from RMM"}
               </button>
+              <button className="secondary-button" type="button" onClick={() => void syncM365Graph()} disabled={rmmSyncLoading || m365SyncLoading}>
+                {m365SyncLoading ? "Syncing…" : "Sync from Microsoft 365"}
+              </button>
+              </div>
             </RoleGate>
           </div>
           {rmmSyncError ? <div className="notice danger" role="alert">{rmmSyncError}</div> : null}
@@ -298,10 +370,19 @@ export function Clients() {
               {rmmSyncResult.errors.map((syncError) => <span key={syncError}>Needs attention: {syncError}</span>)}
             </div>
           ) : null}
+          {m365SyncError ? <div className="notice danger" role="alert">{m365SyncError}</div> : null}
+          {m365SyncResult ? (
+            <div className="connection-state" role="status">
+              <span>{m365SyncResult.users} user{m365SyncResult.users === 1 ? "" : "s"} synced</span>
+              <span>{m365SyncResult.devices} device{m365SyncResult.devices === 1 ? "" : "s"} synced</span>
+              <span>{m365SyncResult.links} relationship{m365SyncResult.links === 1 ? "" : "s"} linked</span>
+              {m365SyncResult.errors.map((syncError) => <span key={syncError}>Needs attention: {syncError}</span>)}
+            </div>
+          ) : null}
         </section>
       ) : null}
 
-      {selectedClientId ? <section className="panel" aria-labelledby="client-detail-heading"><div className="panel-heading"><div><h2 id="client-detail-heading">Client detail</h2><span>{selectedClientId}</span></div>{selectedClient ? <RoleGate role={role} resolved={roleResolved} allowed={["admin"]}><button className="secondary-button" type="button" onClick={beginEdit}>Edit client</button></RoleGate> : null}</div>{selectedClient ? <><div className="tab-list" role="tablist" aria-label="Client detail"><div className="row-actions">{detailTabs.map((tab) => <button key={tab.id} id={`client-detail-tab-${tab.id}`} type="button" role="tab" aria-selected={activeDetailTab === tab.id} aria-controls={`client-detail-panel-${tab.id}`} tabIndex={activeDetailTab === tab.id ? 0 : -1} className={activeDetailTab === tab.id ? "selected" : "secondary-button"} onClick={() => selectDetailTab(tab.id)} onKeyDown={handleDetailTabKeyDown}>{tab.label}</button>)}</div></div>{activeDetailTab === "details" ? <div id="client-detail-panel-details" role="tabpanel" aria-labelledby="client-detail-tab-details"><dl className="mcp-detail-grid"><div><dt>Client ID</dt><dd><code>{selectedClient.client_id}</code></dd></div><div><dt>Name</dt><dd>{selectedClient.name}</dd></div><div><dt>Status</dt><dd><StatusChip status={selectedClient.status} /></dd></div><div><dt>Created</dt><dd>{selectedClient.created_at}</dd></div><div><dt>Updated</dt><dd>{selectedClient.updated_at}</dd></div></dl><h3>Connector mappings</h3>{mappingError ? <div className="notice danger" role="alert">{mappingError}</div> : null}{mappings.length === 0 ? <p className="screen-note">No connector mappings are configured for this client.</p> : <div className="clients-table-wrap"><table className="clients-table"><thead><tr><th scope="col">External company</th><th scope="col">Connector</th><th scope="col">Verification</th></tr></thead><tbody>{mappings.map((mapping) => <tr key={mapping.mapping_id}><td>{mapping.external_company_name || mapping.external_company_id}</td><td><code>{mapping.connector_instance_id}</code></td><td>{mapping.verified === 1 ? <StatusChip status="verified" /> : <RoleGate role={role} resolved={roleResolved} allowed={["admin"]}><button className="secondary-button" type="button" onClick={() => void verifyMapping(mapping.mapping_id)} disabled={verifyingMappingId !== null}>{verifyingMappingId === mapping.mapping_id ? "Verifying…" : "Verify"}</button></RoleGate>}</td></tr>)}</tbody></table></div>}</div> : <div id="client-detail-panel-graph" role="tabpanel" aria-labelledby="client-detail-tab-graph" aria-busy={graphLoading}><h3>Entities</h3>{graphLoading ? <p className="screen-note">Loading operational graph…</p> : graphError ? <div className="notice danger" role="alert">{graphError}</div> : !clientGraph || clientGraph.refs.length === 0 ? <p className="screen-note">No operational-graph entities are linked to this client yet.</p> : <><div className="clients-table-wrap"><table className="clients-table"><thead><tr><th scope="col">Type</th><th scope="col">Name</th><th scope="col">Source</th><th scope="col">External ID</th><th scope="col">Provenance</th></tr></thead><tbody>{groupGraphRefs(clientGraph.refs).map((ref) => <tr key={ref.id}><td><StatusChip status={ref.entity_type} /></td><td>{ref.display_name || ref.external_id}</td><td>{ref.source_system}</td><td><code>{ref.external_id}</code></td><td>{ref.provenance}</td></tr>)}</tbody></table></div><h3>Relationships</h3>{clientGraph.links.length === 0 ? <p className="screen-note">No relationships are linked to these entities.</p> : <div className="clients-table-wrap"><table className="clients-table"><thead><tr><th scope="col">From</th><th scope="col">Relationship</th><th scope="col">To</th><th scope="col">Provenance</th></tr></thead><tbody>{clientGraph.links.map((link) => <tr key={link.id}><td>{entityName(link.from_ref_id)}</td><td>{link.link_type}</td><td>{entityName(link.to_ref_id)}</td><td>{link.provenance}</td></tr>)}</tbody></table></div>}</>}</div>}</> : detailLoading ? <p className="screen-note" aria-busy="true">Loading client details…</p> : detailError ? <div className="notice danger" role="alert">{detailError}</div> : null}</section> : null}
+      {selectedClientId ? <section className="panel" aria-labelledby="client-detail-heading"><div className="panel-heading"><div><h2 id="client-detail-heading">Client detail</h2><span>{selectedClientId}</span></div>{selectedClient ? <RoleGate role={role} resolved={roleResolved} allowed={["admin"]}><button className="secondary-button" type="button" onClick={beginEdit}>Edit client</button></RoleGate> : null}</div>{selectedClient ? <><div className="tab-list" role="tablist" aria-label="Client detail"><div className="row-actions">{detailTabs.map((tab) => <button key={tab.id} id={`client-detail-tab-${tab.id}`} type="button" role="tab" aria-selected={activeDetailTab === tab.id} aria-controls={`client-detail-panel-${tab.id}`} tabIndex={activeDetailTab === tab.id ? 0 : -1} className={activeDetailTab === tab.id ? "selected" : "secondary-button"} onClick={() => selectDetailTab(tab.id)} onKeyDown={handleDetailTabKeyDown}>{tab.label}</button>)}</div></div>{activeDetailTab === "details" ? <div id="client-detail-panel-details" role="tabpanel" aria-labelledby="client-detail-tab-details"><dl className="mcp-detail-grid"><div><dt>Client ID</dt><dd><code>{selectedClient.client_id}</code></dd></div><div><dt>Name</dt><dd>{selectedClient.name}</dd></div><div><dt>Status</dt><dd><StatusChip status={selectedClient.status} /></dd></div><div><dt>Created</dt><dd>{selectedClient.created_at}</dd></div><div><dt>Updated</dt><dd>{selectedClient.updated_at}</dd></div></dl><h3>Connector mappings</h3>{mappingError ? <div className="notice danger" role="alert">{mappingError}</div> : null}{mappings.length === 0 ? <p className="screen-note">No connector mappings are configured for this client.</p> : <div className="clients-table-wrap"><table className="clients-table"><thead><tr><th scope="col">External company</th><th scope="col">Connector</th><th scope="col">Verification</th></tr></thead><tbody>{mappings.map((mapping) => <tr key={mapping.mapping_id}><td>{mapping.external_company_name || mapping.external_company_id}</td><td><code>{mapping.connector_instance_id}</code></td><td>{mapping.verified === 1 ? <StatusChip status="verified" /> : <RoleGate role={role} resolved={roleResolved} allowed={["admin"]}><button className="secondary-button" type="button" onClick={() => void verifyMapping(mapping.mapping_id)} disabled={verifyingMappingId !== null}>{verifyingMappingId === mapping.mapping_id ? "Verifying…" : "Verify"}</button></RoleGate>}</td></tr>)}</tbody></table></div>}</div> : <div id="client-detail-panel-graph" role="tabpanel" aria-labelledby="client-detail-tab-graph" aria-busy={graphLoading}><div className="analytics-filters"><label>Type<select aria-label="Environment type filter" value={graphEntityType} onChange={(event) => { setGraphEntityType(event.target.value); setGraphOffset(0); }}><option value="">All types</option>{Object.keys(entityTypeCounts).sort().map((type) => <option key={type} value={type}>{type}</option>)}</select></label><label>Source<select aria-label="Environment source filter" value={graphSourceSystem} onChange={(event) => { setGraphSourceSystem(event.target.value); setGraphOffset(0); }}><option value="">All sources</option>{[...new Set((clientGraph?.refs ?? []).map((ref) => ref.source_system))].sort().map((source) => <option key={source} value={source}>{source}</option>)}</select></label><label>Relationship<select aria-label="Environment relationship filter" value={graphLinkType} onChange={(event) => { setGraphLinkType(event.target.value); setGraphOffset(0); }}><option value="">All relationships</option>{[...new Set((clientGraph?.links ?? []).map((link) => link.link_type))].sort().map((type) => <option key={type} value={type}>{type}</option>)}</select></label></div>{clientGraph && !graphLoading ? <div className="connection-state" role="status">{Object.entries(entityTypeCounts).map(([type, count]) => <span key={type}>{type}: {count}</span>)}<span>{clientGraph.total_refs} entities · {clientGraph.total_links} relationships</span></div> : null}<h3>Entities</h3>{graphLoading ? <p className="screen-note">Loading environment…</p> : graphError ? <div className="notice danger" role="alert">{graphError}</div> : !clientGraph || clientGraph.refs.length === 0 ? <p className="screen-note">No environment entities are linked to this client yet.</p> : <><div className="clients-table-wrap"><table className="clients-table"><thead><tr><th scope="col">Type</th><th scope="col">Name</th><th scope="col">Source</th><th scope="col">External ID</th><th scope="col">Last seen</th><th scope="col">Provenance</th></tr></thead><tbody>{groupGraphRefs(clientGraph.refs).map((ref) => <tr key={ref.id}><td><StatusChip status={ref.entity_type} /></td><td>{ref.display_name || ref.external_id}</td><td>{ref.source_system}</td><td><code>{ref.external_id}</code></td><td>{isStale(ref.last_seen) ? <span className="screen-note">Stale</span> : ref.last_seen || "—"}</td><td>{ref.provenance}</td></tr>)}</tbody></table></div><h3>Relationships</h3>{clientGraph.links.length === 0 ? <p className="screen-note">No relationships are linked to these entities.</p> : <div className="clients-table-wrap"><table className="clients-table"><thead><tr><th scope="col">From</th><th scope="col">Relationship</th><th scope="col">To</th><th scope="col">Provenance</th></tr></thead><tbody>{clientGraph.links.map((link) => <tr key={link.id}><td>{entityName(link.from_ref_id)}</td><td>{link.link_type}</td><td>{entityName(link.to_ref_id)}</td><td>{link.provenance}</td></tr>)}</tbody></table></div>}</>}<div className="analytics-filter-actions"><button className="secondary-button" type="button" onClick={() => setGraphOffset(Math.max(0, graphOffset - 100))} disabled={graphOffset === 0 || graphLoading}>Previous</button><span>Page {Math.floor(graphOffset / 100) + 1}</span><button className="secondary-button" type="button" onClick={() => setGraphOffset(graphOffset + 100)} disabled={!clientGraph?.has_more || graphLoading}>Next</button></div></div>}</> : detailLoading ? <p className="screen-note" aria-busy="true">Loading client details…</p> : detailError ? <div className="notice danger" role="alert">{detailError}</div> : null}</section> : null}
     </div>
   );
 }

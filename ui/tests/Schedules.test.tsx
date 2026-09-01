@@ -84,7 +84,7 @@ describe("Schedules screen", () => {
     expect(screen.getByText("Every 1 hour")).toBeInTheDocument();
     expect(screen.getByText("Active", { selector: ".status-chip" })).toBeInTheDocument();
     expect(screen.getByText("Paused", { selector: ".status-chip" })).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: "Activity" })).toHaveAttribute("href", "/executions");
+    expect(screen.getByRole("link", { name: "Activity" })).toHaveAttribute("href", "/activity/runs");
 
     fireEvent.change(screen.getByLabelText("Status"), { target: { value: "paused" } });
     expect(screen.queryByText("workflow-daily-review")).not.toBeInTheDocument();

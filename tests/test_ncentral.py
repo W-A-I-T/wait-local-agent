@@ -485,6 +485,16 @@ def test_ncentral_validates_request_and_url_helpers(settings) -> None:
         adapter.execute_script("task", "device", {str(index): "x" for index in range(21)})
     with pytest.raises(NCentralRmmError, match="bounded text"):
         adapter.execute_script("task", "device", {"key": "bad\nvalue"})
+    with pytest.raises(NCentralRmmError, match="script ID is invalid"):
+        adapter.execute_script("task id", "device", {})
+    with pytest.raises(NCentralRmmError, match="device ID is invalid"):
+        adapter.execute_script("task", "", {})
+    with pytest.raises(NCentralRmmError, match="bounded text"):
+        adapter.execute_script("task", "device", {"k" * 501: "x"})
+    with pytest.raises(NCentralRmmError, match="bounded text"):
+        adapter.execute_script("task", "device", {"key": "x" * 501})
+    with pytest.raises(NCentralRmmError, match="limited to 20"):
+        adapter.execute_script("task", "device", {str(index): "x" for index in range(21)})
     with pytest.raises(NCentralRmmError, match=r"HTTP\(S\)"):
         _safe_base_url("ftp://ncentral.example.test")
     with pytest.raises(NCentralRmmError, match="query data"):

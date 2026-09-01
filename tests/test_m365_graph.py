@@ -7,6 +7,7 @@ from typing import Any, cast
 import httpx
 import pytest
 
+from wait_local_agent.m365_auth import M365AuthFailure, M365Connection, M365ProfileResolutionError
 from wait_local_agent.m365_graph import (
     M365GraphClient,
     M365GraphGroup,
@@ -77,6 +78,60 @@ def _configured(settings, *, allow_http_probing: bool = True):
 def test_m365_graph_defaults_block_and_missing_credentials(settings) -> None:
     assert M365GraphClient(settings).list_users().result.status == "blocked"
     assert M365GraphClient(settings).list_groups().result.status == "blocked"
+
+
+@pytest.mark.parametrize("operation", ["get", "post", "patch", "delete"])
+def test_connection_seam_auth_failures_are_sanitized(settings, operation: str) -> None:
+    class FailingToken:
+        configured = True
+
+        def get_token(self) -> str:
+            raise M365AuthFailure("secret token detail")
+
+    client = M365GraphClient(
+        replace(_configured(settings, allow_http_probing=True), allow_write_actions=True),
+        connection=M365Connection(
+            graph_base_url="https://graph.microsoft.com/v1.0",
+            token_provider=FailingToken(),
+        ),
+    )
+    calls = {
+        "get": lambda: client._get("users"),
+        "post": lambda: client._post("users", {}),
+        "patch": lambda: client._patch("users/user-1", {}),
+        "delete": lambda: client._delete("users/user-1"),
+    }
+    with pytest.raises(M365GraphReadError, match="token acquisition failed"):
+        calls[operation]()
+
+
+@pytest.mark.parametrize("operation", ["get", "post", "patch", "delete"])
+def test_connection_seam_profile_resolution_failures_are_sanitized(settings, operation: str) -> None:
+    class Resolver:
+        calls = 0
+
+        def resolve(self, _client_id: str | None):
+            self.calls += 1
+            if self.calls == 1:
+                return M365Connection(
+                    graph_base_url="https://graph.microsoft.com/v1.0",
+                    token_provider=type("ConfiguredToken", (), {"configured": True})(),
+                )
+            raise M365ProfileResolutionError("profile selection detail")
+
+    client = M365GraphClient(
+        _configured(settings, allow_http_probing=True),
+        connection_resolver=cast(Any, Resolver()),
+    )
+    client.settings = replace(client.settings, allow_write_actions=True)
+    calls = {
+        "get": lambda: client._get("users"),
+        "post": lambda: client._post("users", {}),
+        "patch": lambda: client._patch("users/user-1", {}),
+        "delete": lambda: client._delete("users/user-1"),
+    }
+    with pytest.raises(M365GraphReadError, match="profile selection detail"):
+        calls[operation]()
     assert M365GraphClient(settings).list_license_details(identity="user-1").result.status == "blocked"
     assert (
         M365GraphClient(settings)
