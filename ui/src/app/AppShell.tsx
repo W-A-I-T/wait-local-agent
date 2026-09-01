@@ -2,7 +2,7 @@
 // Additional terms: ../../../ADDITIONAL_TERMS.md
 
 import { useState } from "react";
-import { AlertTriangle, CheckCircle2, Info, KeyRound, RefreshCw } from "lucide-react";
+import { AlertTriangle, CheckCircle2, Info, RefreshCw } from "lucide-react";
 import { Link } from "react-router-dom";
 import { getWriteHealthPosture, useDashboard, type AuthState } from "./DashboardContext";
 import { Sidebar } from "./Sidebar";
@@ -11,12 +11,11 @@ import { WaitAttribution } from "../components/WaitAttribution";
 
 export function AppShell() {
   const {
-    apiToken,
-    setApiToken,
-    saveApiToken,
-    clearApiToken,
+    logout,
     refresh,
     role,
+    principalId,
+    authMethod,
     authState,
     roleResolved,
     selectedClientId,
@@ -55,38 +54,12 @@ export function AppShell() {
               <RefreshCw size={17} aria-hidden="true" />
               Refresh
             </button>
-            <form className="token-form" onSubmit={(event) => {
-              event.preventDefault();
-              void saveApiToken();
-            }}>
-              <input
-                aria-hidden="true"
-                autoComplete="username"
-                className="sr-only"
-                name="username"
-                readOnly
-                tabIndex={-1}
-                value="local-appliance"
-                onChange={() => undefined}
-              />
-              <label className="token-input">
-                <span>API token <small>(optional in local mode)</small></span>
-                <input
-                  id="app-api-token"
-                  type="password"
-                  autoComplete="new-password"
-                  placeholder="Paste token"
-                  value={apiToken}
-                  onChange={(event) => setApiToken(event.target.value)}
-                />
-              </label>
-              <button className="icon-button" type="submit">
-                <KeyRound size={17} aria-hidden="true" />
-                Save Token
-              </button>
-            </form>
-            <button className="icon-button" type="button" onClick={() => void clearApiToken()}>
-              Clear Token
+            <div className="account-chip" aria-label="Signed-in account">
+              <strong>{principalId ?? (authState === "demo" ? "Demo appliance" : "Local appliance")}</strong>
+              <span>{authMethodLabel(authMethod, authState)}</span>
+            </div>
+            <button className="icon-button" type="button" onClick={() => void logout()}>
+              Sign out
             </button>
             <AuthStatus authState={authState} role={role} roleResolved={roleResolved} />
             <WriteGateStatus writeHealth={writeHealth} resolved={writeHealthResolved} />
@@ -106,6 +79,19 @@ export function AppShell() {
       </section>
     </main>
   );
+}
+
+function authMethodLabel(authMethod: string, authState: AuthState | null): string {
+  if (authState === "demo") {
+    return "Demo access";
+  }
+  if (authMethod === "local") {
+    return "Browser session";
+  }
+  if (authMethod === "bearer") {
+    return "API token";
+  }
+  return authMethod;
 }
 
 export function WriteGateStatus({
@@ -203,12 +189,12 @@ function AuthHelp({ authState }: { authState: AuthState }) {
       {open ? <div className="auth-help-popover" role="note">
         {authState === "local-open" ? (
           <>
-            <p>The appliance has no API token configured. All requests run as admin in local mode.</p>
-            <p>To secure it, set <code>WAIT_ADMIN_TOKEN</code>, <code>WAIT_TECH_TOKEN</code>, or <code>WAIT_VIEWER_TOKEN</code> in the server environment, then paste that token here.</p>
+            <p>Access controls are off, so this local appliance is running with administrator access.</p>
+            <p>To protect it, configure an administrator or team access credential in the server environment.</p>
           </>
         ) : null}
-        {authState === "authenticated" ? <p>Your role comes from the server&apos;s interpretation of the saved token.</p> : null}
-        {authState === "invalid-token" ? <p>The saved token was not accepted. Clear Token resets it.</p> : null}
+        {authState === "authenticated" ? <p>Your access level comes from your signed-in account.</p> : null}
+        {authState === "invalid-token" ? <p>Your saved access credential was not accepted. Sign in again.</p> : null}
         {authState === "demo" ? <p>Demo mode is enabled for this appliance. Some write actions are intentionally unavailable.</p> : null}
       </div> : null}
     </div>

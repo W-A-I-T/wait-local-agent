@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from enum import IntEnum
 from secrets import compare_digest
 from typing import TYPE_CHECKING, Annotated, Literal
@@ -11,6 +12,7 @@ from fastapi import Header, HTTPException, Request, status
 from wait_local_agent.capabilities import MICROSOFT_ADMIN_CAPABILITY, active_capability_grants
 from wait_local_agent.client_scope import AllClients, BoundClients, ClientScope, resolve_client_scope
 from wait_local_agent.config import Settings
+from wait_local_agent.sessions import CSRF_HEADER, SESSION_COOKIE_NAME, hash_session_token, session_expiries
 
 __all__ = [
     "AllClients",
@@ -24,7 +26,7 @@ __all__ = [
 ]
 
 if TYPE_CHECKING:
-    from wait_local_agent.store import PrincipalAuthRecord, Store
+    from wait_local_agent.store import AuthSessionRecord, PrincipalAuthRecord, Store
 
 
 class Role(IntEnum):
@@ -62,12 +64,14 @@ class AuthContext:
     is_msp_admin: bool = False
     demo_mode: bool = False
     capability_grants: frozenset[tuple[str, str | None]] = frozenset()
+    auth_method: str = "bearer"
+    session_token_hash: str | None = None
 
     @property
     def approver_id(self) -> str | None:
-        if not self.presented_token:
-            return None
-        return hashlib.sha256(self.presented_token.encode("utf-8")).hexdigest()[:16]
+        if self.presented_token:
+            return hashlib.sha256(self.presented_token.encode("utf-8")).hexdigest()[:16]
+        return self.principal_id
 
     def has_capability(self, capability_key: str, client_id: str | None = None) -> bool:
         normalized_key = capability_key.strip().lower()
@@ -100,6 +104,10 @@ def resolve_auth_context(
     settings: Settings,
     authorization: str | None,
     store: Store | None = None,
+    *,
+    session_token: str | None = None,
+    request_method: str | None = None,
+    csrf_header_present: bool = False,
 ) -> AuthContext:
     configured_client_id = settings.client_id.strip() or None
     if settings.demo_mode:
@@ -112,8 +120,56 @@ def resolve_auth_context(
             client_ids=frozenset({demo_client_id}),
             demo_mode=True,
             capability_grants=frozenset({(MICROSOFT_ADMIN_CAPABILITY, demo_client_id)}),
+            auth_method="demo",
         )
 
+    # An explicitly supplied Authorization header always selects the legacy
+    # bearer branch, even when a browser session cookie is also present.
+    if authorization is not None:
+        return _resolve_bearer_auth_context(settings, authorization, store)
+
+    principal_store = store or _store_for_settings(settings)
+    if session_token:
+        token_hash = hash_session_token(session_token)
+        session = principal_store.get_auth_session(token_hash)
+        if session is not None and not _session_expired(session):
+            principal = principal_store.find_principal_auth_record(session.principal_id)
+            if principal is None:
+                raise _unauthorized("invalid session")
+            if (
+                request_method
+                and request_method.upper() in {"POST", "PUT", "PATCH", "DELETE"}
+                and not csrf_header_present
+            ):
+                raise HTTPException(status_code=403, detail={"code": "csrf_required"})
+            idle_expires_at, _ = session_expiries(
+                idle_ttl_minutes=settings.session_idle_ttl_minutes,
+                absolute_ttl_minutes=settings.session_absolute_ttl_minutes,
+            )
+            principal_store.touch_auth_session(
+                token_hash,
+                last_seen_at=datetime.now(UTC).isoformat(),
+                idle_expires_at=idle_expires_at,
+            )
+            return _principal_auth_context(
+                settings,
+                None,
+                principal,
+                principal_store,
+                auth_method=session.auth_method,
+                session_token_hash=token_hash,
+            )
+        raise _unauthorized("invalid session")
+
+    raise _unauthorized("missing bearer token")
+
+
+def _resolve_bearer_auth_context(
+    settings: Settings,
+    authorization: str | None,
+    store: Store | None = None,
+) -> AuthContext:
+    configured_client_id = settings.client_id.strip() or None
     token = _extract_bearer_token(authorization)
     if settings.end_user_support_enabled and settings.end_user_token and compare_digest(
         token, settings.end_user_token
@@ -155,7 +211,14 @@ def resolve_auth_context(
 
 
 def require_end_user(request: Request, authorization: Annotated[str | None, Header()] = None) -> AuthContext:
-    context = resolve_auth_context(request.app.state.settings, authorization, request.app.state.store)
+    context = resolve_auth_context(
+        request.app.state.settings,
+        authorization,
+        request.app.state.store,
+        session_token=request.cookies.get(SESSION_COOKIE_NAME),
+        request_method=request.method,
+        csrf_header_present=CSRF_HEADER in request.headers,
+    )
     if context.role != Role.END_USER:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="end-user access required")
     return context
@@ -167,7 +230,14 @@ def require_role(minimum: Role):
         authorization: Annotated[str | None, Header()] = None,
     ) -> AuthContext:
         settings = request.app.state.settings
-        context = resolve_auth_context(settings, authorization, request.app.state.store)
+        context = resolve_auth_context(
+            settings,
+            authorization,
+            request.app.state.store,
+            session_token=request.cookies.get(SESSION_COOKIE_NAME),
+            request_method=request.method,
+            csrf_header_present=CSRF_HEADER in request.headers,
+        )
         if context.role < minimum:
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="insufficient role")
         return context
@@ -184,7 +254,14 @@ def require_capability(capability_key: str, minimum: Role = Role.VIEWER):
         selected_client_id: Annotated[str | None, Header(alias="X-WAIT-Client-ID")] = None,
     ) -> AuthContext:
         settings = request.app.state.settings
-        context = resolve_auth_context(settings, authorization, request.app.state.store)
+        context = resolve_auth_context(
+            settings,
+            authorization,
+            request.app.state.store,
+            session_token=request.cookies.get(SESSION_COOKIE_NAME),
+            request_method=request.method,
+            csrf_header_present=CSRF_HEADER in request.headers,
+        )
         if context.role < minimum:
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="insufficient role")
         query_client_id = request.query_params.get("client_id")
@@ -275,9 +352,12 @@ def _unauthorized(detail: str) -> HTTPException:
 
 def _principal_auth_context(
     settings: Settings,
-    token: str,
+    token: str | None,
     principal: PrincipalAuthRecord,
     store: Store | None = None,
+    *,
+    auth_method: str = "bearer",
+    session_token_hash: str | None = None,
 ) -> AuthContext:
     client_roles = {client_id: _role_from_label(role) for client_id, role in principal.client_roles}
     client_ids = frozenset(client_roles)
@@ -307,7 +387,23 @@ def _principal_auth_context(
         is_msp_admin=is_msp_admin,
         demo_mode=False,
         capability_grants=active_capability_grants(principal_store, principal.principal_id),
+        auth_method=auth_method,
+        session_token_hash=session_token_hash,
     )
+
+
+def _session_expired(session: AuthSessionRecord) -> bool:
+    try:
+        idle_expires_at = datetime.fromisoformat(str(session.idle_expires_at))
+        absolute_expires_at = datetime.fromisoformat(str(session.absolute_expires_at))
+    except (AttributeError, TypeError, ValueError):
+        return True
+    now = datetime.now(UTC)
+    if idle_expires_at.tzinfo is None:
+        idle_expires_at = idle_expires_at.replace(tzinfo=UTC)
+    if absolute_expires_at.tzinfo is None:
+        absolute_expires_at = absolute_expires_at.replace(tzinfo=UTC)
+    return now >= idle_expires_at or now >= absolute_expires_at
 
 
 def _role_from_label(label: str) -> Role:

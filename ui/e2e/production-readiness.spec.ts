@@ -10,6 +10,15 @@ test.beforeEach(async ({ page }) => {
   }, token);
 });
 
+test("shows the local sign-in screen without a stored credential", async ({ page }) => {
+  await page.goto("/");
+  await page.evaluate(() => localStorage.clear());
+  await page.reload();
+
+  await expect(page.getByRole("heading", { name: "Sign in to the appliance", exact: true })).toBeVisible();
+  await expect(page.getByLabel("Access token")).toBeVisible();
+});
+
 test("completes the safe local setup journey and exercises primary UI surfaces", async ({ page }, testInfo) => {
   const fixtureSuffix = `${testInfo.retry}-${testInfo.repeatEachIndex}-${randomUUID()}`;
   const clientId = `browser-smoke-${fixtureSuffix}`;

@@ -36,6 +36,7 @@ def test_clients_migration_repairs_and_backfills_existing_directory(tmp_path: Pa
             (5, "ticket_identity_and_tenancy"),
             (6, "poll_lease"),
             (7, "operational_graph"),
+            (8, "auth_sessions_and_config"),
         ]
         assert {
             str(row[0])

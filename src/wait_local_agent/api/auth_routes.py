@@ -2,15 +2,25 @@ from __future__ import annotations
 
 import secrets
 import sqlite3
+from collections.abc import Callable
 from dataclasses import asdict
 from typing import Annotated, Literal
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from pydantic import BaseModel, ConfigDict, Field
+from slowapi import Limiter
 
 from wait_local_agent.client_scope import AllClients
-from wait_local_agent.rbac import AuthContext, Role, require_role
-from wait_local_agent.store import PrincipalDetails, Store
+from wait_local_agent.config import Settings
+from wait_local_agent.rbac import AuthContext, Role, require_role, resolve_auth_context
+from wait_local_agent.sessions import (
+    CSRF_HEADER,
+    SESSION_COOKIE_NAME,
+    generate_session_token,
+    hash_session_token,
+    session_expiries,
+)
+from wait_local_agent.store import PrincipalDetails, Store, hash_credential
 
 AdminAccess = Annotated[AuthContext, Depends(require_role(Role.ADMIN))]
 _CLIENT_ROLES = Literal["end_user", "viewer", "technician", "admin"]
@@ -50,8 +60,121 @@ class GlobalRoleRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
-def create_auth_router() -> APIRouter:
+class LocalLoginRequest(BaseModel):
+    token: str = Field(min_length=1, max_length=4096)
+
+    model_config = ConfigDict(extra="forbid")
+
+
+def create_auth_router(limiter: Limiter | None = None) -> APIRouter:
     router = APIRouter(prefix="/auth", tags=["authentication principals"])
+    limit_login: Callable[[Callable[..., object]], Callable[..., object]] = (
+        limiter.limit("10/minute") if limiter is not None else (lambda endpoint: endpoint)
+    )
+
+    @router.get("/session")
+    def session_probe(request: Request) -> dict[str, object]:
+        store = _store(request)
+        try:
+            context = resolve_auth_context(
+                request.app.state.settings,
+                request.headers.get("authorization"),
+                store,
+                session_token=request.cookies.get(SESSION_COOKIE_NAME),
+                request_method=request.method,
+                csrf_header_present=CSRF_HEADER in request.headers,
+            )
+        except HTTPException:
+            return {"authenticated": False}
+        expires_at = None
+        if context.session_token_hash:
+            session = store.get_auth_session(context.session_token_hash)
+            expires_at = session.absolute_expires_at if session is not None else None
+        return {
+            "authenticated": True,
+            **_auth_view(context, settings=request.app.state.settings, expires_at=expires_at),
+        }
+
+    @router.post("/login/local")
+    @limit_login
+    def login_local(payload: LocalLoginRequest, request: Request, response: Response) -> dict[str, object]:
+        store = _store(request)
+        settings = request.app.state.settings
+        try:
+            context = resolve_auth_context(settings, f"Bearer {payload.token}", store)
+        except HTTPException as exc:
+            raise HTTPException(status_code=401, detail="invalid credentials") from exc
+
+        # Only credentials persisted for an active DB principal can mint a
+        # session. Environment bootstrap and end-user tokens remain bearer-only.
+        principal = store.find_principal_by_credential_hash(hash_credential(payload.token))
+        if principal is None or context.principal_id is None:
+            return {"session_created": False}
+
+        session_token = generate_session_token()
+        session_token_hash = hash_session_token(session_token)
+        idle_expires_at, absolute_expires_at = session_expiries(
+            idle_ttl_minutes=settings.session_idle_ttl_minutes,
+            absolute_ttl_minutes=settings.session_absolute_ttl_minutes,
+        )
+        store.create_auth_session(
+            session_token_hash,
+            principal.principal_id,
+            idle_expires_at=idle_expires_at,
+            absolute_expires_at=absolute_expires_at,
+            auth_method="local",
+            user_agent=request.headers.get("user-agent", ""),
+        )
+        response.set_cookie(
+            SESSION_COOKIE_NAME,
+            session_token,
+            max_age=settings.session_absolute_ttl_minutes * 60,
+            secure=settings.session_cookie_secure,
+            httponly=True,
+            samesite="lax",
+            path="/",
+        )
+        return {
+            "session_created": True,
+            **_auth_view(
+                context,
+                settings=settings,
+                auth_method="local",
+                expires_at=absolute_expires_at,
+            ),
+        }
+
+    @router.post("/logout")
+    def logout(request: Request, response: Response) -> dict[str, object]:
+        cookie_token = request.cookies.get(SESSION_COOKIE_NAME)
+        if cookie_token and request.headers.get("authorization") is None:
+            # Resolve first so a valid cookie logout is CSRF-protected. Invalid
+            # or already-expired cookies are still safely cleared below.
+            try:
+                context = resolve_auth_context(
+                    request.app.state.settings,
+                    None,
+                    _store(request),
+                    session_token=cookie_token,
+                    request_method=request.method,
+                    csrf_header_present=CSRF_HEADER in request.headers,
+                )
+            except HTTPException as exc:
+                if exc.status_code == 403:
+                    raise
+                context = None
+            if context is not None and context.session_token_hash:
+                _store(request).revoke_auth_session(context.session_token_hash)
+        elif cookie_token:
+            _store(request).revoke_auth_session(hash_session_token(cookie_token))
+        response.delete_cookie(
+            SESSION_COOKIE_NAME,
+            path="/",
+            secure=request.app.state.settings.session_cookie_secure,
+            httponly=True,
+            samesite="lax",
+        )
+        return {"authenticated": False}
 
     @router.get("/principals")
     def list_principals(request: Request, context: AdminAccess) -> list[dict[str, object]]:
@@ -99,6 +222,8 @@ def create_auth_router() -> APIRouter:
         try:
             if payload.active is not None:
                 store.set_principal_active(normalized_id, payload.active)
+                if payload.active is False:
+                    store.revoke_principal_sessions(normalized_id)
             if payload.display_name is not None:
                 store.set_principal_display_name(normalized_id, payload.display_name)
         except KeyError as exc:
@@ -304,6 +429,27 @@ def _actor_id(context: AuthContext) -> str:
     return context.principal_id or context.approver_id or "bootstrap-admin"
 
 
+def _auth_view(
+    context: AuthContext,
+    *,
+    settings: Settings,
+    auth_method: str | None = None,
+    expires_at: str | None = None,
+) -> dict[str, object]:
+    return {
+        "role": context.role.label(),
+        "client_id": context.client_id,
+        "client_ids": sorted(context.client_ids),
+        "principal_id": context.principal_id,
+        "is_msp_admin": context.is_msp_admin,
+        "auth_method": auth_method or context.auth_method,
+        "expires_at": expires_at,
+        "api_auth_required": not settings.demo_mode,
+        "demo_mode": settings.demo_mode,
+        "end_user_support_enabled": settings.end_user_support_enabled,
+    }
+
+
 def _find_principal(store: Store, principal_id: str) -> PrincipalDetails | None:
     normalized_id = principal_id.strip()
     return next(
@@ -347,4 +493,3 @@ def _credential_created_at(store: Store, principal_id: str, credential_hash: str
         if credential.credential_hash_prefix == prefix:
             return credential.created_at
     raise RuntimeError("credential was not persisted")
-

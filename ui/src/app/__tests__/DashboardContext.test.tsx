@@ -87,6 +87,62 @@ describe("DashboardContext role refresh", () => {
     await waitFor(() => expect(screen.getByTestId("auth-state")).toHaveTextContent(expectedState));
   });
 
+  it("prefers an authenticated browser session and clears a stale bearer token", async () => {
+    window.localStorage.setItem("wait-local-agent-api-token", "stale-token");
+    mockedApiFetch.mockImplementation((path: string) => {
+      if (path === "/auth/session") {
+        return Promise.resolve({
+          authenticated: true,
+          role: "viewer",
+          api_auth_required: true,
+          demo_mode: false,
+          end_user_support_enabled: false,
+          auth_method: "local",
+          principal_id: "operator"
+        }) as ReturnType<typeof apiFetch>;
+      }
+      return Promise.resolve(defaultResponse(path)) as ReturnType<typeof apiFetch>;
+    });
+
+    render(<DashboardProvider><DashboardHarness /></DashboardProvider>);
+
+    await waitFor(() => expect(screen.getByTestId("auth-state")).toHaveTextContent("authenticated"));
+    expect(mockedApiFetch.mock.calls.some(([path]) => path === "/auth/role")).toBe(false);
+    expect(window.localStorage.getItem("wait-local-agent-api-token")).toBeNull();
+  });
+
+  it("keeps a stored bearer token when the session probe reports bearer auth", async () => {
+    window.localStorage.setItem("wait-local-agent-api-token", "legacy-token");
+    mockedApiFetch.mockImplementation((path: string) => {
+      if (path === "/auth/session") {
+        return Promise.resolve({
+          authenticated: true,
+          role: "admin",
+          api_auth_required: true,
+          demo_mode: false,
+          end_user_support_enabled: false,
+          auth_method: "bearer"
+        }) as ReturnType<typeof apiFetch>;
+      }
+      if (path === "/auth/role") {
+        return Promise.resolve({
+          role: "admin",
+          api_auth_required: true,
+          demo_mode: false,
+          end_user_support_enabled: false,
+          auth_method: "bearer"
+        }) as ReturnType<typeof apiFetch>;
+      }
+      return Promise.resolve(defaultResponse(path)) as ReturnType<typeof apiFetch>;
+    });
+
+    render(<DashboardProvider><DashboardHarness /></DashboardProvider>);
+
+    await waitFor(() => expect(screen.getByTestId("auth-state")).toHaveTextContent("authenticated"));
+    expect(window.localStorage.getItem("wait-local-agent-api-token")).toBe("legacy-token");
+    expect(mockedApiFetch.mock.calls.some(([path]) => path === "/auth/role")).toBe(true);
+  });
+
   it("derives invalid-token only when a saved token receives a 401", async () => {
     window.localStorage.setItem("wait-local-agent-api-token", "saved-token");
     mockedApiFetch.mockImplementation((path: string) => {
