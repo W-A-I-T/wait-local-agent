@@ -44,6 +44,7 @@ def test_sidecar_ops_routes_wrap_existing_logic(settings, tmp_path: Path) -> Non
         "version": "0.1.0",
         "locked": False,
         "requires_license": False,
+        "signature_status": "not_recorded",
     }
     assert pack_status.status_code == 200
     status_entries = {entry["name"]: entry for entry in pack_status.json()}
@@ -53,6 +54,7 @@ def test_sidecar_ops_routes_wrap_existing_logic(settings, tmp_path: Path) -> Non
         "version": "0.1.0",
         "locked": False,
         "requires_license": False,
+        "signature_status": "not_recorded",
         "cli_available": True,
         "router_available": True,
         "mounted_cli": False,

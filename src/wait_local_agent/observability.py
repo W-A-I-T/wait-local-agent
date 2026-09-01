@@ -24,6 +24,7 @@ from typing import Literal, TypedDict, cast
 
 from wait_local_agent import fs_permissions
 from wait_local_agent.client_scope import AllClients, ClientScope
+from wait_local_agent.diagnostics import valid_correlation_id
 from wait_local_agent.models import utc_now
 from wait_local_agent.reports.renderers import redact_text, redact_value
 from wait_local_agent.store import Store
@@ -112,6 +113,7 @@ class ExecutionRecorder:
         status: str,
         trigger_source: str,
         client_id: str | None = None,
+        correlation_id: str | None = None,
         metadata: dict[str, object] | None = None,
         steps: tuple[StepRecord, ...] = (),
         artifacts: tuple[ArtifactRecord, ...] = (),
@@ -122,6 +124,9 @@ class ExecutionRecorder:
         swallowed, returning None. The bounded worker keeps a slow database or
         filesystem off the workflow/action critical path.
         """
+        effective_metadata = dict(metadata or {})
+        if valid_correlation_id(correlation_id):
+            effective_metadata["correlation_id"] = correlation_id
         result: list[int] = []
         failure: list[BaseException] = []
 
@@ -134,7 +139,7 @@ class ExecutionRecorder:
                     status=status,
                     trigger_source=trigger_source,
                     client_id=client_id,
-                    metadata=metadata,
+                    metadata=effective_metadata or None,
                     steps=steps,
                     artifacts=artifacts,
                 )

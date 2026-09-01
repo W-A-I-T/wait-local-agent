@@ -253,6 +253,10 @@ def _principal_identity_from_row(row: sqlite3.Row) -> PrincipalIdentity:
     )
 
 
+def latest_declared_schema_version(store: Store) -> int:
+    return max(migration.version for migration in store._declared_migrations())
+
+
 class Store:
     def __init__(self, path: Path) -> None:
         if sqlite3.sqlite_version_info < (3, 35, 0):
@@ -295,37 +299,39 @@ class Store:
         return connection
 
     def _init_schema(self) -> None:
+        migrations = self._declared_migrations()
         with self._connect() as connection:
-            MigrationRunner(connection).run(
-                (
-                    Migration(0, "baseline", self._apply_baseline_migration),
-                    Migration(1, "principals", self._apply_principals_migration),
-                    Migration(2, "clients_and_connectors", self._apply_clients_migration),
-                    Migration(
-                        3,
-                        "provenance_and_ingestion",
-                        self._apply_provenance_migration,
-                    ),
-                    Migration(
-                        4,
-                        "canonical_assets_tenant_unique",
-                        self._apply_canonical_tenant_unique_migration,
-                        foreign_keys_off=True,
-                    ),
-                    Migration(
-                        5,
-                        "ticket_identity_and_tenancy",
-                        self._apply_ticket_identity_migration,
-                        foreign_keys_off=True,
-                    ),
-                    Migration(6, "poll_lease", self._apply_poll_lease_migration),
-                    Migration(7, "operational_graph", self._apply_operational_graph_migration),
-                    Migration(8, "auth_sessions_and_config", self._apply_auth_sessions_and_config_migration),
-                    Migration(9, "principal_identities", self._apply_principal_identities_migration),
-                    Migration(10, "client_candidates", self._apply_client_candidates_migration),
-                )
-            )
+            MigrationRunner(connection).run(migrations)
             self._apply_startup_repairs(connection)
+
+    def _declared_migrations(self) -> tuple[Migration, ...]:
+        return (
+            Migration(0, "baseline", self._apply_baseline_migration),
+            Migration(1, "principals", self._apply_principals_migration),
+            Migration(2, "clients_and_connectors", self._apply_clients_migration),
+            Migration(
+                3,
+                "provenance_and_ingestion",
+                self._apply_provenance_migration,
+            ),
+            Migration(
+                4,
+                "canonical_assets_tenant_unique",
+                self._apply_canonical_tenant_unique_migration,
+                foreign_keys_off=True,
+            ),
+            Migration(
+                5,
+                "ticket_identity_and_tenancy",
+                self._apply_ticket_identity_migration,
+                foreign_keys_off=True,
+            ),
+            Migration(6, "poll_lease", self._apply_poll_lease_migration),
+            Migration(7, "operational_graph", self._apply_operational_graph_migration),
+            Migration(8, "auth_sessions_and_config", self._apply_auth_sessions_and_config_migration),
+            Migration(9, "principal_identities", self._apply_principal_identities_migration),
+            Migration(10, "client_candidates", self._apply_client_candidates_migration),
+        )
 
     def _apply_principals_migration(self, connection: sqlite3.Connection) -> None:
         connection.execute(

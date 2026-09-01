@@ -1526,6 +1526,7 @@ export type PackInfo = {
   version: string;
   locked: boolean;
   requires_license: boolean;
+  signature_status?: "not_recorded";
 };
 
 export type PackStatus = PackInfo & {
@@ -1534,6 +1535,59 @@ export type PackStatus = PackInfo & {
   mounted_cli: boolean;
   mounted_router: boolean;
   error: string | null;
+  signature_status: "not_recorded";
+};
+
+export type DiagnosticSectionError = {
+  status: "degraded";
+  section: string;
+};
+
+export type DiagnosticsSummary = {
+  system: {
+    version: string;
+    build_commit: string | null;
+    update_channel_configured: boolean;
+    os_name: string;
+    install_mode: string;
+    surface_mode: string;
+    free_disk_bytes: number;
+    process_started_at: string;
+    uptime_seconds: number;
+  } | DiagnosticSectionError;
+  configuration: ({
+    write_actions_enabled: boolean;
+    http_probing_enabled: boolean;
+    cloud_fallback_enabled: boolean;
+    offline_mode: boolean;
+    llm_inference_enabled: boolean;
+    api_auth_required: boolean;
+    demo_mode: boolean;
+    scheduler_enabled: boolean;
+    secrets_backend: string;
+    paths: Record<string, { exists: boolean; writable: boolean }>;
+  } & Record<string, boolean | string | Record<string, { exists: boolean; writable: boolean }>>) | DiagnosticSectionError;
+  database: { schema_version: number | null; integrity_check: string } | DiagnosticSectionError;
+  connectors: Array<{ id: string; readiness: string }> | DiagnosticSectionError;
+  packs: Array<{ id: string; version: string; signature_status: string }> | DiagnosticSectionError;
+  failed_executions: Array<{
+    run_kind: string;
+    status: string;
+    started_at: string;
+    finished_at: string;
+    trigger_source: string;
+    steps: Array<{ kind: string; name: string; status: string; error: string }>;
+  }> | DiagnosticSectionError;
+  audit_events: Array<{ type: string; status: string }> | DiagnosticSectionError;
+  hardening: { status: string; expected_check_count?: number; result_count?: number } | DiagnosticSectionError;
+  update_status: { status: string; detail: string; configured: boolean } | DiagnosticSectionError;
+  correlation_ids: string[] | DiagnosticSectionError;
+  support_upload: { configured: boolean; available: boolean };
+};
+
+export type SupportBundlePreview = {
+  inclusions: string[];
+  exclusions: string[];
 };
 
 export type SecretRecord = {

@@ -470,7 +470,8 @@ def test_failed_playbook_result_is_bounded_and_redacted(settings) -> None:
     _seed_client_ticket(store)
 
     class BrokenExecutor:
-        def invoke(self, action_id, payload, actor, *, confirm=False, client_id=None):
+        def invoke(self, action_id, payload, actor, *, confirm=False, client_id=None, correlation_id=None):
+            del correlation_id
             raise RuntimeError("provider access_token=super-secret")
 
     result = run_msp_playbook(

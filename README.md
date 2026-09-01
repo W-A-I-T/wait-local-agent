@@ -147,7 +147,7 @@ Community and commercial-use guide](docs/legal/community-vs-commercial-use.md).
 | <img src="docs/media/dashboard.png" alt="WAIT Local Agent dashboard showing local tickets, workflows, and audit activity" width="100%"> | <img src="docs/media/connectors.png" alt="WAIT Local Agent connectors view showing bounded provider surfaces and action controls" width="100%"> |
 | Local operations stay visible in one reviewable workspace. | Inspect connector readiness and keep proposed changes behind the approval boundary. |
 
-## Example: technician ticket-resolution workflow
+## Technician ticket-resolution workflow example
 
 Open a ticket, start a client-scoped Technician Chat session, review a bounded
 plan, and inspect the resulting execution and audit evidence. [Follow the

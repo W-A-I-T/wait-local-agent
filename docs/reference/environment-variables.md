@@ -31,3 +31,17 @@ active persisted `msp_admin` principal credential. Explicit demo mode is
 bounded: provider writes and deployments are disabled and `/secrets` returns
 HTTP 403. Principal credentials are persisted as SHA-256 hashes and principals
 carry per-client roles plus an optional global `msp_admin` role.
+
+## Diagnostics and local logs
+
+| Variable | Default | Behavior |
+| --- | --- | --- |
+| `WAIT_LOG_DIR` | derived from `WAIT_DATA_PATH` | Private directory for bounded JSON-line logs. Relative values are resolved beside the data file. |
+| `WAIT_LOG_MAX_BYTES` | `1048576` | Positive maximum size of the active log before rotation. |
+| `WAIT_LOG_BACKUP_COUNT` | `5` | Positive number of rotated log files retained. |
+| `WAIT_SUPPORT_UPLOAD_ENDPOINT` | empty | Marks a support destination as configured. The runtime still performs no automatic transfer. |
+
+Log records are scrubbed before writing. The active log and retained backups
+use private filesystem permissions. `WAIT_OFFLINE_MODE=true` blocks support
+transfer availability and does not change local summary, preview, or download
+behavior.
