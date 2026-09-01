@@ -4,13 +4,50 @@ import { buildApiHeaders } from "./headers";
 export class ApiRequestError extends Error {
   readonly technicalDetail: string;
   readonly status?: number;
+  readonly detail?: unknown;
 
-  constructor(message: string, technicalDetail: string, status?: number) {
+  constructor(message: string, technicalDetail: string, status?: number, detail?: unknown) {
     super(message);
     this.name = "ApiRequestError";
     this.technicalDetail = technicalDetail;
     this.status = status;
+    this.detail = detail;
   }
+}
+
+export const CLIENT_SCOPE_ERROR_MESSAGE = "This action needs a specific client selected. Choose one from the top bar and try again.";
+
+const CLIENT_SCOPE_ERROR_SUBSTRINGS = [
+  "authenticated principal has no tenant",
+  "requested tenant is outside authenticated scope",
+  "operation requires a single client scope",
+  "client scope is required",
+  "requires a client scope",
+  "require a client scope",
+  "requires one explicit client",
+  "requires a single client",
+  "require a single client",
+  "requires a tenant",
+  "require a tenant",
+  "outside the configured tenant scope",
+  "client_id is required for a scheduled report",
+  "client_id is required to generate a client report",
+  "client_id is required for a playbook subscription",
+] as const;
+
+export function isClientScopeErrorDetail(detail: unknown): detail is string {
+  return typeof detail === "string" && CLIENT_SCOPE_ERROR_SUBSTRINGS.some((substring) => detail.includes(substring));
+}
+
+export type CapabilityRequiredDetail = {
+  code: "capability_required";
+  capability?: unknown;
+  reason?: unknown;
+  remediation?: unknown;
+};
+
+export function isCapabilityRequiredDetail(detail: unknown): detail is CapabilityRequiredDetail {
+  return Boolean(detail && typeof detail === "object" && (detail as Record<string, unknown>).code === "capability_required");
 }
 
 export async function apiFetch<T>(path: string, init: RequestInit = {}): Promise<T> {
@@ -37,7 +74,8 @@ export async function apiFetch<T>(path: string, init: RequestInit = {}): Promise
   }
 
   if (!response.ok) {
-    throw new ApiRequestError(apiErrorMessage(response.status), `${path} failed with HTTP ${response.status}${errorSuffix(payload)}`, response.status);
+    const detail = extractErrorDetail(payload);
+    throw new ApiRequestError(apiErrorMessage(response.status, detail), `${path} failed with HTTP ${response.status}${errorSuffix(payload)}`, response.status, detail);
   }
 
   return payload as T;
@@ -62,7 +100,8 @@ export async function apiFetchBlob(path: string, init: RequestInit = {}): Promis
     } catch {
       payload = undefined;
     }
-    throw new ApiRequestError(apiErrorMessage(response.status), `${path} failed with HTTP ${response.status}${errorSuffix(payload)}`, response.status);
+    const detail = extractErrorDetail(payload);
+    throw new ApiRequestError(apiErrorMessage(response.status, detail), `${path} failed with HTTP ${response.status}${errorSuffix(payload)}`, response.status, detail);
   }
   return response.blob();
 }
@@ -80,20 +119,28 @@ async function readResponsePayload(response: Response): Promise<unknown> {
 }
 
 function errorSuffix(payload: unknown): string {
-  if (typeof payload === "string" && payload) {
-    return `: ${payload}`;
-  }
-  if (payload && typeof payload === "object") {
-    const record = payload as Record<string, unknown>;
-    const detail = record.detail ?? record.message ?? record.error;
-    if (typeof detail === "string" && detail) {
-      return `: ${detail}`;
-    }
+  const detail = extractErrorDetail(payload);
+  if (typeof detail === "string" && detail) {
+    return `: ${detail}`;
   }
   return "";
 }
 
-function apiErrorMessage(status: number): string {
+function extractErrorDetail(payload: unknown): unknown {
+  if (typeof payload === "string") {
+    return payload;
+  }
+  if (payload && typeof payload === "object") {
+    const record = payload as Record<string, unknown>;
+    return record.detail ?? record.message ?? record.error;
+  }
+  return undefined;
+}
+
+export function apiErrorMessage(status: number, detail?: unknown): string {
+  if (isClientScopeErrorDetail(detail)) {
+    return CLIENT_SCOPE_ERROR_MESSAGE;
+  }
   if (status === 401 || status === 403) {
     return "You do not have permission to do that. Check your access and try again.";
   }

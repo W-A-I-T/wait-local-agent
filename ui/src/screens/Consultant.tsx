@@ -2,7 +2,13 @@ import { FormEvent, useCallback, useEffect, useState } from "react";
 import { AlertTriangle, Compass, RefreshCw } from "lucide-react";
 import { Link } from "react-router-dom";
 import { useDashboard } from "../app/DashboardContext";
-import { ApiRequestError, apiFetch } from "../api/client";
+import {
+  ApiRequestError,
+  CLIENT_SCOPE_ERROR_MESSAGE,
+  apiFetch,
+  isCapabilityRequiredDetail,
+  isClientScopeErrorDetail,
+} from "../api/client";
 import { StatusChip } from "../components/StatusChip";
 import { humanizeName } from "../lib/fields";
 import type {
@@ -100,7 +106,17 @@ const INITIAL_SECTION_STATES: SectionLoadStates = {
 
 function sectionStateForError(error: unknown): SectionLoadState {
   if (error instanceof ApiRequestError && error.status === 403) {
-    return { status: "gated", detail: apiRequestReason(error) };
+    const detail = error.detail ?? apiRequestReason(error);
+    if (isCapabilityRequiredDetail(detail)) {
+      return {
+        status: "gated",
+        detail: typeof detail.remediation === "string" ? detail.remediation : undefined,
+      };
+    }
+    return {
+      status: "error",
+      detail: isClientScopeErrorDetail(detail) ? CLIENT_SCOPE_ERROR_MESSAGE : error.message,
+    };
   }
   if (error instanceof ApiRequestError && error.status === 404) {
     return { status: "empty" };

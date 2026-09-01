@@ -19,11 +19,13 @@ describe("Consultant architecture decisions", () => {
   let rejectBlueprints = false;
   let emptyBlueprints = false;
   let discoverySessionsStatus: number | null = null;
+  let discoverySessionsDetail: unknown = "section unavailable";
   let useCasesStatus: number | null = null;
   let rejectMonitoring = false;
   let rejectArchitecture = false;
   let environmentStatus: number | null = null;
   let governanceStatus: number | null = null;
+  let governanceDetail: unknown = "governance unavailable";
   let evaluationStatus: number | null = null;
   let deliveryStatus: number | null = null;
   let rejectPlaybookGeneration = false;
@@ -35,11 +37,13 @@ describe("Consultant architecture decisions", () => {
     rejectBlueprints = false;
     emptyBlueprints = false;
     discoverySessionsStatus = null;
+    discoverySessionsDetail = "section unavailable";
     useCasesStatus = null;
     rejectMonitoring = false;
     rejectArchitecture = false;
     environmentStatus = null;
     governanceStatus = null;
+    governanceDetail = "governance unavailable";
     evaluationStatus = null;
     deliveryStatus = null;
     dashboard.authState = "authenticated";
@@ -114,7 +118,7 @@ describe("Consultant architecture decisions", () => {
         return Promise.reject(new Error("Forbidden"));
       }
       if (discoverySessionsStatus !== null && path === "/consultant/discovery/sessions") {
-        return Promise.resolve(new Response(JSON.stringify({ detail: "section unavailable" }), { status: discoverySessionsStatus }));
+        return Promise.resolve(new Response(JSON.stringify({ detail: discoverySessionsDetail }), { status: discoverySessionsStatus }));
       }
       if (useCasesStatus !== null && path === "/consultant/use-cases") {
         return Promise.resolve(new Response(JSON.stringify({ detail: "section unavailable" }), { status: useCasesStatus }));
@@ -129,7 +133,7 @@ describe("Consultant architecture decisions", () => {
         return Promise.resolve(new Response(JSON.stringify({ detail: "environment unavailable" }), { status: environmentStatus }));
       }
       if (governanceStatus !== null && path === "/consultant/governance/evaluate") {
-        return Promise.resolve(new Response(JSON.stringify({ detail: "governance unavailable" }), { status: governanceStatus }));
+        return Promise.resolve(new Response(JSON.stringify({ detail: governanceDetail }), { status: governanceStatus }));
       }
       if (evaluationStatus !== null && path === "/consultant/evaluations") {
         return Promise.resolve(new Response(JSON.stringify({ detail: "controlled evaluation execution requires local demo mode with writes disabled" }), { status: evaluationStatus }));
@@ -310,6 +314,7 @@ describe("Consultant architecture decisions", () => {
   it("keeps new section failures retryable or gated", async () => {
     environmentStatus = 500;
     governanceStatus = 403;
+    governanceDetail = "authenticated principal has no tenant";
     evaluationStatus = 409;
     render(<MemoryRouter><Consultant /></MemoryRouter>);
 
@@ -319,12 +324,13 @@ describe("Consultant architecture decisions", () => {
     expect(screen.getByRole("button", { name: "Retry environment probe" })).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: "Evaluate governance" }));
-    expect(await screen.findByText(/Requires the Microsoft Admin pack/)).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: "Open Extensions / Packs" })).toHaveAttribute("href", "/system/extensions");
+    expect(await screen.findByText(/This action needs a specific client selected/)).toBeInTheDocument();
+    expect(screen.queryByText(/Requires the Microsoft Admin pack/)).not.toBeInTheDocument();
 
     dashboard.authState = "demo";
     environmentStatus = null;
     governanceStatus = null;
+    governanceDetail = "governance unavailable";
     fireEvent.click(screen.getByRole("button", { name: "Retry environment probe" }));
     fireEvent.click(screen.getByRole("button", { name: "Evaluate governance" }));
     expect(await screen.findByRole("heading", { name: "Governance checklist" })).toBeInTheDocument();
@@ -335,11 +341,18 @@ describe("Consultant architecture decisions", () => {
 
   it("isolates gated, empty, and retryable initial sections", async () => {
     discoverySessionsStatus = 403;
+    discoverySessionsDetail = {
+      code: "capability_required",
+      capability: "microsoft_admin",
+      reason: "no_grant",
+      remediation: "grant_capability",
+    };
     useCasesStatus = 404;
     rejectMonitoring = true;
     render(<MemoryRouter><Consultant /></MemoryRouter>);
 
     expect(await screen.findByText("Requires the Microsoft Admin pack or Microsoft Admin capability.")).toBeInTheDocument();
+    expect(screen.getByText(/grant_capability/)).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "Open Extensions / Packs" })).toHaveAttribute("href", "/system/extensions");
     expect(screen.getByText("No Solutions Architect use cases are available.")).toBeInTheDocument();
     expect(await screen.findByText(/Unable to load agent monitoring/)).toBeInTheDocument();
