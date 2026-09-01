@@ -26,6 +26,7 @@ MAX_PACKAGE_FILES = 96
 MAX_PACKAGE_FILE_BYTES = 64_000
 MAX_PACKAGE_BYTES = 512_000
 MAX_INPUT_ARTIFACTS = 32
+MAX_FLOW_ACTIONS = 32
 MAX_INPUT_ARTIFACT_BYTES = 256_000
 MAX_PATH_LENGTH = 240
 MAX_TEXT_LENGTH = 240
@@ -511,21 +512,77 @@ def _emit_flow_artifact(
     tenant: str,
 ) -> None:
     flow_id = _identifier(artifact.get("workflow_id"), "workflow_id")
+    name = _text(artifact.get("workflow_name", flow_id), "workflow_name", MAX_TEXT_LENGTH)
+    payload = artifact.get("power_automate")
+    if payload is None and ("trigger" in artifact or "steps" in artifact):
+        raise PowerPlatformPackageError(
+            "Power Automate flow artifact must nest trigger and actions under power_automate; "
+            "the flat trigger/steps shape is not supported"
+        )
+    if not isinstance(payload, Mapping):
+        raise PowerPlatformPackageError("Power Automate flow artifact requires a power_automate object")
+    trigger = payload.get("trigger")
+    if not isinstance(trigger, Mapping):
+        raise PowerPlatformPackageError("Power Automate flow artifact requires a power_automate.trigger object")
+    trigger_name = _text(trigger.get("name"), "power_automate.trigger.name", MAX_TEXT_LENGTH)
+    trigger_type = _identifier(trigger.get("type"), "power_automate.trigger.type")
+    steps = _flow_actions(payload.get("actions"))
+    declared = artifact.get("requires_approval")
+    if declared is not None and not isinstance(declared, bool):
+        raise PowerPlatformPackageError("Power Automate flow artifact requires_approval must be boolean")
+    approval_required = bool(declared) or any(step["ApprovalRequired"] is True for step in steps)
     base = f"modernflows/{flow_id}"
     component_paths.add(base)
     component_id = _component_id(tenant, base)
     root_components.append({"type": "ModernFlow", "schema_name": flow_id, "id": str(component_id)})
     metadata = {
         "ModernFlow": {
-            "Name": artifact.get("workflow_name", flow_id),
+            "Name": name,
             "UniqueName": flow_id,
             "ComponentId": str(component_id),
-            "Trigger": artifact.get("trigger", ""),
-            "Steps": artifact.get("steps", []),
-            "ApprovalRequired": artifact.get("requires_approval") is True,
+            "Trigger": {"Type": trigger_type, "Name": trigger_name},
+            "Steps": steps,
+            "ApprovalRequired": approval_required,
         }
     }
     _add_file(files, f"{base}/flow.yml", _yaml(metadata))
+
+
+def _flow_actions(value: object) -> list[dict[str, object]]:
+    if not isinstance(value, list) or not 1 <= len(value) <= MAX_FLOW_ACTIONS:
+        raise PowerPlatformPackageError(
+            f"Power Automate flow artifact requires 1-{MAX_FLOW_ACTIONS} power_automate.actions"
+        )
+    result: list[dict[str, object]] = []
+    seen: set[str] = set()
+    for raw in value:
+        if not isinstance(raw, Mapping):
+            raise PowerPlatformPackageError("power_automate.actions must contain objects")
+        action_id = _identifier(raw.get("id"), "power_automate.action.id")
+        if action_id in seen:
+            raise PowerPlatformPackageError(f"duplicate power_automate.action id: {action_id}")
+        seen.add(action_id)
+        name = _text(raw.get("name"), "power_automate.action.name", MAX_TEXT_LENGTH)
+        kind = _text(raw.get("kind"), "power_automate.action.kind", MAX_TEXT_LENGTH)
+        action_type = _text(raw.get("type"), "power_automate.action.type", MAX_TEXT_LENGTH)
+        method = _text(raw.get("method"), "power_automate.action.method", MAX_TEXT_LENGTH)
+        approval_required = raw.get("approval_required")
+        if not isinstance(approval_required, bool):
+            raise PowerPlatformPackageError("power_automate.action approval_required must be boolean")
+        raw_tool_id = raw.get("tool_id")
+        tool_id = None if raw_tool_id is None else _identifier(raw_tool_id, "power_automate.action.tool_id")
+        result.append(
+            {
+                "UniqueName": action_id,
+                "Name": name,
+                "Kind": kind,
+                "Type": action_type,
+                "Method": method,
+                "ToolId": tool_id,
+                "ApprovalRequired": approval_required,
+            }
+        )
+    return result
 
 
 def _emit_connector_artifact(

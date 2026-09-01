@@ -16,6 +16,8 @@ from wait_local_agent.config import Settings
 from wait_local_agent.connectwise import ConnectWiseClient
 from wait_local_agent.dattormm import DattoRmmAdapter
 from wait_local_agent.halopsa import HaloPSAClient
+from wait_local_agent.m365_auth import M365Connection, M365TokenProvider, validate_m365_credentials
+from wait_local_agent.m365_graph import M365GraphClient
 from wait_local_agent.models import ConnectorInstance
 from wait_local_agent.ncentral import NCentralRmmAdapter
 from wait_local_agent.net_security import (
@@ -53,6 +55,7 @@ type ReadClient = (
     | NinjaOneRmmAdapter
     | DattoRmmAdapter
     | NCentralRmmAdapter
+    | M365GraphClient
 )
 type Builder = Callable[[Settings, httpx.BaseTransport], ReadClient]
 
@@ -91,6 +94,10 @@ def _build_ncentral(settings: Settings, transport: httpx.BaseTransport) -> NCent
     return NCentralRmmAdapter(settings, transport=transport)
 
 
+def _build_m365(settings: Settings, transport: httpx.BaseTransport) -> M365GraphClient:
+    return M365GraphClient(settings, transport=transport)
+
+
 _BUILDERS: dict[str, Builder] = {
     "halopsa": _build_halopsa,
     "connectwise": _build_connectwise,
@@ -100,6 +107,7 @@ _BUILDERS: dict[str, Builder] = {
     "ninjaone": _build_ninjaone,
     "dattormm": _build_dattormm,
     "ncentral": _build_ncentral,
+    "m365": _build_m365,
 }
 SUPPORTED_CONNECTOR_TYPES = frozenset(_BUILDERS)
 
@@ -111,6 +119,7 @@ _SERVICENOW_CREDENTIAL_KEYS = frozenset({"username", "password"})
 _NINJAONE_CREDENTIAL_KEYS = frozenset({"access_token"})
 _DATTORMM_CREDENTIAL_KEYS = frozenset({"access_token"})
 _NCENTRAL_CREDENTIAL_KEYS = frozenset({"access_token"})
+_M365_CONFIG_KEYS: frozenset[str] = frozenset()
 _HALO_CONFIG_KEYS = frozenset({"base_url"})
 _CONNECTWISE_CONFIG_KEYS = frozenset({"base_url", "api_version"})
 _AUTOTASK_CONFIG_KEYS = frozenset({"base_url"})
@@ -130,6 +139,7 @@ _BASE_URL_REQUIRED_BY_TYPE: dict[str, bool] = {
     "ninjaone": True,
     "dattormm": True,
     "ncentral": True,
+    "m365": False,
 }
 _VERSION_PATTERN = re.compile(r"^[0-9]{4}\.[0-9]+$")
 _SUBDOMAIN_PATTERN = re.compile(r"^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$")
@@ -184,6 +194,7 @@ def _credential_error(connector_type: str) -> ConnectorFactoryError:
         "ninjaone": "access_token",
         "dattormm": "access_token",
         "ncentral": "access_token",
+        "m365": "mode plus the exact fields for client_credentials or static_token",
     }[connector_type]
     labels = {
         "halopsa": "HaloPSA",
@@ -194,6 +205,7 @@ def _credential_error(connector_type: str) -> ConnectorFactoryError:
         "ninjaone": "NinjaOne",
         "dattormm": "Datto RMM",
         "ncentral": "N-central",
+        "m365": "Microsoft 365",
     }
     return ConnectorFactoryError(
         f"invalid {labels[connector_type]} credentials; expected keys: {expected}"
@@ -223,6 +235,12 @@ def _load_credentials(
     if not isinstance(payload, dict):
         raise ConnectorFactoryError("connector credentials must be a JSON object")
 
+    if connector_type == "m365":
+        try:
+            return validate_m365_credentials(payload)
+        except Exception as exc:
+            raise _credential_error(connector_type) from exc
+
     expected = {
         "halopsa": _HALO_CREDENTIAL_KEYS,
         "connectwise": _CONNECTWISE_CREDENTIAL_KEYS,
@@ -232,6 +250,7 @@ def _load_credentials(
         "ninjaone": _NINJAONE_CREDENTIAL_KEYS,
         "dattormm": _DATTORMM_CREDENTIAL_KEYS,
         "ncentral": _NCENTRAL_CREDENTIAL_KEYS,
+        "m365": frozenset(),
     }[connector_type]
     if set(payload) != expected or any(not _non_empty_string(value) for value in payload.values()):
         raise _credential_error(connector_type)
@@ -262,6 +281,7 @@ def _load_config(instance: ConnectorInstance, *, connector_type: str) -> dict[st
         "ninjaone": _NINJAONE_CONFIG_KEYS,
         "dattormm": _DATTORMM_CONFIG_KEYS,
         "ncentral": _NCENTRAL_CONFIG_KEYS,
+        "m365": _M365_CONFIG_KEYS,
     }[connector_type]
     if set(payload) - expected:
         raise ConnectorFactoryError("connector config_json contains unsupported fields")
@@ -321,6 +341,10 @@ def _validate_urls(
     allowed_hosts: tuple[str, ...],
     syncro_subdomain: str | None = None,
 ) -> str:
+    if connector_type == "m365":
+        # The profile has no origin input. Keep the Graph origin a code-level
+        # constant so a vault record cannot turn this into an SSRF primitive.
+        return "https://graph.microsoft.com/v1.0"
     base_url = config.get("base_url")
     if connector_type == "syncro" and not _non_empty_string(base_url):
         normalized_subdomain = syncro_subdomain.strip().casefold() if isinstance(syncro_subdomain, str) else ""
@@ -407,9 +431,16 @@ def _sanitized_settings(
             "ncentral_access_token": "",
             "ncentral_org_unit_map_json": "",
             "ncentral_page_size": 50,
+            "m365_graph_base_url": "",
+            "m365_access_token": "",
+            "m365_page_size": base_settings.m365_page_size,
         }
     )
-    if connector_type == "halopsa":
+    if connector_type == "m365":
+        values["m365_graph_base_url"] = base_url
+        if credentials.get("mode") == "static_token":
+            values["m365_access_token"] = credentials["access_token"]
+    elif connector_type == "halopsa":
         values.update(
             {
                 "halopsa_base_url": base_url,
@@ -556,11 +587,25 @@ def build_read_client(
     )
     try:
         pinned = PinnedIpTransport(
-            allowed_hosts=base_settings.connector_instance_allowed_hosts,
+            allowed_hosts=(
+                (*base_settings.connector_instance_allowed_hosts, "graph.microsoft.com")
+                if connector_type == "m365"
+                else base_settings.connector_instance_allowed_hosts
+            ),
             timeout=base_settings.connector_timeout_seconds,
             resolver=resolver or socket.getaddrinfo,
             transport=inner_transport,
         )
+        if connector_type == "m365":
+            return M365GraphClient(
+                per_instance_settings,
+                transport=pinned,
+                connection=M365Connection(
+                    graph_base_url=per_instance_settings.m365_graph_base_url,
+                    token_provider=M365TokenProvider(credentials),
+                    profile_id=instance.connector_instance_id,
+                ),
+            )
         return builder(per_instance_settings, pinned)
     except ConnectorFactoryError:
         raise

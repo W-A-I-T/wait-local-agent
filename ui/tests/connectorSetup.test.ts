@@ -40,7 +40,7 @@ describe("connector setup metadata", () => {
     expect(new Set(envVars).size).toBe(envVars.length);
   });
 
-  it("marks only the converted PSA family as instance-backed", () => {
+  it("marks the converted PSA family and M365 as instance-backed", () => {
     expect(connectorSetup.halopsa.tier).toBe("instance");
     expect(connectorSetup.connectwise.tier).toBe("instance");
     expect(connectorSetup.autotask.tier).toBe("instance");
@@ -48,6 +48,6 @@ describe("connector setup metadata", () => {
     expect(connectorSetup.servicenow.tier).toBe("instance");
     expect(connectorSetup.rmm.tier).toBe("instance");
     expect(connectorSetup.hudu.tier).toBe("env");
-    expect(connectorSetup.m365.tier).toBe("env");
+    expect(connectorSetup.m365.tier).toBe("instance");
   });
 });

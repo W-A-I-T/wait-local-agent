@@ -134,6 +134,12 @@ def _rmm_secret(**overrides: str) -> str:
     return json.dumps(payload)
 
 
+def _m365_secret(**overrides: str) -> str:
+    payload = {"mode": "static_token", "access_token": "profile-value"}
+    payload.update(overrides)
+    return json.dumps(payload)
+
+
 def test_active_gate_precedes_vault_for_all_inactive_states(settings, tmp_path: Path) -> None:
     for status in ("inactive", "disabled", "error"):
         vault = _Vault()
@@ -292,7 +298,7 @@ def test_config_json_requires_nonempty_base_url(settings, tmp_path: Path) -> Non
 @pytest.mark.parametrize(
     ("connector_type", "requires_base_url"),
     [
-        (connector_type, connector_type != "syncro")
+        (connector_type, connector_type not in {"syncro", "m365"})
         for connector_type in sorted(_BUILDERS)
     ],
 )
@@ -482,6 +488,25 @@ def test_new_instance_backed_providers_build_read_only_clients(
     assert client.settings.allow_write_actions is False
     for field_name, value in expected_fields.items():
         assert getattr(client.settings, field_name) == value
+
+
+def test_m365_instance_builds_with_fixed_graph_origin_and_profile_token(settings, tmp_path: Path) -> None:
+    instance = _instance(connector_type="m365", config={})
+    client = build_read_client(
+        instance,
+        base_settings=_base_settings(settings, tmp_path),
+        vault=_Vault(_m365_secret()),
+        resolver=_resolver("8.8.8.8"),
+        inner_transport=httpx.MockTransport(lambda request: httpx.Response(200, json={"value": []})),
+    )
+    assert client.settings.m365_graph_base_url == "https://graph.microsoft.com/v1.0"
+    assert client.settings.m365_access_token == "profile-value"
+    assert isinstance(client, connector_factory.M365GraphClient)
+    validate_connector_instance(
+        instance,
+        base_settings=_base_settings(settings, tmp_path),
+        vault=_Vault(_m365_secret()),
+    )
 
 
 @pytest.mark.parametrize(

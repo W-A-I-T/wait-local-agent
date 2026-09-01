@@ -7,7 +7,8 @@ import { StatusChip } from "../components/StatusChip";
 import { EmptyState } from "../components/EmptyState";
 import { LoadingState } from "../components/LoadingState";
 
-type ConnectorType = "halopsa" | "connectwise" | "autotask" | "syncro" | "servicenow" | "ninjaone" | "dattormm" | "ncentral";
+type ConnectorType = "halopsa" | "connectwise" | "autotask" | "syncro" | "servicenow" | "ninjaone" | "dattormm" | "ncentral" | "m365";
+type M365CredentialMode = "client_credentials" | "static_token";
 
 type DiscoveredCompany = {
   externalCompanyId: string;
@@ -41,6 +42,11 @@ type ConnectForm = {
   serviceNowUsername: string;
   serviceNowPassword: string;
   rmmAccessToken: string;
+  m365CredentialMode: M365CredentialMode;
+  m365TenantId: string;
+  m365ClientId: string;
+  m365ClientSecret: string;
+  m365AccessToken: string;
   ninjaOrganizationMap: string;
   dattoSiteMap: string;
   ncentralOrgUnitMap: string;
@@ -75,6 +81,11 @@ const initialConnectForm: ConnectForm = {
   serviceNowUsername: "",
   serviceNowPassword: "",
   rmmAccessToken: "",
+  m365CredentialMode: "client_credentials",
+  m365TenantId: "",
+  m365ClientId: "",
+  m365ClientSecret: "",
+  m365AccessToken: "",
   ninjaOrganizationMap: "",
   dattoSiteMap: "",
   ncentralOrgUnitMap: ""
@@ -421,7 +432,11 @@ export function ConnectorInstances() {
   const apiVersionValid = connectForm.connectorType === "connectwise"
     ? /^[0-9]{4}\.[0-9]+$/.test(connectForm.apiVersion.trim())
     : connectForm.connectorType !== "servicenow" || /^[A-Za-z0-9_]{1,20}$/.test(connectForm.apiVersion.trim());
-  const hasProviderCredentials = connectForm.connectorType === "halopsa"
+  const hasProviderCredentials = connectForm.connectorType === "m365"
+    ? connectForm.m365CredentialMode === "client_credentials"
+      ? connectForm.m365TenantId.trim() && connectForm.m365ClientId.trim() && connectForm.m365ClientSecret.trim()
+      : connectForm.m365AccessToken.trim()
+    : connectForm.connectorType === "halopsa"
     ? connectForm.haloClientId.trim() && connectForm.clientSecret.trim() && connectForm.tenant.trim()
     : connectForm.connectorType === "connectwise"
       ? connectForm.company.trim() && connectForm.publicKey.trim() && connectForm.privateKey.trim() && connectForm.connectWiseClientId.trim()
@@ -440,7 +455,7 @@ export function ConnectorInstances() {
               );
   const connectFormReady = Boolean(
     connectForm.displayName.trim()
-      && (connectForm.connectorType === "syncro" || connectForm.baseUrl.trim())
+      && (connectForm.connectorType === "syncro" || connectForm.connectorType === "m365" || connectForm.baseUrl.trim())
       && apiVersionValid
       && hasProviderCredentials
   );
@@ -470,7 +485,16 @@ export function ConnectorInstances() {
     const connectorType = connectForm.connectorType;
     const displayName = connectForm.displayName.trim();
     const credentialRef = `connector:${connectorType}:${slug(displayName)}:${crypto.randomUUID()}`;
-    const credentials: Record<string, string> = connectorType === "halopsa"
+    const credentials: Record<string, string> = connectorType === "m365"
+      ? connectForm.m365CredentialMode === "client_credentials"
+        ? {
+            mode: "client_credentials",
+            tenant_id: connectForm.m365TenantId.trim(),
+            client_id: connectForm.m365ClientId.trim(),
+            client_secret: connectForm.m365ClientSecret.trim()
+          }
+        : { mode: "static_token", access_token: connectForm.m365AccessToken.trim() }
+      : connectorType === "halopsa"
       ? {
           client_id: connectForm.haloClientId.trim(),
           client_secret: connectForm.clientSecret.trim(),
@@ -502,7 +526,9 @@ export function ConnectorInstances() {
               : {
                   access_token: connectForm.rmmAccessToken.trim()
                 };
-    const config: Record<string, string> = connectorType === "syncro"
+    const config: Record<string, string> = connectorType === "m365"
+      ? {}
+      : connectorType === "syncro"
       ? {}
       : connectorType === "ninjaone"
         ? { base_url: connectForm.baseUrl.trim(), organization_map_json: connectForm.ninjaOrganizationMap.trim() }
@@ -622,7 +648,8 @@ export function ConnectorInstances() {
                   setConnectForm((current) => ({
                     ...current,
                     connectorType,
-                    apiVersion: connectorType === "servicenow" ? "v1" : connectorType === "connectwise" ? "2024.1" : current.apiVersion
+                    apiVersion: connectorType === "servicenow" ? "v1" : connectorType === "connectwise" ? "2024.1" : current.apiVersion,
+                    m365CredentialMode: connectorType === "m365" ? "client_credentials" : current.m365CredentialMode
                   }));
                   setConnectError("");
                   setConnectNotice("");
@@ -636,6 +663,7 @@ export function ConnectorInstances() {
                 <option value="ninjaone">NinjaOne</option>
                 <option value="dattormm">Datto RMM</option>
                 <option value="ncentral">N-able N-central</option>
+                <option value="m365">Microsoft 365 / Entra</option>
               </select>
             </fieldset>
 
@@ -651,7 +679,9 @@ export function ConnectorInstances() {
             </label>
             {clientsError ? <p className="field-error">{clientsError} You can still connect without a WAIT client association.</p> : null}
 
-            {connectForm.connectorType === "syncro" ? (
+            {connectForm.connectorType === "m365" ? (
+              <p className="screen-note">Microsoft Graph uses the fixed Microsoft origin; choose how this profile acquires its token.</p>
+            ) : connectForm.connectorType === "syncro" ? (
               <label htmlFor="syncro-subdomain">Syncro subdomain
                 <input id="syncro-subdomain" aria-describedby="syncro-subdomain-help" value={connectForm.syncroSubdomain} onChange={(event) => updateConnectForm("syncroSubdomain", event.target.value)} required />
                 <span id="syncro-subdomain-help" className="field-help">The subdomain from your Syncro address, for example acme in acme.syncromsp.com.</span>
@@ -677,7 +707,39 @@ export function ConnectorInstances() {
               </label>
             ) : null}
 
-            {connectForm.connectorType === "halopsa" ? (
+            {connectForm.connectorType === "m365" ? (
+              <>
+                <label htmlFor="m365-credential-mode">Credential mode
+                  <select id="m365-credential-mode" value={connectForm.m365CredentialMode} onChange={(event) => updateConnectForm("m365CredentialMode", event.target.value as M365CredentialMode)}>
+                    <option value="client_credentials">App registration (client credentials)</option>
+                    <option value="static_token">Static access token (legacy/dev)</option>
+                  </select>
+                </label>
+                {connectForm.m365CredentialMode === "client_credentials" ? (
+                  <>
+                    <label htmlFor="m365-tenant-id">Tenant ID
+                      <input id="m365-tenant-id" aria-describedby="m365-tenant-id-help" value={connectForm.m365TenantId} onChange={(event) => updateConnectForm("m365TenantId", event.target.value)} required />
+                    </label>
+                    <span id="m365-tenant-id-help" className="field-help">{credentialFieldHelp}</span>
+                    <label htmlFor="m365-client-id">Client ID
+                      <input id="m365-client-id" aria-describedby="m365-client-id-help" value={connectForm.m365ClientId} onChange={(event) => updateConnectForm("m365ClientId", event.target.value)} required />
+                    </label>
+                    <span id="m365-client-id-help" className="field-help">{credentialFieldHelp}</span>
+                    <label htmlFor="m365-client-secret">Client secret
+                      <input id="m365-client-secret" aria-describedby="m365-client-secret-help" type="password" value={connectForm.m365ClientSecret} onChange={(event) => updateConnectForm("m365ClientSecret", event.target.value)} required />
+                    </label>
+                    <span id="m365-client-secret-help" className="field-help">{credentialFieldHelp}</span>
+                  </>
+                ) : (
+                  <>
+                    <label htmlFor="m365-access-token">Access token
+                      <input id="m365-access-token" aria-describedby="m365-access-token-help" type="password" value={connectForm.m365AccessToken} onChange={(event) => updateConnectForm("m365AccessToken", event.target.value)} required />
+                    </label>
+                    <span id="m365-access-token-help" className="field-help">{credentialFieldHelp}</span>
+                  </>
+                )}
+              </>
+            ) : connectForm.connectorType === "halopsa" ? (
               <>
                 <label htmlFor="halopsa-client-id">Client ID
                   <input id="halopsa-client-id" aria-describedby="halopsa-client-id-help" value={connectForm.haloClientId} onChange={(event) => updateConnectForm("haloClientId", event.target.value)} required />

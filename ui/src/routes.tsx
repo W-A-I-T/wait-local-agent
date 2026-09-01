@@ -3,6 +3,7 @@ import { Route, Routes } from "react-router-dom";
 import { Approvals } from "./screens/Approvals";
 import { Analytics } from "./screens/Analytics";
 import { Agents } from "./screens/Agents";
+import { AgentPlatform } from "./screens/AgentPlatform";
 import { Backfills } from "./screens/Backfills";
 import { Executions } from "./screens/Executions";
 import { Connectors } from "./screens/Connectors";
@@ -139,6 +140,7 @@ export function AppRoutes() {
       <Route path="approvals" element={<Approvals />} />
       <Route path="analytics" element={<Analytics />} />
       <Route path="agents" element={<Agents />} />
+      <Route path="agent-platform" element={<AgentPlatform />} />
       <Route path="technician-chat" element={<TechnicianChat />} />
       <Route path="backfills" element={<ActivityShell><Backfills /></ActivityShell>} />
       <Route path="executions" element={<ActivityShell><Executions /></ActivityShell>} />
