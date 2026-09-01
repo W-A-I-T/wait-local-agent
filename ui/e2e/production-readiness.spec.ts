@@ -70,7 +70,7 @@ test("completes the safe local setup journey and exercises primary UI surfaces",
   await expect(page.getByText("Setup complete")).toBeVisible();
 
   await page.goto("/playbooks");
-  await page.getByLabel("Client").selectOption(clientId);
+  await page.locator("#app-client-selector").selectOption(clientId);
   const qbr = page.locator("article").filter({ hasText: "Quarterly Business Review" });
   await expect(qbr).toBeVisible();
   await qbr.getByLabel("Period start").fill("2026-01-01");

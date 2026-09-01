@@ -6,7 +6,8 @@
 - Client selector rollout tests and screen-specific request/gating tests were updated.
 - `ui/e2e/production-readiness.spec.ts` now explicitly selects the created
   client before the gated Playbooks Preview action and asserts that Preview is
-  enabled.
+  enabled. The selection uses the unique `#app-client-selector` DOM id rather
+  than the ambiguous `getByLabel("Client")` query.
 - Task artifacts were synchronized.
 
 ## Risk Areas
@@ -36,12 +37,14 @@
 
 - Focused acceptance run: 5 files, 33 tests passed.
 - Full `npm test -- --run`: 71 files, 397 tests passed twice.
+- Fresh sequential post-fix reruns: 71 files, 397 tests passed on both runs.
 - `npm run build`: passed.
 - `git diff --check`: passed.
 - Existing warnings remain: Vite native config-loader extension warning and a large minified chunk warning.
 - The production-readiness Playwright spec was updated to resolve the scoped
-  Preview gate; Playwright test discovery passed, but the browser run was not
-  executed because `127.0.0.1:5173` was unavailable.
+  Preview gate and its selector strict-mode failure; Playwright test discovery
+  passed, but the browser run was not executed because `127.0.0.1:5173` was
+  unavailable (connection refused).
 
 ## Diff Summary
 
