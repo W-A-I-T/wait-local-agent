@@ -70,7 +70,10 @@ from wait_local_agent.collectors import (
 from wait_local_agent.communication import ConfiguredCommunicationProvider
 from wait_local_agent.config import Settings, load_settings
 from wait_local_agent.confluence import ConfluenceClient, ConfluenceReadResponse
-from wait_local_agent.connector_factory import ConnectorFactoryError
+from wait_local_agent.connector_factory import (
+    ConnectorFactoryError,
+    validate_connector_instance,
+)
 from wait_local_agent.connectors import (
     draft_connectwise_ticket_action,
     draft_halopsa_ticket_action,
@@ -167,6 +170,7 @@ from wait_local_agent.models import (
     MAX_EVENT_RETRIES,
     MAX_EVENT_RETRY_DELAY_SECONDS,
     AgentDefinition,
+    ConnectorInstance,
     ConsultantDiscoverySession,
     WorkflowRun,
 )
@@ -1438,6 +1442,23 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         context: AdminAccess,
     ) -> dict[str, object]:
         _require_msp_operator(context)
+        connector_type = payload.connector_type.strip().casefold()
+        if payload.credential_ref and connector_type in {"autotask", "syncro", "servicenow"}:
+            candidate = ConnectorInstance(
+                connector_instance_id="pending-validation",
+                connector_type=connector_type,
+                display_name=payload.display_name,
+                client_id=payload.client_id,
+                credential_ref=payload.credential_ref,
+                config_json=payload.config_json,
+                status="inactive",
+                created_at="",
+                updated_at="",
+            )
+            try:
+                validate_connector_instance(candidate, base_settings=active_settings, vault=vault)
+            except ConnectorFactoryError as exc:
+                raise HTTPException(status_code=422, detail=str(exc)) from exc
         try:
             instance = store.create_connector_instance(
                 payload.connector_type,
