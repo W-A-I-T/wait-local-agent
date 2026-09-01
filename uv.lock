@@ -1247,7 +1247,7 @@ wheels = [
 
 [[package]]
 name = "google-cloud-compute"
-version = "1.50.0"
+version = "1.51.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "google-api-core", extra = ["grpc"] },
@@ -1256,9 +1256,9 @@ dependencies = [
     { name = "proto-plus" },
     { name = "protobuf" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/3e/02/6fea4f0054554df4489b83d45c87581a3c3be20a2c0ced516d97de0a4257/google_cloud_compute-1.50.0.tar.gz", hash = "sha256:42479d9580a7760efe5239be33fb6c71d20873ee6885bcbba57c1635db8bd622", size = 5558855, upload-time = "2026-07-16T20:36:15.145Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/13/c7/b914abc6edf873d42e52608d9a5b1f5416c76451abdec529a35e02c9fe6b/google_cloud_compute-1.51.0.tar.gz", hash = "sha256:45d95bdb065244dda61d4db3984c6684ba1fc76107fa3c7882a35a3e8b450cea", size = 5636082, upload-time = "2026-08-25T19:18:41.468Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/fb/9c/e5fbbae29b4f136a5a96c1b5361bcdb15519696bf7511aabe75cddfa58bc/google_cloud_compute-1.50.0-py3-none-any.whl", hash = "sha256:ac0fc81f21d8bb174e6d8456402b9c291236517f319debdd0c19a198fffbb8a1", size = 4187916, upload-time = "2026-07-16T20:35:50.921Z" },
+    { url = "https://files.pythonhosted.org/packages/1a/36/78ec4dbf7f2b2e6f0c95b70c2ddcf58ba4c3cc946a0b1bd7557d1f0151ee/google_cloud_compute-1.51.0-py3-none-any.whl", hash = "sha256:8af537b9a7411aa9bf297758f457e31a2b89aaf6d8677c25a318d2b9185e204b", size = 4231750, upload-time = "2026-08-24T21:55:26.381Z" },
 ]
 
 [[package]]
@@ -1276,7 +1276,7 @@ wheels = [
 
 [[package]]
 name = "google-cloud-iam"
-version = "2.24.1"
+version = "2.25.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "google-api-core", extra = ["grpc"] },
@@ -1286,9 +1286,9 @@ dependencies = [
     { name = "proto-plus" },
     { name = "protobuf" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/16/d8/ebea2eb4423ee467a50ed7b91ab0a1a0e0749f869151598891456a117a8f/google_cloud_iam-2.24.1.tar.gz", hash = "sha256:2d7edfe48fd24a181f55473a77584c0c947cf52915fc7af835d9ae0408fccae0", size = 561397, upload-time = "2026-08-06T06:24:26.45Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/b1/41/41bc40a72a095feb7b21483b68c40e336314bc4a4d8067442c64fcbdb78f/google_cloud_iam-2.25.0.tar.gz", hash = "sha256:af311f839cb7791e582093940ec114323fc6a92110e9807844026eb09704c479", size = 621407, upload-time = "2026-08-25T19:18:53.051Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/a4/98/11d466009ffdf7abc987d9db8d6a59bbbb2c08543fd9ee4d98514bafbdc4/google_cloud_iam-2.24.1-py3-none-any.whl", hash = "sha256:7122aca0f5e2aa5bac889ff8136629054e9eef761d14dc5111ac1d109f68052a", size = 515093, upload-time = "2026-08-06T06:23:18.659Z" },
+    { url = "https://files.pythonhosted.org/packages/50/df/c6a837dc04bd1ce95f20a41c6a9470fda78f83074704ddc00ec8a7409f0f/google_cloud_iam-2.25.0-py3-none-any.whl", hash = "sha256:adaa7e9a44d48f521e5be7bce7d52f74f9f097885f641865d50caaacc79abf86", size = 567102, upload-time = "2026-08-24T21:55:38.53Z" },
 ]
 
 [[package]]
@@ -4796,8 +4796,8 @@ requires-dist = [
     { name = "fastapi", specifier = ">=0.139.0,<1.0" },
     { name = "fastembed", marker = "extra == 'knowledge'", specifier = ">=0.4,<1" },
     { name = "fastembed", marker = "extra == 'qdrant'", specifier = ">=0.4,<1" },
-    { name = "google-cloud-compute", specifier = "==1.50.0" },
-    { name = "google-cloud-iam", specifier = "==2.24.1" },
+    { name = "google-cloud-compute", specifier = "==1.51.0" },
+    { name = "google-cloud-iam", specifier = "==2.25.0" },
     { name = "google-cloud-resource-manager", specifier = "==1.18.0" },
     { name = "google-cloud-storage", specifier = "==3.13.1" },
     { name = "h2", specifier = ">=4.4.1,<5.0" },
