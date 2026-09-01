@@ -1112,6 +1112,137 @@ def test_power_platform_deployment_route_records_approved_execution(settings, mo
     assert persisted.execution_status == "succeeded"
 
 
+def test_power_platform_stage_execution_rejects_already_executed_approval(settings, monkeypatch) -> None:
+    execute = _endpoint(settings, "/consultant/solutions/deployment-approvals/{request_id}/execute")
+    store = Store(settings.data_path)
+    calls: list[object] = []
+
+    def unexpected_execute(*args, **kwargs):
+        calls.append((args, kwargs))
+        raise AssertionError("PAC execution must not run for a terminal approval")
+
+    monkeypatch.setattr("wait_local_agent.api.app.execute_power_platform_stage", unexpected_execute)
+
+    for terminal_status in ("succeeded", "verified", "unverified", "submitted"):
+        approval = store.create_approval_request(
+            f"acme:onboarding:stage:{terminal_status}",
+            "power_platform.solution_stage",
+            {
+                "format": "wait-local-agent.power-platform.deployment-approval",
+                "format_version": 1,
+                "client_id": "acme",
+                "solution_name": "onboarding",
+                "publisher_name": "WAITConsulting",
+                "publisher_prefix": "wlp",
+                "output_directory": "/tmp/wait-consultant-solution",
+                "deployment_targets": [{"name": "dev", "environment_url": "https://dev.crm.dynamics.com"}],
+                "stage": "build",
+                "promotion_evidence": {},
+                "credentials_included": False,
+            },
+            client_id="acme",
+        )
+        approval_id = approval.id or 0
+        store.update_approval_request(approval_id, "approved", approver_id="admin")
+        store.record_approval_execution(
+            approval_id,
+            status=terminal_status,
+            message="terminal execution fixture",
+            result={"status": terminal_status, "evidence": "preserve"},
+            audit_event_type="power_platform.solution_stage",
+        )
+        before = store.get_approval_request(approval_id)
+        assert before is not None
+
+        with pytest.raises(HTTPException) as exc_info:
+            execute(approval_id, _request(), _admin())
+
+        assert exc_info.value.status_code == 409
+        assert exc_info.value.detail == "deployment approval request has already executed"
+        assert calls == []
+        after = store.get_approval_request(approval_id)
+        assert after == before
+
+
+def test_power_platform_rollback_execution_rejects_already_executed_approval(settings, monkeypatch) -> None:
+    execute = _endpoint(settings, "/consultant/solutions/rollback-approvals/{request_id}/execute")
+    store = Store(settings.data_path)
+    calls: list[object] = []
+
+    def unexpected_execute(*args, **kwargs):
+        calls.append((args, kwargs))
+        raise AssertionError("PAC execution must not run for a terminal approval")
+
+    monkeypatch.setattr("wait_local_agent.api.app.execute_power_platform_rollback", unexpected_execute)
+
+    for terminal_status in ("succeeded", "verified", "unverified", "submitted"):
+        approval = store.create_approval_request(
+            f"acme:onboarding:rollback:{terminal_status}",
+            "power_platform.solution_rollback",
+            {"stage": "dev"},
+            client_id="acme",
+        )
+        approval_id = approval.id or 0
+        store.update_approval_request(approval_id, "approved", approver_id="admin")
+        store.record_approval_execution(
+            approval_id,
+            status=terminal_status,
+            message="terminal execution fixture",
+            result={"status": terminal_status, "evidence": "preserve"},
+            audit_event_type="power_platform.solution_rollback",
+        )
+        before = store.get_approval_request(approval_id)
+        assert before is not None
+
+        with pytest.raises(HTTPException) as exc_info:
+            execute(approval_id, _request(), _admin())
+
+        assert exc_info.value.status_code == 409
+        assert exc_info.value.detail == "rollback approval request has already executed"
+        assert calls == []
+        after = store.get_approval_request(approval_id)
+        assert after == before
+
+
+def test_power_platform_stage_execution_still_runs_for_a_fresh_approval(settings, monkeypatch) -> None:
+    request_approval = _endpoint(settings, "/consultant/solutions/deployment-approvals")(
+        PowerPlatformDeploymentRequest(
+            client_id="acme",
+            solution_name="onboarding_fresh_execution",
+            publisher_name="WAITConsulting",
+            publisher_prefix="wlp",
+            output_directory="/tmp/wait-consultant-solution",
+            deployment_targets=[{"name": "dev", "environment_url": "https://dev.crm.dynamics.com"}],
+            stage="build",
+        ),
+        _request(),
+        _technician(),
+    )
+    approval_id = request_approval["approval"]["id"]
+    store = Store(settings.data_path)
+    store.update_approval_request(approval_id, "approved", approver_id="admin")
+    calls: list[object] = []
+
+    def fake_execute(*args, **kwargs):
+        calls.append((args, kwargs))
+        return {
+            "status": "succeeded",
+            "message": "fresh approval fixture succeeded",
+            "stage": "build",
+            "artifact_digest": "sha256:" + "a" * 64,
+        }
+
+    monkeypatch.setattr("wait_local_agent.api.app.execute_power_platform_stage", fake_execute)
+    result = _endpoint(settings, "/consultant/solutions/deployment-approvals/{request_id}/execute")(
+        approval_id,
+        _request(),
+        _admin(),
+    )
+
+    assert result["execution_status"] == "succeeded"
+    assert calls
+
+
 def test_power_platform_deployment_route_rejects_foreign_tenant(settings) -> None:
     with pytest.raises(HTTPException, match="outside authenticated scope"):
         _endpoint(settings, "/consultant/solutions/deployment-approvals")(

@@ -326,6 +326,7 @@ AdminAccess = Annotated[AuthContext, Depends(require_role(Role.ADMIN))]
 EndUserAccess = Annotated[AuthContext, Depends(require_end_user)]
 LOGGER = logging.getLogger(__name__)
 CORRELATION_HEADER = "X-Correlation-ID"
+_TERMINAL_EXECUTION_STATUSES = frozenset({"succeeded", "verified", "unverified", "submitted"})
 
 
 class CorrelationIdMiddleware:
@@ -6360,6 +6361,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             raise HTTPException(status_code=404, detail="deployment approval request not found")
         if approval.status != "approved":
             raise HTTPException(status_code=409, detail="deployment approval must be approved before execution")
+        if approval.execution_status in _TERMINAL_EXECUTION_STATUSES:
+            raise HTTPException(status_code=409, detail="deployment approval request has already executed")
         try:
             payload = _safe_json_object(approval.payload_json)
             plan = build_power_platform_deployment_plan_from_payload(payload)
@@ -6468,6 +6471,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             raise HTTPException(status_code=404, detail="Power Platform rollback approval request not found")
         if approval.status != "approved":
             raise HTTPException(status_code=409, detail="rollback approval must be approved before execution")
+        if approval.execution_status in _TERMINAL_EXECUTION_STATUSES:
+            raise HTTPException(status_code=409, detail="rollback approval request has already executed")
         try:
             payload = _safe_json_object(approval.payload_json)
             plan = build_power_platform_deployment_plan_from_payload(payload)
@@ -7580,7 +7585,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         if request.action_type == "power_platform.solution_stage":
             if request.status != "approved":
                 return False, "Approval must be approved before execution."
-            if request.execution_status == "succeeded":
+            if request.execution_status in _TERMINAL_EXECUTION_STATUSES:
                 return False, "Approval request has already executed successfully."
             if not active_settings.allow_write_actions:
                 return False, "Power Platform execution is blocked until WAIT_ALLOW_WRITE_ACTIONS=true."
