@@ -157,6 +157,33 @@ describe("Connector Instances screen", () => {
     expect(screen.queryByRole("link", { name: "Connector Instances" })).not.toBeInTheDocument();
     expect(fetchMock).not.toHaveBeenCalled();
   });
+
+  it("renders the instance form fields for each supported PSA", async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      if (String(input) === "/connector-instances") return jsonResponse([]);
+      if (String(input) === "/clients") return jsonResponse([]);
+      throw new Error(`Unexpected request: ${String(input)}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(<ConnectorInstances />);
+    await screen.findByText("No connector instances are configured.");
+    const provider = screen.getByLabelText("Provider");
+
+    fireEvent.change(provider, { target: { value: "autotask" } });
+    expect(screen.getByLabelText("API integration code")).toBeInTheDocument();
+    expect(screen.getByLabelText("Username")).toBeInTheDocument();
+
+    fireEvent.change(provider, { target: { value: "syncro" } });
+    expect(screen.getByLabelText(/Syncro subdomain/)).toBeInTheDocument();
+    expect(screen.getByLabelText("API key")).toBeInTheDocument();
+    expect(screen.queryByLabelText("Base URL")).not.toBeInTheDocument();
+
+    fireEvent.change(provider, { target: { value: "servicenow" } });
+    expect(screen.getByLabelText("ServiceNow instance URL")).toBeInTheDocument();
+    expect(screen.getByLabelText("Password")).toBeInTheDocument();
+    expect(screen.getByLabelText(/API version/)).toBeInTheDocument();
+  });
 });
 
 function jsonResponse(payload: unknown): Response {

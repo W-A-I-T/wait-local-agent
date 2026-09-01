@@ -11,16 +11,21 @@ import httpx
 import pytest
 
 from wait_local_agent import connector_factory, net_security
+from wait_local_agent.autotask import AutotaskClient
 from wait_local_agent.connector_factory import (
     _BUILDERS,
     _SECRET_SETTING_FIELDS,
     ConnectorFactoryError,
+    _api_base_url,
     _validate_urls,
     build_read_client,
     build_read_client_for,
+    validate_connector_instance,
 )
 from wait_local_agent.connectwise import ConnectWiseClient
 from wait_local_agent.models import ConnectorInstance
+from wait_local_agent.servicenow import ServiceNowClient
+from wait_local_agent.syncro import SyncroClient
 
 
 def _instance(
@@ -36,7 +41,9 @@ def _instance(
         display_name="Test connector",
         client_id=None,
         credential_ref=credential_ref,
-        config_json=json.dumps(config or {"base_url": "https://provider.example.test"}),
+        config_json=json.dumps(
+            {"base_url": "https://provider.example.test"} if config is None else config
+        ),
         status=status,
         created_at="2026-01-01T00:00:00+00:00",
         updated_at="2026-01-01T00:00:00+00:00",
@@ -95,6 +102,24 @@ def _connectwise_secret(**overrides: str) -> str:
         "private_key": "instance-private",
         "client_id": "instance-client",
     }
+    payload.update(overrides)
+    return json.dumps(payload)
+
+
+def _autotask_secret(**overrides: str) -> str:
+    payload = {"integration_code": "fixture-integration", "username": "fixture-user", "secret": "fixture-value"}
+    payload.update(overrides)
+    return json.dumps(payload)
+
+
+def _syncro_secret(**overrides: str) -> str:
+    payload = {"api_key": "fixture-key", "subdomain": "fixture-subdomain"}
+    payload.update(overrides)
+    return json.dumps(payload)
+
+
+def _servicenow_secret(**overrides: str) -> str:
+    payload = {"username": "fixture-user", "password": "fixture-value"}
     payload.update(overrides)
     return json.dumps(payload)
 
@@ -351,6 +376,204 @@ def test_provider_base_url_suffixes_are_preserved(settings, tmp_path: Path) -> N
     assert cw.settings.connectwise_base_url.endswith("/v4_6_release/apis/3.0")
 
 
+@pytest.mark.parametrize(
+    "connector_type,secret,expected_type,expected_fields",
+    [
+        (
+            "autotask",
+            _autotask_secret(),
+            AutotaskClient,
+            {
+                "autotask_base_url": "https://provider.example.test",
+                "autotask_username": "fixture-user",
+                "autotask_secret": "fixture-value",
+                "autotask_integration_code": "fixture-integration",
+            },
+        ),
+        (
+            "syncro",
+            _syncro_secret(),
+            SyncroClient,
+            {"syncro_base_url": "https://provider.example.test", "syncro_api_token": "fixture-key"},
+        ),
+        (
+            "servicenow",
+            _servicenow_secret(),
+            ServiceNowClient,
+            {
+                "servicenow_base_url": "https://provider.example.test",
+                "servicenow_username": "fixture-user",
+                "servicenow_password": "fixture-value",
+                "servicenow_api_version": "v1",
+            },
+        ),
+    ],
+)
+def test_new_instance_backed_providers_build_read_only_clients(
+    settings,
+    tmp_path: Path,
+    connector_type: str,
+    secret: str,
+    expected_type: type,
+    expected_fields: Mapping[str, str],
+) -> None:
+    config = {"base_url": "https://provider.example.test"}
+    if connector_type == "servicenow":
+        config["api_version"] = "v1"
+    client = build_read_client(
+        _instance(connector_type=connector_type, config=config),
+        base_settings=_base_settings(settings, tmp_path),
+        vault=_Vault(secret),
+        resolver=_resolver("8.8.8.8"),
+        inner_transport=httpx.MockTransport(lambda request: httpx.Response(200, json=[])),
+    )
+    assert isinstance(client, expected_type)
+    assert client.settings.allow_write_actions is False
+    for field_name, value in expected_fields.items():
+        assert getattr(client.settings, field_name) == value
+
+
+@pytest.mark.parametrize(
+    "connector_type,secret,expected_message",
+    [
+        ("autotask", json.dumps({"integration_code": "a", "username": "b"}), "integration_code, username, secret"),
+        ("syncro", json.dumps({"api_key": "a"}), "api_key, subdomain"),
+        ("servicenow", json.dumps({"username": "a", "token": "b"}), "username, password"),
+    ],
+)
+def test_new_provider_credentials_are_exact(
+    settings,
+    tmp_path: Path,
+    connector_type: str,
+    secret: str,
+    expected_message: str,
+) -> None:
+    with pytest.raises(ConnectorFactoryError, match=expected_message):
+        build_read_client(
+            _instance(connector_type=connector_type),
+            base_settings=_base_settings(settings, tmp_path),
+            vault=_Vault(secret),
+        )
+
+
+@pytest.mark.parametrize(
+    "connector_type,secret,expected_message",
+    [
+        (
+            "autotask",
+            json.dumps({"integration_code": "fixture-code", "username": "fixture-user", "secret": 7}),
+            "integration_code, username, secret",
+        ),
+        (
+            "syncro",
+            json.dumps({"api_key": "fixture-key", "subdomain": "fixture_subdomain"}),
+            "api_key, subdomain",
+        ),
+        (
+            "servicenow",
+            json.dumps({"username": "fixture-user", "password": ""}),
+            "username, password",
+        ),
+    ],
+)
+def test_new_provider_credential_values_are_nonempty_strings(
+    settings,
+    tmp_path: Path,
+    connector_type: str,
+    secret: str,
+    expected_message: str,
+) -> None:
+    with pytest.raises(ConnectorFactoryError, match=expected_message):
+        build_read_client(
+            _instance(connector_type=connector_type),
+            base_settings=_base_settings(settings, tmp_path),
+            vault=_Vault(secret),
+        )
+
+
+def test_syncro_subdomain_builds_the_canonical_origin(settings, tmp_path: Path) -> None:
+    base = replace(_base_settings(settings, tmp_path), connector_instance_allowed_hosts=("fixture.syncromsp.com",))
+    client = build_read_client(
+        _instance(connector_type="syncro", config={}),
+        base_settings=base,
+        vault=_Vault(_syncro_secret(subdomain="fixture")),
+        resolver=_resolver("8.8.8.8"),
+        inner_transport=httpx.MockTransport(lambda request: httpx.Response(200, json=[])),
+    )
+    assert isinstance(client, SyncroClient)
+    assert client.settings.syncro_base_url == "https://fixture.syncromsp.com"
+
+
+def test_syncro_rejects_invalid_derived_subdomain() -> None:
+    with pytest.raises(ConnectorFactoryError, match="valid subdomain"):
+        _validate_urls(
+            {},
+            connector_type="syncro",
+            allowed_hosts=("fixture.syncromsp.com",),
+            syncro_subdomain="fixture_subdomain",
+        )
+
+
+def test_api_base_url_adds_and_preserves_provider_suffix() -> None:
+    assert _api_base_url("https://provider.example.test", connector_type="connectwise") == (
+        "https://provider.example.test/v4_6_release/apis/3.0"
+    )
+    assert _api_base_url(
+        "https://provider.example.test/v4_6_release/apis/3.0/",
+        connector_type="connectwise",
+    ) == "https://provider.example.test/v4_6_release/apis/3.0"
+
+
+def test_servicenow_api_version_validation_rejects_non_strings_and_bad_values(settings, tmp_path: Path) -> None:
+    for version in (7, "bad/version"):
+        with pytest.raises(ConnectorFactoryError, match="ServiceNow API version is invalid"):
+            build_read_client(
+                _instance(
+                    connector_type="servicenow",
+                    config={"base_url": "https://provider.example.test", "api_version": version},
+                ),
+                base_settings=_base_settings(settings, tmp_path),
+                vault=_Vault(_servicenow_secret()),
+            )
+
+
+@pytest.mark.parametrize(
+    "connector_type,secret,config",
+    [
+        ("halopsa", _halo_secret(), {"base_url": "https://provider.example.test"}),
+        ("connectwise", _connectwise_secret(), {"base_url": "https://provider.example.test"}),
+        ("autotask", _autotask_secret(), {"base_url": "https://provider.example.test"}),
+        ("syncro", _syncro_secret(), {"base_url": "https://provider.example.test"}),
+        (
+            "servicenow",
+            _servicenow_secret(),
+            {"base_url": "https://provider.example.test", "api_version": "v1"},
+        ),
+    ],
+)
+def test_validate_connector_instance_accepts_supported_providers(
+    settings,
+    tmp_path: Path,
+    connector_type: str,
+    secret: str,
+    config: Mapping[str, object],
+) -> None:
+    validate_connector_instance(
+        _instance(connector_type=connector_type, config=config),
+        base_settings=_base_settings(settings, tmp_path),
+        vault=_Vault(secret),
+    )
+
+
+def test_validate_connector_instance_rejects_unsupported_type(settings, tmp_path: Path) -> None:
+    with pytest.raises(ConnectorFactoryError, match="unsupported connector_type"):
+        validate_connector_instance(
+            _instance(connector_type="unsupported"),
+            base_settings=_base_settings(settings, tmp_path),
+            vault=_Vault(_halo_secret()),
+        )
+
+
 def test_invalid_base_url_type_is_fixed() -> None:
     with pytest.raises(ConnectorFactoryError, match="base_url is invalid"):
         _validate_urls(
@@ -472,6 +695,24 @@ def test_build_read_client_for_handles_missing_instance(settings, tmp_path: Path
 
     with pytest.raises(ConnectorFactoryError, match="not found"):
         build_read_client_for(Store(), "missing", base_settings=_base_settings(settings, tmp_path))
+
+
+def test_build_read_client_for_builds_loaded_instance(settings, tmp_path: Path) -> None:
+    class Store:
+        def get_connector_instance(self, connector_instance_id: str) -> ConnectorInstance:
+            assert connector_instance_id == "instance-1"
+            return _instance()
+
+    vault = _Vault(_halo_secret())
+    client = build_read_client_for(
+        Store(),
+        "instance-1",
+        base_settings=_base_settings(settings, tmp_path),
+        vault=vault,
+        resolver=_resolver("8.8.8.8"),
+    )
+    assert client.settings.halopsa_base_url == "https://provider.example.test"
+    assert vault.keys == ["credential-ref"]
 
 
 def test_build_read_client_for_redacts_store_errors(settings, tmp_path: Path) -> None:
