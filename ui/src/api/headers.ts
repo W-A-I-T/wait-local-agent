@@ -2,7 +2,7 @@ export const apiTokenStorageKey = "wait-local-agent-api-token";
 export const selectedClientStorageKey = "wait-local-agent-selected-client";
 
 export function buildApiHeaders(includeJsonContentType = false): HeadersInit {
-  const headers: Record<string, string> = {};
+  const headers: Record<string, string> = { "X-WAIT-CSRF": "1" };
   const token = loadStoredApiToken().trim();
   const selectedClientId = loadStoredSelectedClientId().trim();
   if (includeJsonContentType) {

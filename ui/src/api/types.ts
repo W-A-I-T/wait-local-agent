@@ -1693,11 +1693,38 @@ export type MicrosoftAdminRunbookPlan = {
 export type AuthRoleResponse = {
   role: "admin" | "technician" | "viewer";
   client_id?: string | null;
+  client_ids?: string[];
   api_auth_required: boolean;
   demo_mode: boolean;
   end_user_support_enabled: boolean;
   is_msp_admin?: boolean;
   principal_id?: string | null;
+  auth_method?: string;
+  expires_at?: string | null;
+};
+
+export type AuthSessionResponse = AuthRoleResponse & {
+  authenticated: boolean;
+};
+
+export type PrincipalClientRole = "end_user" | "viewer" | "technician" | "admin";
+
+export type PrincipalCredential = {
+  credential_hash_prefix: string;
+  active: boolean;
+  created_at: string;
+};
+
+export type PrincipalAdminView = {
+  principal_id: string;
+  kind: "customer" | "staff";
+  display_name: string;
+  active: boolean;
+  created_at: string;
+  client_roles: Array<[string, PrincipalClientRole]>;
+  global_roles: string[];
+  credential_count: number;
+  credentials: PrincipalCredential[];
 };
 
 export type FounderUploadPreview = {

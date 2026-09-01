@@ -32,6 +32,7 @@ from starlette.types import Scope
 
 from wait_local_agent import __version__
 from wait_local_agent.agents import AgentDefinitionError, AgentService
+from wait_local_agent.api.auth_routes import create_auth_router
 from wait_local_agent.api.founder import (
     FounderNotConfiguredError,
     FounderPackContractError,
@@ -1109,6 +1110,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         route_dependencies=[Depends(require_role(Role.VIEWER))],
     )
     app.include_router(create_founder_router())
+    app.include_router(create_auth_router(limiter))
 
     @app.get("/health")
     @limiter.exempt
@@ -1167,6 +1169,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             "client_id": context.client_id,
             "client_ids": sorted(context.client_ids),
             "principal_id": context.principal_id,
+            "auth_method": context.auth_method,
             "is_msp_admin": context.is_msp_admin,
             "api_auth_required": auth_required(active_settings),
             "demo_mode": active_settings.demo_mode,
@@ -8021,6 +8024,8 @@ def _request_validation_error_handler(request: Request, exc: Exception) -> JSONR
     sensitive_fields: set[str]
     if request.url.path == "/secrets":
         sensitive_fields = {"value"}
+    elif request.url.path == "/auth/login/local":
+        sensitive_fields = {"token"}
     elif request.url.path == "/packs/install":
         sensitive_fields = {"license", "license_key"}
     else:
