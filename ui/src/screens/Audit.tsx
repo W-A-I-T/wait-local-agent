@@ -80,6 +80,11 @@ export function Audit() {
           <span>{events.length} events</span>
         </div>
 
+        <div className="notice" role="note">
+          Audit data stays on this appliance and is never transmitted to WAIT by the runtime. Use Export CSV or
+          Export Events JSON below when you choose to save a local copy.
+        </div>
+
         <div className="grid">
           <ClientIdSelect label="client_id" value={clientId} onChange={setClientId} clients={clients} id="audit-client-id" />
           <label>

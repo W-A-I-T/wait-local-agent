@@ -28,7 +28,7 @@ from wait_local_agent.rmm import (
     RmmInventoryProvider,
     RmmProviderResolutionError,
 )
-from wait_local_agent.store import Store
+from wait_local_agent.store import Store, latest_declared_schema_version
 
 
 class _FakeRmmProvider:
@@ -129,7 +129,13 @@ def test_v7_operational_graph_is_additive_idempotent_and_fk_clean(tmp_path: Path
                 "order by type, name"
             )
         ]
-        assert connection.execute("select count(*) from schema_migrations").fetchone()[0] == 12
+        declared_migrations = store._declared_migrations()  # noqa: SLF001
+        assert connection.execute("select max(version) from schema_migrations").fetchone()[0] == (
+            latest_declared_schema_version(store)
+        )
+        assert connection.execute("select count(*) from schema_migrations").fetchone()[0] == len(
+            declared_migrations
+        )
 
 
 def test_graph_store_is_fail_closed_and_cross_tenant_links_raise(tmp_path: Path) -> None:

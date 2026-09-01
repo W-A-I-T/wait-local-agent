@@ -209,6 +209,10 @@ class PrincipalCredentialSummary:
     created_at: str
 
 
+class PrincipalInvariantError(ValueError):
+    """Raised when a principal mutation would violate an identity invariant."""
+
+
 @dataclass(frozen=True)
 class PrincipalIdentity:
     issuer: str
@@ -248,6 +252,10 @@ def _principal_identity_from_row(row: sqlite3.Row) -> PrincipalIdentity:
         created_at=str(row["created_at"]),
         last_login_at=str(row["last_login_at"]) if row["last_login_at"] is not None else None,
     )
+
+
+def latest_declared_schema_version(store: Store) -> int:
+    return max(migration.version for migration in store._declared_migrations())
 
 
 class Store:
@@ -292,38 +300,40 @@ class Store:
         return connection
 
     def _init_schema(self) -> None:
+        migrations = self._declared_migrations()
         with self._connect() as connection:
-            MigrationRunner(connection).run(
-                (
-                    Migration(0, "baseline", self._apply_baseline_migration),
-                    Migration(1, "principals", self._apply_principals_migration),
-                    Migration(2, "clients_and_connectors", self._apply_clients_migration),
-                    Migration(
-                        3,
-                        "provenance_and_ingestion",
-                        self._apply_provenance_migration,
-                    ),
-                    Migration(
-                        4,
-                        "canonical_assets_tenant_unique",
-                        self._apply_canonical_tenant_unique_migration,
-                        foreign_keys_off=True,
-                    ),
-                    Migration(
-                        5,
-                        "ticket_identity_and_tenancy",
-                        self._apply_ticket_identity_migration,
-                        foreign_keys_off=True,
-                    ),
-                    Migration(6, "poll_lease", self._apply_poll_lease_migration),
-                    Migration(7, "operational_graph", self._apply_operational_graph_migration),
-                    Migration(8, "auth_sessions_and_config", self._apply_auth_sessions_and_config_migration),
-                    Migration(9, "principal_identities", self._apply_principal_identities_migration),
-                    Migration(10, "client_candidates", self._apply_client_candidates_migration),
-                    Migration(11, "client_baselines", self._apply_client_baselines_migration),
-                )
-            )
+            MigrationRunner(connection).run(migrations)
             self._apply_startup_repairs(connection)
+
+    def _declared_migrations(self) -> tuple[Migration, ...]:
+        return (
+            Migration(0, "baseline", self._apply_baseline_migration),
+            Migration(1, "principals", self._apply_principals_migration),
+            Migration(2, "clients_and_connectors", self._apply_clients_migration),
+            Migration(
+                3,
+                "provenance_and_ingestion",
+                self._apply_provenance_migration,
+            ),
+            Migration(
+                4,
+                "canonical_assets_tenant_unique",
+                self._apply_canonical_tenant_unique_migration,
+                foreign_keys_off=True,
+            ),
+            Migration(
+                5,
+                "ticket_identity_and_tenancy",
+                self._apply_ticket_identity_migration,
+                foreign_keys_off=True,
+            ),
+            Migration(6, "poll_lease", self._apply_poll_lease_migration),
+            Migration(7, "operational_graph", self._apply_operational_graph_migration),
+            Migration(8, "auth_sessions_and_config", self._apply_auth_sessions_and_config_migration),
+            Migration(9, "principal_identities", self._apply_principal_identities_migration),
+            Migration(10, "client_candidates", self._apply_client_candidates_migration),
+            Migration(11, "client_baselines", self._apply_client_baselines_migration),
+        )
 
     def _apply_principals_migration(self, connection: sqlite3.Connection) -> None:
         connection.execute(
@@ -927,10 +937,13 @@ class Store:
         if not normalized_id:
             raise ValueError("principal_id must be non-empty")
         with self._connect() as connection:
-            if connection.execute(
-                "select 1 from principals where principal_id = ?", (normalized_id,)
-            ).fetchone() is None:
+            principal = connection.execute(
+                "select active from principals where principal_id = ?", (normalized_id,)
+            ).fetchone()
+            if principal is None:
                 raise KeyError(normalized_id)
+            if not bool(principal["active"]):
+                raise PrincipalInvariantError("inactive principals cannot receive credentials")
             connection.execute(
                 """
                 insert into principal_credentials (principal_id, credential_hash, created_at)
@@ -952,10 +965,21 @@ class Store:
         if normalized_role not in {"end_user", "viewer", "technician", "admin"}:
             raise ValueError("unsupported principal client role")
         with self._connect() as connection:
-            if connection.execute(
-                "select 1 from principals where principal_id = ?", (normalized_id,)
-            ).fetchone() is None:
+            principal = connection.execute(
+                "select kind from principals where principal_id = ?", (normalized_id,)
+            ).fetchone()
+            if principal is None:
                 raise KeyError(normalized_id)
+            if str(principal["kind"]) == "customer" and connection.execute(
+                """
+                select 1
+                from principal_client_roles
+                where principal_id = ? and client_id <> ?
+                limit 1
+                """,
+                (normalized_id, normalized_client_id),
+            ).fetchone() is not None:
+                raise PrincipalInvariantError("customer principals can belong to exactly one client")
             connection.execute(
                 """
                 insert into principal_client_roles (principal_id, client_id, role)
@@ -972,10 +996,13 @@ class Store:
         if normalized_role != "msp_admin":
             raise ValueError("unsupported principal global role")
         with self._connect() as connection:
-            if connection.execute(
-                "select 1 from principals where principal_id = ?", (normalized_id,)
-            ).fetchone() is None:
+            principal = connection.execute(
+                "select kind from principals where principal_id = ?", (normalized_id,)
+            ).fetchone()
+            if principal is None:
                 raise KeyError(normalized_id)
+            if str(principal["kind"]) != "staff":
+                raise PrincipalInvariantError("only staff principals can receive the msp_admin role")
             connection.execute(
                 "insert into principal_global_roles (principal_id, role) values (?, ?)",
                 (normalized_id, normalized_role),
@@ -988,6 +1015,8 @@ class Store:
         if not isinstance(active, bool):
             raise ValueError("active must be a boolean")
         with self._connect() as connection:
+            if not active:
+                _guard_last_msp_admin(connection, normalized_id)
             cursor = connection.execute(
                 "update principals set active = ? where principal_id = ?",
                 (int(active), normalized_id),
@@ -1015,25 +1044,53 @@ class Store:
         if not normalized_hash:
             raise ValueError("credential_hash must be non-empty")
         with self._connect() as connection:
-            cursor = connection.execute(
-                "update principal_credentials set active = 0 where credential_hash = ?",
+            credential = connection.execute(
+                """
+                select principal_id, active
+                from principal_credentials
+                where credential_hash = ?
+                """,
                 (normalized_hash,),
-            )
-            if cursor.rowcount != 1:
+            ).fetchone()
+            if credential is None:
                 rows = connection.execute(
-                    "select credential_hash from principal_credentials where credential_hash like ?",
+                    """
+                    select credential_hash, principal_id, active
+                    from principal_credentials
+                    where credential_hash like ?
+                    """,
                     (f"{normalized_hash}%",),
                 ).fetchall()
                 if len(rows) != 1:
                     raise KeyError(normalized_hash)
-                cursor = connection.execute(
-                    "update principal_credentials set active = 0 where credential_hash = ?",
-                    (str(rows[0][0]),),
+                credential_hash = str(rows[0][0])
+                principal_id = str(rows[0][1])
+                credential_active = bool(rows[0][2])
+            else:
+                credential_hash = normalized_hash
+                principal_id = str(credential["principal_id"])
+                credential_active = bool(credential["active"])
+            if credential_active:
+                _guard_last_msp_admin(
+                    connection,
+                    principal_id,
+                    revoke_one_credential=True,
                 )
+            cursor = connection.execute(
+                "update principal_credentials set active = 0 where credential_hash = ?",
+                (credential_hash,),
+            )
             if cursor.rowcount != 1:
                 raise KeyError(normalized_hash)
 
-    def remove_principal_client_role(self, principal_id: str, client_id: str, role: str) -> None:
+    def remove_principal_client_role(
+        self,
+        principal_id: str,
+        client_id: str,
+        role: str,
+        *,
+        actor_principal_id: str | None = None,
+    ) -> None:
         normalized_id = principal_id.strip()
         normalized_client_id = _normalize_client_id(client_id)
         normalized_role = _principal_role_label(role)
@@ -1045,6 +1102,35 @@ class Store:
         if normalized_role not in {"end_user", "viewer", "technician", "admin"}:
             raise ValueError("unsupported principal client role")
         with self._connect() as connection:
+            principal = connection.execute(
+                "select active from principals where principal_id = ?", (normalized_id,)
+            ).fetchone()
+            if principal is None:
+                raise KeyError(normalized_id)
+            existing_role = connection.execute(
+                """
+                select 1
+                from principal_client_roles
+                where principal_id = ? and client_id = ? and role = ?
+                """,
+                (normalized_id, normalized_client_id, normalized_role),
+            ).fetchone()
+            if existing_role is None:
+                raise KeyError((normalized_id, normalized_client_id, normalized_role))
+            remaining = connection.execute(
+                """
+                select count(*)
+                from principal_client_roles
+                where principal_id = ? and not (client_id = ? and role = ?)
+                """,
+                (normalized_id, normalized_client_id, normalized_role),
+            ).fetchone()
+            has_remaining_scope = int(remaining[0]) > 0
+            is_msp_admin = _is_msp_admin(connection, normalized_id)
+            if normalized_id == actor_principal_id and not has_remaining_scope and not is_msp_admin:
+                raise PrincipalInvariantError("the authenticated principal cannot remove its final access scope")
+            if bool(principal["active"]) and not has_remaining_scope and not is_msp_admin:
+                raise PrincipalInvariantError("an active principal must retain a client role or the msp_admin role")
             cursor = connection.execute(
                 """
                 delete from principal_client_roles
@@ -1063,6 +1149,24 @@ class Store:
         if normalized_role != "msp_admin":
             raise ValueError("unsupported principal global role")
         with self._connect() as connection:
+            principal = connection.execute(
+                "select active from principals where principal_id = ?", (normalized_id,)
+            ).fetchone()
+            if principal is None:
+                raise KeyError(normalized_id)
+            role_exists = connection.execute(
+                "select 1 from principal_global_roles where principal_id = ? and role = ?",
+                (normalized_id, normalized_role),
+            ).fetchone()
+            if role_exists is None:
+                raise KeyError((normalized_id, normalized_role))
+            _guard_last_msp_admin(connection, normalized_id)
+            remaining = connection.execute(
+                "select count(*) from principal_client_roles where principal_id = ?",
+                (normalized_id,),
+            ).fetchone()
+            if bool(principal["active"]) and int(remaining[0]) == 0:
+                raise PrincipalInvariantError("an active principal must retain a client role or the msp_admin role")
             cursor = connection.execute(
                 "delete from principal_global_roles where principal_id = ? and role = ?",
                 (normalized_id, normalized_role),
@@ -10947,6 +11051,54 @@ def _principal_role_label(role: str) -> str:
     if hasattr(role, "label"):
         return str(role.label()).strip().lower()
     return str(role).strip().lower()
+
+
+def _is_msp_admin(connection: sqlite3.Connection, principal_id: str) -> bool:
+    return connection.execute(
+        "select 1 from principal_global_roles where principal_id = ? and role = 'msp_admin'",
+        (principal_id,),
+    ).fetchone() is not None
+
+
+def _guard_last_msp_admin(
+    connection: sqlite3.Connection,
+    principal_id: str,
+    *,
+    revoke_one_credential: bool = False,
+) -> None:
+    principal = connection.execute(
+        """
+        select count(pc.credential_hash) as active_credential_count
+        from principals p
+        left join principal_global_roles pgr
+          on pgr.principal_id = p.principal_id and pgr.role = 'msp_admin'
+        left join principal_credentials pc
+          on pc.principal_id = p.principal_id and pc.active = 1
+        where p.principal_id = ? and p.active = 1 and pgr.principal_id is not null
+        group by p.principal_id
+        """,
+        (principal_id,),
+    ).fetchone()
+    if principal is None:
+        return
+    active_credential_count = int(principal["active_credential_count"])
+    if active_credential_count == 0:
+        return
+    if revoke_one_credential and active_credential_count > 1:
+        return
+    remaining = connection.execute(
+        """
+        select count(distinct p.principal_id)
+        from principals p
+        join principal_global_roles pgr
+          on pgr.principal_id = p.principal_id and pgr.role = 'msp_admin'
+        join principal_credentials pc
+          on pc.principal_id = p.principal_id and pc.active = 1
+        where p.active = 1
+        """
+    ).fetchone()
+    if int(remaining[0]) <= 1:
+        raise PrincipalInvariantError("the final active msp_admin credential cannot be removed")
 
 
 def _validate_event_retry_policy(max_retries: int, retry_delay_seconds: int) -> None:

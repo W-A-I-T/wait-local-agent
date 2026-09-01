@@ -1,66 +1,91 @@
-# Diagnostics & Support Specification
+# Diagnostics & Support
 
-> **Status: specification. Tracked for an upcoming release.**
+WAIT Local Agent ships appliance diagnostics and deterministic, redacted
+support bundles. Collection is allowlist-first: it selects fixed operational
+facts instead of copying broad configuration, environment, artifact, or content
+stores and trying to clean them afterward.
 
-This page defines a forthcoming Diagnostics & Support capability. It does not
-describe a feature that ships in the current public runtime.
+## Access boundary
 
-## Redacted support bundle
+The diagnostics API is restricted to an appliance or MSP administrator. An
+administrator bound to a single client cannot view or create an appliance-wide
+bundle. The Diagnostics & Support screen applies the same administrator gate in
+the browser, and the API remains the enforcement point.
 
-The capability will assemble a redacted bundle for troubleshooting without
-collecting customer work content by default. Bundle creation will remain a
-local, customer-initiated operation.
+## Local commands
 
-### What it will contain
+```bash
+wait-local-agent support doctor
+wait-local-agent support bundle --preview
+wait-local-agent support bundle --output /approved/private/location/support.zip
+wait-local-agent support upload --consent
+```
 
-- WAIT version, build commit, and update channel;
-- operating system and install type;
-- Docker, desktop, or CLI operating mode;
-- database schema version and integrity result;
-- safe configuration booleans only, never secret values;
+`support doctor` prints the allowlisted summary. Bundle preview writes no file.
+Bundle creation writes a private local archive, optionally copies it to the
+operator-selected output path, and prints its SHA-256 digest. Automatic upload
+is not implemented: `support upload` records a local refusal and exits nonzero,
+including when an endpoint is configured.
+
+## Local API
+
+- `GET /diagnostics/summary` returns the allowlisted operational summary.
+- `POST /diagnostics/bundle/preview` returns the fixed inclusion and exclusion
+  lists without writing a file.
+- `POST /diagnostics/bundle` creates and returns the ZIP archive.
+- `POST /diagnostics/bundle/upload` records and returns a refusal; it performs
+  no network transfer.
+
+Every request receives a validated `X-Correlation-ID` response header. A valid
+incoming value is reused; an invalid or missing value is replaced. Run entry
+points pass that identifier explicitly into execution recording.
+
+## Bundle contents
+
+Each bounded archive contains fixed JSON sections for:
+
+- WAIT version, build commit when cheaply available, operating system, install
+  mode, free disk, process start, and uptime;
+- database migration version and SQLite integrity result;
+- safe feature and connector-configuration booleans;
+- path existence and writability facts without path strings;
 - connector IDs and readiness;
-- installed pack IDs, versions, and signature status;
-- the last failed executions with redacted step errors;
-- recent audit event types and statuses;
-- healthcheck and hardening results;
-- available disk space;
-- process start time and uptime;
-- recent structured errors after redaction;
-- update-check status;
-- correlation IDs used to trace related local events; and
-- a manifest listing every bundle item with its SHA-256 hash.
+- installed pack IDs, versions, and signature-recording status;
+- recent failed execution metadata with scrubbed step errors;
+- recent audit event types and statuses only;
+- the latest hardening result and update-check status; and
+- recent valid correlation IDs.
 
-### What it excludes by default
+The archive never contains execution artifacts. It has fixed entry and total
+size caps and never walks the filesystem. If a section cannot be collected, its
+file contains a degraded marker rather than disappearing silently. The
+deterministic `manifest.json` records every section's size and SHA-256 plus an
+overall content digest. An optional case reference is stored only as a digest.
 
-- ticket bodies and email bodies;
+## Excluded data
+
+The fixed exclusion list covers:
+
+- ticket and email bodies;
 - knowledge documents;
-- prompts and model completions;
-- customer names;
-- user names and email addresses;
-- tenant IDs;
-- hostnames and IP addresses;
-- device serial numbers;
-- URLs carrying customer information; and
-- all keys, passwords, tokens, certificates, and private keys.
+- prompts and completions;
+- customer, user, and tenant identities;
+- user email addresses;
+- hostnames, IP addresses, device serial numbers, and customer URLs; and
+- keys, passwords, tokens, certificates, and private keys.
 
-## Required flow
+Free-text failure details receive additional defense-in-depth scrubbing for
+email addresses, IPv4 and IPv6 literals, URLs, hostnames, bearer and
+JWT-shaped material, cloud access-key shapes, long token shapes, secret-style
+assignments, and private identity assignments.
 
-1. **Generate locally.** The operator requests a new redacted bundle.
-2. **Preview exactly what is included.** The preview lists every file and field
-   before any transfer can occur.
-3. **Download.** The operator saves the bundle locally for their own review or
-   delivery process.
-4. **Optionally upload with explicit consent.** Upload is a separate action. The
-   destination and stated retention period must be shown before the operator
-   consents.
-5. **Record upload and deletion locally.** The appliance keeps a local record
-   of an upload and of any requested local or remote deletion, including its
-   status.
+## Private structured logs
 
-The download-only path will be fully supported for European and air-gapped
-installs. Upload will not be required for bundle creation, preview, or local
-download.
+Server startup and `serve` initialize bounded rotating JSON-line logs under the
+configured private log directory. Without `WAIT_LOG_DIR`, the directory is
+derived from the local data-file location. Permissions are reapplied to the
+active file and retained backups after rotation, and messages and exception
+text pass through the same scrubber before being written.
 
-Until this specification is implemented, use the local commands in
-[Troubleshooting](troubleshooting.md) and redact their output before sharing it.
-
+Offline mode does not contact an update or support service. Diagnostics,
+preview, and download remain available for air-gapped installations.

@@ -226,7 +226,8 @@ def test_orchestration_entries_skip_quarantine_before_side_effects(settings) -> 
     class CountingTool:
         calls = 0
 
-        def invoke(self, action_id, payload, actor, *, confirm=False, client_id=None):
+        def invoke(self, action_id, payload, actor, *, confirm=False, client_id=None, correlation_id=None):
+            del correlation_id
             self.calls += 1
             raise AssertionError("quarantined ticket reached a tool")
 
@@ -335,7 +336,8 @@ def test_workflow_runner_quarantine_skip_has_no_tool_or_run_side_effect(settings
     class CountingTool:
         calls = 0
 
-        def invoke(self, action_id, payload, actor, *, confirm=False, client_id=None):
+        def invoke(self, action_id, payload, actor, *, confirm=False, client_id=None, correlation_id=None):
+            del correlation_id
             self.calls += 1
             raise AssertionError("quarantined ticket reached a tool")
 

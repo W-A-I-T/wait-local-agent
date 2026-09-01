@@ -24,7 +24,6 @@ export function Settings() {
   const [launchPassportState, setLaunchPassportState] = useState<"loading" | "not_configured" | "available" | "unavailable">("loading");
 
   const [packPath, setPackPath] = useState("");
-  const [packLicense, setPackLicense] = useState("");
   const [secretName, setSecretName] = useState("");
   const [secretValue, setSecretValue] = useState("");
   const [backupPath, setBackupPath] = useState("");
@@ -110,12 +109,11 @@ export function Settings() {
       const body = await apiFetch<Record<string, string | number | boolean | null>>("/packs/install", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ tarball_path: packPath, license_key: packLicense || undefined })
+        body: JSON.stringify({ tarball_path: packPath })
       });
       setStatusMessage(`Pack installed: ${(body as { pack_name?: string }).pack_name || "done"}.`);
       await refresh();
       setPackPath("");
-      setPackLicense("");
     } catch (error) {
       setStatusMessage(error instanceof Error ? error.message : "Install failed.");
     }
@@ -284,6 +282,14 @@ export function Settings() {
             <dd>{providers ? (providers.ocr_enabled ? "enabled" : "disabled") : "unknown"}</dd>
           </div>
         </div>
+        {security?.demo_mode ? (
+          <div className="panel-subsection">
+            <h3>Demo mode is active.</h3>
+            <p className="screen-note">Write actions and Power Platform deployment are disabled while demo mode is on, regardless of any other configuration.</p>
+            <p className="screen-note">Other actions may also be unavailable if their own <code>WAIT_ALLOW_*</code> setting isn't configured on this appliance — that's separate from demo mode.</p>
+            <p className="screen-note">There is no in-app switch for this — <code>WAIT_DEMO_MODE</code> is read once when the appliance starts, so changing it requires editing the environment configuration and restarting the appliance.</p>
+          </div>
+        ) : null}
       </section>
 
       <section className="panel">
@@ -361,6 +367,37 @@ export function Settings() {
 
       <section className="panel">
         <div className="panel-heading">
+          <h2>Licensing</h2>
+          <span>Installed terms and packs</span>
+        </div>
+        <div className="table-list settings-list">
+          <div>
+            <dt>Runtime license</dt>
+            <dd>AGPL-3.0-only with WAIT additional terms</dd>
+          </div>
+          <div>
+            <dt>Attribution</dt>
+            <dd>The Powered by WAIT attribution must remain visible where the additional terms require it.</dd>
+          </div>
+        </div>
+        <p className="screen-note">
+          <a href="https://github.com/W-A-I-T/wait-local-agent/blob/main/docs/legal/community-vs-commercial-use.md" target="_blank" rel="noreferrer">
+            Read the community and commercial use guide
+          </a>
+        </p>
+        <div className="table-list">
+          {packs.length === 0 ? <p>No installed packs were found.</p> : null}
+          {packs.map((pack) => (
+            <div className="table-row" key={`license-${pack.name}`}>
+              <div><strong>{pack.name}</strong><span>v{pack.version}</span></div>
+              <span>Signature record: {formatSignatureStatus(pack.signature_status)}</span>
+            </div>
+          ))}
+        </div>
+      </section>
+
+      <section className="panel">
+        <div className="panel-heading">
           <h2>Packs</h2>
           <span>{packs.length} installed</span>
         </div>
@@ -384,10 +421,6 @@ export function Settings() {
             <label>
               Tarball path
               <input value={packPath} onChange={(event) => setPackPath(event.target.value)} />
-            </label>
-            <label>
-              License key
-              <input value={packLicense} onChange={(event) => setPackLicense(event.target.value)} />
             </label>
             <button type="submit">Install</button>
           </form>
@@ -497,6 +530,12 @@ export function Settings() {
       </section>
     </section>
   );
+}
+
+function formatSignatureStatus(status: string | undefined): string {
+  if (!status) return "Not recorded";
+  const readable = status.replaceAll("_", " ");
+  return `${readable.charAt(0).toUpperCase()}${readable.slice(1)}`;
 }
 
 function isLaunchPassportNotConfigured(error: unknown): boolean {

@@ -95,6 +95,13 @@ from wait_local_agent.consultant import (
 from wait_local_agent.consultant_use_cases import UseCaseCatalogError, list_consultant_use_cases
 from wait_local_agent.copilot_studio import CopilotStudioPlanError, build_copilot_studio_plan
 from wait_local_agent.delivery_plan import DeliveryPlanError, build_consultant_delivery_plan
+from wait_local_agent.diagnostics import (
+    BundleLimitError,
+    build_support_bundle,
+    collect_diagnostics,
+    preview_support_bundle,
+    support_upload_refusal,
+)
 from wait_local_agent.discovery import DiscoveryValidationError, build_solution_discovery
 from wait_local_agent.evaluation import (
     AgentServiceEvaluationExecutor,
@@ -103,6 +110,7 @@ from wait_local_agent.evaluation import (
     execute_tool_contract,
 )
 from wait_local_agent.event_dispatch import EventDispatcher
+from wait_local_agent.fs_permissions import create_private_directory, write_private_bytes
 from wait_local_agent.governance import GovernanceValidationError, evaluate_solution_governance
 from wait_local_agent.halopsa import HaloPSAClient, HaloReadResponse
 from wait_local_agent.hudu import HuduClient, HuduReadResponse
@@ -194,6 +202,7 @@ from wait_local_agent.services import TicketIntelligenceService
 from wait_local_agent.sharepoint import SharePointClient, SharePointReadResponse
 from wait_local_agent.smart_actions import SmartActionService
 from wait_local_agent.store import Store
+from wait_local_agent.structured_logging import configure_structured_logging
 from wait_local_agent.supervisor import (
     SupervisorPlanError,
     build_supervisor_delegation_plan,
@@ -248,6 +257,7 @@ hardening_app = typer.Typer(help="Appliance hardening check commands.")
 secrets_app = typer.Typer(help="Local Fernet secret vault commands.")
 update_app = typer.Typer(help="Signed update channel commands.")
 packs_app = typer.Typer(help="Installed pack commands.")
+support_app = typer.Typer(help="Redacted local diagnostics and support commands.")
 founder_app = typer.Typer(help="Founder pack commands.")
 reports_app = typer.Typer(help="Stored report list, detail, and export commands.")
 collectors_app = typer.Typer(help="Collector module protocol commands.")
@@ -287,6 +297,7 @@ app.add_typer(hardening_app, name="hardening")
 app.add_typer(secrets_app, name="secrets")
 app.add_typer(update_app, name="update")
 app.add_typer(packs_app, name="packs")
+app.add_typer(support_app, name="support")
 app.add_typer(founder_app, name="founder")
 LOGGER = logging.getLogger(__name__)
 _PACK_CLI_NAMES: set[str] = set()
@@ -446,7 +457,7 @@ def issue_principal_credential_command(
     if principal is None:
         raise typer.BadParameter("principal not found")
     if not principal.active:
-        raise typer.BadParameter("credentials require an active principal")
+        raise typer.BadParameter("inactive principals cannot receive credentials")
     raw_token = secrets.token_urlsafe(32)
     credential_hash = store.add_principal_credential(principal.principal_id, raw_token)
     store.add_audit_event(
@@ -551,7 +562,12 @@ def remove_principal_role_command(
         if client_id is None:
             raise typer.BadParameter("--client-id is required for a client role")
         try:
-            store.remove_principal_client_role(normalized_id, client_id, role)
+            store.remove_principal_client_role(
+                normalized_id,
+                client_id,
+                role,
+                actor_principal_id=context.principal_id,
+            )
         except (KeyError, ValueError) as exc:
             raise typer.BadParameter(str(exc)) from exc
         event_type = "principal.client_role.removed"
@@ -629,6 +645,50 @@ def doctor() -> None:
     typer.echo(f"m365_configured={m365_configured}")
     typer.echo(f"packs_discovered={len(load_pack_registry(settings).statuses)}")
     typer.echo(f"founder_lp_status={_doctor_founder_lp_status()}")
+
+
+@support_app.command("doctor")
+def support_doctor() -> None:
+    settings = load_settings()
+    typer.echo(json.dumps(collect_diagnostics(settings, Store(settings.data_path)).to_dict(), sort_keys=True))
+
+
+@support_app.command("bundle")
+def support_bundle(
+    preview: Annotated[bool, typer.Option("--preview", help="List included and excluded sections only.")] = False,
+    output: Annotated[Path | None, typer.Option("--output", help="Write the local archive to this path.")] = None,
+    case_id: Annotated[
+        str | None,
+        typer.Option("--case-id", help="Optional case reference hashed in the manifest."),
+    ] = None,
+) -> None:
+    settings = load_settings()
+    store = Store(settings.data_path)
+    if preview:
+        typer.echo(json.dumps(preview_support_bundle(settings, store, case_id=case_id).to_dict(), sort_keys=True))
+        return
+    try:
+        result = build_support_bundle(settings, store, case_id=case_id)
+    except BundleLimitError as exc:
+        raise typer.BadParameter("support bundle exceeded its safety limit") from exc
+    destination = result.path
+    if output is not None and output.absolute() != result.path.absolute():
+        create_private_directory(output.parent)
+        write_private_bytes(output, result.path.read_bytes(), replace_existing=True)
+        destination = output
+    typer.echo(f"bundle={destination} sha256={result.sha256} size_bytes={result.size_bytes}")
+
+
+@support_app.command("upload")
+def support_upload(
+    consent: Annotated[bool, typer.Option("--consent", help="Confirm the operator approved this transfer.")] = False,
+) -> None:
+    settings = load_settings()
+    store = Store(settings.data_path)
+    reason = support_upload_refusal(settings, consent=consent)
+    store.add_audit_event("support.upload_refused", "support-bundle", reason)
+    typer.echo(reason)
+    raise typer.Exit(code=1)
 
 
 @microsoft_provider_app.command("health")
@@ -5838,7 +5898,9 @@ def _format_update_status(status: UpdateStatus) -> str:
 
 @app.command()
 def serve(host: str = "127.0.0.1", port: int = 8788) -> None:
-    uvicorn.run(create_app(), host=host, port=port)
+    settings = load_settings()
+    configure_structured_logging(settings)
+    uvicorn.run(create_app(settings), host=host, port=port)
 
 
 def _sync_pack_cli_on_startup() -> None:

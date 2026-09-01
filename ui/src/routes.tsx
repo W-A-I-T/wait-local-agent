@@ -38,6 +38,8 @@ import { Clients } from "./screens/Clients";
 import { ClientDiscovery } from "./screens/ClientDiscovery";
 import { Login } from "./screens/Login";
 import { M365Actions } from "./screens/M365Actions";
+import { DiagnosticsSupport } from "./screens/DiagnosticsSupport";
+import { TechnicianPath } from "./screens/TechnicianPath";
 import { MicrosoftAdmin } from "./screens/MicrosoftAdmin";
 import { MicrosoftAdminAccess } from "./screens/MicrosoftAdminAccess";
 import { PrincipalsAdmin } from "./screens/PrincipalsAdmin";
@@ -166,10 +168,12 @@ export function AppRoutes() {
       <Route path="agents" element={<Agents />} />
       <Route path="agent-platform" element={<AgentPlatform />} />
       <Route path="technician-chat" element={<TechnicianChat />} />
+      <Route path="technician-path" element={<TechnicianPath />} />
       <Route path="backfills" element={<ActivityShell><Backfills /></ActivityShell>} />
       <Route path="executions" element={<ActivityShell><Executions /></ActivityShell>} />
       <Route path="settings" element={<Settings />} />
       <Route path="system/appliance-health" element={<ApplianceHealth />} />
+      <Route path="system/diagnostics" element={<DiagnosticsSupport />} />
       <Route path="system/extensions" element={<ExtensionsPacks />} />
       <Route path="system/identity-access" element={<MspAdminRoute description="Only MSP administrators can provision principals and credentials."><IdentityAccess /></MspAdminRoute>} />
       <Route path="integrations/mcp" element={<McpIntegration />} />

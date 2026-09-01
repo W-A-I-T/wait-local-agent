@@ -1,6 +1,6 @@
 # CLI Reference
 
-The 37 CLI registrations below are derived from the `add_typer` calls in
+The 38 CLI registrations below are derived from the `add_typer` calls in
 `src/wait_local_agent/cli.py`. Nested names are shown with their full command
 path.
 
@@ -33,6 +33,7 @@ path.
 | `events` | Event history; `events list`. |
 | `backup` | SQLite backup/restore. |
 | `hardening` | Appliance hardening checks. |
+| `support` | Allowlisted diagnostics and local support archives; `support doctor`, `support bundle --preview`, `support bundle --output PATH`, `support upload --consent`. |
 | `secrets` | Local Fernet vault operations; `secrets init`, `secrets list`, and explicit `secrets migrate-external-key`. |
 | `update` | Signed update-channel operations; `update check`. |
 | `packs` | Installed pack operations; `packs status`. |
@@ -49,3 +50,8 @@ The root app also exposes commands such as `doctor`, `ingest`, and
 `technician-chat`. Provider-specific connector commands are registered under
 `connectors`; they do not bypass the outbound, write, role, tenancy, or
 approval boundaries.
+
+`support bundle --preview` writes no archive. `support bundle --output PATH`
+creates a private bounded ZIP and prints its digest. `support upload` always
+records a local refusal and exits nonzero because this release has no automatic
+network sender.

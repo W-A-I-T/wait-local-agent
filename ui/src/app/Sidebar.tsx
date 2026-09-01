@@ -1,6 +1,7 @@
 import type { LucideIcon } from "lucide-react";
 import {
   Activity,
+  ListChecks,
   Bot,
   BarChart3,
   BookOpenText,
@@ -17,6 +18,7 @@ import {
   PackageOpen,
   ShieldCheck,
   Sparkles,
+  Stethoscope,
   UserRoundCog,
   Users,
   Workflow
@@ -53,6 +55,7 @@ const primaryNavigation: NavigationGroup[] = [
     items: [
       { to: "/tickets", label: "Tickets", icon: ClipboardList },
       { to: "/technician-chat", label: "Technician Chat", icon: MessageSquare },
+      { to: "/technician-path", label: "Technician Path", icon: ListChecks },
       { to: "/end-user", label: "End-user support", icon: LifeBuoy, endUserSupport: true },
       { to: "/microsoft-admin", label: "Microsoft Admin", icon: ShieldCheck, microsoftAdminCapability: true }
     ]
@@ -98,6 +101,7 @@ const advancedNavigation: NavItem[] = [
   { to: "/settings", label: "Settings", icon: Activity },
   { to: "/operations/reconciliation", label: "Sync / Reconciliation", icon: Database, adminOnly: true },
   { to: "/system/appliance-health", label: "Appliance Health", icon: ShieldCheck, adminOnly: true },
+  { to: "/system/diagnostics", label: "Diagnostics & Support", icon: Stethoscope, adminOnly: true },
   { to: "/system/extensions", label: "Extensions / Packs", icon: PackageOpen, adminOnly: true },
   { to: "/integrations/mcp", label: "MCP", icon: Network, adminOnly: true }
 ];

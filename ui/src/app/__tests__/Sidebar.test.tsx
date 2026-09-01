@@ -17,19 +17,19 @@ const mockedMicrosoftAdminAccess = vi.mocked(useMicrosoftAdminAccess);
 
 const destinations = [
   ["Overview", "/"], ["Clients", "/clients"],
-  ["Tickets", "/tickets"], ["Approvals", "/approvals"], ["Technician Chat", "/technician-chat"], ["Microsoft Admin", "/microsoft-admin"], ["M365 Actions", "/m365-actions"], ["Azure Lighthouse", "/microsoft-admin/azure-lighthouse"],
+  ["Tickets", "/tickets"], ["Approvals", "/approvals"], ["Technician Chat", "/technician-chat"], ["Technician Path", "/technician-path"], ["Microsoft Admin", "/microsoft-admin"], ["M365 Actions", "/m365-actions"], ["Azure Lighthouse", "/microsoft-admin/azure-lighthouse"],
   ["Automations", "/workflows"], ["Agents", "/agents"], ["Activity", "/activity/runs"],
   ["Solutions Architect", "/consultant"],
   ["Solution delivery", "/consultant/solution-delivery"],
   ["Reports", "/reports"], ["Analytics", "/analytics"], ["Audit", "/audit"], ["Collectors", "/collectors"],
   ["Launch Passport", "/founder"],
   ["Connectors", "/connectors"], ["Connector Instances", "/integrations/connector-instances"], ["Identity & Access", "/system/identity-access"], ["Microsoft Admin Access", "/microsoft-admin/access"], ["Knowledge", "/knowledge"], ["Settings", "/settings"],
-  ["Sync / Reconciliation", "/operations/reconciliation"], ["Appliance Health", "/system/appliance-health"], ["Extensions / Packs", "/system/extensions"], ["MCP", "/integrations/mcp"]
+  ["Sync / Reconciliation", "/operations/reconciliation"], ["Appliance Health", "/system/appliance-health"], ["Diagnostics & Support", "/system/diagnostics"], ["Extensions / Packs", "/system/extensions"], ["MCP", "/integrations/mcp"]
 ] as const;
 
 const groupedDestinations = {
   Operations: [
-    ["Tickets", "/tickets"], ["Technician Chat", "/technician-chat"], ["Microsoft Admin", "/microsoft-admin"]
+    ["Tickets", "/tickets"], ["Technician Chat", "/technician-chat"], ["Technician Path", "/technician-path"], ["Microsoft Admin", "/microsoft-admin"]
   ],
   Control: [
     ["Connectors", "/connectors"], ["Automations", "/workflows"], ["Approvals", "/approvals"], ["Activity", "/activity/runs"], ["Audit", "/audit"], ["Reports", "/reports"]
@@ -44,7 +44,7 @@ const groupedDestinations = {
 
 const advancedDestinations = [
   ["Analytics", "/analytics"], ["Collectors", "/collectors"], ["Launch Passport", "/founder"],
-  ["Connector Instances", "/integrations/connector-instances"], ["Identity & Access", "/system/identity-access"], ["Microsoft Admin Access", "/microsoft-admin/access"], ["Settings", "/settings"], ["Sync / Reconciliation", "/operations/reconciliation"], ["Appliance Health", "/system/appliance-health"], ["Extensions / Packs", "/system/extensions"], ["MCP", "/integrations/mcp"]
+  ["Connector Instances", "/integrations/connector-instances"], ["Identity & Access", "/system/identity-access"], ["Microsoft Admin Access", "/microsoft-admin/access"], ["Settings", "/settings"], ["Sync / Reconciliation", "/operations/reconciliation"], ["Appliance Health", "/system/appliance-health"], ["Diagnostics & Support", "/system/diagnostics"], ["Extensions / Packs", "/system/extensions"], ["MCP", "/integrations/mcp"]
 ] as const;
 
 function renderSidebar(
@@ -171,7 +171,7 @@ describe("Sidebar navigation IA", () => {
     renderSidebar("viewer");
     fireEvent.click(screen.getByText("System / Advanced"));
 
-    for (const label of ["Connector Instances", "Identity & Access", "Microsoft Admin Access", "Sync / Reconciliation", "Appliance Health", "Extensions / Packs", "MCP"]) {
+    for (const label of ["Connector Instances", "Identity & Access", "Microsoft Admin Access", "Sync / Reconciliation", "Appliance Health", "Diagnostics & Support", "Extensions / Packs", "MCP"]) {
       expect(screen.queryByRole("link", { name: label })).not.toBeInTheDocument();
     }
 
