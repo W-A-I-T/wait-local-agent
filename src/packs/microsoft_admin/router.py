@@ -281,6 +281,7 @@ def create_router() -> APIRouter:
 
 def _clients(request: Request) -> tuple[MicrosoftAdminGraphClient, M365GraphClient]:
     settings = cast(Settings, request.app.state.settings)
+    connection_resolver = getattr(request.app.state, "m365_connection_resolver", None)
     admin_transport = cast(
         httpx.BaseTransport | None,
         getattr(request.app.state, "microsoft_admin_transport", None),
@@ -289,9 +290,22 @@ def _clients(request: Request) -> tuple[MicrosoftAdminGraphClient, M365GraphClie
         httpx.BaseTransport | None,
         getattr(request.app.state, "m365_transport", None),
     )
+    if connection_resolver is None:
+        return (
+            MicrosoftAdminGraphClient(settings, transport=admin_transport),
+            M365GraphClient(settings, transport=m365_transport),
+        )
     return (
-        MicrosoftAdminGraphClient(settings, transport=admin_transport),
-        M365GraphClient(settings, transport=m365_transport),
+        MicrosoftAdminGraphClient(
+            settings,
+            transport=admin_transport,
+            connection_resolver=connection_resolver,
+        ),
+        M365GraphClient(
+            settings,
+            transport=m365_transport,
+            connection_resolver=connection_resolver,
+        ),
     )
 
 

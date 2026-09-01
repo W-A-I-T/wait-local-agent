@@ -20,6 +20,13 @@ canonical JSON representation. Component IDs are UUID5 values derived from
 the tenant and stable component path. No timestamp, random value, provider
 call, PAC invocation, or credential is involved.
 
+A flow artifact must carry its trigger and actions under `power_automate`, the
+same shape returned by `POST /consultant/workflows/power-automate/plan`. The
+emitted `flow.yml` records the trigger type and name plus every action's unique
+name, display name, kind, type, method, optional existing tool reference, and
+approval flag. A flow artifact missing that section is rejected rather than
+packaged with empty flow metadata.
+
 ## API
 
 Technicians can build and validate a tenant-scoped package:

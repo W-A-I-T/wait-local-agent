@@ -5,6 +5,7 @@ import json
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from types import SimpleNamespace
 from typing import cast
 
 import pytest
@@ -23,6 +24,7 @@ from wait_local_agent.scheduler import (
     validate_cron_expression,
     validate_schedule,
     validate_scheduled_report_params,
+    validate_timezone,
 )
 from wait_local_agent.security import require_bearer_authorization
 from wait_local_agent.smart_actions import (
@@ -439,6 +441,183 @@ def test_scheduler_validation_supports_connector_poll_targets() -> None:
         _validate_schedule_target("connector_poll", "template", None, "connector-1")
     with pytest.raises(ValueError, match="connector_poll schedules require entity_id only"):
         _validate_schedule_target("connector_poll", "", "agent-1", "connector-1")
+
+
+def test_scheduler_graph_sync_validates_runs_and_audits(tmp_path: Path, monkeypatch) -> None:
+    _validate_schedule_target("graph_sync", "", None, "client-a")
+    with pytest.raises(ValueError, match="graph_sync schedules require entity_id only"):
+        _validate_schedule_target("graph_sync", "template", None, "client-a")
+
+    store = Store(tmp_path / "graph-sync.db")
+    calls: list[str] = []
+
+    def run_graph_sync(client_id: str) -> dict[str, str]:
+        calls.append(client_id)
+        return {"status": "ready"}
+
+    manager = SchedulerManager(store, enabled=False, graph_sync_runner=run_graph_sync)
+    scheduled_job = manager.register(
+        "",
+        "0 9 * * *",
+        {"client_id": "client-a"},
+        job_kind="graph_sync",
+        entity_id="client-a",
+    )
+
+    async def run_in_thread(function, *args, **kwargs):
+        return function(*args, **kwargs)
+
+    monkeypatch.setattr("wait_local_agent.scheduler.asyncio.to_thread", run_in_thread)
+    asyncio.run(manager._run_job(scheduled_job))  # noqa: SLF001
+
+    assert calls == ["client-a"]
+    events = store.list_audit_events(client_id="client-a")
+    assert any(
+        event.event_type == "scheduled_job.graph_sync" and "completed" in event.detail
+        for event in events
+    )
+
+
+def test_scheduler_graph_sync_scope_validation_skip_and_failure_are_isolated(
+    tmp_path: Path, monkeypatch
+) -> None:
+    store = Store(tmp_path / "graph-sync-edges.db")
+    with pytest.raises(ValueError, match="must match entity_id"):
+        SchedulerManager(store, enabled=False).register(
+            "", "0 9 * * *", {"client_id": "other"}, job_kind="graph_sync", entity_id="client-a"
+        )
+
+    async def run_in_thread(function, *args, **kwargs):
+        return function(*args, **kwargs)
+
+    monkeypatch.setattr("wait_local_agent.scheduler.asyncio.to_thread", run_in_thread)
+    valid_job = ScheduledJob(
+        id=7, template_id="", cron="0 9 * * *", params_json="{}", paused=False,
+        created_at="", updated_at="", job_kind="graph_sync", entity_id="client-a",
+    )
+    asyncio.run(SchedulerManager(store, enabled=False)._run_job(replace(valid_job, entity_id=None)))
+    manager = SchedulerManager(
+        store, enabled=False, graph_sync_runner=lambda _client: (_ for _ in ()).throw(
+            RuntimeError("access_token=graph-secret")
+        )
+    )
+    asyncio.run(manager._run_job(valid_job))
+    event = next(event for event in store.list_audit_events() if event.event_type == "scheduled_job.graph_sync")
+    assert "graph-secret" not in event.detail
+    assert "access_token" not in event.detail
+
+
+def test_scheduler_skips_quarantined_workflow_playbook_and_agent_jobs(tmp_path: Path) -> None:
+    store = Store(tmp_path / "quarantine-skip.db")
+    manager = SchedulerManager(store, enabled=False)
+    manager._is_quarantined_ticket = lambda *_args: True  # type: ignore[method-assign]  # noqa: SLF001
+
+    workflow = ScheduledJob(
+        id=1, template_id="template", cron="0 9 * * *", params_json=json.dumps({"ticket_id": "T-1"}),
+        paused=False, created_at="", updated_at="", job_kind="workflow",
+    )
+    playbook = replace(workflow, id=2, job_kind="playbook")
+    agent = replace(workflow, id=3, job_kind="agent", agent_id="agent-1", entity_id="T-1")
+
+    async def scenario() -> None:
+        await manager._run_job(workflow)  # noqa: SLF001
+        await manager._run_job(playbook)  # noqa: SLF001
+        await manager._run_job(agent)  # noqa: SLF001
+
+    asyncio.run(scenario())
+    assert store.list_audit_events() == []
+
+
+def test_scheduler_workflow_and_playbook_input_failures_are_audited(
+    tmp_path: Path, monkeypatch
+) -> None:
+    store = Store(tmp_path / "scheduled-input-failures.db")
+    manager = SchedulerManager(store, enabled=False)
+    workflow = ScheduledJob(
+        id=1, template_id="template", cron="0 9 * * *", params_json=json.dumps({"ticket_id": "T-1", "input": []}),
+        paused=False, created_at="", updated_at="", job_kind="workflow",
+    )
+    playbook = replace(workflow, id=2, job_kind="playbook")
+
+    async def scenario() -> None:
+        for job, message in ((workflow, "workflow input"), (playbook, "playbook input")):
+            with pytest.raises(ValueError, match=message):
+                await manager._run_job(job)  # noqa: SLF001
+
+    asyncio.run(scenario())
+    assert len([e for e in store.list_audit_events() if e.event_type == "scheduled_job.trigger_failed"]) == 2
+
+    def fail_playbook(*_args, **_kwargs):
+        raise RuntimeError("provider access_token=secret")
+
+    monkeypatch.setattr("wait_local_agent.scheduler.run_msp_playbook", fail_playbook)
+    failing = replace(playbook, id=3, params_json=json.dumps({"ticket_id": "T-1", "input": {}}))
+    with pytest.raises(RuntimeError):
+        asyncio.run(manager._run_job(failing))  # noqa: SLF001
+    event = next(e for e in store.list_audit_events() if e.subject_id == "3")
+    assert "secret" not in event.detail
+
+
+def test_scheduler_deterministic_noop_and_validation_edges(tmp_path: Path, monkeypatch) -> None:
+    store = Store(tmp_path / "scheduler-edges.db")
+    manager = SchedulerManager(store, enabled=False)
+    job = ScheduledJob(
+        id=4, template_id="template", cron="0 9 * * *", params_json=json.dumps({"ticket_id": "T-1"}),
+        paused=False, created_at="", updated_at="", job_kind="workflow",
+    )
+
+    monkeypatch.setattr(
+        "wait_local_agent.scheduler.run_workflow_template",
+        lambda *_args, **_kwargs: SimpleNamespace(id=None),
+    )
+    asyncio.run(manager._run_job(job))  # noqa: SLF001
+    manager._dispatch_completion(  # noqa: SLF001
+        run_id=None,
+        ticket_id="T-1",
+        template_id="template",
+        status="completed",
+        actor="scheduler",
+    )
+    manager._retry_due_event_deliveries()  # noqa: SLF001
+
+    with pytest.raises(ValueError, match="unsupported scheduled job kind"):
+        _validate_schedule_target("unknown", "", None, None)
+    with pytest.raises(ValueError, match="playbook schedules"):
+        _validate_schedule_target("playbook", "", None, None)
+    with pytest.raises(ValueError, match="valid IANA timezone"):
+        validate_timezone("")
+    with pytest.raises(ValueError, match="scheduled report type"):
+        asyncio.run(manager._run_report_job(job, {"client_id": "acme", "period_days": 1}, "acme"))  # noqa: SLF001
+    with pytest.raises(ValueError, match="follow_up_after_days"):
+        validate_scheduled_report_params({"client_id": "acme", "period_days": 1, "follow_up_after_days": 0})
+    with pytest.raises(ValueError, match="period_days"):
+        validate_scheduled_report_params({"client_id": "acme", "period_days": 0})
+    with pytest.raises(ValueError, match="include client_id"):
+        validate_scheduled_report_params({"period_days": 1})
+
+
+def test_scheduler_connector_poll_missing_entity_and_failure_are_audited(tmp_path: Path, monkeypatch) -> None:
+    store = Store(tmp_path / "connector-poll-edges.db")
+    manager = SchedulerManager(store, enabled=False, ingestion_poller=cast(IngestionPoller, object()))
+    missing = ScheduledJob(
+        id=1, template_id="", cron="0 9 * * *", params_json="{}", paused=False,
+        created_at="", updated_at="", job_kind="connector_poll", entity_id=None,
+    )
+    asyncio.run(manager._run_job(missing))
+
+    class FailingPoller:
+        def poll_instance(self, *_args, **_kwargs):
+            raise RuntimeError("poll failed")
+
+    manager = SchedulerManager(store, enabled=False, ingestion_poller=cast(IngestionPoller, FailingPoller()))
+
+    async def run_in_thread(function, *args, **kwargs):
+        return function(*args, **kwargs)
+
+    monkeypatch.setattr("wait_local_agent.scheduler.asyncio.to_thread", run_in_thread)
+    job = replace(missing, id=2, entity_id="connector-1")
+    asyncio.run(manager._run_job(job))
+    assert any(event.detail == "scheduled sync -> failed" for event in store.list_audit_events())
 
 
 @pytest.mark.parametrize("status", ["failed", "degraded", "skipped_locked"])

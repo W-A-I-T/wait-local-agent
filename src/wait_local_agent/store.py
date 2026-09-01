@@ -35,6 +35,7 @@ from wait_local_agent.models import (
     AuditEvent,
     CanonicalAsset,
     Client,
+    ClientCandidate,
     ClientConnectorMapping,
     CollectorRun,
     CollectorSource,
@@ -321,6 +322,7 @@ class Store:
                     Migration(7, "operational_graph", self._apply_operational_graph_migration),
                     Migration(8, "auth_sessions_and_config", self._apply_auth_sessions_and_config_migration),
                     Migration(9, "principal_identities", self._apply_principal_identities_migration),
+                    Migration(10, "client_candidates", self._apply_client_candidates_migration),
                 )
             )
             self._apply_startup_repairs(connection)
@@ -762,6 +764,35 @@ class Store:
         )
 
     @staticmethod
+    def _apply_client_candidates_migration(connection: sqlite3.Connection) -> None:
+        connection.execute(
+            """
+            create table if not exists client_candidates (
+                candidate_id text primary key,
+                connector_instance_id text not null references connector_instances(connector_instance_id)
+                  on delete cascade,
+                provider text not null,
+                external_id text not null,
+                display_name text not null,
+                domains_json text not null default '[]',
+                provenance text not null,
+                first_seen text not null,
+                last_seen text not null,
+                match_state text not null check (
+                  match_state in ('verified','proposed','ambiguous','unmatched','conflicting','dismissed')
+                ),
+                matched_client_id text references clients(client_id),
+                match_reason text not null default '',
+                confidence real not null default 0.0,
+                unique(connector_instance_id, external_id)
+            )
+            """
+        )
+        connection.execute(
+            "create index if not exists idx_client_candidates_state on client_candidates(match_state, last_seen desc)"
+        )
+
+    @staticmethod
     def _apply_operational_graph_migration(connection: sqlite3.Connection) -> None:
         """Add the client-scoped operational graph tables without changing existing data."""
 
@@ -1151,6 +1182,155 @@ class Store:
                 """,
                 (normalized_key, config_value, utc_now(), updated_by),
             )
+
+    def upsert_client_candidate(
+        self,
+        candidate: ClientCandidate,
+        *,
+        preserve_state: bool = True,
+    ) -> ClientCandidate:
+        """Insert or refresh one provider candidate without duplicating it."""
+
+        if not candidate.candidate_id.strip() or not candidate.connector_instance_id.strip():
+            raise ValueError("candidate and connector instance IDs must be non-empty")
+        if not candidate.external_id.strip() or not candidate.display_name.strip():
+            raise ValueError("candidate external_id and display_name must be non-empty")
+        if candidate.match_state not in {"verified", "proposed", "ambiguous", "unmatched", "conflicting", "dismissed"}:
+            raise ValueError("unsupported candidate match state")
+        with self._connect() as connection:
+            connection.execute(
+                """
+                insert into client_candidates
+                  (candidate_id, connector_instance_id, provider, external_id, display_name,
+                   domains_json, provenance, first_seen, last_seen, match_state,
+                   matched_client_id, match_reason, confidence)
+                values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                on conflict(connector_instance_id, external_id) do update set
+                  display_name = excluded.display_name,
+                  domains_json = excluded.domains_json,
+                  provenance = excluded.provenance,
+                  last_seen = excluded.last_seen,
+                  match_state = case
+                    when client_candidates.match_state = 'verified' then 'verified'
+                    when client_candidates.match_state = 'dismissed' then 'dismissed'
+                    when ? then excluded.match_state
+                    else client_candidates.match_state
+                  end,
+                  matched_client_id = case
+                    when client_candidates.match_state in ('verified', 'dismissed')
+                      then client_candidates.matched_client_id
+                    when ? then excluded.matched_client_id
+                    else client_candidates.matched_client_id
+                  end,
+                  match_reason = case
+                    when client_candidates.match_state in ('verified', 'dismissed') then client_candidates.match_reason
+                    when ? then excluded.match_reason
+                    else client_candidates.match_reason
+                  end,
+                  confidence = case
+                    when client_candidates.match_state in ('verified', 'dismissed') then client_candidates.confidence
+                    when ? then excluded.confidence
+                    else client_candidates.confidence
+                  end
+                """,
+                (
+                    candidate.candidate_id,
+                    candidate.connector_instance_id,
+                    candidate.provider,
+                    candidate.external_id,
+                    candidate.display_name,
+                    candidate.domains_json,
+                    candidate.provenance,
+                    candidate.first_seen,
+                    candidate.last_seen,
+                    candidate.match_state,
+                    candidate.matched_client_id,
+                    candidate.match_reason,
+                    candidate.confidence,
+                    int(not preserve_state),
+                    int(not preserve_state),
+                    int(not preserve_state),
+                    int(not preserve_state),
+                ),
+            )
+            row = connection.execute(
+                "select * from client_candidates where connector_instance_id = ? and external_id = ?",
+                (candidate.connector_instance_id, candidate.external_id),
+            ).fetchone()
+        if row is None:  # pragma: no cover - successful insert/upsert always returns a row
+            raise RuntimeError("client candidate could not be stored")
+        return _candidate_from_row(row)
+
+    def list_client_candidates(
+        self,
+        *,
+        match_state: str | None = None,
+        offset: int = 0,
+        limit: int = 100,
+    ) -> list[ClientCandidate]:
+        if offset < 0 or limit < 1 or limit > 500:
+            raise ValueError("candidate pagination is out of bounds")
+        clauses: list[str] = []
+        params: list[object] = []
+        if match_state is not None:
+            if match_state not in {"verified", "proposed", "ambiguous", "unmatched", "conflicting", "dismissed"}:
+                raise ValueError("unsupported candidate match state")
+            clauses.append("match_state = ?")
+            params.append(match_state)
+        where = f"where {' and '.join(clauses)}" if clauses else ""
+        with self._connect() as connection:
+            rows = connection.execute(
+                f"select * from client_candidates {where} order by last_seen desc, candidate_id limit ? offset ?",  # nosec B608: where is fixed internal SQL
+                [*params, limit, offset],
+            ).fetchall()
+        return [_candidate_from_row(row) for row in rows]
+
+    def get_client_candidate(self, candidate_id: str) -> ClientCandidate | None:
+        normalized_id = _normalize_client_id(candidate_id)
+        if normalized_id is None:
+            return None
+        with self._connect() as connection:
+            row = connection.execute(
+                "select * from client_candidates where candidate_id = ?", (normalized_id,)
+            ).fetchone()
+        return _candidate_from_row(row) if row else None
+
+    def set_client_candidate_state(
+        self,
+        candidate_id: str,
+        match_state: str,
+        *,
+        matched_client_id: str | None = None,
+        match_reason: str = "",
+        confidence: float = 0.0,
+    ) -> ClientCandidate | None:
+        normalized_id = _normalize_client_id(candidate_id)
+        if normalized_id is None:
+            return None
+        if match_state not in {"verified", "proposed", "ambiguous", "unmatched", "conflicting", "dismissed"}:
+            raise ValueError("unsupported candidate match state")
+        if not 0.0 <= confidence <= 1.0:
+            raise ValueError("candidate confidence must be between 0 and 1")
+        with self._connect() as connection:
+            connection.execute(
+                """
+                update client_candidates
+                set match_state = ?, matched_client_id = ?, match_reason = ?, confidence = ?
+                where candidate_id = ?
+                """,
+                (match_state, matched_client_id, match_reason, confidence, normalized_id),
+            )
+            row = connection.execute(
+                "select * from client_candidates where candidate_id = ?", (normalized_id,)
+            ).fetchone()
+        return _candidate_from_row(row) if row else None
+
+    def count_client_candidates(self) -> dict[str, int]:
+        with self._connect() as connection:
+            rows = connection.execute(
+                "select match_state, count(*) as count from client_candidates group by match_state"
+            ).fetchall()
+        return {str(row["match_state"]): int(row["count"]) for row in rows}
 
     def add_principal_identity(
         self,
@@ -3748,6 +3928,7 @@ class Store:
             effective_ticket = replace(ticket, client_id=normalized_client_id, source_system="local")
             with self._connect() as connection:
                 self._write_ingested_ticket(connection, effective_ticket)
+            self._seed_ticket_graph(normalized_client_id, effective_ticket.id)
             written += 1
         return IngestSummary(written=written, quarantined=0)
 
@@ -3764,6 +3945,7 @@ class Store:
             raise ValueError("connector_instance_id must be non-empty")
         written = 0
         quarantined = 0
+        graph_seeds: list[tuple[str, str]] = []
         with self._connect() as connection:
             connection.execute("begin immediate")
             instance = connection.execute(
@@ -3872,6 +4054,7 @@ class Store:
                         changed_at=record.updated_at.strip() or record.created_at.strip() or utc_now(),
                         source="ticket_ingest",
                     )
+                graph_seeds.append((resolved_client_id, persisted_id))
                 self._add_audit_event(
                     connection,
                     "ticket.ingested",
@@ -3880,7 +4063,16 @@ class Store:
                     client_id=resolved_client_id,
                 )
                 written += 1
+        for resolved_client_id, ticket_id in graph_seeds:
+            self._seed_ticket_graph(resolved_client_id, ticket_id)
         return IngestSummary(written=written, quarantined=quarantined)
+
+    def _seed_ticket_graph(self, client_id: str, ticket_id: str) -> None:
+        # Keep the graph service import local: Store owns the persistence layer
+        # and operational_graph depends on Store for its idempotent writes.
+        from wait_local_agent.operational_graph import OperationalGraphService
+
+        OperationalGraphService(self).seed_ticket_requester(client_id, ticket_id)
 
     def _upsert_provider_ticket(
         self,
@@ -8123,6 +8315,14 @@ class Store:
                 completed_at=exercise.completed_at,
                 client_id=client_id,
             )
+        # Collector runs may be host-scoped and therefore have no client.  Do
+        # not let a result asset's optional ownership turn that into a graph
+        # write: graph refs require a real, singular client scope.
+        normalized_client_id = _normalize_client_id(client_id)
+        if normalized_client_id is not None and self.get_client(AllClients(), normalized_client_id) is not None:
+            from wait_local_agent.operational_graph import OperationalGraphService
+
+            OperationalGraphService(self).seed_canonical_assets(normalized_client_id)
 
     def upsert_canonical_asset(
         self,
@@ -8447,20 +8647,108 @@ class Store:
         scope: ClientScope | str | None,
         *,
         entity_type: str | None = None,
+        source_system: str | None = None,
+        link_type: str | None = None,
+        offset: int = 0,
+        limit: int | None = None,
     ) -> list[EntityRef]:
         normalized_entity_type = _validated_entity_type(entity_type) if entity_type is not None else None
+        normalized_source_system = (
+            _required_graph_text(source_system, "source_system") if source_system is not None else None
+        )
+        normalized_link_type = _validated_link_type(link_type) if link_type is not None else None
+        _validate_graph_paging(offset, limit)
         client_predicate, client_params = _client_scope_predicate(scope)
         clauses = [client_predicate]
         params: list[object] = list(client_params)
         if normalized_entity_type is not None:
             clauses.append("entity_type = ?")
             params.append(normalized_entity_type)
+        if normalized_source_system is not None:
+            clauses.append("source_system = ?")
+            params.append(normalized_source_system)
+        if normalized_link_type is not None:
+            clauses.append(
+                "exists ("
+                "select 1 from entity_links l "
+                "where l.client_id = external_entity_refs.client_id "
+                "and (l.from_ref_id = external_entity_refs.id or l.to_ref_id = external_entity_refs.id) "
+                "and l.link_type = ?"
+                ")"
+            )
+            params.append(normalized_link_type)
+        paging = ""
+        if limit is not None:
+            paging = " limit ? offset ?"
+            params.extend((limit, offset))
+        elif offset:
+            paging = " limit -1 offset ?"
+            params.append(offset)
         with self._connect() as connection:
             rows = connection.execute(
-                f"select * from external_entity_refs where {' and '.join(clauses)} order by id",  # nosec B608: predicates are fixed internal strings; tenant values are parameterized
+                f"select * from external_entity_refs where {' and '.join(clauses)} order by id{paging}",  # nosec B608: predicates are fixed internal strings; tenant values are parameterized
                 params,
             ).fetchall()
         return [EntityRef(**dict(row)) for row in rows]
+
+    def count_entity_refs(
+        self,
+        scope: ClientScope | str | None,
+        *,
+        entity_type: str | None = None,
+        source_system: str | None = None,
+        link_type: str | None = None,
+    ) -> int:
+        normalized_entity_type = _validated_entity_type(entity_type) if entity_type is not None else None
+        normalized_source_system = (
+            _required_graph_text(source_system, "source_system") if source_system is not None else None
+        )
+        normalized_link_type = _validated_link_type(link_type) if link_type is not None else None
+        client_predicate, client_params = _client_scope_predicate(scope)
+        clauses = [client_predicate]
+        params: list[object] = list(client_params)
+        if normalized_entity_type is not None:
+            clauses.append("entity_type = ?")
+            params.append(normalized_entity_type)
+        if normalized_source_system is not None:
+            clauses.append("source_system = ?")
+            params.append(normalized_source_system)
+        if normalized_link_type is not None:
+            clauses.append(
+                "exists ("
+                "select 1 from entity_links l "
+                "where l.client_id = external_entity_refs.client_id "
+                "and (l.from_ref_id = external_entity_refs.id or l.to_ref_id = external_entity_refs.id) "
+                "and l.link_type = ?"
+                ")"
+            )
+            params.append(normalized_link_type)
+        with self._connect() as connection:
+            row = connection.execute(
+                f"select count(*) from external_entity_refs where {' and '.join(clauses)}",  # nosec B608
+                params,
+            ).fetchone()
+        return int(row[0]) if row is not None else 0
+
+    def count_entity_refs_by_type(
+        self, scope: ClientScope | str | None, *, source_system: str | None = None
+    ) -> dict[str, int]:
+        normalized_source_system = (
+            _required_graph_text(source_system, "source_system") if source_system is not None else None
+        )
+        client_predicate, client_params = _client_scope_predicate(scope)
+        clauses = [client_predicate]
+        params: list[object] = list(client_params)
+        if normalized_source_system is not None:
+            clauses.append("source_system = ?")
+            params.append(normalized_source_system)
+        with self._connect() as connection:
+            rows = connection.execute(
+                f"select entity_type, count(*) from external_entity_refs "
+                f"where {' and '.join(clauses)} group by entity_type",  # nosec B608
+                params,
+            ).fetchall()
+        return {str(row[0]): int(row[1]) for row in rows}
 
     def upsert_entity_link(
         self,
@@ -8570,6 +8858,108 @@ class Store:
                 params,
             ).fetchall()
         return [EntityLink(**dict(row)) for row in rows]
+
+    def list_entity_links_page(
+        self,
+        scope: ClientScope | str | None,
+        *,
+        entity_type: str | None = None,
+        source_system: str | None = None,
+        link_type: str | None = None,
+        offset: int = 0,
+        limit: int = 200,
+    ) -> list[EntityLink]:
+        normalized_entity_type = _validated_entity_type(entity_type) if entity_type is not None else None
+        normalized_source_system = (
+            _required_graph_text(source_system, "source_system") if source_system is not None else None
+        )
+        normalized_link_type = _validated_link_type(link_type) if link_type is not None else None
+        _validate_graph_paging(offset, limit)
+        link_predicate, link_params = _client_scope_predicate(scope, "l.client_id")
+        from_predicate, from_params = _client_scope_predicate(scope, "f.client_id")
+        to_predicate, to_params = _client_scope_predicate(scope, "t.client_id")
+        clauses = [link_predicate, from_predicate, to_predicate]
+        params: list[object] = [*link_params, *from_params, *to_params]
+        if normalized_entity_type is not None and normalized_source_system is not None:
+            clauses.append(
+                "((f.entity_type = ? and f.source_system = ?) "
+                "or (t.entity_type = ? and t.source_system = ?))"
+            )
+            params.extend(
+                (normalized_entity_type, normalized_source_system, normalized_entity_type, normalized_source_system)
+            )
+        elif normalized_entity_type is not None:
+            clauses.append("(f.entity_type = ? or t.entity_type = ?)")
+            params.extend((normalized_entity_type, normalized_entity_type))
+        elif normalized_source_system is not None:
+            clauses.append("(f.source_system = ? or t.source_system = ?)")
+            params.extend((normalized_source_system, normalized_source_system))
+        if normalized_link_type is not None:
+            clauses.append("l.link_type = ?")
+            params.append(normalized_link_type)
+        params.extend((limit, offset))
+        with self._connect() as connection:
+            rows = connection.execute(
+                f"""
+                select l.*
+                from entity_links l
+                join external_entity_refs f on f.id = l.from_ref_id
+                join external_entity_refs t on t.id = l.to_ref_id
+                where {' and '.join(clauses)}
+                order by l.id
+                limit ? offset ?
+                """,  # nosec B608: predicates are fixed internal strings; tenant values are parameterized
+                params,
+            ).fetchall()
+        return [EntityLink(**dict(row)) for row in rows]
+
+    def count_entity_links(
+        self,
+        scope: ClientScope | str | None,
+        *,
+        entity_type: str | None = None,
+        source_system: str | None = None,
+        link_type: str | None = None,
+    ) -> int:
+        normalized_entity_type = _validated_entity_type(entity_type) if entity_type is not None else None
+        normalized_source_system = (
+            _required_graph_text(source_system, "source_system") if source_system is not None else None
+        )
+        normalized_link_type = _validated_link_type(link_type) if link_type is not None else None
+        link_predicate, link_params = _client_scope_predicate(scope, "l.client_id")
+        from_predicate, from_params = _client_scope_predicate(scope, "f.client_id")
+        to_predicate, to_params = _client_scope_predicate(scope, "t.client_id")
+        clauses = [link_predicate, from_predicate, to_predicate]
+        params: list[object] = [*link_params, *from_params, *to_params]
+        if normalized_entity_type is not None and normalized_source_system is not None:
+            clauses.append(
+                "((f.entity_type = ? and f.source_system = ?) "
+                "or (t.entity_type = ? and t.source_system = ?))"
+            )
+            params.extend(
+                (normalized_entity_type, normalized_source_system, normalized_entity_type, normalized_source_system)
+            )
+        elif normalized_entity_type is not None:
+            clauses.append("(f.entity_type = ? or t.entity_type = ?)")
+            params.extend((normalized_entity_type, normalized_entity_type))
+        elif normalized_source_system is not None:
+            clauses.append("(f.source_system = ? or t.source_system = ?)")
+            params.extend((normalized_source_system, normalized_source_system))
+        if normalized_link_type is not None:
+            clauses.append("l.link_type = ?")
+            params.append(normalized_link_type)
+        with self._connect() as connection:
+            row = connection.execute(
+                f"""
+                select count(*)
+                from entity_links l
+                join external_entity_refs f on f.id = l.from_ref_id
+                join external_entity_refs t on t.id = l.to_ref_id
+                where {' and '.join(clauses)}
+                """,  # nosec B608: predicates are fixed internal strings; tenant values are parameterized
+                params,
+            ).fetchone()
+        return int(row[0]) if row is not None else 0
 
     def neighbors(
         self, scope: ClientScope | str | None, ref_id: int
@@ -10321,6 +10711,13 @@ def _validated_entity_type(entity_type: str) -> str:
     return normalized
 
 
+def _validate_graph_paging(offset: int, limit: int | None) -> None:
+    if isinstance(offset, bool) or not isinstance(offset, int) or offset < 0:
+        raise ValueError("offset must be a non-negative integer")
+    if limit is not None and (isinstance(limit, bool) or not isinstance(limit, int) or limit < 1):
+        raise ValueError("limit must be a positive integer")
+
+
 def _validated_link_type(link_type: str) -> str:
     normalized = _required_graph_text(link_type, "link_type").lower()
     if normalized not in _LINK_TYPES:
@@ -10350,6 +10747,12 @@ def _connector_instance_from_row(row: sqlite3.Row) -> ConnectorInstance:
 
 def _mapping_from_row(row: sqlite3.Row) -> ClientConnectorMapping:
     return ClientConnectorMapping(**dict(row))
+
+
+def _candidate_from_row(row: sqlite3.Row) -> ClientCandidate:
+    payload = dict(row)
+    payload["confidence"] = float(payload["confidence"])
+    return ClientCandidate(**payload)
 
 
 def _sync_cursor_from_row(row: sqlite3.Row) -> SyncCursor:

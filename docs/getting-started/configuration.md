@@ -46,7 +46,7 @@ the relevant approval gate.
 
 ## Connector instances
 
-HaloPSA, ConnectWise PSA, Autotask, Syncro, and ServiceNow can be configured as
+HaloPSA, ConnectWise PSA, Autotask, Syncro, ServiceNow, and Microsoft 365 can be configured as
 persisted Connector Instances from **Integrations → Connector Instances**.
 The instance stores non-secret configuration and a reference to the local
 vault; credential material is never stored in `config_json` or returned by the
@@ -56,8 +56,20 @@ for appliance-wide provider access.
 For instance setup, Autotask uses a base URL plus username, secret, and API
 integration code. Syncro uses an API key and subdomain. ServiceNow uses its
 instance URL plus username and password, matching the current Basic Auth Table
-API client. Instance reads remain gated by `WAIT_ALLOW_HTTP_PROBING`, and the
-instance origin must be listed in `WAIT_CONNECTOR_INSTANCE_ALLOWED_HOSTS`.
+API client. NinjaOne, Datto RMM, and N-able N-central use the existing
+provider access token plus base URL and a non-secret client-to-provider map:
+`organization_map_json`, `site_map_json`, or `org_unit_map_json`, respectively.
+Microsoft 365 profiles store either an app-registration credential set
+(`tenant_id`, `client_id`, and `client_secret`) or a legacy static access token
+in the vault. Profile Graph and token origins are fixed to Microsoft’s
+`graph.microsoft.com` and `login.microsoftonline.com`; they cannot be supplied
+through `config_json`. Client-scoped profiles take precedence over MSP-wide
+profiles, with the existing environment token as fallback. Instance reads remain
+gated by `WAIT_ALLOW_HTTP_PROBING`, and every instance
+origin must be listed in `WAIT_CONNECTOR_INSTANCE_ALLOWED_HOSTS`. RMM graph
+sync resolves an active client-scoped instance first, then an active MSP-wide
+instance, then the existing environment provider, and finally the local
+collector. Multiple active instances at the selected tier fail closed.
 Connector polling is read-only and records health and last-successful-sync
 state in the existing `sync_cursors` table.
 

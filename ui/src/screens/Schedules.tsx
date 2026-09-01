@@ -4,8 +4,8 @@ import type { ScheduledJob } from "../api/types";
 import { StatusChip } from "../components/StatusChip";
 
 type StatusFilter = "all" | "active" | "paused";
-type TargetFilter = "all" | "workflow" | "playbook";
-type TargetKind = "workflow" | "playbook" | "other";
+type TargetFilter = "all" | "workflow" | "playbook" | "graph_sync";
+type TargetKind = "workflow" | "playbook" | "graph_sync" | "other";
 
 export function Schedules() {
   const [jobs, setJobs] = useState<ScheduledJob[]>([]);
@@ -48,7 +48,7 @@ export function Schedules() {
         <div>
           <p className="eyebrow">Automation</p>
           <h2>Schedules</h2>
-          <p className="screen-note">Review workflow and playbook schedules. This screen is read-only.</p>
+          <p className="screen-note">Review workflow, playbook, and environment schedules. This screen is read-only.</p>
         </div>
         <button className="icon-button" type="button" onClick={() => void loadSchedules()} disabled={loading}>
           {loading ? "Loading…" : "Refresh"}
@@ -91,6 +91,7 @@ export function Schedules() {
                 <option value="all">All targets</option>
                 <option value="workflow">Workflows</option>
                 <option value="playbook">Playbooks</option>
+                <option value="graph_sync">Environment sync</option>
               </select>
             </label>
           </div>
@@ -213,6 +214,9 @@ function DetailField({ label, value }: { label: string; value: unknown }) {
 }
 
 function targetKind(job: ScheduledJob): TargetKind {
+  if (job.job_kind === "graph_sync") {
+    return "graph_sync";
+  }
   if (job.job_kind === "playbook" || job.playbook_id) {
     return "playbook";
   }
@@ -223,7 +227,7 @@ function targetKind(job: ScheduledJob): TargetKind {
 }
 
 function targetLabel(kind: TargetKind): string {
-  return kind === "playbook" ? "Playbook" : kind === "workflow" ? "Workflow" : "Other";
+  return kind === "playbook" ? "Playbook" : kind === "workflow" ? "Workflow" : kind === "graph_sync" ? "Environment sync" : "Other";
 }
 
 function targetId(job: ScheduledJob, kind: TargetKind): string {
@@ -232,6 +236,9 @@ function targetId(job: ScheduledJob, kind: TargetKind): string {
   }
   if (kind === "workflow") {
     return job.template_id ?? "Not provided";
+  }
+  if (kind === "graph_sync") {
+    return job.client_id ?? job.entity_id ?? "Not provided";
   }
   return job.agent_id ?? job.template_id ?? "Not provided";
 }

@@ -17,6 +17,7 @@ import {
   PackageOpen,
   ShieldCheck,
   Sparkles,
+  UserRoundCog,
   Users,
   Workflow
 } from "lucide-react";
@@ -61,8 +62,9 @@ const primaryNavigation: NavigationGroup[] = [
     items: [
       { to: "/connectors", label: "Connectors", icon: GitBranch },
       { to: "/workflows", label: "Automations", icon: Workflow },
+      { to: "/agent-platform", label: "Agent Platform", icon: Bot },
       { to: "/approvals", label: "Approvals", icon: ClipboardCheck },
-      { to: "/executions", label: "Activity", icon: Activity },
+      { to: "/activity/runs", label: "Activity", icon: Activity },
       { to: "/audit", label: "Audit", icon: FileSearch },
       { to: "/reports", label: "Reports", icon: BarChart3 }
     ]
@@ -90,6 +92,7 @@ const advancedNavigation: NavItem[] = [
   { to: "/collectors", label: "Collectors", icon: Database },
   { to: "/founder", label: "Launch Passport", icon: Sparkles },
   { to: "/integrations/connector-instances", label: "Connector Instances", icon: Database, adminOnly: true },
+  { to: "/system/identity-access", label: "Identity & Access", icon: UserRoundCog, adminOnly: true },
   { to: "/microsoft-admin/access", label: "Microsoft Admin Access", icon: ShieldCheck, adminOnly: true },
   { to: "/settings/access", label: "People & Access", icon: Users, mspAdminOnly: true },
   { to: "/settings", label: "Settings", icon: Activity },

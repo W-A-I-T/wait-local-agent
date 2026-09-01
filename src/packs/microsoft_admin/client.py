@@ -9,6 +9,13 @@ from urllib.parse import parse_qsl, urlencode, urlsplit
 import httpx
 
 from wait_local_agent.config import Settings
+from wait_local_agent.m365_auth import (
+    M365AuthFailure,
+    M365Connection,
+    M365ConnectionResolver,
+    M365ProfileResolutionError,
+    env_connection,
+)
 from wait_local_agent.models import ConnectorReadResult
 from wait_local_agent.net_security import NetSecurityError, build_pinned_client, validate_operator_url
 
@@ -41,9 +48,20 @@ from .normalizers import (
 class MicrosoftAdminGraphClient:
     """Bounded Microsoft Graph reads for the Microsoft administrator pack."""
 
-    def __init__(self, settings: Settings, *, transport: httpx.BaseTransport | None = None) -> None:
+    def __init__(
+        self,
+        settings: Settings,
+        *,
+        transport: httpx.BaseTransport | None = None,
+        connection: M365Connection | None = None,
+        connection_resolver: M365ConnectionResolver | None = None,
+        client_id: str | None = None,
+    ) -> None:
         self.settings = settings
         self.transport = transport
+        self.connection = connection
+        self.connection_resolver = connection_resolver
+        self.client_id = client_id
 
     def health(self) -> ConnectorReadResult:
         blocked = self._blocked_result()
@@ -279,16 +297,17 @@ class MicrosoftAdminGraphClient:
         )
 
     def _get(self, endpoint: str, params: dict[str, str | int]) -> object:
-        base_url = _graph_base_url(
-            self.settings.m365_graph_base_url,
-            allow_insecure_transport=self.settings.allow_insecure_provider_transport,
-        )
-        url = f"{base_url}/{endpoint}"
-        headers = {
-            "Authorization": f"Bearer {self.settings.m365_access_token}",
-            "Accept": "application/json",
-        }
         try:
+            connection = self._connection()
+            base_url = _graph_base_url(
+                connection.graph_base_url,
+                allow_insecure_transport=self.settings.allow_insecure_provider_transport,
+            )
+            url = f"{base_url}/{endpoint}"
+            headers = {
+                "Authorization": f"Bearer {connection.token_provider.get_token()}",
+                "Accept": "application/json",
+            }
             if self.transport is not None:
                 client = httpx.Client(
                     timeout=self.settings.connector_timeout_seconds,
@@ -307,8 +326,10 @@ class MicrosoftAdminGraphClient:
                 )
             with client:
                 response = client.get(url, headers=headers, params=params)
-        except MicrosoftAdminError:
+        except (MicrosoftAdminError, M365ProfileResolutionError):
             raise
+        except M365AuthFailure as exc:
+            raise MicrosoftAdminError("Microsoft administrator Graph token acquisition failed.") from exc
         except (httpx.TimeoutException, httpx.ConnectError) as exc:
             raise MicrosoftAdminError(
                 "Microsoft administrator Graph request failed before receiving a response."
@@ -333,10 +354,16 @@ class MicrosoftAdminGraphClient:
         )
 
     def _not_configured_result(self) -> ConnectorReadResult | None:
+        try:
+            connection = self._connection()
+        except (M365ProfileResolutionError, MicrosoftAdminError) as exc:
+            return ConnectorReadResult("failed", str(exc))
+        if connection.token_provider.configured and connection.graph_base_url:
+            return None
         missing = [
             key
             for key, value in {
-                "WAIT_M365_GRAPH_BASE_URL": self.settings.m365_graph_base_url,
+                "WAIT_M365_GRAPH_BASE_URL": connection.graph_base_url,
                 "WAIT_M365_ACCESS_TOKEN": self.settings.m365_access_token,
             }.items()
             if not value
@@ -347,6 +374,14 @@ class MicrosoftAdminGraphClient:
             "not_configured",
             f"Microsoft administrator Graph credentials are missing: {', '.join(missing)}.",
         )
+
+    def _connection(self) -> M365Connection:
+        if self.connection_resolver is not None:
+            try:
+                return self.connection_resolver.resolve(self.client_id)
+            except M365ProfileResolutionError as exc:
+                raise MicrosoftAdminError(str(exc)) from exc
+        return self.connection or env_connection(self.settings)
 
 
 def _graph_base_url(value: str, *, allow_insecure_transport: bool) -> str:

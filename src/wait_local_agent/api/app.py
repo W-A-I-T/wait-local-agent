@@ -60,6 +60,12 @@ from wait_local_agent.backup import (
     restore_state,
     run_restore_exercise,
 )
+from wait_local_agent.client_discovery import (
+    PSA_CONNECTOR_TYPES,
+    ClientDiscoveryError,
+    assert_bulk_accept_allowed,
+    discover_instance,
+)
 from wait_local_agent.client_scope import AllClients, BoundClients, ClientScope, resolve_client_scope
 from wait_local_agent.collectors import (
     CollectorService,
@@ -144,6 +150,7 @@ from wait_local_agent.lp_client import (
     LaunchPassportRequestError,
     LaunchPassportUnauthorized,
 )
+from wait_local_agent.m365_auth import M365ConnectionResolver, M365ProfileResolutionError
 from wait_local_agent.m365_graph import (
     M365GraphClient,
     M365GraphGroupReadResponse,
@@ -170,6 +177,7 @@ from wait_local_agent.models import (
     MAX_EVENT_RETRIES,
     MAX_EVENT_RETRY_DELAY_SECONDS,
     AgentDefinition,
+    ClientCandidate,
     ConnectorInstance,
     ConsultantDiscoverySession,
     WorkflowRun,
@@ -251,7 +259,7 @@ from wait_local_agent.reports.msp import (
 )
 from wait_local_agent.reports.renderers import redact_text, redact_value, report_as_dict
 from wait_local_agent.reports.service import ReportService
-from wait_local_agent.rmm import rmm_provider_from_settings
+from wait_local_agent.rmm import RmmProviderResolutionError, rmm_provider_from_settings
 from wait_local_agent.scalepad import (
     ScalePadAssessmentResponse,
     ScalePadClient,
@@ -861,6 +869,8 @@ class ScheduledJobCreateRequest(BaseModel):
     report_type: Literal["qbr", "automation_opportunity", "recurring_service_review"] | None = None
     playbook_id: str | None = None
     agent_id: str | None = None
+    job_kind: Literal["workflow", "playbook", "agent", "report", "connector_poll", "graph_sync"] | None = None
+    graph_sync: bool = False
     entity_id: str | None = None
     cron: str = ""
     schedule_type: Literal["cron", "interval", "once"] = "cron"
@@ -964,6 +974,24 @@ class ClientConnectorMappingCreateRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
+class ClientDiscoveryRunRequest(BaseModel):
+    connector_instance_id: str | None = Field(default=None, min_length=1, max_length=128)
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class ClientDiscoveryBulkAcceptRequest(BaseModel):
+    candidate_ids: list[str] = Field(min_length=1, max_length=100)
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class DeploymentModeRequest(BaseModel):
+    mode: Literal["msp", "smb"]
+
+    model_config = ConfigDict(extra="forbid")
+
+
 class QuarantineReclassificationRequest(BaseModel):
     client_id: str = Field(min_length=1, max_length=128)
 
@@ -1004,6 +1032,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         )
     store = Store(active_settings.data_path)
     vault = SecretVault(active_settings.vault_path)
+    m365_connection_resolver = M365ConnectionResolver(active_settings, store, vault)
     session_signing_key = get_or_create_session_signing_key(active_settings, vault)
     if not active_settings.demo_mode and not admin_credential_configured(active_settings, store):
         raise RuntimeError(
@@ -1030,6 +1059,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     timezest_client = TimeZestClient(active_settings)
     scalepad_client = ScalePadClient(active_settings)
     m365_client = M365GraphClient(active_settings)
+    # Keep construction compatible with injected test clients while making the
+    # runtime Graph client use the same profile resolver as the admin pack.
+    m365_client.connection_resolver = m365_connection_resolver
     teams_client = TeamsGraphClient(active_settings)
     work_iq_client = WorkIqClient(active_settings)
     update_status_cache = UpdateStatusCache(ttl_seconds=3600.0)
@@ -1060,6 +1092,34 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     agent_service = AgentService(store, active_settings, smart_action_service)
     mcp_server = WaitMcpServer(agent_service, smart_action_service)
     event_dispatcher = EventDispatcher(store, agent_service)
+
+    def _m365_graph_client_for_client(client_id: str) -> M365GraphClient:
+        connection = m365_connection_resolver.resolve(client_id)
+        return M365GraphClient(
+            active_settings,
+            connection=connection,
+            client_id=client_id,
+        )
+
+    def _m365_graph_service_for_client(client_id: str) -> OperationalGraphService:
+        return OperationalGraphService(store, m365_client=_m365_graph_client_for_client(client_id))
+
+    def _run_client_graph_sync(client_id: str) -> object:
+        client = store.get_client(AllClients(), client_id)
+        if client is None or client.status.strip().lower() != "active":
+            raise ValueError("client must be active")
+        try:
+            client_rmm_provider = rmm_provider_from_settings(active_settings, store, client_id, vault)
+        except RmmProviderResolutionError as exc:
+            raise ValueError(str(exc)) from exc
+        if client_rmm_provider.adapter_id != "local-collector" and not active_settings.allow_http_probing:
+            raise ValueError("RMM read probing is disabled")
+        return OperationalGraphService(
+            store,
+            rmm_provider=client_rmm_provider,
+            m365_client=_m365_graph_client_for_client(client_id),
+        ).seed_client_inventory(client_id)
+
     scheduler = SchedulerManager(
         store,
         enabled=active_settings.scheduler_enabled,
@@ -1067,6 +1127,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         smart_action_service=smart_action_service,
         event_dispatcher=event_dispatcher,
         ingestion_poller=IngestionPoller(store, base_settings=active_settings),
+        graph_sync_runner=_run_client_graph_sync,
     )
 
     @asynccontextmanager
@@ -1092,6 +1153,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.state.settings = active_settings
     app.state.store = store
     app.state.vault = vault
+    app.state.m365_connection_resolver = m365_connection_resolver
     app.state.scheduler = scheduler
     app.state.limiter = limiter
     app.state.update_status_cache = update_status_cache
@@ -1128,6 +1190,15 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     )
     app.include_router(create_founder_router())
     app.include_router(create_auth_router(limiter))
+
+    def _m365_health_configured() -> bool:
+        try:
+            return m365_connection_resolver.resolve().token_provider.configured
+        except Exception:
+            # Health must remain available even when a stored profile is
+            # malformed or ambiguous; the connector endpoint reports the
+            # sanitized failure when it is used.
+            return bool(active_settings.m365_graph_base_url and active_settings.m365_access_token)
 
     @app.get("/health")
     @limiter.exempt
@@ -1171,7 +1242,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             "sharepoint_configured": bool(
                 active_settings.sharepoint_base_url and active_settings.sharepoint_access_token
             ),
-            "m365_configured": bool(active_settings.m365_graph_base_url and active_settings.m365_access_token),
+            "m365_configured": _m365_health_configured(),
         }
 
     @app.get("/healthz", include_in_schema=False)
@@ -1312,6 +1383,219 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         scope = resolve_client_scope(context, client_id, allow_all=True)
         return [asdict(client) for client in store.list_clients(scope)]
 
+    def _discovery_summary() -> dict[str, int]:
+        counts = store.count_client_candidates()
+        return {
+            "discovered": sum(
+                counts.get(state, 0)
+                for state in ("verified", "proposed", "ambiguous", "unmatched", "conflicting")
+            ),
+            "reconciled": counts.get("verified", 0),
+            "need_confirmation": counts.get("proposed", 0) + counts.get("ambiguous", 0),
+            "unmatched": counts.get("unmatched", 0),
+            "conflicts": counts.get("conflicting", 0),
+        }
+
+    def _require_discovery_write(context: AuthContext) -> None:
+        if active_settings.demo_mode:
+            raise HTTPException(status_code=403, detail="client discovery is unavailable in demo mode")
+        _require_msp_operator(context)
+
+    @app.get("/setup/mode")
+    def deployment_mode(_: ViewerAccess) -> dict[str, str | None]:
+        mode = store.get_app_config("deployment.mode")
+        return {"mode": mode if mode in {"msp", "smb"} else None}
+
+    @app.put("/setup/mode")
+    def set_deployment_mode(payload: DeploymentModeRequest, context: AdminAccess) -> dict[str, str]:
+        _require_discovery_write(context)
+        store.set_app_config("deployment.mode", payload.mode, updated_by=context.approver_id or "admin")
+        store.add_audit_event(
+            "deployment.mode.updated", "deployment.mode", f"mode={payload.mode}", approver_id=context.approver_id
+        )
+        return {"mode": payload.mode}
+
+    @app.post("/discovery/clients/run")
+    def run_client_discovery(payload: ClientDiscoveryRunRequest, context: AdminAccess) -> dict[str, object]:
+        _require_discovery_write(context)
+        instances = store.list_connector_instances()
+        if payload.connector_instance_id:
+            instance = store.get_connector_instance(payload.connector_instance_id)
+            if instance is None:
+                raise HTTPException(status_code=404, detail="connector instance not found")
+            instances = [instance]
+        instances = [
+            instance for instance in instances if instance.connector_type.casefold().strip() in PSA_CONNECTOR_TYPES
+        ]
+        if payload.connector_instance_id and not instances:
+            raise HTTPException(status_code=409, detail="connector instance is not a supported PSA instance")
+        discovered: list[ClientCandidate] = []
+        failures: list[dict[str, str]] = []
+        for instance in instances:
+            try:
+                discovered.extend(discover_instance(store, instance, settings=active_settings, vault=vault))
+            except ClientDiscoveryError as exc:
+                failures.append({"connector_instance_id": instance.connector_instance_id, "detail": str(exc)})
+        store.add_audit_event(
+            "client.discovery.run",
+            payload.connector_instance_id or "all",
+            f"candidates={len(discovered)} failures={len(failures)}",
+            approver_id=context.approver_id,
+        )
+        return {
+            "candidates": [asdict(candidate) for candidate in discovered],
+            "failures": failures,
+            "summary": _discovery_summary(),
+        }
+
+    @app.get("/discovery/clients")
+    def list_client_discovery_candidates(
+        context: AdminAccess,
+        match_state: Literal[
+            "verified", "proposed", "ambiguous", "unmatched", "conflicting", "dismissed"
+        ] | None = None,
+        page: int = Query(default=1, ge=1, le=5000),
+        page_size: int = Query(default=50, ge=1, le=500),
+    ) -> dict[str, object]:
+        _require_discovery_write(context)
+        candidates = store.list_client_candidates(
+            match_state=match_state, offset=(page - 1) * page_size, limit=page_size
+        )
+        return {
+            "items": [asdict(candidate) for candidate in candidates],
+            "page": page,
+            "page_size": page_size,
+            "summary": _discovery_summary(),
+        }
+
+    def _accept_discovery_candidate(candidate: ClientCandidate, context: AuthContext) -> dict[str, object]:
+        if candidate.match_state != "proposed" or not candidate.matched_client_id:
+            raise HTTPException(
+                status_code=409, detail="only proposed candidates with one matched client can be accepted"
+            )
+        if store.get_client(AllClients(), candidate.matched_client_id) is None:
+            raise HTTPException(status_code=409, detail="the proposed client no longer exists")
+        try:
+            mapping = store.create_client_connector_mapping(
+                AllClients(), candidate.connector_instance_id, candidate.external_id, candidate.matched_client_id,
+                external_company_name=candidate.display_name,
+            )
+            verification = store.verify_client_connector_mapping(
+                AllClients(), mapping.mapping_id, return_retenanted_count=True
+            )
+        except ClientConnectorMappingConflictError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        except (sqlite3.IntegrityError, KeyError, ValueError) as exc:
+            raise HTTPException(status_code=409, detail="candidate mapping could not be created") from exc
+        if not isinstance(verification, tuple):  # pragma: no cover
+            raise RuntimeError("mapping verification did not return re-tenant count")
+        verified_mapping, retenanted_count = verification
+        updated = store.set_client_candidate_state(
+            candidate.candidate_id, "verified", matched_client_id=verified_mapping.client_id,
+            match_reason="accepted proposed exact normalized name", confidence=1.0,
+        )
+        if updated is None:  # pragma: no cover
+            raise HTTPException(status_code=404, detail="candidate not found")
+        store.add_audit_event(
+            "client.discovery.accepted",
+            candidate.candidate_id,
+            f"client={verified_mapping.client_id}",
+            client_id=verified_mapping.client_id,
+            approver_id=context.approver_id,
+        )
+        return {
+            **asdict(updated),
+            "mapping": asdict(verified_mapping),
+            "retenanted_count": retenanted_count,
+        }
+
+    @app.post("/discovery/clients/{candidate_id}/accept")
+    def accept_client_discovery_candidate(candidate_id: str, context: AdminAccess) -> dict[str, object]:
+        _require_discovery_write(context)
+        candidate = store.get_client_candidate(candidate_id)
+        if candidate is None:
+            raise HTTPException(status_code=404, detail="candidate not found")
+        return _accept_discovery_candidate(candidate, context)
+
+    @app.post("/discovery/clients/accept-proposed")
+    def bulk_accept_client_discovery_candidates(
+        payload: ClientDiscoveryBulkAcceptRequest,
+        context: AdminAccess,
+    ) -> dict[str, object]:
+        _require_discovery_write(context)
+        candidates = [store.get_client_candidate(candidate_id) for candidate_id in payload.candidate_ids]
+        if any(candidate is None for candidate in candidates):
+            raise HTTPException(status_code=404, detail="candidate not found")
+        resolved = cast(list[ClientCandidate], candidates)
+        try:
+            assert_bulk_accept_allowed(resolved)
+        except ClientDiscoveryError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        accepted = [_accept_discovery_candidate(candidate, context) for candidate in resolved]
+        return {"accepted": accepted, "summary": _discovery_summary()}
+
+    @app.post("/discovery/clients/{candidate_id}/create-client")
+    def create_client_from_discovery_candidate(candidate_id: str, context: AdminAccess) -> dict[str, object]:
+        _require_discovery_write(context)
+        candidate = store.get_client_candidate(candidate_id)
+        if candidate is None:
+            raise HTTPException(status_code=404, detail="candidate not found")
+        if candidate.match_state in {"verified", "dismissed"}:
+            raise HTTPException(status_code=409, detail="candidate cannot create a client in its current state")
+        client_id = f"discovered-{candidate.candidate_id.replace('-', '')[:24]}"
+        try:
+            client = store.create_client(client_id, candidate.display_name)
+            mapping = store.create_client_connector_mapping(
+                AllClients(), candidate.connector_instance_id, candidate.external_id, client.client_id,
+                external_company_name=candidate.display_name,
+            )
+            verification = store.verify_client_connector_mapping(
+                AllClients(), mapping.mapping_id, return_retenanted_count=True
+            )
+        except (sqlite3.IntegrityError, KeyError, ValueError, ClientConnectorMappingConflictError) as exc:
+            raise HTTPException(status_code=409, detail="client or candidate mapping already exists") from exc
+        if not isinstance(verification, tuple):  # pragma: no cover
+            raise RuntimeError("mapping verification did not return re-tenant count")
+        verified_mapping, retenanted_count = verification
+        updated = store.set_client_candidate_state(
+            candidate.candidate_id,
+            "verified",
+            matched_client_id=client.client_id,
+            match_reason="new client created from provider candidate",
+            confidence=1.0,
+        )
+        if updated is None:  # pragma: no cover
+            raise HTTPException(status_code=404, detail="candidate not found")
+        store.add_audit_event(
+            "client.discovery.created",
+            candidate.candidate_id,
+            f"client={client.client_id}",
+            client_id=client.client_id,
+            approver_id=context.approver_id,
+        )
+        return {
+            **asdict(updated),
+            "client": asdict(client),
+            "mapping": asdict(verified_mapping),
+            "retenanted_count": retenanted_count,
+        }
+
+    @app.post("/discovery/clients/{candidate_id}/dismiss")
+    def dismiss_client_discovery_candidate(candidate_id: str, context: AdminAccess) -> dict[str, object]:
+        _require_discovery_write(context)
+        candidate = store.get_client_candidate(candidate_id)
+        if candidate is None:
+            raise HTTPException(status_code=404, detail="candidate not found")
+        if candidate.match_state == "verified":
+            raise HTTPException(status_code=409, detail="verified candidates cannot be dismissed")
+        updated = store.set_client_candidate_state(candidate_id, "dismissed", match_reason="dismissed by administrator")
+        if updated is None:  # pragma: no cover
+            raise HTTPException(status_code=404, detail="candidate not found")
+        store.add_audit_event(
+            "client.discovery.dismissed", candidate_id, "dismissed by administrator", approver_id=context.approver_id
+        )
+        return asdict(updated)
+
     @app.post("/clients")
     def create_client(payload: ClientCreateRequest, context: AdminAccess) -> dict[str, object]:
         _require_msp_operator(context)
@@ -1331,11 +1615,31 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return asdict(client)
 
     @app.get("/clients/{client_id}/graph")
-    def client_graph(client_id: str, context: ViewerAccess) -> dict[str, object]:
+    def client_graph(
+        client_id: str,
+        context: ViewerAccess,
+        entity_type: str | None = None,
+        link_type: str | None = None,
+        source_system: str | None = None,
+        offset: Annotated[int, Query(ge=0)] = 0,
+        limit: Annotated[int, Query(ge=1, le=200)] = 100,
+    ) -> dict[str, object]:
         scope = _resolve_client_target_scope(context, client_id)
         if store.get_client(scope, client_id) is None:
             raise HTTPException(status_code=404, detail="client not found")
-        return asdict(operational_graph_service.client_graph(scope))
+        try:
+            return asdict(
+                operational_graph_service.client_graph(
+                    scope,
+                    entity_type=entity_type,
+                    link_type=link_type,
+                    source_system=source_system,
+                    offset=offset,
+                    limit=limit,
+                )
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     @app.post("/clients/{client_id}/graph/sync-rmm")
     def sync_client_rmm_graph(client_id: str, context: AdminAccess) -> dict[str, object]:
@@ -1343,9 +1647,32 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         scope = _resolve_client_target_scope(context, client_id)
         if store.get_client(scope, client_id) is None:
             raise HTTPException(status_code=404, detail="client not found")
-        if rmm_provider.adapter_id != "local-collector" and not active_settings.allow_http_probing:
+        try:
+            client_rmm_provider = rmm_provider_from_settings(
+                active_settings,
+                store,
+                client_id,
+                vault,
+            )
+        except RmmProviderResolutionError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        if client_rmm_provider.adapter_id != "local-collector" and not active_settings.allow_http_probing:
             raise HTTPException(status_code=409, detail="RMM read probing is disabled")
-        return dict(operational_graph_service.seed_rmm_inventory(scope))
+        return dict(OperationalGraphService(store, rmm_provider=client_rmm_provider).seed_rmm_inventory(scope))
+
+    @app.post("/clients/{client_id}/graph/sync-m365")
+    def sync_client_m365_graph(client_id: str, context: AdminAccess) -> dict[str, object]:
+        _require_msp_operator(context)
+        scope = _resolve_client_target_scope(context, client_id)
+        if store.get_client(scope, client_id) is None:
+            raise HTTPException(status_code=404, detail="client not found")
+        if not active_settings.allow_http_probing:
+            raise HTTPException(status_code=409, detail="Microsoft 365 read probing is disabled")
+        try:
+            service = _m365_graph_service_for_client(client_id)
+        except M365ProfileResolutionError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        return dict(service.seed_m365_inventory(scope))
 
     @app.patch("/clients/{client_id}")
     def update_client_status(
@@ -1443,7 +1770,15 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     ) -> dict[str, object]:
         _require_msp_operator(context)
         connector_type = payload.connector_type.strip().casefold()
-        if payload.credential_ref and connector_type in {"autotask", "syncro", "servicenow"}:
+        if payload.credential_ref and connector_type in {
+            "autotask",
+            "syncro",
+            "servicenow",
+            "ninjaone",
+            "dattormm",
+            "ncentral",
+            "m365",
+        }:
             candidate = ConnectorInstance(
                 connector_instance_id="pending-validation",
                 connector_type=connector_type,
@@ -6282,6 +6617,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         request: ScheduledJobCreateRequest,
         context: TechnicianAccess,
     ) -> dict[str, object]:
+        if request.graph_sync or request.job_kind == "graph_sync":
+            return _create_scheduled_graph_sync_job(request, context)
         if request.playbook_id is not None:
             return _create_scheduled_playbook_job(request, context)
         if request.report_type is not None:
@@ -6459,6 +6796,44 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 job_kind="agent",
                 agent_id=definition.id,
                 entity_id=request.entity_id,
+                schedule_type=request.schedule_type,
+                interval_seconds=request.interval_seconds,
+                run_at=request.run_at,
+                timezone=request.timezone,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        return _scheduled_job_view(scheduled_job)
+
+    def _create_scheduled_graph_sync_job(
+        request: ScheduledJobCreateRequest,
+        context: AuthContext,
+    ) -> dict[str, object]:
+        if any(
+            value is not None
+            for value in (request.template_id, request.report_type, request.playbook_id, request.agent_id)
+        ):
+            raise HTTPException(status_code=422, detail="environment sync schedules cannot include another target")
+        requested_client_id = request.params.get("client_id")
+        if requested_client_id is not None and not isinstance(requested_client_id, str):
+            raise HTTPException(status_code=422, detail="params.client_id must be a string")
+        scoped_client_id = resolve_client_scope(
+            context,
+            requested_client_id.strip() if isinstance(requested_client_id, str) else None,
+        ).client_id
+        if scoped_client_id is None:
+            raise HTTPException(status_code=403, detail="client scope is required")
+        if store.get_client(AllClients(), scoped_client_id) is None:
+            raise HTTPException(status_code=404, detail="client not found")
+        params = dict(request.params)
+        params["client_id"] = scoped_client_id
+        try:
+            scheduled_job = scheduler.register(
+                "",
+                request.cron,
+                params,
+                job_kind="graph_sync",
+                entity_id=scoped_client_id,
                 schedule_type=request.schedule_type,
                 interval_seconds=request.interval_seconds,
                 run_at=request.run_at,

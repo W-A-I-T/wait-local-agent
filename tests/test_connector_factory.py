@@ -23,7 +23,10 @@ from wait_local_agent.connector_factory import (
     validate_connector_instance,
 )
 from wait_local_agent.connectwise import ConnectWiseClient
+from wait_local_agent.dattormm import DattoRmmAdapter
 from wait_local_agent.models import ConnectorInstance
+from wait_local_agent.ncentral import NCentralRmmAdapter
+from wait_local_agent.ninjaone import NinjaOneRmmAdapter
 from wait_local_agent.servicenow import ServiceNowClient
 from wait_local_agent.syncro import SyncroClient
 
@@ -33,13 +36,14 @@ def _instance(
     connector_type: str = "halopsa",
     status: str = "active",
     credential_ref: str | None = "credential-ref",
+    client_id: str | None = None,
     config: Mapping[str, object] | None = None,
 ) -> ConnectorInstance:
     return ConnectorInstance(
         connector_instance_id="instance-1",
         connector_type=connector_type,
         display_name="Test connector",
-        client_id=None,
+        client_id=client_id,
         credential_ref=credential_ref,
         config_json=json.dumps(
             {"base_url": "https://provider.example.test"} if config is None else config
@@ -120,6 +124,18 @@ def _syncro_secret(**overrides: str) -> str:
 
 def _servicenow_secret(**overrides: str) -> str:
     payload = {"username": "fixture-user", "password": "fixture-value"}
+    payload.update(overrides)
+    return json.dumps(payload)
+
+
+def _rmm_secret(**overrides: str) -> str:
+    payload = {"access_token": "fixture-access-value"}
+    payload.update(overrides)
+    return json.dumps(payload)
+
+
+def _m365_secret(**overrides: str) -> str:
+    payload = {"mode": "static_token", "access_token": "profile-value"}
     payload.update(overrides)
     return json.dumps(payload)
 
@@ -279,6 +295,47 @@ def test_config_json_requires_nonempty_base_url(settings, tmp_path: Path) -> Non
         )
 
 
+@pytest.mark.parametrize(
+    ("connector_type", "requires_base_url"),
+    [
+        (connector_type, connector_type not in {"syncro", "m365"})
+        for connector_type in sorted(_BUILDERS)
+    ],
+)
+def test_config_base_url_requirement_is_per_connector_type(
+    connector_type: str, requires_base_url: bool
+) -> None:
+    if requires_base_url:
+        with pytest.raises(ConnectorFactoryError, match="requires a base_url"):
+            connector_factory._load_config(
+                _instance(connector_type=connector_type, config={}),
+                connector_type=connector_type,
+            )
+    else:
+        assert connector_factory._load_config(
+            _instance(connector_type=connector_type, config={}),
+            connector_type=connector_type,
+        ) == {}
+
+
+@pytest.mark.parametrize(
+    "config",
+    [
+        {"base_url": "https://provider.example.test", "organization_map_json": ""},
+        {"base_url": "https://provider.example.test", "organization_map_json": "not-json"},
+        {"base_url": "https://provider.example.test", "organization_map_json": "[]"},
+        {"base_url": "https://provider.example.test", "page_size": 0},
+        {"base_url": "https://provider.example.test", "page_size": True},
+    ],
+)
+def test_rmm_config_rejects_invalid_tenant_maps_and_page_sizes(config: Mapping[str, object]) -> None:
+    with pytest.raises(ConnectorFactoryError, match="invalid"):
+        connector_factory._load_config(
+            _instance(connector_type="ninjaone", config=config),
+            connector_type="ninjaone",
+        )
+
+
 def test_base_origin_allowlist_and_same_origin_token_are_enforced(settings, tmp_path: Path, monkeypatch) -> None:
     with pytest.raises(ConnectorFactoryError, match="network policy"):
         build_read_client(
@@ -433,6 +490,125 @@ def test_new_instance_backed_providers_build_read_only_clients(
         assert getattr(client.settings, field_name) == value
 
 
+def test_m365_instance_builds_with_fixed_graph_origin_and_profile_token(settings, tmp_path: Path) -> None:
+    instance = _instance(connector_type="m365", config={})
+    client = build_read_client(
+        instance,
+        base_settings=_base_settings(settings, tmp_path),
+        vault=_Vault(_m365_secret()),
+        resolver=_resolver("8.8.8.8"),
+        inner_transport=httpx.MockTransport(lambda request: httpx.Response(200, json={"value": []})),
+    )
+    assert client.settings.m365_graph_base_url == "https://graph.microsoft.com/v1.0"
+    assert client.settings.m365_access_token == "profile-value"
+    assert isinstance(client, connector_factory.M365GraphClient)
+    validate_connector_instance(
+        instance,
+        base_settings=_base_settings(settings, tmp_path),
+        vault=_Vault(_m365_secret()),
+    )
+
+
+@pytest.mark.parametrize(
+    "connector_type,config,expected_type,expected_fields",
+    [
+        (
+            "ninjaone",
+            {
+                "base_url": "https://provider.example.test/api/v2",
+                "organization_map_json": '{"acme":42}',
+                "page_size": 25,
+            },
+            NinjaOneRmmAdapter,
+            {
+                "ninjaone_base_url": "https://provider.example.test/api/v2",
+                "ninjaone_access_token": "fixture-access-value",
+                "ninjaone_organization_map_json": '{"acme":42}',
+                "ninjaone_page_size": 25,
+            },
+        ),
+        (
+            "dattormm",
+            {
+                "base_url": "https://provider.example.test/api",
+                "site_map_json": '{"acme":"site-42"}',
+                "page_size": 25,
+            },
+            DattoRmmAdapter,
+            {
+                "datto_rmm_base_url": "https://provider.example.test/api",
+                "datto_rmm_access_token": "fixture-access-value",
+                "datto_rmm_site_map_json": '{"acme":"site-42"}',
+                "datto_rmm_page_size": 25,
+            },
+        ),
+        (
+            "ncentral",
+            {
+                "base_url": "https://provider.example.test",
+                "org_unit_map_json": '{"acme":[100]}',
+                "page_size": 25,
+            },
+            NCentralRmmAdapter,
+            {
+                "ncentral_base_url": "https://provider.example.test",
+                "ncentral_access_token": "fixture-access-value",
+                "ncentral_org_unit_map_json": '{"acme":[100]}',
+                "ncentral_page_size": 25,
+            },
+        ),
+    ],
+)
+def test_rmm_instance_backed_providers_build_read_only_clients(
+    settings,
+    tmp_path: Path,
+    connector_type: str,
+    config: Mapping[str, object],
+    expected_type: type,
+    expected_fields: Mapping[str, object],
+) -> None:
+    client = build_read_client(
+        _instance(connector_type=connector_type, config=config),
+        base_settings=_base_settings(settings, tmp_path, allow_write_actions=True),
+        vault=_Vault(_rmm_secret()),
+        resolver=_resolver("8.8.8.8"),
+        inner_transport=httpx.MockTransport(lambda request: httpx.Response(200, json=[])),
+    )
+    assert isinstance(client, expected_type)
+    assert client.settings.allow_write_actions is False
+    for field_name, value in expected_fields.items():
+        assert getattr(client.settings, field_name) == value
+
+
+@pytest.mark.parametrize("connector_type", ["ninjaone", "dattormm", "ncentral"])
+def test_rmm_instance_credentials_are_exact(settings, tmp_path: Path, connector_type: str) -> None:
+    with pytest.raises(ConnectorFactoryError, match="expected keys: access_token"):
+        build_read_client(
+            _instance(connector_type=connector_type),
+            base_settings=_base_settings(settings, tmp_path),
+            vault=_Vault(json.dumps({"token": "fixture-value"})),
+        )
+
+
+@pytest.mark.parametrize(
+    "connector_type,config",
+    [
+        ("ninjaone", {"base_url": "https://not-allowed.example.test", "organization_map_json": "{}"}),
+        ("dattormm", {"base_url": "https://not-allowed.example.test", "site_map_json": "{}"}),
+        ("ncentral", {"base_url": "https://not-allowed.example.test", "org_unit_map_json": "{}"}),
+    ],
+)
+def test_rmm_instance_origins_use_the_allowlist(
+    settings, tmp_path: Path, connector_type: str, config: Mapping[str, object]
+) -> None:
+    with pytest.raises(ConnectorFactoryError, match="network policy"):
+        build_read_client(
+            _instance(connector_type=connector_type, config=config),
+            base_settings=_base_settings(settings, tmp_path),
+            vault=_Vault(_rmm_secret()),
+        )
+
+
 @pytest.mark.parametrize(
     "connector_type,secret,expected_message",
     [
@@ -537,6 +713,11 @@ def test_servicenow_api_version_validation_rejects_non_strings_and_bad_values(se
             )
 
 
+def test_servicenow_api_version_validation_rejects_non_string_directly() -> None:
+    with pytest.raises(ConnectorFactoryError, match="ServiceNow API version is invalid"):
+        connector_factory._validate_servicenow_version(7)
+
+
 @pytest.mark.parametrize(
     "connector_type,secret,config",
     [
@@ -548,6 +729,24 @@ def test_servicenow_api_version_validation_rejects_non_strings_and_bad_values(se
             "servicenow",
             _servicenow_secret(),
             {"base_url": "https://provider.example.test", "api_version": "v1"},
+        ),
+        (
+            "ninjaone",
+            _rmm_secret(),
+            {
+                "base_url": "https://provider.example.test",
+                "organization_map_json": '{"acme":42}',
+            },
+        ),
+        (
+            "dattormm",
+            _rmm_secret(),
+            {"base_url": "https://provider.example.test", "site_map_json": '{"acme":"site-42"}'},
+        ),
+        (
+            "ncentral",
+            _rmm_secret(),
+            {"base_url": "https://provider.example.test", "org_unit_map_json": '{"acme":[100]}'},
         ),
     ],
 )

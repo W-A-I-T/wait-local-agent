@@ -7,6 +7,7 @@ import logging
 from typing import TypedDict
 
 from wait_local_agent.client_scope import AllClients, BoundClients, ClientScope
+from wait_local_agent.m365_graph import M365GraphReadProvider
 from wait_local_agent.models import EntityLink, EntityRef, SubGraph
 from wait_local_agent.rmm import RmmInventoryProvider
 from wait_local_agent.store import Store
@@ -21,30 +22,80 @@ class RmmInventorySeedSummary(TypedDict):
     errors: list[str]
 
 
+class M365InventorySeedSummary(TypedDict):
+    users: int
+    devices: int
+    links: int
+    errors: list[str]
+
+
+class ClientGraphSyncSummary(TypedDict):
+    rmm: RmmInventorySeedSummary
+    m365: M365InventorySeedSummary
+
+
 class OperationalGraphService:
     """Build bounded graph views from tenant-scoped persisted relationships."""
 
     HARD_MAX_DEPTH = 5
     HARD_MAX_NODES = 200
 
-    def __init__(self, store: Store, rmm_provider: RmmInventoryProvider | None = None) -> None:
+    def __init__(
+        self,
+        store: Store,
+        rmm_provider: RmmInventoryProvider | None = None,
+        m365_client: M365GraphReadProvider | None = None,
+    ) -> None:
         self.store = store
         self.rmm_provider = rmm_provider
+        self.m365_client = m365_client
 
-    def client_graph(self, scope: ClientScope | str | None) -> SubGraph:
-        """Return the bounded graph for one client in stable persisted order."""
+    def client_graph(
+        self,
+        scope: ClientScope | str | None,
+        *,
+        entity_type: str | None = None,
+        link_type: str | None = None,
+        source_system: str | None = None,
+        offset: int = 0,
+        limit: int = 100,
+    ) -> SubGraph:
+        """Return one bounded, filterable page of a client's graph."""
 
         _require_single_scope(scope)
-        refs = self.store.list_entity_refs(scope)[: self.HARD_MAX_NODES]
-        ref_ids = {ref.id for ref in refs}
-        links_by_id: dict[int, EntityLink] = {}
-        for ref in refs:
-            for link in self.store.list_entity_links(scope, ref.id):
-                if link.from_ref_id in ref_ids and link.to_ref_id in ref_ids:
-                    links_by_id[link.id] = link
+        effective_limit = min(limit, self.HARD_MAX_NODES)
+        refs = self.store.list_entity_refs(
+            scope,
+            entity_type=entity_type,
+            source_system=source_system,
+            link_type=link_type,
+            offset=offset,
+            limit=effective_limit,
+        )
+        links = self.store.list_entity_links_page(
+            scope,
+            entity_type=entity_type,
+            source_system=source_system,
+            link_type=link_type,
+            offset=offset,
+            limit=effective_limit,
+        )
+        total_refs = self.store.count_entity_refs(
+            scope, entity_type=entity_type, source_system=source_system, link_type=link_type
+        )
+        total_links = self.store.count_entity_links(
+            scope,
+            entity_type=entity_type,
+            source_system=source_system,
+            link_type=link_type,
+        )
         return SubGraph(
             refs=tuple(refs),
-            links=tuple(links_by_id[link_id] for link_id in sorted(links_by_id)),
+            links=tuple(links),
+            total_refs=total_refs,
+            total_links=total_links,
+            has_more=(offset + effective_limit < total_refs or offset + effective_limit < total_links),
+            entity_type_counts=self.store.count_entity_refs_by_type(scope),
         )
 
     def subgraph(
@@ -249,6 +300,110 @@ class OperationalGraphService:
                 )
                 summary["links"] += 1
         return summary
+
+    def seed_m365_inventory(
+        self, scope: ClientScope | str | None
+    ) -> M365InventorySeedSummary:
+        """Persist Microsoft 365 identity and Intune metadata for one client."""
+
+        _require_single_scope(scope)
+        provider = self.m365_client
+        summary: M365InventorySeedSummary = {"users": 0, "devices": 0, "links": 0, "errors": []}
+        if provider is None:
+            summary["errors"].append("microsoft 365 provider unavailable")
+            return summary
+
+        users_response = provider.list_users(page_size=self.HARD_MAX_NODES)
+        if users_response.result.status != "ready":
+            summary["errors"].append(f"user inventory unavailable: {users_response.result.message}")
+            users = []
+        else:
+            users = sorted(users_response.items, key=lambda user: user.id)
+
+        connection = getattr(provider, "connection", None)
+        profile_id = getattr(connection, "profile_id", None)
+        tenant_external_id = profile_id.strip() if isinstance(profile_id, str) and profile_id.strip() else "environment"
+        self.store.upsert_entity_ref(
+            scope,
+            entity_type="m365_account",
+            source_system="m365",
+            external_id=tenant_external_id,
+            display_name="Microsoft 365 tenant",
+            provenance="m365_inventory",
+        )
+
+        user_refs: dict[str, EntityRef] = {}
+        user_refs_by_upn: dict[str, EntityRef] = {}
+        for user in users:
+            user_id = user.id.strip()
+            if not user_id:
+                continue
+            upn = user.user_principal_name.strip()
+            user_ref = self.store.upsert_entity_ref(
+                scope,
+                entity_type="user",
+                source_system="m365",
+                external_id=user_id,
+                display_name=user.display_name.strip() or upn or user_id,
+                provenance="m365_inventory",
+                attributes={
+                    "user_principal_name": upn,
+                    "mail": user.mail.strip(),
+                    "account_enabled": user.account_enabled,
+                },
+            )
+            user_refs[user_id] = user_ref
+            if upn:
+                user_refs_by_upn[upn.casefold()] = user_ref
+            summary["users"] += 1
+
+        devices_response = provider.list_managed_devices(page_size=self.HARD_MAX_NODES)
+        if devices_response.result.status != "ready":
+            summary["errors"].append(f"device inventory unavailable: {devices_response.result.message}")
+            devices = []
+        else:
+            devices = sorted(devices_response.items, key=lambda device: device.id)
+        for device in devices:
+            device_id = device.id.strip()
+            if not device_id:
+                continue
+            device_ref = self.store.upsert_entity_ref(
+                scope,
+                entity_type="device",
+                source_system="m365",
+                external_id=device_id,
+                display_name=device.device_name.strip() or device_id,
+                provenance="m365_inventory",
+                attributes={
+                    "user_id": device.user_id.strip(),
+                    "user_principal_name": device.user_principal_name.strip(),
+                    "operating_system": device.operating_system.strip(),
+                    "os_version": device.os_version.strip(),
+                    "compliance_state": device.compliance_state.strip(),
+                    "management_agent": device.management_agent.strip(),
+                    "owner_type": device.owner_type.strip(),
+                    "last_sync_date_time": device.last_sync_date_time.strip(),
+                },
+            )
+            summary["devices"] += 1
+            owner_ref = user_refs.get(device.user_id.strip()) or user_refs_by_upn.get(
+                device.user_principal_name.strip().casefold()
+            )
+            if owner_ref is not None:
+                self.store.upsert_entity_link(
+                    scope,
+                    from_ref_id=owner_ref.id,
+                    to_ref_id=device_ref.id,
+                    link_type="owns_device",
+                    provenance="m365_inventory",
+                )
+                summary["links"] += 1
+        return summary
+
+    def seed_client_inventory(self, scope: ClientScope | str | None) -> ClientGraphSyncSummary:
+        """Run the scheduled RMM and Microsoft 365 inventory contributors."""
+
+        return {"rmm": self.seed_rmm_inventory(scope), "m365": self.seed_m365_inventory(scope)}
 
 
 def _object_attributes(attributes_json: str) -> dict[str, object]:

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import replace
+from typing import cast
 
 import httpx
 import pytest
@@ -411,3 +412,7 @@ def test_dattormm_rejects_unscoped_and_invalid_requests(settings) -> None:
         adapter.preview_script("", "device-1", {}, client_id="acme")
     with pytest.raises(DattoRmmError, match="arguments are too numerous"):
         adapter.preview_script("script-1", "device-1", {str(index): "x" for index in range(21)}, client_id="acme")
+    with pytest.raises(DattoRmmError, match="argument values are invalid"):
+        adapter.preview_script("script-1", "device-1", cast(dict[str, str], {"key": 7}), client_id="acme")
+    with pytest.raises(DattoRmmError, match="unsafe characters"):
+        _safe_endpoint("v2/site/site-42/devices?limit=1")
