@@ -196,7 +196,9 @@ def test_storage_defensive_validation_and_actor_normalization(settings) -> None:
     assert actor_identifier(None) == "api"
     assert actor_identifier("   ") == "api"
     assert len(actor_identifier("a" * 200)) == 128
-    assert parse_iso_timestamp("2026-08-30T10:00:00", "timestamp").endswith("+00:00")
+    timestamp = parse_iso_timestamp("2026-08-30T10:00:00", "timestamp")
+    assert timestamp is not None
+    assert timestamp.endswith("+00:00")
 
 
 def test_memory_active_restore_scalar_history_and_filters(settings) -> None:
@@ -237,9 +239,9 @@ def test_skill_private_validators_cover_supported_schema_subset() -> None:
     with pytest.raises(AgentPlatformError):
         _slug("bad_slug")
     assert _version(1) == 1
-    for invalid in (0, True, cast(int, "1")):
+    for invalid_version in (0, True, cast(int, "1")):
         with pytest.raises(AgentPlatformError):
-            _version(invalid)
+            _version(invalid_version)
     assert _tools(["ticket-triage", "ticket-triage"]) == ["ticket-triage"]
     with pytest.raises(AgentPlatformError):
         _tools(cast(list[str], "not-a-list"))
@@ -274,9 +276,9 @@ def test_skill_private_validators_cover_supported_schema_subset() -> None:
             "properties": {"items": {"type": "array", "items": "bad"}},
         },
     ]
-    for invalid in invalid_schemas:
+    for invalid_schema in invalid_schemas:
         with pytest.raises(AgentPlatformError):
-            _schema(cast(dict[str, object], invalid))
+            _schema(cast(dict[str, object], invalid_schema))
 
 
 def test_skill_resource_and_sample_validation_branches() -> None:

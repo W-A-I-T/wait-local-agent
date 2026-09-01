@@ -61,9 +61,10 @@ def _runtime(
     IterationService,
 ]:
     store = Store(settings.data_path)
-    for client_id in clients:
+    for index, client_id in enumerate(clients):
         ensure_test_client(store, client_id)
-        ingest_local(store, _SAMPLE_TICKETS, client_id=client_id)
+        if index == 0:
+            ingest_local(store, _SAMPLE_TICKETS, client_id=client_id)
     actions = SmartActionService(store, settings)
     agents = AgentService(store, settings, actions)
     memories = MemoryService(store)

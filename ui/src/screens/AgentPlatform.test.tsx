@@ -38,13 +38,15 @@ function responseFor(path: string): unknown {
       },
       attachment_max_bytes: 4 * 1024 * 1024,
       write_actions_enabled: false,
-      llm_inference_enabled: false
+      llm_inference_enabled: false,
+      initialized: true
     };
   }
   if (path === "/packs/agent-platform/iterations") return [pendingSession];
   if (path === "/agents") return [{ id: "agent-1", name: "Dispatch review", client_id: "acme" }];
   if (path === "/packs/agent-platform/memories") return [];
   if (path === "/packs/agent-platform/skills") return [];
+  if (path === "/smart-actions") return [{ action_id: "ticket-triage", title: "Ticket triage", risk_level: "low", requires_approval: false }];
   if (path === "/packs/agent-platform/technicians") return [];
   if (path.includes("/attachments/analyses")) return [];
   if (path.includes("/attachments")) return [];

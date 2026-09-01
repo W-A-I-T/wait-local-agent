@@ -56,6 +56,7 @@ const primaryNavigation: NavigationGroup[] = [
       { to: "/microsoft-admin", label: "Microsoft Admin", icon: ShieldCheck, microsoftAdminCapability: true }
     ]
   },
+  {
     label: "Control",
     items: [
       { to: "/connectors", label: "Connectors", icon: GitBranch },

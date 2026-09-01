@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import base64
 import binascii
+import builtins
 import hashlib
 import json
 import re
@@ -322,7 +323,7 @@ class AttachmentService:
         client_id: str,
         ticket_id: str,
         attachment_id: str | None = None,
-    ) -> list[AttachmentAnalysis]:
+    ) -> builtins.list[AttachmentAnalysis]:
         client_id = require_client(self.store, client_id)
         ticket_id = validate_identifier(ticket_id, "ticket_id")
         clauses = ["client_id = ?", "ticket_id = ?"]
@@ -519,6 +520,7 @@ class AttachmentService:
                     created_at,
                 ),
             )
+            assert cursor.lastrowid is not None
             analysis_id = int(cursor.lastrowid)
         return AttachmentAnalysis(
             id=analysis_id,

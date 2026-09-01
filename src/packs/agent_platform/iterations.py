@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import builtins
 import sqlite3
 import uuid
 from collections.abc import Mapping
@@ -645,7 +646,7 @@ class IterationService:
         session: IterationSession,
         status: str,
         current_step: int,
-        steps: list[dict[str, object]],
+        steps: builtins.list[dict[str, object]],
         state: dict[str, object],
         approval_id: int | None,
     ) -> None:

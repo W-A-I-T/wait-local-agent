@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import builtins
 import json
 import re
 import sqlite3
@@ -113,9 +114,9 @@ class SkillService:
         slug: str,
         description: str,
         instructions: str,
-        allowed_tools: list[str],
+        allowed_tools: builtins.list[str],
         input_schema: dict[str, object],
-        resources: list[dict[str, object]],
+        resources: builtins.list[dict[str, object]],
         actor: str,
     ) -> SkillRecord:
         client_id = require_client(self.store, client_id)
@@ -278,7 +279,7 @@ class SkillService:
             ).fetchall()
         return [self.get(client_id=client_id, skill_id=str(row["id"])) for row in rows]
 
-    def revisions(self, *, client_id: str, skill_id: str) -> list[SkillRevision]:
+    def revisions(self, *, client_id: str, skill_id: str) -> builtins.list[SkillRevision]:
         current = self.get(client_id=client_id, skill_id=skill_id)
         with self.store._connect() as connection:  # noqa: SLF001
             rows = connection.execute(
@@ -386,6 +387,7 @@ class SkillService:
                     created_at,
                 ),
             )
+            assert cursor.lastrowid is not None
             run_id = int(cursor.lastrowid)
         self.store.add_audit_event(
             "agent_skill.tested",
@@ -407,7 +409,7 @@ class SkillService:
             created_at=created_at,
         )
 
-    def test_runs(self, *, client_id: str, skill_id: str, limit: int = 20) -> list[SkillTestRun]:
+    def test_runs(self, *, client_id: str, skill_id: str, limit: int = 20) -> builtins.list[SkillTestRun]:
         skill = self.get(client_id=client_id, skill_id=skill_id)
         if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= 100:
             raise AgentPlatformError("limit must be an integer between 1 and 100")
@@ -426,9 +428,9 @@ class SkillService:
         self,
         *,
         instructions: str,
-        allowed_tools: list[str],
+        allowed_tools: builtins.list[str],
         input_schema: dict[str, object],
-        resources: list[dict[str, object]],
+        resources: builtins.list[dict[str, object]],
     ) -> _RevisionPayload:
         instructions = validate_text(
             instructions,

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import builtins
 import re
 import sqlite3
 from collections.abc import Mapping
@@ -200,6 +201,7 @@ class TechnicianService:
                     actor,
                 ),
             )
+            assert cursor.lastrowid is not None
             workload_id = int(cursor.lastrowid)
         self.store.add_audit_event(
             "technician_workload.recorded",
@@ -250,7 +252,7 @@ class TechnicianService:
         *,
         client_id: str,
         ticket_id: str,
-        required_expertise: list[str] | None = None,
+        required_expertise: builtins.list[str] | None = None,
         limit: int = 5,
         now: str | None = None,
     ) -> dict[str, object]:
@@ -311,7 +313,7 @@ class TechnicianService:
                     "workload_observed_at": workload.observed_at if workload else None,
                 }
             )
-        candidates.sort(key=lambda item: (-float(item["score"]), str(item["technician_id"])))
+        candidates.sort(key=lambda item: (-cast(float, item["score"]), str(item["technician_id"])))
         ranked = candidates[:limit]
         available_ranked = [candidate for candidate in ranked if candidate["available"] is True]
         dispatch_payload = {
@@ -319,7 +321,7 @@ class TechnicianService:
             "technicians": [
                 {
                     "id": str(candidate["technician_id"]),
-                    "workload": float(candidate["workload_ratio"]) * 100.0,
+                    "workload": cast(float, candidate["workload_ratio"]) * 100.0,
                 }
                 for candidate in available_ranked
             ],

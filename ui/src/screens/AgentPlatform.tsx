@@ -1,6 +1,8 @@
 import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
 import { apiFetch } from "../api/client";
 import { useDashboard } from "../app/DashboardContext";
+import { EmptyState } from "../components/EmptyState";
+import { LoadingState } from "../components/LoadingState";
 
 type PlatformTab = "memory" | "skills" | "iterations" | "technicians" | "attachments";
 
@@ -11,6 +13,7 @@ type PlatformStatus = {
   attachment_max_bytes: number;
   write_actions_enabled: boolean;
   llm_inference_enabled: boolean;
+  initialized: boolean;
 };
 
 type MemoryRecord = {
@@ -125,6 +128,13 @@ type AttachmentAnalysis = {
   error_detail: string;
 };
 
+type SmartActionOption = {
+  action_id: string;
+  title: string;
+  risk_level: string;
+  requires_approval: boolean;
+};
+
 function parseJsonObject(value: string, label: string): Record<string, unknown> {
   let parsed: unknown;
   try {
@@ -152,22 +162,38 @@ async function fileToBase64(file: File): Promise<string> {
   return btoa(binary);
 }
 
-function StatusSummary({ status }: { status: PlatformStatus | null }) {
+function StatusSummary({
+  status,
+  selectedClientId,
+  clientName,
+  liveWritesReady,
+  writeHealthResolved
+}: {
+  status: PlatformStatus | null;
+  selectedClientId: string;
+  clientName?: string;
+  liveWritesReady: boolean;
+  writeHealthResolved: boolean;
+}) {
   if (!status) return null;
   const enabled = Object.entries(status.capabilities).filter(([, value]) => value).length;
   return (
     <section className="panel">
       <div className="panel-heading">
         <h2>Agent Platform</h2>
-        <span>{status.status}</span>
+        <span>{status.initialized ? status.status : "initializing"}</span>
       </div>
+      <p className="screen-note">
+        Client scope: {selectedClientId ? `${clientName ?? "Selected client"} (${selectedClientId})` : "none selected"}.
+        Local capability changes remain separate from live PSA writes.
+      </p>
       <p className="screen-note">
         {enabled} governed capabilities are available. Executable steps continue to use the existing Smart Action,
         tenant, role, approval, and audit boundaries.
       </p>
       <div className="grid">
         <div><strong>Schema</strong><p>v{status.migration_version}</p></div>
-        <div><strong>Live writes</strong><p>{status.write_actions_enabled ? "enabled" : "blocked"}</p></div>
+        <div><strong>Live PSA writes</strong><p>{!writeHealthResolved ? "checking" : liveWritesReady ? "ready" : "blocked"}</p></div>
         <div><strong>Image inference</strong><p>{status.llm_inference_enabled ? "enabled" : "blocked"}</p></div>
       </div>
     </section>
@@ -176,6 +202,7 @@ function StatusSummary({ status }: { status: PlatformStatus | null }) {
 
 function MemoryPanel({ canWrite }: { canWrite: boolean }) {
   const [records, setRecords] = useState<MemoryRecord[]>([]);
+  const [loading, setLoading] = useState(true);
   const [scopeType, setScopeType] = useState("client");
   const [scopeId, setScopeId] = useState("");
   const [key, setKey] = useState("");
@@ -185,10 +212,13 @@ function MemoryPanel({ canWrite }: { canWrite: boolean }) {
   const [message, setMessage] = useState("");
 
   const refresh = useCallback(async () => {
+    setLoading(true);
     try {
       setRecords(await apiFetch<MemoryRecord[]>("/packs/agent-platform/memories"));
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "Unable to load memories.");
+    } finally {
+      setLoading(false);
     }
   }, []);
 
@@ -254,7 +284,7 @@ function MemoryPanel({ canWrite }: { canWrite: boolean }) {
         {message ? <div className="notice" role="status">{message}</div> : null}
       </section>
       <section className="table-list">
-        {records.map((record) => (
+        {loading ? <LoadingState label="Loading durable memory…" /> : records.length === 0 ? <EmptyState title="No durable memory is available" why="Store an explicit, sourced tenant fact to make it available to governed context." /> : records.map((record) => (
           <article className="panel" key={record.id}>
             <div className="panel-heading"><h3>{record.key}</h3><span>v{record.version} · {record.scope_type}</span></div>
             <p className="screen-note">{record.summary || "No summary"} · {record.provenance}</p>
@@ -269,20 +299,30 @@ function MemoryPanel({ canWrite }: { canWrite: boolean }) {
 
 function SkillsPanel({ canWrite }: { canWrite: boolean }) {
   const [skills, setSkills] = useState<SkillRecord[]>([]);
+  const [actions, setActions] = useState<SmartActionOption[]>([]);
+  const [loading, setLoading] = useState(true);
   const [name, setName] = useState("");
   const [slug, setSlug] = useState("");
   const [instructions, setInstructions] = useState("");
-  const [tools, setTools] = useState("ticket-triage");
+  const [tools, setTools] = useState<string[]>([]);
   const [schema, setSchema] = useState('{"type":"object","properties":{}}');
   const [testInput, setTestInput] = useState("{}");
   const [testOutput, setTestOutput] = useState<Record<string, unknown> | null>(null);
   const [message, setMessage] = useState("");
 
   const refresh = useCallback(async () => {
+    setLoading(true);
     try {
-      setSkills(await apiFetch<SkillRecord[]>("/packs/agent-platform/skills"));
+      const [skillRows, actionRows] = await Promise.all([
+        apiFetch<SkillRecord[]>("/packs/agent-platform/skills"),
+        apiFetch<SmartActionOption[]>("/smart-actions")
+      ]);
+      setSkills(skillRows);
+      setActions(actionRows);
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "Unable to load skills.");
+    } finally {
+      setLoading(false);
     }
   }, []);
   useEffect(() => { void refresh(); }, [refresh]);
@@ -298,7 +338,7 @@ function SkillsPanel({ canWrite }: { canWrite: boolean }) {
           slug,
           description: "",
           instructions,
-          allowed_tools: splitValues(tools),
+          allowed_tools: tools,
           input_schema: parseJsonObject(schema, "Input schema"),
           resources: []
         })
@@ -337,7 +377,19 @@ function SkillsPanel({ canWrite }: { canWrite: boolean }) {
             <label>Slug<input required value={slug} onChange={(event) => setSlug(event.target.value)} /></label>
           </div>
           <label>Instructions<textarea required rows={5} value={instructions} onChange={(event) => setInstructions(event.target.value)} placeholder="Use {{input.ticket_id}} placeholders." /></label>
-          <label>Allowed Smart Action IDs<textarea rows={2} value={tools} onChange={(event) => setTools(event.target.value)} /></label>
+          <fieldset>
+            <legend>Allowed Smart Actions</legend>
+            {actions.length === 0 ? <p className="screen-note">No Smart Actions are available in the current catalog.</p> : actions.map((action) => (
+              <label key={action.action_id}>
+                <input
+                  type="checkbox"
+                  checked={tools.includes(action.action_id)}
+                  onChange={() => setTools((current) => current.includes(action.action_id) ? current.filter((id) => id !== action.action_id) : [...current, action.action_id])}
+                />
+                {action.title} ({action.action_id}) · {action.risk_level}{action.requires_approval ? " · approval required" : ""}
+              </label>
+            ))}
+          </fieldset>
           <label>Input schema<textarea rows={4} value={schema} onChange={(event) => setSchema(event.target.value)} /></label>
           <button disabled={!canWrite} type="submit">Create skill</button>
         </form>
@@ -346,7 +398,7 @@ function SkillsPanel({ canWrite }: { canWrite: boolean }) {
         {message ? <div className="notice" role="status">{message}</div> : null}
       </section>
       <section className="table-list">
-        {skills.map((skill) => (
+        {loading ? <LoadingState label="Loading governed skills…" /> : skills.length === 0 ? <EmptyState title="No governed skills are available" why="Create a versioned skill after selecting the Smart Actions it may use." /> : skills.map((skill) => (
           <article className="panel" key={skill.id}>
             <div className="panel-heading"><h3>{skill.name}</h3><span>v{skill.current_version}</span></div>
             <p className="screen-note">{skill.revision.allowed_tools.join(", ") || "No tools"}</p>
@@ -361,15 +413,19 @@ function SkillsPanel({ canWrite }: { canWrite: boolean }) {
 
 function IterationsPanel({ canWrite }: { canWrite: boolean }) {
   const [sessions, setSessions] = useState<IterationSession[]>([]);
+  const [loading, setLoading] = useState(true);
   const [agents, setAgents] = useState<AgentDefinition[]>([]);
   const [skills, setSkills] = useState<SkillRecord[]>([]);
   const [sourceType, setSourceType] = useState<"agent" | "skill">("agent");
   const [sourceId, setSourceId] = useState("");
   const [ticketId, setTicketId] = useState("");
-  const [steps, setSteps] = useState('[{"tool_id":"ticket-triage","payload":{}}]');
+  const [instruction, setInstruction] = useState("");
+  const [steps, setSteps] = useState("");
+  const [finishReason, setFinishReason] = useState("");
   const [message, setMessage] = useState("");
 
   const refresh = useCallback(async () => {
+    setLoading(true);
     try {
       const [sessionRows, agentRows, skillRows] = await Promise.all([
         apiFetch<IterationSession[]>("/packs/agent-platform/iterations"),
@@ -381,6 +437,8 @@ function IterationsPanel({ canWrite }: { canWrite: boolean }) {
       setSkills(skillRows);
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "Unable to load iteration sessions.");
+    } finally {
+      setLoading(false);
     }
   }, []);
   useEffect(() => { void refresh(); }, [refresh]);
@@ -404,7 +462,7 @@ function IterationsPanel({ canWrite }: { canWrite: boolean }) {
           source_type: sourceType,
           source_id: sourceId,
           entity_id: ticketId,
-          instruction: "Pause after every governed step.",
+          instruction,
           steps: parsedSteps
         })
       });
@@ -420,7 +478,7 @@ function IterationsPanel({ canWrite }: { canWrite: boolean }) {
       await apiFetch<IterationSession>(`/packs/agent-platform/iterations/${session.id}/${action}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(action === "finish" ? { reason: "Technician finished the review." } : {})
+        body: JSON.stringify(action === "finish" ? { reason: finishReason.trim() } : {})
       });
       await refresh();
     } catch (error) {
@@ -439,13 +497,15 @@ function IterationsPanel({ canWrite }: { canWrite: boolean }) {
             <label>Source<select required value={sourceId} onChange={(event) => setSourceId(event.target.value)}><option value="">Choose</option>{sourceOptions.map((source) => <option key={source.id} value={source.id}>{source.name}</option>)}</select></label>
             <label>Ticket ID<input required value={ticketId} onChange={(event) => setTicketId(event.target.value)} /></label>
           </div>
-          {sourceType === "skill" ? <label>Bounded steps JSON<textarea rows={4} value={steps} onChange={(event) => setSteps(event.target.value)} /></label> : null}
+          <label>Session instruction<input required value={instruction} onChange={(event) => setInstruction(event.target.value)} /></label>
+          {sourceType === "skill" ? <label>Bounded steps JSON<textarea required rows={4} value={steps} onChange={(event) => setSteps(event.target.value)} placeholder='[{"tool_id":"action-id","payload":{}}]' /></label> : null}
           <button disabled={!canWrite} type="submit">Create paused session</button>
         </form>
+        <label>Finish reason (required before finishing)<input value={finishReason} onChange={(event) => setFinishReason(event.target.value)} /></label>
         {message ? <div className="notice" role="status">{message}</div> : null}
       </section>
       <section className="table-list">
-        {sessions.map((session) => {
+        {loading ? <LoadingState label="Loading iteration sessions…" /> : sessions.length === 0 ? <EmptyState title="No iteration sessions are available" why="Create a paused session from an enabled agent or skill to review one governed step at a time." /> : sessions.map((session) => {
           const terminal = ["completed", "failed", "rejected", "cancelled"].includes(session.status);
           return <article className="panel" key={session.id}>
             <div className="panel-heading"><h3>{session.source_type}: {session.source_id}</h3><span>{session.status}</span></div>
@@ -454,7 +514,7 @@ function IterationsPanel({ canWrite }: { canWrite: boolean }) {
             <div className="template-actions">
               <button disabled={!canWrite || terminal} type="button" onClick={() => void control(session, "continue")}>{session.status === "pending_approval" ? "Check approval" : "Continue one step"}</button>
               <button disabled={!canWrite || session.status === "pending_approval"} type="button" onClick={() => void control(session, "restart")}>Restart</button>
-              <button disabled={!canWrite || terminal || session.status === "pending_approval"} type="button" onClick={() => void control(session, "finish")}>Finish</button>
+              <button disabled={!canWrite || !finishReason.trim() || terminal || session.status === "pending_approval"} type="button" onClick={() => void control(session, "finish")}>Finish</button>
             </div>
           </article>;
         })}
@@ -465,19 +525,28 @@ function IterationsPanel({ canWrite }: { canWrite: boolean }) {
 
 function TechniciansPanel({ canWrite, isAdmin }: { canWrite: boolean; isAdmin: boolean }) {
   const [profiles, setProfiles] = useState<TechnicianProfile[]>([]);
+  const [loading, setLoading] = useState(true);
   const [technicianId, setTechnicianId] = useState("");
   const [displayName, setDisplayName] = useState("");
+  const [timezone, setTimezone] = useState("");
+  const [workingHours, setWorkingHours] = useState("{}");
   const [expertise, setExpertise] = useState("");
+  const [clientFamiliarity, setClientFamiliarity] = useState("");
+  const [capacity, setCapacity] = useState("");
+  const [enabled, setEnabled] = useState(true);
   const [ticketId, setTicketId] = useState("");
   const [requiredExpertise, setRequiredExpertise] = useState("");
   const [recommendation, setRecommendation] = useState<TechnicianRecommendation | null>(null);
   const [message, setMessage] = useState("");
 
   const refresh = useCallback(async () => {
+    setLoading(true);
     try {
       setProfiles(await apiFetch<TechnicianProfile[]>("/packs/agent-platform/technicians"));
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "Unable to load technicians.");
+    } finally {
+      setLoading(false);
     }
   }, []);
   useEffect(() => { void refresh(); }, [refresh]);
@@ -487,15 +556,15 @@ function TechniciansPanel({ canWrite, isAdmin }: { canWrite: boolean; isAdmin: b
     try {
       await apiFetch<TechnicianProfile>(`/packs/agent-platform/technicians/${technicianId}`, {
         method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          display_name: displayName,
-          timezone: "UTC",
-          working_hours: {},
-          expertise: splitValues(expertise),
-          client_familiarity: 0,
-          capacity: 40,
-          enabled: true
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            display_name: displayName,
+            timezone,
+            working_hours: parseJsonObject(workingHours, "Working hours"),
+            expertise: splitValues(expertise),
+            client_familiarity: Number(clientFamiliarity),
+            capacity: Number(capacity),
+            enabled
         })
       });
       setMessage("Technician profile saved.");
@@ -527,8 +596,13 @@ function TechniciansPanel({ canWrite, isAdmin }: { canWrite: boolean; isAdmin: b
           <div className="grid">
             <label>Technician ID<input required value={technicianId} onChange={(event) => setTechnicianId(event.target.value)} /></label>
             <label>Display name<input required value={displayName} onChange={(event) => setDisplayName(event.target.value)} /></label>
+            <label>Timezone<input required value={timezone} onChange={(event) => setTimezone(event.target.value)} /></label>
             <label>Expertise<input value={expertise} onChange={(event) => setExpertise(event.target.value)} placeholder="MFA, Entra, networking" /></label>
+            <label>Client familiarity (0–5)<input required type="number" min="0" max="5" value={clientFamiliarity} onChange={(event) => setClientFamiliarity(event.target.value)} /></label>
+            <label>Capacity (1–100)<input required type="number" min="1" max="100" value={capacity} onChange={(event) => setCapacity(event.target.value)} /></label>
           </div>
+          <label>Working hours JSON<textarea required rows={3} value={workingHours} onChange={(event) => setWorkingHours(event.target.value)} /></label>
+          <label><input type="checkbox" checked={enabled} onChange={(event) => setEnabled(event.target.checked)} /> Profile enabled</label>
           <button disabled={!canWrite || !isAdmin} type="submit">Save profile</button>
         </form>
         <div className="grid">
@@ -540,21 +614,23 @@ function TechniciansPanel({ canWrite, isAdmin }: { canWrite: boolean; isAdmin: b
         {message ? <div className="notice" role="status">{message}</div> : null}
       </section>
       <section className="table-list">
-        {profiles.map((profile) => <article className="panel" key={profile.technician_id}><div className="panel-heading"><h3>{profile.display_name}</h3><span>{profile.enabled ? "enabled" : "disabled"}</span></div><p className="screen-note">{profile.expertise.join(", ") || "No expertise labels"}</p><p className="screen-note">Capacity {profile.capacity} · Open tickets {profile.workload?.open_tickets ?? "unknown"}</p></article>)}
+        {loading ? <LoadingState label="Loading technician profiles…" /> : profiles.length === 0 ? <EmptyState title="No technician profiles are available" why="An administrator can add a client-scoped profile before ranking workload." /> : profiles.map((profile) => <article className="panel" key={profile.technician_id}><div className="panel-heading"><h3>{profile.display_name}</h3><span>{profile.enabled ? "enabled" : "disabled"}</span></div><p className="screen-note">{profile.expertise.join(", ") || "No expertise labels"}</p><p className="screen-note">Capacity {profile.capacity} · Open tickets {profile.workload?.open_tickets ?? "unknown"}</p></article>)}
       </section>
     </div>
   );
 }
 
-function AttachmentsPanel({ canWrite, maxBytes }: { canWrite: boolean; maxBytes: number }) {
+function AttachmentsPanel({ canWrite, maxBytes }: { canWrite: boolean; maxBytes?: number }) {
   const [ticketId, setTicketId] = useState("");
   const [file, setFile] = useState<File | null>(null);
   const [attachments, setAttachments] = useState<TicketAttachment[]>([]);
   const [analyses, setAnalyses] = useState<AttachmentAnalysis[]>([]);
+  const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState("");
 
   const refresh = useCallback(async () => {
     if (!ticketId) return;
+    setLoading(true);
     try {
       const [attachmentRows, analysisRows] = await Promise.all([
         apiFetch<TicketAttachment[]>(`/packs/agent-platform/tickets/${ticketId}/attachments`),
@@ -564,6 +640,8 @@ function AttachmentsPanel({ canWrite, maxBytes }: { canWrite: boolean; maxBytes:
       setAnalyses(analysisRows);
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "Unable to load attachments.");
+    } finally {
+      setLoading(false);
     }
   }, [ticketId]);
 
@@ -571,6 +649,7 @@ function AttachmentsPanel({ canWrite, maxBytes }: { canWrite: boolean; maxBytes:
     event.preventDefault();
     if (!file) return;
     try {
+      if (maxBytes === undefined) throw new Error("Upload limits are still loading. Try again in a moment.");
       if (file.size > maxBytes) throw new Error(`Image must be no larger than ${maxBytes} bytes.`);
       await apiFetch<TicketAttachment>(`/packs/agent-platform/tickets/${ticketId}/attachments`, {
         method: "POST",
@@ -613,12 +692,12 @@ function AttachmentsPanel({ canWrite, maxBytes }: { canWrite: boolean; maxBytes:
             <label>Ticket ID<input required value={ticketId} onChange={(event) => setTicketId(event.target.value)} /></label>
             <label>PNG, JPEG, or WebP<input required accept="image/png,image/jpeg,image/webp" type="file" onChange={(event) => setFile(event.target.files?.[0] ?? null)} /></label>
           </div>
-          <div className="template-actions"><button type="button" disabled={!ticketId} onClick={() => void refresh()}>Load</button><button type="submit" disabled={!canWrite || !file}>Store image</button></div>
+          <div className="template-actions"><button type="button" disabled={!ticketId || loading} onClick={() => void refresh()}>Load</button><button type="submit" disabled={!canWrite || !file || maxBytes === undefined}>Store image</button></div>
         </form>
         {message ? <div className="notice" role="status">{message}</div> : null}
       </section>
       <section className="table-list">
-        {attachments.map((attachment) => {
+        {loading ? <LoadingState label="Loading ticket images…" /> : attachments.length === 0 ? <EmptyState title="No ticket images are loaded" why="Enter a ticket ID and choose Load, or store a supported image for the selected ticket." /> : attachments.map((attachment) => {
           const analysis = latest.get(attachment.id);
           return <article className="panel" key={attachment.id}><div className="panel-heading"><h3>{attachment.filename}</h3><span>{attachment.byte_size} bytes</span></div><p className="screen-note">SHA-256 {attachment.sha256}</p>{analysis ? <pre>{JSON.stringify(analysis.status === "ready" ? analysis.result : { status: analysis.status, detail: analysis.error_detail }, null, 2)}</pre> : null}<button disabled={!canWrite} type="button" onClick={() => void analyze(attachment)}>Analyze visible evidence</button></article>;
         })}
@@ -628,7 +707,7 @@ function AttachmentsPanel({ canWrite, maxBytes }: { canWrite: boolean; maxBytes:
 }
 
 export function AgentPlatform() {
-  const { canWrite, role } = useDashboard();
+  const { canWrite, role, clients = [], selectedClientId = "", liveWritesReady = false, writeHealthResolved = false } = useDashboard();
   const [tab, setTab] = useState<PlatformTab>("memory");
   const [status, setStatus] = useState<PlatformStatus | null>(null);
   const [message, setMessage] = useState("");
@@ -641,7 +720,14 @@ export function AgentPlatform() {
 
   return (
     <div className="screen-stack">
-      <StatusSummary status={status} />
+      <StatusSummary
+        status={status}
+        selectedClientId={selectedClientId}
+        clientName={clients.find((client) => client.client_id === selectedClientId)?.name}
+        liveWritesReady={liveWritesReady}
+        writeHealthResolved={writeHealthResolved}
+      />
+      {!selectedClientId ? <div className="notice" role="alert">Choose a client in the workspace scope selector before loading or changing agent-platform data.</div> : null}
       <section className="panel">
         <div className="template-actions" role="tablist" aria-label="Agent platform capabilities">
           {(["memory", "skills", "iterations", "technicians", "attachments"] as PlatformTab[]).map((item) => (
@@ -654,7 +740,7 @@ export function AgentPlatform() {
       {tab === "skills" ? <SkillsPanel canWrite={canWrite} /> : null}
       {tab === "iterations" ? <IterationsPanel canWrite={canWrite} /> : null}
       {tab === "technicians" ? <TechniciansPanel canWrite={canWrite} isAdmin={role === "admin"} /> : null}
-      {tab === "attachments" ? <AttachmentsPanel canWrite={canWrite} maxBytes={status?.attachment_max_bytes ?? 4 * 1024 * 1024} /> : null}
+      {tab === "attachments" ? <AttachmentsPanel canWrite={canWrite} maxBytes={status?.attachment_max_bytes} /> : null}
     </div>
   );
 }

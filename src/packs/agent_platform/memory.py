@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import builtins
 import sqlite3
 import uuid
 from dataclasses import asdict, dataclass
@@ -288,7 +289,7 @@ class MemoryService:
         technician_id: str | None = None,
         ticket_id: str | None = None,
         limit: int = 20,
-    ) -> list[dict[str, object]]:
+    ) -> builtins.list[dict[str, object]]:
         client_id = require_client(self.store, client_id)
         if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= MAX_CONTEXT_MEMORIES:
             raise AgentPlatformError(

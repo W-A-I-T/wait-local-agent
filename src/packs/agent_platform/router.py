@@ -72,7 +72,7 @@ class SkillCreateRequest(StrictModel):
     description: str = Field(default="", max_length=2_000)
     instructions: str = Field(min_length=1, max_length=20_000)
     allowed_tools: list[str] = Field(default_factory=list, max_length=16)
-    input_schema: dict[str, object] = Field(default_factory=lambda: {"type": "object"})
+    input_schema: dict[str, object] = Field(default_factory=lambda: cast(dict[str, object], {"type": "object"}))
     resources: list[SkillResourceRequest] = Field(default_factory=list, max_length=10)
 
 
