@@ -4,7 +4,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { Settings } from "./Settings";
 
 const dashboardState = vi.hoisted(() => ({
-  authState: "demo" as "demo" | "authenticated",
+  authState: "demo" as "demo" | "authenticated" | "local-open",
   isAdmin: true,
   loading: false,
   role: "admin" as "admin" | "viewer"
@@ -21,6 +21,71 @@ afterEach(() => {
   dashboardState.role = "admin";
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
+});
+
+function installSettingsResponses(demoMode: boolean) {
+  const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+    const path = String(input);
+    if (path === "/settings/providers") {
+      return jsonResponse({ local_model_provider: "demo", vector_backend: "local" });
+    }
+    if (path === "/settings/security") {
+      return jsonResponse({
+        api_token_configured: false,
+        admin_token_configured: false,
+        tech_token_configured: false,
+        viewer_token_configured: false,
+        api_auth_required: false,
+        demo_mode: demoMode
+      });
+    }
+    if (path === "/packs" || path === "/secrets") {
+      return jsonResponse([]);
+    }
+    if (path === "/update-status") {
+      return jsonResponse({ status: "current", detail: "No update available." });
+    }
+    if (path === "/founder/lp-status") {
+      return jsonResponse({ error: "launch passport not configured" }, 409);
+    }
+    throw new Error(`Unexpected request: ${path}`);
+  });
+  vi.stubGlobal("fetch", fetchMock);
+  return fetchMock;
+}
+
+describe("Settings demo mode explanation", () => {
+  it("explains the active restrictions and restart-only change mechanism", async () => {
+    dashboardState.authState = "local-open";
+    installSettingsResponses(true);
+
+    render(
+      <MemoryRouter>
+        <Settings />
+      </MemoryRouter>
+    );
+
+    expect(await screen.findByRole("heading", { name: "Demo mode is active." })).toBeInTheDocument();
+    expect(screen.getByText(/Write actions and Power Platform deployment are disabled/)).toBeInTheDocument();
+    expect(screen.getByText(/Other actions may also be unavailable if their own/)).toHaveTextContent("WAIT_ALLOW_*");
+    expect(screen.getByText(/There is no in-app switch for this/)).toHaveTextContent("WAIT_DEMO_MODE");
+    expect(screen.getByText(/There is no in-app switch for this/)).toHaveTextContent(/restart/i);
+  });
+
+  it("omits the active restriction explanation when demo mode is off", async () => {
+    dashboardState.authState = "local-open";
+    installSettingsResponses(false);
+
+    render(
+      <MemoryRouter>
+        <Settings />
+      </MemoryRouter>
+    );
+
+    expect(await screen.findByText("Settings loaded.")).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Demo mode is active." })).not.toBeInTheDocument();
+    expect(screen.queryByText(/Write actions and Power Platform deployment are disabled/)).not.toBeInTheDocument();
+  });
 });
 
 describe("Settings loading", () => {
