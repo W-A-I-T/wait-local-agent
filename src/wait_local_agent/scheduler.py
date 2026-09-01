@@ -50,6 +50,7 @@ class SchedulerManager:
         event_dispatcher: EventDispatcher | None = None,
         ingestion_poller: IngestionPoller | None = None,
         graph_sync_runner: Callable[[str], object] | None = None,
+        baseline_snapshot_runner: Callable[[str], object] | None = None,
     ) -> None:
         self._store = store
         self._enabled = enabled
@@ -58,6 +59,7 @@ class SchedulerManager:
         self._event_dispatcher = event_dispatcher
         self._ingestion_poller = ingestion_poller
         self._graph_sync_runner = graph_sync_runner
+        self._baseline_snapshot_runner = baseline_snapshot_runner
         self._scheduler: AsyncIOScheduler | None = None
         self._started = False
 
@@ -108,11 +110,11 @@ class SchedulerManager:
         normalized_timezone = validate_schedule(schedule_type, cron, interval_seconds, run_at, timezone)
         _validate_schedule_target(job_kind, template_id, agent_id, entity_id)
         client_id = _string_or_none(params.get("client_id"))
-        if job_kind == "graph_sync":
-            graph_client_id = _string_or_none(entity_id)
-            if client_id is not None and client_id != graph_client_id:
-                raise ValueError("graph_sync schedule client scope must match entity_id")
-            client_id = graph_client_id
+        if job_kind in {"graph_sync", "baseline_snapshot"}:
+            scoped_client_id = _string_or_none(entity_id)
+            if client_id is not None and client_id != scoped_client_id:
+                raise ValueError(f"{job_kind} schedule client scope must match entity_id")
+            client_id = scoped_client_id
         scheduled_job = self._store.create_scheduled_job(
             template_id,
             cron,
@@ -190,6 +192,9 @@ class SchedulerManager:
             return
         if scheduled_job.job_kind == "graph_sync":
             await self._run_graph_sync_job(scheduled_job)
+            return
+        if scheduled_job.job_kind == "baseline_snapshot":
+            await self._run_baseline_snapshot_job(scheduled_job)
             return
         params = _safe_json_object(scheduled_job.params_json)
         client_id = _string_or_none(params.get("client_id")) or scheduled_job.client_id
@@ -302,6 +307,30 @@ class SchedulerManager:
             "scheduled_job.graph_sync",
             str(scheduled_job.id),
             f"scheduled environment sync -> completed ({type(result).__name__})",
+            client_id=client_id,
+        )
+
+    async def _run_baseline_snapshot_job(self, scheduled_job: ScheduledJob) -> None:
+        client_id = scheduled_job.entity_id
+        runner = self._baseline_snapshot_runner
+        if runner is None or not isinstance(client_id, str) or not client_id.strip():
+            LOGGER.warning("Scheduled baseline snapshot skipped: runner or client scope is not configured")
+            return
+        try:
+            result = await asyncio.to_thread(runner, client_id)
+        except Exception as exc:  # noqa: BLE001 - scheduled snapshot failures are isolated and sanitized
+            self._store.add_audit_event(
+                "scheduled_job.baseline_snapshot",
+                str(scheduled_job.id),
+                f"scheduled baseline snapshot -> failed: {type(exc).__name__}: provider request failed",
+                client_id=client_id,
+            )
+            return
+        version = getattr(result, "version", "unknown")
+        self._store.add_audit_event(
+            "scheduled_job.baseline_snapshot",
+            str(scheduled_job.id),
+            f"scheduled baseline snapshot -> completed (version {version})",
             client_id=client_id,
         )
 
@@ -706,6 +735,10 @@ def _validate_schedule_target(
     if job_kind == "graph_sync":
         if template_id or agent_id is not None or not _string_or_none(entity_id):
             raise ValueError("graph_sync schedules require entity_id only")
+        return
+    if job_kind == "baseline_snapshot":
+        if template_id or agent_id is not None or not _string_or_none(entity_id):
+            raise ValueError("baseline_snapshot schedules require entity_id only")
         return
     if job_kind == "playbook":
         if not template_id or agent_id is not None or entity_id is not None:

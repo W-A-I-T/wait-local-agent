@@ -471,7 +471,7 @@ def test_scheduler_graph_sync_validates_runs_and_audits(tmp_path: Path, monkeypa
     asyncio.run(manager._run_job(scheduled_job))  # noqa: SLF001
 
     assert calls == ["client-a"]
-    events = store.list_audit_events(client_id="client-a")
+    events = store.list_audit_events()
     assert any(
         event.event_type == "scheduled_job.graph_sync" and "completed" in event.detail
         for event in events
@@ -505,6 +505,66 @@ def test_scheduler_graph_sync_scope_validation_skip_and_failure_are_isolated(
     event = next(event for event in store.list_audit_events() if event.event_type == "scheduled_job.graph_sync")
     assert "graph-secret" not in event.detail
     assert "access_token" not in event.detail
+
+
+def test_scheduler_baseline_snapshot_validates_registers_triggers_and_sanitizes_failure(
+    tmp_path: Path, monkeypatch
+) -> None:
+    _validate_schedule_target("baseline_snapshot", "", None, "client-a")
+    with pytest.raises(ValueError, match="baseline_snapshot schedules require entity_id only"):
+        _validate_schedule_target("baseline_snapshot", "template", None, "client-a")
+
+    store = Store(tmp_path / "baseline-snapshot.db")
+    calls: list[str] = []
+
+    def run_baseline_snapshot(client_id: str) -> SimpleNamespace:
+        calls.append(client_id)
+        return SimpleNamespace(version=3)
+
+    manager = SchedulerManager(store, enabled=False, baseline_snapshot_runner=run_baseline_snapshot)
+    scheduled_job = manager.register(
+        "",
+        "0 9 * * *",
+        {"client_id": "client-a"},
+        job_kind="baseline_snapshot",
+        entity_id="client-a",
+    )
+
+    async def run_in_thread(function, *args, **kwargs):
+        return function(*args, **kwargs)
+
+    monkeypatch.setattr("wait_local_agent.scheduler.asyncio.to_thread", run_in_thread)
+    asyncio.run(manager._run_job(scheduled_job))  # noqa: SLF001
+
+    assert calls == ["client-a"]
+    completed = next(
+        event
+        for event in store.list_audit_events(client_id="client-a")
+        if event.event_type == "scheduled_job.baseline_snapshot"
+    )
+    assert "completed (version 3)" in completed.detail
+
+    def fail_baseline_snapshot(_client_id: str) -> None:
+        raise RuntimeError("provider request failed with token=abc")
+
+    failing_manager = SchedulerManager(
+        store,
+        enabled=False,
+        baseline_snapshot_runner=fail_baseline_snapshot,
+    )
+    asyncio.run(failing_manager._run_job(scheduled_job))  # noqa: SLF001
+
+    events = store.list_audit_events()
+    failed = next(
+        event
+        for event in events
+        if event.event_type == "scheduled_job.baseline_snapshot"
+        and "failed" in event.detail
+        and "baseline" in event.detail
+    )
+    assert failed.detail == "scheduled baseline snapshot -> failed: RuntimeError: provider request failed"
+    assert "provider request failed with token=abc" not in failed.detail
+    assert all("token" not in event.detail for event in events)
 
 
 def test_scheduler_skips_quarantined_workflow_playbook_and_agent_jobs(tmp_path: Path) -> None:

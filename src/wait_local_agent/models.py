@@ -921,6 +921,18 @@ class SyncCursor:
 
 
 @dataclass(frozen=True)
+class ClientBaseline:
+    baseline_id: str
+    client_id: str
+    version: int
+    generated_at: str
+    accepted: bool
+    source_coverage_json: str
+    summary_json: str
+    sections_json: str
+
+
+@dataclass(frozen=True)
 class UnmappedRecord:
     record_id: str
     connector_instance_id: str

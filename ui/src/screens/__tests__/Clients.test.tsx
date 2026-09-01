@@ -146,6 +146,48 @@ describe("Clients", () => {
     expect(await screen.findByRole("alert")).toHaveTextContent("environment is no longer available");
   });
 
+  it("loads baseline versions, groups drift, and accepts a candidate", async () => {
+    const baseline = {
+      baseline_id: "baseline-2",
+      client_id: "acme",
+      version: 2,
+      generated_at: "2026-09-01T00:00:00Z",
+      accepted: false,
+      source_coverage: { microsoft_posture: "ready" },
+      summary: {},
+      sections: {}
+    };
+    mockedApiFetch.mockImplementation((path, init) => {
+      if (path === "/clients") return Promise.resolve([{ client_id: "acme", name: "Acme", status: "active" }]) as ReturnType<typeof apiFetch>;
+      if (path === "/clients/acme") return Promise.resolve({ client_id: "acme", name: "Acme", status: "active", created_at: "now", updated_at: "now" }) as ReturnType<typeof apiFetch>;
+      if (path === "/clients/acme/baselines" && init?.method === "POST") return Promise.resolve(baseline) as ReturnType<typeof apiFetch>;
+      if (path === "/clients/acme/baselines/2/accept") return Promise.resolve({ ...baseline, accepted: true }) as ReturnType<typeof apiFetch>;
+      if (path === "/clients/acme/baselines") return Promise.resolve([baseline]) as ReturnType<typeof apiFetch>;
+      if (path === "/clients/acme/drift") return Promise.resolve({
+        client_id: "acme",
+        baseline_version: 1,
+        baseline_generated_at: "2026-08-31T00:00:00Z",
+        generated_at: "2026-09-01T00:00:00Z",
+        unchanged: false,
+        findings: [{ domain: "microsoft_posture", path: "microsoft_posture.summary.noncompliant_devices", classification: "worsened", previous: 1, current: 2, correlation_label: "no matching approved change found" }],
+        source_coverage: { microsoft_posture: "ready" },
+        fresh_summary: {}
+      }) as ReturnType<typeof apiFetch>;
+      return Promise.resolve([]) as ReturnType<typeof apiFetch>;
+    });
+
+    render(<Clients />);
+    await screen.findByText("Acme");
+    await act(async () => { screen.getByRole("button", { name: "Acme" }).click(); });
+    await act(async () => { screen.getByRole("tab", { name: "Baseline" }).click(); });
+
+    expect(await screen.findByText("no matching approved change found")).toBeInTheDocument();
+    expect(screen.getByText("worsened")).toBeInTheDocument();
+    await act(async () => { screen.getByRole("button", { name: "Accept" }).click(); });
+    expect(await screen.findByText("Current")).toBeInTheDocument();
+    expect(mockedApiFetch).toHaveBeenCalledWith("/clients/acme/baselines/2/accept", { method: "POST" });
+  });
+
   it("applies environment filters, resets paging, and navigates pages", async () => {
     const graph = {
       refs: [

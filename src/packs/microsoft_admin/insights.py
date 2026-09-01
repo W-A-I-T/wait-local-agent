@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from typing import cast
 
 from wait_local_agent.m365_graph import M365GraphClient
 
@@ -148,6 +149,26 @@ def build_dashboard(
             "defender_incidents": incidents.items,
             "defender_alerts": alerts.items,
         },
+    }
+
+
+def build_dashboard_summary(
+    provider: MicrosoftAdminProvider,
+    core_client: M365GraphClient,
+    *,
+    now: datetime | None = None,
+) -> dict[str, object]:
+    """Return only the stable posture summary used by baseline snapshots.
+
+    The dashboard remains the source of truth for the existing live surface;
+    this projection deliberately omits provider payloads and evidence details.
+    """
+
+    dashboard = build_dashboard(provider, core_client, now=now)
+    return {
+        "generated_at": dashboard["generated_at"],
+        "summary": cast(dict[str, object], dashboard["summary"]),
+        "source_statuses": cast(dict[str, str], dashboard["source_statuses"]),
     }
 
 
