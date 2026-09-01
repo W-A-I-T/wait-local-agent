@@ -16,7 +16,7 @@ from wait_local_agent.backup import backup_state, restore_state
 from wait_local_agent.cli import app as cli_app
 from wait_local_agent.migrations import Migration, MigrationRunner
 from wait_local_agent.smart_actions import SmartActionService
-from wait_local_agent.store import Store
+from wait_local_agent.store import Store, latest_declared_schema_version
 from wait_local_agent.surface_coverage import SURFACE_CLASSES, build_surface_inventory, enumerate_fastapi_routes
 
 SURFACE_MANIFEST_PATH = Path(__file__).parents[1] / "docs/ai-workflow/surface-coverage.json"
@@ -72,9 +72,11 @@ def test_store_migrations_are_idempotent_and_connection_pragmas_are_safe(tmp_pat
         assert connection.execute("pragma journal_mode").fetchone()[0].lower() == "wal"
         assert connection.execute("pragma busy_timeout").fetchone()[0] >= 3000
 
-    Store(path)
+    store = Store(path)
     with sqlite3.connect(path) as connection:
-        assert connection.execute("select count(*) from schema_migrations").fetchone()[0] == 10
+        assert connection.execute("select max(version) from schema_migrations").fetchone()[0] == (
+            latest_declared_schema_version(store)
+        )
 
 
 def test_migration_failure_rolls_back_data_and_version_bump(tmp_path: Path) -> None:

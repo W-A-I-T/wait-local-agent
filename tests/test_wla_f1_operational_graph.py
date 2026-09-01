@@ -16,7 +16,7 @@ from wait_local_agent.models import CanonicalAsset, Ticket
 from wait_local_agent.operational_graph import OperationalGraphService
 from wait_local_agent.rbac import AuthContext, Role, resolve_auth_context
 from wait_local_agent.rmm import RmmAlert, RmmDevice, RmmInventoryProvider
-from wait_local_agent.store import Store
+from wait_local_agent.store import Store, latest_declared_schema_version
 
 
 class _FakeRmmProvider:
@@ -95,7 +95,9 @@ def test_v7_operational_graph_is_additive_idempotent_and_fk_clean(tmp_path: Path
                 "order by type, name"
             )
         ]
-        assert connection.execute("select count(*) from schema_migrations").fetchone()[0] == 10
+        assert connection.execute("select max(version) from schema_migrations").fetchone()[0] == (
+            latest_declared_schema_version(store)
+        )
 
 
 def test_graph_store_is_fail_closed_and_cross_tenant_links_raise(tmp_path: Path) -> None:

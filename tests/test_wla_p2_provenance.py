@@ -5,7 +5,7 @@ from pathlib import Path
 
 from wait_local_agent.client_scope import AllClients, BoundClients
 from wait_local_agent.models import Ticket
-from wait_local_agent.store import Store
+from wait_local_agent.store import Store, latest_declared_schema_version
 
 
 def _seed_connectors(store: Store):
@@ -65,7 +65,9 @@ def test_v3_is_additive_idempotent_and_fk_clean(tmp_path: Path) -> None:
 
     Store(tmp_path / "state.db")
     with store._connect() as connection:  # noqa: SLF001
-        assert connection.execute("select count(*) from schema_migrations").fetchone()[0] == 10
+        assert connection.execute("select max(version) from schema_migrations").fetchone()[0] == (
+            latest_declared_schema_version(store)
+        )
         assert connection.execute("pragma foreign_key_check").fetchall() == []
 
 

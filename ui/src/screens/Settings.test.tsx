@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { render, screen, within } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { Settings } from "./Settings";
@@ -55,7 +55,8 @@ describe("Settings loading", () => {
     expect(screen.getByText("Provider mode").parentElement).toHaveTextContent("llama.cpp");
     expect(screen.getByText("Demo mode").parentElement).toHaveTextContent("enabled");
     expect(screen.getByText("Update check").parentElement).toHaveTextContent("current");
-    expect(screen.getByText("Core pack")).toBeInTheDocument();
+    const packsPanel = screen.getByRole("heading", { name: "Packs" }).closest(".panel") as HTMLElement;
+    expect(within(packsPanel).getByText("Core pack")).toBeInTheDocument();
     expect(screen.getByText("unavailable in demo mode")).toBeInTheDocument();
     expect(screen.getByText("Vault contents are unavailable in demo mode.")).toBeInTheDocument();
     expect(screen.queryByText(/Administrator role required for admin settings/)).not.toBeInTheDocument();

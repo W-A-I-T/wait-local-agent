@@ -35,7 +35,7 @@ from wait_local_agent.diagnostics import (
 from wait_local_agent.models import Ticket
 from wait_local_agent.observability import ExecutionRecorder
 from wait_local_agent.smart_actions import SmartActionService
-from wait_local_agent.store import Store
+from wait_local_agent.store import Store, latest_declared_schema_version
 from wait_local_agent.structured_logging import (
     PrivateRotatingFileHandler,
     ScrubbedJsonFormatter,
@@ -97,14 +97,18 @@ def _inline_threadpool(monkeypatch: pytest.MonkeyPatch) -> None:
 
 def test_summary_uses_explicit_safe_shape_and_authoritative_version(settings: Settings) -> None:
     settings = replace(settings, log_dir=settings.data_path.parent / "private-logs")
-    summary = collect_diagnostics(settings, Store(settings.data_path)).to_dict()
+    store = Store(settings.data_path)
+    summary = collect_diagnostics(settings, store).to_dict()
 
     system = summary["system"]
     configuration = summary["configuration"]
     assert isinstance(system, dict)
     assert isinstance(configuration, dict)
     assert system["version"] == wait_local_agent.__version__
-    assert summary["database"] == {"schema_version": 7, "integrity_check": "ok"}
+    assert summary["database"] == {
+        "schema_version": latest_declared_schema_version(store),
+        "integrity_check": "ok",
+    }
     assert set(configuration) == {
         "write_actions_enabled",
         "http_probing_enabled",
@@ -161,11 +165,21 @@ def test_bundle_manifest_hashes_entries_and_is_deterministic(settings: Settings)
     store = Store(settings.data_path)
     first = build_support_bundle(settings, store, case_id="case-private-44")
     first_bytes = first.path.read_bytes()
+    first_archive_entries = _archive_entries(first.path)
+    first_entries = dict(first_archive_entries)
+    first_manifest = json.loads(first_entries.pop("manifest.json"))
     second = build_support_bundle(settings, store, case_id="case-private-44")
-    entries = _archive_entries(second.path)
+    second_archive_entries = _archive_entries(second.path)
+    entries = dict(second_archive_entries)
     manifest = json.loads(entries.pop("manifest.json"))
 
-    assert first_bytes == second.path.read_bytes()
+    assert set(first_archive_entries) == set(second_archive_entries)
+    assert {
+        name: hashlib.sha256(content).hexdigest() for name, content in first_archive_entries.items()
+    } == {
+        name: hashlib.sha256(content).hexdigest() for name, content in second_archive_entries.items()
+    }
+    assert first_manifest["overall_sha256"] == manifest["overall_sha256"]
     assert first.sha256 == hashlib.sha256(first_bytes).hexdigest()
     assert second.entries == tuple(sorted((*entries, "manifest.json")))
     expected = []

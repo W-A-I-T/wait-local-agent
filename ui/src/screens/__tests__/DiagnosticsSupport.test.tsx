@@ -31,7 +31,7 @@ const summary = {
     secrets_backend: "env",
     paths: {}
   },
-  database: { schema_version: 7, integrity_check: "ok" },
+  database: { schema_version: null, integrity_check: "ok" },
   connectors: [{ id: "halopsa", readiness: "configured" }],
   packs: [],
   failed_executions: [{
