@@ -17,7 +17,7 @@ from wait_local_agent.vault import SecretVault, SecretVaultError
 
 LOGGER = logging.getLogger(__name__)
 
-OIDC_CLIENT_SECRET_KEY = "WAIT_OIDC_CLIENT_SECRET"
+OIDC_CLIENT_SECRET_KEY = "WAIT_OIDC_CLIENT_SECRET"  # nosec B105: secret name constant, not a secret value
 SESSION_SIGNING_KEY = "WAIT_SESSION_SIGNING_KEY"
 _TENANT_ID_RE = re.compile(r"^[A-Za-z0-9._-]{1,320}$")
 
@@ -77,7 +77,7 @@ def load_oidc_config(settings: Settings, store: Store, vault: SecretVault) -> Oi
     try:
         client_secret = vault.get(OIDC_CLIENT_SECRET_KEY) or ""
     except (SecretVaultError, ValueError):
-        client_secret = ""
+        client_secret = ""  # nosec B105: empty fallback when the vault secret is unavailable
     return OidcConfig(
         tenant_id=tenant_id.strip(),
         client_id=client_id.strip(),
