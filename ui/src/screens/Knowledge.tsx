@@ -3,8 +3,17 @@ import { useDashboard } from "../app/DashboardContext";
 import { apiFetch } from "../api/client";
 import { type KnowledgeChunk, type KnowledgeDocument } from "../api/types";
 import { ClientIdSelect } from "../components/ClientIdSelect";
+import { RoleGate } from "../components/RoleGate";
 
 export type KnowledgeParser = "auto" | "plain" | "markdown" | "pdf";
+const KNOWLEDGE_AUTHORITY_OPTIONS = [
+  "AUTHORITATIVE_POLICY",
+  "APPROVED_SOP",
+  "REFERENCE",
+  "VENDOR",
+  "TECHNICIAN_NOTES",
+  "UNTRUSTED",
+] as const;
 
 export function parserPayload(parser: KnowledgeParser): "" | "basic" | "pypdf" {
   if (parser === "auto") return "";
@@ -13,7 +22,7 @@ export function parserPayload(parser: KnowledgeParser): "" | "basic" | "pypdf" {
 }
 
 export function Knowledge() {
-  const { clients = [], isAdmin, canWrite, selectedClientId, setSelectedClientId } = useDashboard();
+  const { clients = [], isAdmin, canWrite, role, roleResolved, selectedClientId, setSelectedClientId } = useDashboard();
   const [documents, setDocuments] = useState<KnowledgeDocument[]>([]);
   const [chunks, setChunks] = useState<KnowledgeChunk[]>([]);
   const [path, setPath] = useState("");
@@ -25,6 +34,9 @@ export function Knowledge() {
   const [searchClientId, setSearchClientId] = useState("");
   const [statusMessage, setStatusMessage] = useState("");
   const [isLoading, setIsLoading] = useState(false);
+  const [authorityDocumentId, setAuthorityDocumentId] = useState<number | null>(null);
+  const [authorityDraft, setAuthorityDraft] = useState("");
+  const [sopVersionDraft, setSopVersionDraft] = useState("");
 
   const loadDocuments = useCallback(async () => {
     try {
@@ -91,6 +103,34 @@ export function Knowledge() {
     }
   }
 
+  function beginAuthorityEdit(document: KnowledgeDocument) {
+    setAuthorityDocumentId(document.id);
+    setAuthorityDraft(document.authority);
+    setSopVersionDraft(document.sop_version ?? "");
+  }
+
+  async function saveAuthority(documentId: number) {
+    setIsLoading(true);
+    setStatusMessage("Saving document authority...");
+    try {
+      const updated = await apiFetch<KnowledgeDocument>(`/knowledge/documents/${documentId}/authority`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          authority: authorityDraft,
+          sop_version: sopVersionDraft || null,
+        }),
+      });
+      setDocuments((current) => current.map((document) => document.id === updated.id ? updated : document));
+      setAuthorityDocumentId(null);
+      setStatusMessage("Document authority updated.");
+    } catch (error) {
+      setStatusMessage(error instanceof Error ? error.message : "Document authority could not be updated.");
+    } finally {
+      setIsLoading(false);
+    }
+  }
+
   return (
     <div className="screen-stack">
       <section className="panel knowledge-panel">
@@ -140,7 +180,32 @@ export function Knowledge() {
                 <span>{document.kind} · {document.chunk_count} chunks</span>
                 <em>{document.path}</em>
               </div>
-              <em>{document.indexed_at}</em>
+              <div>
+                <strong>Authority: {document.authority}</strong>
+                <span>{document.sop_version ? `SOP version: ${document.sop_version}` : "No SOP version"}</span>
+                {document.approved_by ? <span>Approved by: {document.approved_by}</span> : null}
+                <em>{document.indexed_at}</em>
+              </div>
+              <RoleGate role={role} resolved={roleResolved} allowed={["admin"]}>
+                {authorityDocumentId === document.id ? (
+                  <div>
+                    <label>
+                      Authority
+                      <select value={authorityDraft} onChange={(event) => setAuthorityDraft(event.target.value)} disabled={isLoading}>
+                        {KNOWLEDGE_AUTHORITY_OPTIONS.map((authority) => <option key={authority} value={authority}>{authority}</option>)}
+                      </select>
+                    </label>
+                    <label>
+                      SOP version
+                      <input value={sopVersionDraft} maxLength={200} onChange={(event) => setSopVersionDraft(event.target.value)} disabled={isLoading} />
+                    </label>
+                    <button type="button" onClick={() => void saveAuthority(document.id)} disabled={isLoading}>{isLoading ? "Saving..." : "Save authority"}</button>
+                    <button className="secondary-button" type="button" onClick={() => setAuthorityDocumentId(null)} disabled={isLoading}>Cancel</button>
+                  </div>
+                ) : (
+                  <button className="secondary-button" type="button" onClick={() => beginAuthorityEdit(document)} disabled={isLoading}>Change authority</button>
+                )}
+              </RoleGate>
             </article>
           ))}
         </div>

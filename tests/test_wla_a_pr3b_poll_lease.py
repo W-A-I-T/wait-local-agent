@@ -8,6 +8,7 @@ from typing import Literal
 
 import pytest
 
+from tests.support import PINNED_SCHEMA_MIGRATIONS
 from wait_local_agent.store import (
     PollLeaseClaimResult,
     Store,
@@ -30,21 +31,9 @@ def test_v6_registers_additive_lease_columns_and_preserves_foreign_keys(tmp_path
     store, _ = _seed_instance(tmp_path / "state.db")
 
     with store._connect() as connection:  # noqa: SLF001
-        assert [tuple(row) for row in connection.execute("select version, name from schema_migrations")] == [
-            (0, "baseline"),
-            (1, "principals"),
-            (2, "clients_and_connectors"),
-            (3, "provenance_and_ingestion"),
-            (4, "canonical_assets_tenant_unique"),
-            (5, "ticket_identity_and_tenancy"),
-            (6, "poll_lease"),
-            (7, "operational_graph"),
-            (8, "auth_sessions_and_config"),
-            (9, "principal_identities"),
-            (10, "client_candidates"),
-            (11, "client_baselines"),
-            (12, "commercial_activations"),
-        ]
+        assert [
+            tuple(row) for row in connection.execute("select version, name from schema_migrations")
+        ] == PINNED_SCHEMA_MIGRATIONS
         assert {str(row[1]) for row in connection.execute("pragma table_info(sync_cursors)")} >= {
             "lease_token",
             "lease_expires_at",

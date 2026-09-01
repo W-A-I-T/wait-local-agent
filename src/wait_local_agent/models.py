@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
+from enum import StrEnum
 from typing import Any, Literal
 
 ApprovalStatus = Literal["pending", "approved", "rejected", "expired"]
@@ -80,6 +81,16 @@ MAX_EVENT_RETRY_DELAY_SECONDS = 60 * 60
 MAX_EVENT_RETRIES = 10
 EVENT_RETRY_POLL_SECONDS = 30
 EVENT_RETRY_BATCH_SIZE = 10
+MAX_KNOWLEDGE_SOP_VERSION_LENGTH = 200
+
+
+class KnowledgeAuthority(StrEnum):
+    AUTHORITATIVE_POLICY = "AUTHORITATIVE_POLICY"
+    APPROVED_SOP = "APPROVED_SOP"
+    REFERENCE = "REFERENCE"
+    VENDOR = "VENDOR"
+    TECHNICIAN_NOTES = "TECHNICIAN_NOTES"
+    UNTRUSTED = "UNTRUSTED"
 
 
 @dataclass(frozen=True)
@@ -193,6 +204,7 @@ class SourceReference:
     excerpt: str
     document_id: int | None = None
     chunk_id: int | None = None
+    authority: str = KnowledgeAuthority.UNTRUSTED.value
 
 
 @dataclass(frozen=True)
@@ -726,6 +738,11 @@ class KnowledgeDocument:
     chunk_count: int
     indexed_at: str
     client_id: str | None = None
+    authority: str = KnowledgeAuthority.UNTRUSTED.value
+    sop_version: str | None = None
+    approved_by: str | None = None
+    approved_at: str | None = None
+    superseded_by: int | None = None
 
 
 @dataclass(frozen=True)

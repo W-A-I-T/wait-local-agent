@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { MemoryRouter } from "react-router-dom";
 import { useDashboard } from "../app/DashboardContext";
@@ -79,7 +79,7 @@ function responseFor(path: string): unknown {
   if (path === "/backup/restore-exercises") return [];
   if (path === "/technician/chat/sessions") return [];
   if (path === "/smart-actions/runs") return [];
-  if (path === "/knowledge/documents") return [];
+  if (path === "/knowledge/documents") return [{ id: 7, path: "docs/runbook.md", title: "Runbook", kind: "markdown", checksum: "sum", modified_at: "now", chunk_count: 1, indexed_at: "now", client_id: "acme", authority: "UNTRUSTED", sop_version: null, approved_by: null, approved_at: null, superseded_by: null }];
   if (path === "/analytics/summary") return analyticsSummary;
   if (path === "/audit") return [];
   if (path === "/consultant/blueprints") return [];
@@ -133,5 +133,28 @@ describe("ClientIdSelect screen rollout", () => {
     }
     expect(screen.getAllByRole("option", { name: "Acme Support" }).some((option) => option.getAttribute("value") === "acme")).toBe(true);
     expect(screen.getAllByRole("option", { name: "Globex IT" }).some((option) => option.getAttribute("value") === "globex")).toBe(true);
+  });
+
+  it("shows authority metadata and controls only to administrators", async () => {
+    const adminRender = renderScreen(<Knowledge />);
+
+    expect(await screen.findByText("Authority: UNTRUSTED")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Change authority" })).toBeInTheDocument();
+
+    adminRender.unmount();
+    vi.mocked(useDashboard).mockReturnValue({ ...dashboard, role: "viewer", isAdmin: false } as never);
+    renderScreen(<Knowledge />);
+
+    expect(await screen.findByText("Authority: UNTRUSTED")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Change authority" })).not.toBeInTheDocument();
+  });
+
+  it("opens the administrator authority editor", async () => {
+    renderScreen(<Knowledge />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Change authority" }));
+
+    expect(screen.getByLabelText("Authority")).toHaveValue("UNTRUSTED");
+    expect(screen.getByLabelText("SOP version")).toBeInTheDocument();
   });
 });

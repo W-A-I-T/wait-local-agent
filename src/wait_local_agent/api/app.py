@@ -193,10 +193,12 @@ from wait_local_agent.models import (
     MAX_APPROVAL_EXPIRY_SECONDS,
     MAX_EVENT_RETRIES,
     MAX_EVENT_RETRY_DELAY_SECONDS,
+    MAX_KNOWLEDGE_SOP_VERSION_LENGTH,
     AgentDefinition,
     ClientCandidate,
     ConnectorInstance,
     ConsultantDiscoverySession,
+    KnowledgeAuthority,
     WorkflowRun,
 )
 from wait_local_agent.monitoring import build_agent_health_summary
@@ -373,6 +375,14 @@ class KnowledgeIngestRequest(BaseModel):
     parser: str | None = None
     ocr: bool | None = None
     client_id: str | None = None
+
+
+class KnowledgeAuthorityRequest(BaseModel):
+    authority: KnowledgeAuthority
+    sop_version: str | None = Field(default=None, max_length=MAX_KNOWLEDGE_SOP_VERSION_LENGTH)
+    superseded_by: int | None = Field(default=None, gt=0)
+
+    model_config = ConfigDict(extra="forbid")
 
 
 class ApprovalPayloadPatchRequest(BaseModel):
@@ -7454,6 +7464,30 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     ) -> list[dict[str, object]]:
         scope = resolve_client_scope(context, client_id, allow_all=True)
         return [asdict(document) for document in store.list_knowledge_documents(client_id=scope)]
+
+    @app.patch("/knowledge/documents/{document_id}/authority")
+    def set_knowledge_document_authority(
+        document_id: int,
+        payload: KnowledgeAuthorityRequest,
+        context: AdminAccess,
+        client_id: str | None = None,
+    ) -> dict[str, object]:
+        scope = resolve_client_scope(context, client_id, allow_all=True)
+        actor = context.approver_id or context.principal_id or "authenticated-admin"
+        try:
+            document = store.set_knowledge_document_authority(
+                document_id,
+                payload.authority,
+                actor,
+                client_id=scope,
+                sop_version=payload.sop_version,
+                superseded_by=payload.superseded_by,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        if document is None:
+            raise HTTPException(status_code=404, detail="knowledge document not found")
+        return asdict(document)
 
     @app.get("/knowledge/search")
     def knowledge_search(

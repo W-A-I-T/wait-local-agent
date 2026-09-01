@@ -4,7 +4,7 @@ from pathlib import Path
 
 from wait_local_agent.client_scope import AllClients
 from wait_local_agent.config import Settings
-from wait_local_agent.models import SourceReference, Ticket
+from wait_local_agent.models import KnowledgeAuthority, SourceReference, Ticket
 from wait_local_agent.store import Store
 from wait_local_agent.vector_search import search_backend_from_settings
 
@@ -30,16 +30,20 @@ def retrieve_sources(
                 client_id=client_id if client_id is not None else AllClients(),
             )
         if chunks:
-            return [
-                SourceReference(
-                    title=chunk.title,
-                    path=chunk.path,
-                    excerpt=chunk.excerpt,
-                    document_id=chunk.document_id,
-                    chunk_id=chunk.id,
+            sources: list[SourceReference] = []
+            for chunk in chunks:
+                document = store.get_knowledge_document(chunk.document_id) if chunk.document_id is not None else None
+                sources.append(
+                    SourceReference(
+                        title=chunk.title,
+                        path=chunk.path,
+                        excerpt=chunk.excerpt,
+                        document_id=chunk.document_id,
+                        chunk_id=chunk.id,
+                        authority=document.authority if document is not None else KnowledgeAuthority.UNTRUSTED.value,
+                    )
                 )
-                for chunk in chunks
-            ]
+            return sources
 
     if store is not None and store.knowledge_chunk_count() > 0:
         return []

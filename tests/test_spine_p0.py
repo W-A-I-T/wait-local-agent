@@ -9,7 +9,7 @@ import pytest
 from fastapi import APIRouter, FastAPI, WebSocket
 from starlette.routing import Mount, Route
 
-from tests.support import ingest_local
+from tests.support import PINNED_SCHEMA_MIGRATIONS, ingest_local
 from wait_local_agent.agents import AgentService
 from wait_local_agent.api.app import create_app
 from wait_local_agent.backup import backup_state, restore_state
@@ -52,25 +52,13 @@ def _load_surface_manifest() -> SurfaceManifest:
 
 def test_store_migrations_are_idempotent_and_connection_pragmas_are_safe(tmp_path: Path) -> None:
     path = tmp_path / "state.db"
-    Store(path)
-    with Store(path)._connect() as connection:  # noqa: SLF001
+    store = Store(path)
+    with store._connect() as connection:  # noqa: SLF001
         migration_columns = [str(row[1]) for row in connection.execute("pragma table_info(schema_migrations)")]
         assert migration_columns == ["version", "name", "applied_at"]
-        assert [tuple(row) for row in connection.execute("select version, name from schema_migrations")] == [
-            (0, "baseline"),
-            (1, "principals"),
-            (2, "clients_and_connectors"),
-            (3, "provenance_and_ingestion"),
-            (4, "canonical_assets_tenant_unique"),
-            (5, "ticket_identity_and_tenancy"),
-            (6, "poll_lease"),
-            (7, "operational_graph"),
-            (8, "auth_sessions_and_config"),
-            (9, "principal_identities"),
-            (10, "client_candidates"),
-            (11, "client_baselines"),
-            (12, "commercial_activations"),
-        ]
+        assert [
+            tuple(row) for row in connection.execute("select version, name from schema_migrations")
+        ] == PINNED_SCHEMA_MIGRATIONS
         assert connection.execute("pragma foreign_keys").fetchone()[0] == 1
         assert connection.execute("pragma journal_mode").fetchone()[0].lower() == "wal"
         assert connection.execute("pragma busy_timeout").fetchone()[0] >= 3000
