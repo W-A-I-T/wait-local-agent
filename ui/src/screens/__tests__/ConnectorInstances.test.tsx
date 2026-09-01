@@ -458,4 +458,28 @@ describe("ConnectorInstances connect flow", () => {
     expect(screen.getByRole("button", { name: "Connect system" })).toBeDisabled();
     expect(mockedApiFetch.mock.calls.some(([path, init]) => path === "/secrets" && init?.method === "POST")).toBe(false);
   });
+
+  it("renders instance fields for each supported RMM", async () => {
+    mockedApiFetch.mockImplementation((path) => {
+      if (path === "/clients") return Promise.resolve([]) as ReturnType<typeof apiFetch>;
+      if (path === "/connector-instances") return Promise.resolve([]) as ReturnType<typeof apiFetch>;
+      if (path === "/ingestion/sync-cursors") return Promise.resolve([]) as ReturnType<typeof apiFetch>;
+      throw new Error(`Unexpected request: ${path}`);
+    });
+
+    render(<ConnectorInstances />);
+    await screen.findByText("No connector instances are configured.");
+    const provider = screen.getByLabelText("Provider");
+
+    fireEvent.change(provider, { target: { value: "ninjaone" } });
+    expect(screen.getByLabelText("Access token")).toHaveAttribute("type", "password");
+    expect(screen.getByLabelText("NinjaOne organization map JSON")).toBeInTheDocument();
+
+    fireEvent.change(provider, { target: { value: "dattormm" } });
+    expect(screen.getByLabelText("Datto RMM site map JSON")).toBeInTheDocument();
+
+    fireEvent.change(provider, { target: { value: "ncentral" } });
+    expect(screen.getByLabelText("N-central organization-unit map JSON")).toBeInTheDocument();
+    expect(screen.getByLabelText("Provider base URL")).toBeInTheDocument();
+  });
 });

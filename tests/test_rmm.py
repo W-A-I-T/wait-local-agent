@@ -5,10 +5,12 @@ from typing import cast
 
 import pytest
 
+from wait_local_agent.models import CanonicalAsset, ConnectorInstance
 from wait_local_agent.rmm import (
     LocalCollectorRmmAdapter,
     RmmAlert,
     RmmDevice,
+    RmmProviderResolutionError,
     RmmScript,
     RmmScriptExecution,
     RmmScriptPreview,
@@ -277,6 +279,71 @@ def test_local_rmm_adapter_is_inventory_only(settings) -> None:
     execution = adapter.execute_script("script-1", "device-1", {}, client_id="acme")
     assert preview.status == "blocked"
     assert execution.status == "blocked"
+
+
+def test_local_rmm_adapter_filters_malformed_and_non_endpoint_assets() -> None:
+    class AssetStore:
+        def list_canonical_assets(self, *, client_id):
+            assert client_id == "acme"
+            return [
+                CanonicalAsset(
+                    id=1,
+                    canonical_id="endpoint-1",
+                    asset_type="endpoint-agent",
+                    display_name="Workstation 1",
+                    attributes_json='{"category":"workstation","os":"Linux"}',
+                    first_seen="",
+                    last_seen="",
+                ),
+                CanonicalAsset(
+                    id=2,
+                    canonical_id="server-1",
+                    asset_type="server",
+                    display_name="Server 1",
+                    attributes_json="{}",
+                    first_seen="",
+                    last_seen="",
+                ),
+                CanonicalAsset(
+                    id=3,
+                    canonical_id="bad-json",
+                    asset_type="endpoint-agent",
+                    display_name="Bad JSON",
+                    attributes_json="not-json",
+                    first_seen="",
+                    last_seen="",
+                ),
+                CanonicalAsset(
+                    id=4,
+                    canonical_id="bad-shape",
+                    asset_type="endpoint-agent",
+                    display_name="Bad shape",
+                    attributes_json="[]",
+                    first_seen="",
+                    last_seen="",
+                ),
+            ]
+
+    devices = LocalCollectorRmmAdapter(cast(Store, AssetStore())).list_devices("acme")
+
+    assert devices == [
+        RmmDevice(
+            device_id="endpoint-1",
+            name="Workstation 1",
+            category="workstation",
+            attributes={"category": "workstation", "os": "Linux"},
+        )
+    ]
+
+
+def test_local_rmm_adapter_reports_missing_execution_provider() -> None:
+    adapter = LocalCollectorRmmAdapter(cast(Store, object()))
+
+    result = adapter.get_execution("execution-1")
+
+    assert result.status == "blocked"
+    assert result.execution_id == "execution-1"
+    assert result.message == "local collector RMM adapter has no execution provider"
 
 
 def test_rmm_alerts_and_script_catalog_are_bounded(settings) -> None:
@@ -722,3 +789,131 @@ def test_rmm_provider_selects_configured_ninjaone_without_network_calls(settings
     )
 
     assert provider.adapter_id == "ninjaone"
+
+
+class _InstanceStore:
+    def __init__(self, instances: list[ConnectorInstance]) -> None:
+        self.instances = instances
+
+    def list_connector_instances(self) -> list[ConnectorInstance]:
+        return self.instances
+
+    def get_connector_instance(self, connector_instance_id: str) -> ConnectorInstance | None:
+        return next(
+            (instance for instance in self.instances if instance.connector_instance_id == connector_instance_id),
+            None,
+        )
+
+
+def _rmm_instance(
+    instance_id: str,
+    *,
+    client_id: str | None = None,
+    connector_type: str = "ninjaone",
+    status: str = "active",
+) -> ConnectorInstance:
+    return ConnectorInstance(
+        connector_instance_id=instance_id,
+        connector_type=connector_type,
+        display_name=instance_id,
+        client_id=client_id,
+        credential_ref="fixture-ref",
+        config_json="{}",
+        status=status,
+        created_at="",
+        updated_at="",
+    )
+
+
+def test_rmm_provider_instance_precedence_and_env_fallback(settings, monkeypatch) -> None:
+    import wait_local_agent.connector_factory as factory
+
+    built: list[str] = []
+
+    class Provider:
+        def __init__(self, adapter_id: str) -> None:
+            self.adapter_id = adapter_id
+
+    def build(_store, instance_id, **_kwargs):
+        built.append(instance_id)
+        return Provider(instance_id)
+
+    monkeypatch.setattr(factory, "build_read_client_for", build)
+    store = _InstanceStore(
+        [
+            _rmm_instance("msp-wide"),
+            _rmm_instance("client-scoped", client_id="acme"),
+        ]
+    )
+    configured = replace(settings, ninjaone_base_url="https://ninjaone.example.test")
+    assert rmm_provider_from_settings(configured, store, "acme").adapter_id == "client-scoped"
+    msp_provider = rmm_provider_from_settings(
+        configured, _InstanceStore([_rmm_instance("msp-wide")]), "acme"
+    )
+    assert msp_provider.adapter_id == "msp-wide"
+    assert rmm_provider_from_settings(configured, _InstanceStore([]), "acme").adapter_id == "ninjaone"
+    assert built == ["client-scoped", "msp-wide"]
+
+
+def test_rmm_provider_instance_ambiguity_fails_closed(settings) -> None:
+    store = _InstanceStore([_rmm_instance("one", client_id="acme"), _rmm_instance("two", client_id="acme")])
+    with pytest.raises(RmmProviderResolutionError, match="ambiguous active RMM connector instances"):
+        rmm_provider_from_settings(settings, store, "acme")
+
+
+def test_rmm_provider_instance_resolution_errors_fail_closed(settings, monkeypatch) -> None:
+    import wait_local_agent.connector_factory as factory
+
+    class BrokenStore(_InstanceStore):
+        def list_connector_instances(self):
+            raise RuntimeError("fixture store failure")
+
+    with pytest.raises(RmmProviderResolutionError, match="could not be loaded"):
+        rmm_provider_from_settings(settings, BrokenStore([]), "acme")
+
+    monkeypatch.setattr(
+        factory,
+        "build_read_client_for",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            factory.ConnectorFactoryError("fixture instance failure")
+        ),
+    )
+    with pytest.raises(RmmProviderResolutionError, match="fixture instance failure"):
+        rmm_provider_from_settings(
+            settings,
+            _InstanceStore([_rmm_instance("client-scoped", client_id="acme")]),
+            "acme",
+        )
+
+
+def test_rmm_provider_msp_ambiguity_fails_closed(settings) -> None:
+    store = _InstanceStore([_rmm_instance("one"), _rmm_instance("two")])
+
+    with pytest.raises(RmmProviderResolutionError, match="at the MSP-wide tier"):
+        rmm_provider_from_settings(settings, store, "acme")
+
+
+@pytest.mark.parametrize(
+    ("field", "value", "adapter_id"),
+    [
+        ("datto_rmm_base_url", "https://datto.example.test", "dattormm"),
+        ("ncentral_base_url", "https://ncentral.example.test", "ncentral"),
+        ("n_sight_base_url", "https://nsight.example.test", "n-sight"),
+        ("kaseya_rmm_base_url", "https://kaseya.example.test", "kaseya-vsa-x"),
+        ("screenconnect_base_url", "https://screenconnect.example.test", "screenconnect"),
+    ],
+)
+def test_rmm_provider_legacy_environment_precedence(settings, field, value, adapter_id) -> None:
+    provider = rmm_provider_from_settings(replace(settings, **{field: value}), Store(settings.data_path))
+
+    assert provider.adapter_id == adapter_id
+
+
+def test_rmm_provider_ignores_inactive_and_non_rmm_instances(settings) -> None:
+    store = _InstanceStore(
+        [
+            _rmm_instance("inactive", client_id="acme", status="inactive"),
+            _rmm_instance("psa", client_id="acme", connector_type="halopsa"),
+        ]
+    )
+    assert rmm_provider_from_settings(settings, store, "acme").adapter_id == "local-collector"

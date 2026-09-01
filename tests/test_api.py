@@ -81,6 +81,18 @@ from wait_local_agent.syncro import SyncroCommentsResponse, SyncroReadResponse
 from wait_local_agent.vault import SecretVault
 
 
+def test_validation_errors_redact_sensitive_route_inputs(settings) -> None:
+    client = TestClient(create_app(settings))
+
+    local_login = client.post("/auth/login/local", json={})
+    pack_install = client.post("/packs/install", json={})
+
+    assert local_login.status_code == 422
+    assert pack_install.status_code == 422
+    assert local_login.json()["detail"][0]["loc"][-1] == "token"
+    assert pack_install.json()["detail"][0]["loc"][-1] == "tarball_path"
+
+
 def test_api_lists_exactly_fourteen_collector_modules(settings, isolated_default_registry) -> None:
     client = TestClient(create_app(settings))
 
