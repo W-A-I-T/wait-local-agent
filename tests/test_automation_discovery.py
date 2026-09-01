@@ -168,19 +168,18 @@ def test_discovery_routes_are_scoped_and_import_only_permitted_evidence(settings
     assert readiness.status_code == 200
     assert readiness.json()["verified_count"] == 1
 
-    payload = {
+    entry: dict[str, object] = {
+        "ticket_id": "AUTH-1",
+        "connector_instance_id": connector_id,
+        "external_time_entry_id": "route-time-1",
+        "minutes": 20,
+        "work_type": "remote support",
+        "occurred_at": "2026-08-30T18:00:00Z",
+        "source_system": "test-psa",
+    }
+    payload: dict[str, object] = {
         "client_id": client_id,
-        "entries": [
-            {
-                "ticket_id": "AUTH-1",
-                "connector_instance_id": connector_id,
-                "external_time_entry_id": "route-time-1",
-                "minutes": 20,
-                "work_type": "remote support",
-                "occurred_at": "2026-08-30T18:00:00Z",
-                "source_system": "test-psa",
-            }
-        ],
+        "entries": [entry],
     }
     imported = client.post("/packs/automation-discovery/time-entries/import", json=payload)
     duplicate = client.post("/packs/automation-discovery/time-entries/import", json=payload)
@@ -198,13 +197,13 @@ def test_discovery_routes_are_scoped_and_import_only_permitted_evidence(settings
 
     unknown_ticket = client.post(
         "/packs/automation-discovery/time-entries/import",
-        json={**payload, "entries": [{**payload["entries"][0], "ticket_id": "not-in-acme"}]},
+        json={**payload, "entries": [{**entry, "ticket_id": "not-in-acme"}]},
     )
     unknown_connector = client.post(
         "/packs/automation-discovery/time-entries/import",
         json={
             **payload,
-            "entries": [{**payload["entries"][0], "connector_instance_id": "not-in-acme"}],
+            "entries": [{**entry, "connector_instance_id": "not-in-acme"}],
         },
     )
 
