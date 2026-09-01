@@ -316,7 +316,9 @@ def test_capability_failure_reasons_cover_missing_principal_and_grant(settings) 
     no_principal = AuthContext(role=Role.ADMIN, presented_token="bootstrap", is_msp_admin=True)
     with pytest.raises(HTTPException) as bootstrap_error:
         require_capability_scope(no_principal, MICROSOFT_ADMIN_CAPABILITY, "acme")
-    assert bootstrap_error.value.detail["reason"] == "no_principal"
+    bootstrap_detail = bootstrap_error.value.detail
+    assert isinstance(bootstrap_detail, dict)
+    assert bootstrap_detail["reason"] == "no_principal"
 
     no_grant = AuthContext(
         role=Role.ADMIN,
@@ -327,7 +329,9 @@ def test_capability_failure_reasons_cover_missing_principal_and_grant(settings) 
     )
     with pytest.raises(HTTPException) as grant_error:
         require_capability_scope(no_grant, MICROSOFT_ADMIN_CAPABILITY, "acme")
-    assert grant_error.value.detail["reason"] == "no_grant"
+    grant_detail = grant_error.value.detail
+    assert isinstance(grant_detail, dict)
+    assert grant_detail["reason"] == "no_grant"
 
 
 def _auth(token: str) -> dict[str, str]:

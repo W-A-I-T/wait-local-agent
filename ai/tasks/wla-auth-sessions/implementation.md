@@ -43,6 +43,26 @@
   same environment hangs on baseline `/healthz` requests, so no API result is
   represented as passing.
 
+## CI Fix Follow-up
+
+- Narrowed both `HTTPException.detail` values in `tests/test_rbac.py` before
+  indexing them by the `reason` key for mypy's type narrowing.
+- Updated `ui/e2e/production-readiness.spec.ts` for the login-first flow: the
+  unauthenticated test verifies the Login heading, access-token field, and
+  sign-in button; the dashboard journey signs in with `WAIT_BROWSER_TOKEN`
+  and waits for the dashboard shell before exercising routes.
+- `mypy src tests` — blocked by six existing missing `slowapi` implementation or
+  stub imports in `src/wait_local_agent/api/{app,auth_routes}.py`; no errors were
+  reported at the changed RBAC sites.
+- `mypy --ignore-missing-imports src tests` — reached all 288 files and reported
+  only two unrelated `unused-ignore` errors in untouched `cloud_connectors/aws.py`
+  and `nsight.py`.
+- `cd ui && npx tsc --noEmit -p .` — passed.
+- The repository `ui/tsconfig.json` does not include `e2e`; an e2e-only TypeScript
+  check was not usable because this checkout lacks Node type declarations for
+  the pre-existing `node:crypto` and `process` references.
+- Per task constraints, pytest and Playwright were not run.
+
 ## Files Touched
 
 - `.env.example`
