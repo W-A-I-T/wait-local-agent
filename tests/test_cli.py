@@ -73,6 +73,30 @@ def test_doctor_command_reports_safe_defaults(monkeypatch, tmp_path) -> None:
     assert "write_actions_enabled=False" in result.output
 
 
+def test_knowledge_authority_cli_validates_and_updates_documents(monkeypatch, tmp_path) -> None:
+    data_path = tmp_path / "state.db"
+    monkeypatch.setenv("WAIT_DATA_PATH", str(data_path))
+    store = Store(data_path)
+    document = store.upsert_knowledge_document(
+        path="docs/cli-authority.md",
+        title="CLI authority document",
+        kind="markdown",
+        checksum="cli-authority-sum",
+        modified_at="2026-08-31T00:00:00+00:00",
+        chunks=["CLI authority evidence"],
+        client_id="demo",
+    )
+    runner = CliRunner()
+
+    invalid = runner.invoke(app, ["knowledge", "set-authority", str(document.id), "NOT_A_CLASS"])
+    updated = runner.invoke(app, ["knowledge", "set-authority", str(document.id), "REFERENCE"])
+
+    assert invalid.exit_code != 0
+    assert "authority must be one of" in invalid.output
+    assert updated.exit_code == 0, updated.output
+    assert json.loads(updated.output)["authority"] == "REFERENCE"
+
+
 def test_microsoft_provider_health_reports_scopes_without_secrets(monkeypatch, tmp_path) -> None:
     monkeypatch.setenv("WAIT_DATA_PATH", str(tmp_path / "state.db"))
     monkeypatch.setattr(

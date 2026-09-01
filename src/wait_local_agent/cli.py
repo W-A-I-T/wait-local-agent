@@ -50,7 +50,7 @@ from wait_local_agent.api.packs.loader import (
 )
 from wait_local_agent.autotask import AutotaskClient, AutotaskReadResponse
 from wait_local_agent.backup import BackupEncryptionError, backup_state, restore_state, run_restore_exercise
-from wait_local_agent.client_scope import AllClients
+from wait_local_agent.client_scope import AllClients, resolve_client_scope
 from wait_local_agent.collectors import (
     CollectorService,
     collector_run_collection_scope,
@@ -126,6 +126,7 @@ from wait_local_agent.m365_graph import (
     M365GraphManagedDeviceReadResponse,
     M365GraphReadResponse,
 )
+from wait_local_agent.models import MAX_KNOWLEDGE_SOP_VERSION_LENGTH
 from wait_local_agent.monitoring import build_agent_health_summary
 from wait_local_agent.msp_playbooks import (
     create_msp_playbook_subscription,
@@ -4566,6 +4567,41 @@ def list_knowledge_documents() -> None:
         typer.echo(
             f"{document.id} {document.title} chunks={document.chunk_count} path={document.path}"
         )
+
+
+@knowledge_app.command("set-authority")
+def set_knowledge_document_authority(
+    document_id: int,
+    authority: str,
+    sop_version: Annotated[
+        str | None,
+        typer.Option(
+            "--sop-version",
+            help=f"Operator-supplied SOP version, at most {MAX_KNOWLEDGE_SOP_VERSION_LENGTH} characters.",
+        ),
+    ] = None,
+    superseded_by: Annotated[int | None, typer.Option("--superseded-by", min=1)] = None,
+    client_id: Annotated[str | None, typer.Option("--client-id")] = None,
+    token: Annotated[str | None, typer.Option("--token", envvar="WAIT_CLI_TOKEN")] = None,
+) -> None:
+    settings = load_settings()
+    context = _cli_access(settings, token, Role.ADMIN)
+    scope = resolve_client_scope(context, client_id, allow_all=True)
+    store = Store(settings.data_path)
+    try:
+        document = store.set_knowledge_document_authority(
+            document_id,
+            authority,
+            context.approver_id or context.principal_id or "authenticated-admin",
+            client_id=scope,
+            sop_version=sop_version,
+            superseded_by=superseded_by,
+        )
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc)) from exc
+    if document is None:
+        raise typer.BadParameter("knowledge document not found in authenticated scope")
+    typer.echo(json.dumps(asdict(document), sort_keys=True))
 
 
 @knowledge_app.command("search")

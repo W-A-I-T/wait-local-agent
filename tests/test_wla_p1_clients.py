@@ -8,6 +8,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 import wait_local_agent.api.app as app_module
+from tests.support import PINNED_SCHEMA_MIGRATIONS
 from wait_local_agent.api.app import create_app
 from wait_local_agent.client_scope import AllClients, BoundClients
 from wait_local_agent.migrations import Migration, MigrationRunner
@@ -27,19 +28,9 @@ def test_clients_migration_repairs_and_backfills_existing_directory(tmp_path: Pa
     path = tmp_path / "state.db"
     store = Store(path)
     with store._connect() as connection:  # noqa: SLF001
-        assert [tuple(row) for row in connection.execute("select version, name from schema_migrations")] == [
-            (0, "baseline"),
-            (1, "principals"),
-            (2, "clients_and_connectors"),
-            (3, "provenance_and_ingestion"),
-            (4, "canonical_assets_tenant_unique"),
-            (5, "ticket_identity_and_tenancy"),
-            (6, "poll_lease"),
-            (7, "operational_graph"),
-            (8, "auth_sessions_and_config"),
-            (9, "principal_identities"),
-            (10, "client_candidates"),
-        ]
+        assert [
+            tuple(row) for row in connection.execute("select version, name from schema_migrations")
+        ] == PINNED_SCHEMA_MIGRATIONS
         assert {
             str(row[0])
             for row in connection.execute(

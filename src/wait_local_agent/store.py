@@ -26,6 +26,7 @@ from wait_local_agent.models import (
     MAX_APPROVAL_EXPIRY_SECONDS,
     MAX_EVENT_RETRIES,
     MAX_EVENT_RETRY_DELAY_SECONDS,
+    MAX_KNOWLEDGE_SOP_VERSION_LENGTH,
     AgentBackfill,
     AgentDefinition,
     AgentDefinitionRevision,
@@ -52,6 +53,7 @@ from wait_local_agent.models import (
     ExecutionRun,
     ExecutionStep,
     IngestSummary,
+    KnowledgeAuthority,
     KnowledgeChunk,
     KnowledgeDocument,
     KnowledgeDocumentWrite,
@@ -331,6 +333,7 @@ class Store:
             Migration(8, "auth_sessions_and_config", self._apply_auth_sessions_and_config_migration),
             Migration(9, "principal_identities", self._apply_principal_identities_migration),
             Migration(10, "client_candidates", self._apply_client_candidates_migration),
+            Migration(11, "document_authority", self._apply_document_authority_migration),
         )
 
     def _apply_principals_migration(self, connection: sqlite3.Connection) -> None:
@@ -797,6 +800,25 @@ class Store:
         connection.execute(
             "create index if not exists idx_client_candidates_state on client_candidates(match_state, last_seen desc)"
         )
+
+    @staticmethod
+    def _apply_document_authority_migration(connection: sqlite3.Connection) -> None:
+        Store._ensure_column(
+            connection,
+            "knowledge_documents",
+            "authority",
+            "text not null default 'UNTRUSTED'",
+        )
+        Store._ensure_column(connection, "knowledge_documents", "sop_version", "text")
+        Store._ensure_column(connection, "knowledge_documents", "approved_by", "text")
+        Store._ensure_column(connection, "knowledge_documents", "approved_at", "text")
+        Store._ensure_column(
+            connection,
+            "knowledge_documents",
+            "superseded_by",
+            "integer references knowledge_documents(id)",
+        )
+        connection.execute("update knowledge_documents set authority = 'UNTRUSTED'")
 
     @staticmethod
     def _apply_operational_graph_migration(connection: sqlite3.Connection) -> None:
@@ -7924,10 +7946,123 @@ class Store:
             raise RuntimeError("knowledge document was not persisted")
         return persisted
 
-    def get_knowledge_document(self, document_id: int) -> KnowledgeDocument | None:
+    def get_knowledge_document(
+        self,
+        document_id: int,
+        client_id: ClientScope | str | None = _ALL_CLIENTS,
+    ) -> KnowledgeDocument | None:
+        client_predicate, client_params = _client_scope_predicate(client_id)
         with self._connect() as connection:
-            row = connection.execute("select * from knowledge_documents where id = ?", (document_id,)).fetchone()
+            row = connection.execute(
+                f"select * from knowledge_documents where id = ? and {client_predicate}",  # nosec B608: predicate is a fixed internal string; client ids are parameterized
+                (document_id, *client_params),
+            ).fetchone()
         return KnowledgeDocument(**dict(row)) if row else None
+
+    def set_knowledge_document_authority(
+        self,
+        document_id: int,
+        authority: KnowledgeAuthority | str,
+        actor: str,
+        *,
+        client_id: ClientScope | str | None = _ALL_CLIENTS,
+        sop_version: str | None = None,
+        superseded_by: int | None = None,
+    ) -> KnowledgeDocument | None:
+        if isinstance(authority, KnowledgeAuthority):
+            normalized_authority = authority
+        else:
+            try:
+                normalized_authority = KnowledgeAuthority(authority.strip())
+            except (AttributeError, ValueError) as exc:
+                allowed = ", ".join(item.value for item in KnowledgeAuthority)
+                raise ValueError(f"authority must be one of: {allowed}") from exc
+        if not isinstance(actor, str) or not actor.strip():
+            raise ValueError("authority change actor must be non-empty")
+        if sop_version is not None:
+            if not isinstance(sop_version, str):
+                raise ValueError("sop_version must be text")
+            sop_version = sop_version.strip() or None
+            if sop_version is not None and len(sop_version) > MAX_KNOWLEDGE_SOP_VERSION_LENGTH:
+                raise ValueError(
+                    f"sop_version must contain at most {MAX_KNOWLEDGE_SOP_VERSION_LENGTH} characters"
+                )
+        if superseded_by is not None and (
+            isinstance(superseded_by, bool) or not isinstance(superseded_by, int) or superseded_by <= 0
+        ):
+            raise ValueError("superseded_by must be a positive document id")
+
+        client_predicate, client_params = _client_scope_predicate(client_id)
+        with self._connect() as connection:
+            row = connection.execute(
+                f"select * from knowledge_documents where id = ? and {client_predicate}",  # nosec B608: predicate is a fixed internal string; client ids are parameterized
+                (document_id, *client_params),
+            ).fetchone()
+            if row is None:
+                return None
+            current_authority = KnowledgeAuthority(str(row["authority"]))
+            target_client_id = row["client_id"]
+            if superseded_by is not None:
+                if superseded_by == document_id:
+                    raise ValueError("superseded_by must point to another document")
+                superseded = connection.execute(
+                    "select id, client_id from knowledge_documents where id = ?",
+                    (superseded_by,),
+                ).fetchone()
+                if superseded is None or superseded["client_id"] != target_client_id:
+                    raise ValueError("superseded_by document is not in the same client scope")
+
+            is_approved = normalized_authority in {
+                KnowledgeAuthority.AUTHORITATIVE_POLICY,
+                KnowledgeAuthority.APPROVED_SOP,
+            }
+            now = utc_now()
+            next_sop_version = sop_version if is_approved else None
+            next_superseded_by = superseded_by if is_approved else None
+            next_approved_by = actor.strip() if is_approved else None
+            next_approved_at = now if is_approved else None
+            connection.execute(
+                """
+                update knowledge_documents
+                set authority = ?, sop_version = ?, approved_by = ?, approved_at = ?, superseded_by = ?
+                where id = ?
+                """,
+                (
+                    normalized_authority.value,
+                    next_sop_version,
+                    next_approved_by,
+                    next_approved_at,
+                    next_superseded_by,
+                    document_id,
+                ),
+            )
+            if current_authority != normalized_authority:
+                detail = (
+                    f"actor={actor.strip()} document_id={document_id} "
+                    f"old_authority={current_authority.value} new_authority={normalized_authority.value}"
+                )
+                normalized_client_id = (
+                    str(target_client_id) if target_client_id is not None else None
+                )
+                self._add_audit_event(
+                    connection,
+                    "knowledge.authority.changed",
+                    str(document_id),
+                    detail,
+                    client_id=normalized_client_id,
+                    approver_id=actor.strip(),
+                )
+                self._add_event_history(
+                    connection,
+                    "knowledge.authority.changed",
+                    str(document_id),
+                    "completed",
+                    detail,
+                    "{}",
+                    normalized_client_id,
+                )
+
+        return self.get_knowledge_document(document_id, client_id=client_id)
 
     def list_knowledge_documents(
         self, client_id: ClientScope | str | None = _ALL_CLIENTS

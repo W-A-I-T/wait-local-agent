@@ -1149,6 +1149,11 @@ export type KnowledgeDocument = {
   chunk_count: number;
   indexed_at: string;
   client_id?: string | null;
+  authority: string;
+  sop_version?: string | null;
+  approved_by?: string | null;
+  approved_at?: string | null;
+  superseded_by?: number | null;
 };
 
 export type KnowledgeChunk = {
