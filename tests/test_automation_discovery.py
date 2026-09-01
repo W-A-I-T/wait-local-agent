@@ -232,6 +232,7 @@ def test_historical_discovery_reports_unclassified_recurring_subjects(settings, 
 
     report = build_historical_discovery(store, client_id=client_id, days=60, min_tickets=3)
 
+    assert report["ticket_count"] == 4
     recurring = next(item for item in report["opportunities"] if item["category_id"] == "recurring:vpn-timeout-issue")
     assert recurring["label"] == "Recurring ticket family: vpn timeout issue"
     assert recurring["ticket_count"] == 3
