@@ -47,6 +47,16 @@ export type Client = {
 
 export type ClientDirectoryEntry = Pick<Client, "client_id" | "name" | "status">;
 
+export type CommercialActivation = {
+  client_id: string;
+  activated_at: string;
+  activated_by: string;
+};
+
+export type EntitlementResponse = {
+  commercial: Record<string, unknown> | null;
+};
+
 export type DeploymentMode = "msp" | "smb";
 
 export type ClientCandidate = {

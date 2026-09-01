@@ -50,5 +50,11 @@ Control by a service provider.
 This definition is a commercial term. It does not restrict Community use or
 imply any usage metering in the public runtime.
 
-This is product documentation, not legal advice; the executed commercial agreement governs.
+Under the commercial policy, the licensed MSP Control capability includes four
+Managed Clients at no additional charge; the fifth and each subsequent Managed
+Client require the applicable paid commercial entitlement. This policy applies
+only to the proprietary MSP Control capability and does not gate, meter, count,
+degrade, or nag any Community functionality or rights. The precise EULA
+language requires review and approval by counsel before publication.
 
+This is product documentation, not legal advice; the executed commercial agreement governs.

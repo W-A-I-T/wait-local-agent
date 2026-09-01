@@ -163,6 +163,7 @@ class Settings:
     update_channel_url: str = ""
     update_pubkeys: tuple[str, ...] = ()
     update_allow_prerelease: bool = False
+    license_pubkeys: tuple[str, ...] = ()
     mcp_allowed_origins: tuple[str, ...] = ()
     mcp_client_allowed_hosts: tuple[str, ...] = ()
     connector_instance_allowed_hosts: tuple[str, ...] = ()
@@ -517,6 +518,11 @@ def load_settings() -> Settings:
             if value.strip()
         ),
         update_allow_prerelease=_bool_env("WAIT_UPDATE_ALLOW_PRERELEASE"),
+        license_pubkeys=tuple(
+            value.strip()
+            for value in os.getenv("WAIT_LICENSE_PUBKEYS", "").split(",")
+            if value.strip()
+        ),
         mcp_allowed_origins=tuple(
             value.strip().rstrip("/")
             for value in os.getenv("WAIT_MCP_ALLOWED_ORIGINS", "").split(",")
