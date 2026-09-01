@@ -11,6 +11,7 @@ from typing import Any, Protocol, cast
 
 import httpx
 
+from wait_local_agent.autotask import AutotaskClient
 from wait_local_agent.config import Settings
 from wait_local_agent.connectwise import ConnectWiseClient
 from wait_local_agent.halopsa import HaloPSAClient
@@ -20,7 +21,9 @@ from wait_local_agent.net_security import (
     Resolver,
     validate_provider_origin,
 )
+from wait_local_agent.servicenow import ServiceNowClient
 from wait_local_agent.store import _contains_sensitive_config_key
+from wait_local_agent.syncro import SyncroClient
 from wait_local_agent.vault import SecretVault
 
 
@@ -38,7 +41,7 @@ class VaultReader(Protocol):
         ...
 
 
-type ReadClient = HaloPSAClient | ConnectWiseClient
+type ReadClient = HaloPSAClient | ConnectWiseClient | AutotaskClient | SyncroClient | ServiceNowClient
 type Builder = Callable[[Settings, httpx.BaseTransport], ReadClient]
 
 SUPPORTED_CONNECTOR_TYPES: frozenset[str]
@@ -52,17 +55,40 @@ def _build_connectwise(settings: Settings, transport: httpx.BaseTransport) -> Co
     return ConnectWiseClient(settings, transport=transport)
 
 
+def _build_autotask(settings: Settings, transport: httpx.BaseTransport) -> AutotaskClient:
+    return AutotaskClient(settings, transport=transport)
+
+
+def _build_syncro(settings: Settings, transport: httpx.BaseTransport) -> SyncroClient:
+    return SyncroClient(settings, transport=transport)
+
+
+def _build_servicenow(settings: Settings, transport: httpx.BaseTransport) -> ServiceNowClient:
+    return ServiceNowClient(settings, transport=transport)
+
+
 _BUILDERS: dict[str, Builder] = {
     "halopsa": _build_halopsa,
     "connectwise": _build_connectwise,
+    "autotask": _build_autotask,
+    "syncro": _build_syncro,
+    "servicenow": _build_servicenow,
 }
 SUPPORTED_CONNECTOR_TYPES = frozenset(_BUILDERS)
 
 _HALO_CREDENTIAL_KEYS = frozenset({"client_id", "client_secret", "tenant"})
 _CONNECTWISE_CREDENTIAL_KEYS = frozenset({"company", "public_key", "private_key", "client_id"})
+_AUTOTASK_CREDENTIAL_KEYS = frozenset({"integration_code", "username", "secret"})
+_SYNCRO_CREDENTIAL_KEYS = frozenset({"api_key", "subdomain"})
+_SERVICENOW_CREDENTIAL_KEYS = frozenset({"username", "password"})
 _HALO_CONFIG_KEYS = frozenset({"base_url"})
 _CONNECTWISE_CONFIG_KEYS = frozenset({"base_url", "api_version"})
+_AUTOTASK_CONFIG_KEYS = frozenset({"base_url"})
+_SYNCRO_CONFIG_KEYS = frozenset({"base_url"})
+_SERVICENOW_CONFIG_KEYS = frozenset({"base_url", "api_version"})
 _VERSION_PATTERN = re.compile(r"^[0-9]{4}\.[0-9]+$")
+_SUBDOMAIN_PATTERN = re.compile(r"^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$")
+_SERVICENOW_VERSION_PATTERN = re.compile(r"^[A-Za-z0-9_]{1,20}$")
 
 # Credential-shaped fields are derived from the current Settings dataclass so
 # newly added *_token/*_secret/etc. fields fail closed until deliberately
@@ -104,12 +130,22 @@ def _non_empty_string(value: object) -> bool:
 
 
 def _credential_error(connector_type: str) -> ConnectorFactoryError:
-    if connector_type == "halopsa":
-        return ConnectorFactoryError(
-            "invalid HaloPSA credentials; expected keys: client_id, client_secret, tenant"
-        )
+    expected = {
+        "halopsa": "client_id, client_secret, tenant",
+        "connectwise": "company, public_key, private_key, client_id",
+        "autotask": "integration_code, username, secret",
+        "syncro": "api_key, subdomain",
+        "servicenow": "username, password",
+    }[connector_type]
+    labels = {
+        "halopsa": "HaloPSA",
+        "connectwise": "ConnectWise",
+        "autotask": "Autotask",
+        "syncro": "Syncro",
+        "servicenow": "ServiceNow",
+    }
     return ConnectorFactoryError(
-        "invalid ConnectWise credentials; expected keys: company, public_key, private_key, client_id"
+        f"invalid {labels[connector_type]} credentials; expected keys: {expected}"
     )
 
 
@@ -136,9 +172,20 @@ def _load_credentials(
     if not isinstance(payload, dict):
         raise ConnectorFactoryError("connector credentials must be a JSON object")
 
-    expected = _HALO_CREDENTIAL_KEYS if connector_type == "halopsa" else _CONNECTWISE_CREDENTIAL_KEYS
+    expected = {
+        "halopsa": _HALO_CREDENTIAL_KEYS,
+        "connectwise": _CONNECTWISE_CREDENTIAL_KEYS,
+        "autotask": _AUTOTASK_CREDENTIAL_KEYS,
+        "syncro": _SYNCRO_CREDENTIAL_KEYS,
+        "servicenow": _SERVICENOW_CREDENTIAL_KEYS,
+    }[connector_type]
     if set(payload) != expected or any(not _non_empty_string(value) for value in payload.values()):
         raise _credential_error(connector_type)
+    if connector_type == "syncro":
+        subdomain = cast(str, payload["subdomain"]).strip().casefold()
+        if not _SUBDOMAIN_PATTERN.fullmatch(subdomain):
+            raise _credential_error(connector_type)
+        payload["subdomain"] = subdomain
     return {key: value for key, value in payload.items() if isinstance(value, str)}
 
 
@@ -152,16 +199,26 @@ def _load_config(instance: ConnectorInstance, *, connector_type: str) -> dict[st
     if _contains_sensitive_config_key(payload):
         raise ConnectorFactoryError("connector config_json must not contain credentials")
 
-    expected = _HALO_CONFIG_KEYS if connector_type == "halopsa" else _CONNECTWISE_CONFIG_KEYS
+    expected = {
+        "halopsa": _HALO_CONFIG_KEYS,
+        "connectwise": _CONNECTWISE_CONFIG_KEYS,
+        "autotask": _AUTOTASK_CONFIG_KEYS,
+        "syncro": _SYNCRO_CONFIG_KEYS,
+        "servicenow": _SERVICENOW_CONFIG_KEYS,
+    }[connector_type]
     if set(payload) - expected:
         raise ConnectorFactoryError("connector config_json contains unsupported fields")
     base_url = payload.get("base_url")
-    if not _non_empty_string(base_url):
+    if connector_type != "syncro" and not _non_empty_string(base_url):
         raise ConnectorFactoryError("connector config_json requires a base_url")
     if connector_type == "connectwise" and "api_version" in payload:
         version = payload["api_version"]
         if not isinstance(version, str):
             raise ConnectorFactoryError("ConnectWise API version is invalid")
+    if connector_type == "servicenow" and "api_version" in payload:
+        version = payload["api_version"]
+        if not isinstance(version, str):
+            raise ConnectorFactoryError("ServiceNow API version is invalid")
     return payload
 
 
@@ -185,8 +242,14 @@ def _validate_urls(
     *,
     connector_type: str,
     allowed_hosts: tuple[str, ...],
+    syncro_subdomain: str | None = None,
 ) -> str:
-    base_url = config["base_url"]
+    base_url = config.get("base_url")
+    if connector_type == "syncro" and not _non_empty_string(base_url):
+        normalized_subdomain = syncro_subdomain.strip().casefold() if isinstance(syncro_subdomain, str) else ""
+        if not _SUBDOMAIN_PATTERN.fullmatch(normalized_subdomain):
+            raise ConnectorFactoryError("invalid Syncro credentials; expected a valid subdomain")
+        base_url = f"https://{normalized_subdomain}.syncromsp.com"
     if not isinstance(base_url, str):
         raise ConnectorFactoryError("connector base_url is invalid")
     try:
@@ -209,6 +272,15 @@ def _validate_connectwise_version(value: object) -> str:
     version = value.strip()
     if len(version) > 20 or not _VERSION_PATTERN.fullmatch(version):
         raise ConnectorFactoryError("ConnectWise API version is invalid")
+    return version
+
+
+def _validate_servicenow_version(value: object) -> str:
+    if not isinstance(value, str):
+        raise ConnectorFactoryError("ServiceNow API version is invalid")
+    version = value.strip().strip("/")
+    if version and not _SERVICENOW_VERSION_PATTERN.fullmatch(version):
+        raise ConnectorFactoryError("ServiceNow API version is invalid")
     return version
 
 
@@ -237,6 +309,10 @@ def _sanitized_settings(
             "halopsa_ticket_write_endpoint": "",
             "halopsa_action_write_endpoint": "",
             "connectwise_base_url": "",
+            "syncro_base_url": "",
+            "servicenow_base_url": "",
+            "servicenow_api_version": "",
+            "autotask_base_url": "",
         }
     )
     if connector_type == "halopsa":
@@ -248,7 +324,7 @@ def _sanitized_settings(
                 "halopsa_tenant": credentials["tenant"],
             }
         )
-    else:
+    elif connector_type == "connectwise":
         effective_version = config.get("api_version", base_settings.connectwise_api_version)
         values.update(
             {
@@ -260,7 +336,65 @@ def _sanitized_settings(
                 "connectwise_api_version": _validate_connectwise_version(effective_version),
             }
         )
+    elif connector_type == "autotask":
+        values.update(
+            {
+                "autotask_base_url": base_url,
+                "autotask_username": credentials["username"],
+                "autotask_secret": credentials["secret"],
+                "autotask_integration_code": credentials["integration_code"],
+            }
+        )
+    elif connector_type == "syncro":
+        values.update(
+            {
+                "syncro_base_url": base_url,
+                "syncro_api_token": credentials["api_key"],
+            }
+        )
+    else:
+        effective_version = config.get("api_version", base_settings.servicenow_api_version)
+        values.update(
+            {
+                "servicenow_base_url": base_url,
+                "servicenow_username": credentials["username"],
+                "servicenow_password": credentials["password"],
+                "servicenow_api_version": _validate_servicenow_version(effective_version),
+            }
+        )
     return replace(base_settings, **cast(Any, values))
+
+
+def validate_connector_instance(
+    instance: ConnectorInstance,
+    *,
+    base_settings: Settings,
+    vault: VaultReader | None = None,
+) -> None:
+    """Validate stored-instance credentials and configuration without probing."""
+    connector_type = instance.connector_type.casefold().strip() if isinstance(instance.connector_type, str) else ""
+    if connector_type not in _BUILDERS:
+        raise ConnectorFactoryError("unsupported connector_type")
+    credentials = _load_credentials(
+        instance,
+        connector_type=connector_type,
+        base_settings=base_settings,
+        vault=vault,
+    )
+    config = _load_config(instance, connector_type=connector_type)
+    base_url = _validate_urls(
+        config,
+        connector_type=connector_type,
+        allowed_hosts=base_settings.connector_instance_allowed_hosts,
+        syncro_subdomain=credentials.get("subdomain"),
+    )
+    _sanitized_settings(
+        base_settings,
+        connector_type=connector_type,
+        config=config,
+        credentials=credentials,
+        base_url=base_url,
+    )
 
 
 def build_read_client(
@@ -290,6 +424,7 @@ def build_read_client(
         config,
         connector_type=connector_type,
         allowed_hosts=base_settings.connector_instance_allowed_hosts,
+        syncro_subdomain=credentials.get("subdomain"),
     )
     per_instance_settings = _sanitized_settings(
         base_settings,

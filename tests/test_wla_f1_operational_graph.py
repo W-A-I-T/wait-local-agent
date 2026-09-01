@@ -95,7 +95,7 @@ def test_v7_operational_graph_is_additive_idempotent_and_fk_clean(tmp_path: Path
                 "order by type, name"
             )
         ]
-        assert connection.execute("select count(*) from schema_migrations").fetchone()[0] == 9
+        assert connection.execute("select count(*) from schema_migrations").fetchone()[0] == 10
 
 
 def test_graph_store_is_fail_closed_and_cross_tenant_links_raise(tmp_path: Path) -> None:

@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { Consultant } from "./Consultant";
@@ -6,6 +6,8 @@ import { Consultant } from "./Consultant";
 const dashboard = vi.hoisted(() => ({
   canWrite: true,
   clientId: "acme",
+  selectedClientId: "acme",
+  clients: [{ client_id: "acme", name: "Acme Support", status: "active" }],
   authState: "authenticated",
   writeHealth: { status: "blocked" },
 }));
@@ -19,11 +21,13 @@ describe("Consultant architecture decisions", () => {
   let rejectBlueprints = false;
   let emptyBlueprints = false;
   let discoverySessionsStatus: number | null = null;
+  let discoverySessionsDetail: unknown = "section unavailable";
   let useCasesStatus: number | null = null;
   let rejectMonitoring = false;
   let rejectArchitecture = false;
   let environmentStatus: number | null = null;
   let governanceStatus: number | null = null;
+  let governanceDetail: unknown = "governance unavailable";
   let evaluationStatus: number | null = null;
   let deliveryStatus: number | null = null;
   let rejectPlaybookGeneration = false;
@@ -35,11 +39,13 @@ describe("Consultant architecture decisions", () => {
     rejectBlueprints = false;
     emptyBlueprints = false;
     discoverySessionsStatus = null;
+    discoverySessionsDetail = "section unavailable";
     useCasesStatus = null;
     rejectMonitoring = false;
     rejectArchitecture = false;
     environmentStatus = null;
     governanceStatus = null;
+    governanceDetail = "governance unavailable";
     evaluationStatus = null;
     deliveryStatus = null;
     dashboard.authState = "authenticated";
@@ -60,7 +66,18 @@ describe("Consultant architecture decisions", () => {
           agents: [],
           workflows: [],
         }],
-        "/consultant/use-cases": { use_cases: [] },
+        "/consultant/use-cases": {
+          use_cases: [{
+            id: "use-case-1",
+            title: "Employee identity sync",
+            category: "identity",
+            business_goal: "Keep employee records aligned.",
+            services: ["Microsoft Graph"],
+            agent_roles: ["identity-reader"],
+            outputs: ["employee record"],
+            approval_boundaries: ["No writes"],
+          }],
+        },
         "/consultant/monitoring/agents": { agent_count: 0, total_runs: 0, failed_runs: 0 },
         "/consultant/discovery/sessions": [],
         "/consultant/blueprints/bp-acme/architecture": {
@@ -81,6 +98,13 @@ describe("Consultant architecture decisions", () => {
             inference_started: false,
             execution_started: false,
             deployment_started: false,
+          },
+          supervisor: {
+            mode: "delegated",
+            children: [
+              { id: "identity-reader", kind: "reader", context_policy: "bounded" },
+              { id: "approval-checker", kind: "reviewer", context_policy: "bounded" },
+            ],
           },
           decisions: [{
             id: "decision-1",
@@ -114,7 +138,7 @@ describe("Consultant architecture decisions", () => {
         return Promise.reject(new Error("Forbidden"));
       }
       if (discoverySessionsStatus !== null && path === "/consultant/discovery/sessions") {
-        return Promise.resolve(new Response(JSON.stringify({ detail: "section unavailable" }), { status: discoverySessionsStatus }));
+        return Promise.resolve(new Response(JSON.stringify({ detail: discoverySessionsDetail }), { status: discoverySessionsStatus }));
       }
       if (useCasesStatus !== null && path === "/consultant/use-cases") {
         return Promise.resolve(new Response(JSON.stringify({ detail: "section unavailable" }), { status: useCasesStatus }));
@@ -129,7 +153,7 @@ describe("Consultant architecture decisions", () => {
         return Promise.resolve(new Response(JSON.stringify({ detail: "environment unavailable" }), { status: environmentStatus }));
       }
       if (governanceStatus !== null && path === "/consultant/governance/evaluate") {
-        return Promise.resolve(new Response(JSON.stringify({ detail: "governance unavailable" }), { status: governanceStatus }));
+        return Promise.resolve(new Response(JSON.stringify({ detail: governanceDetail }), { status: governanceStatus }));
       }
       if (evaluationStatus !== null && path === "/consultant/evaluations") {
         return Promise.resolve(new Response(JSON.stringify({ detail: "controlled evaluation execution requires local demo mode with writes disabled" }), { status: evaluationStatus }));
@@ -244,6 +268,8 @@ describe("Consultant architecture decisions", () => {
     render(<MemoryRouter><Consultant /></MemoryRouter>);
 
     expect(await screen.findByRole("heading", { name: "Solutions Architect blueprints" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Blueprint walkthrough" })).toBeInTheDocument();
+    expect(screen.getByText(/Run the selected blueprint through discovery, architecture/)).toBeInTheDocument();
     expect(screen.queryByRole("heading", { name: "Architecture decisions" })).not.toBeInTheDocument();
     fireEvent.click(await screen.findByRole("button", { name: /Employee onboarding/ }));
 
@@ -310,6 +336,7 @@ describe("Consultant architecture decisions", () => {
   it("keeps new section failures retryable or gated", async () => {
     environmentStatus = 500;
     governanceStatus = 403;
+    governanceDetail = "authenticated principal has no tenant";
     evaluationStatus = 409;
     render(<MemoryRouter><Consultant /></MemoryRouter>);
 
@@ -319,12 +346,13 @@ describe("Consultant architecture decisions", () => {
     expect(screen.getByRole("button", { name: "Retry environment probe" })).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: "Evaluate governance" }));
-    expect(await screen.findByText(/Requires the Microsoft Admin pack/)).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: "Open Extensions / Packs" })).toHaveAttribute("href", "/system/extensions");
+    expect(await screen.findByText(/This action needs a specific client selected/)).toBeInTheDocument();
+    expect(screen.queryByText(/Requires the Microsoft Admin pack/)).not.toBeInTheDocument();
 
     dashboard.authState = "demo";
     environmentStatus = null;
     governanceStatus = null;
+    governanceDetail = "governance unavailable";
     fireEvent.click(screen.getByRole("button", { name: "Retry environment probe" }));
     fireEvent.click(screen.getByRole("button", { name: "Evaluate governance" }));
     expect(await screen.findByRole("heading", { name: "Governance checklist" })).toBeInTheDocument();
@@ -335,11 +363,18 @@ describe("Consultant architecture decisions", () => {
 
   it("isolates gated, empty, and retryable initial sections", async () => {
     discoverySessionsStatus = 403;
+    discoverySessionsDetail = {
+      code: "capability_required",
+      capability: "microsoft_admin",
+      reason: "no_grant",
+      remediation: "grant_capability",
+    };
     useCasesStatus = 404;
     rejectMonitoring = true;
     render(<MemoryRouter><Consultant /></MemoryRouter>);
 
     expect(await screen.findByText("Requires the Microsoft Admin pack or Microsoft Admin capability.")).toBeInTheDocument();
+    expect(screen.getByText(/grant_capability/)).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "Open Extensions / Packs" })).toHaveAttribute("href", "/system/extensions");
     expect(screen.getByText("No Solutions Architect use cases are available.")).toBeInTheDocument();
     expect(await screen.findByText(/Unable to load agent monitoring/)).toBeInTheDocument();
@@ -454,5 +489,23 @@ describe("Consultant architecture decisions", () => {
     expect(errorNotice).toHaveTextContent("The appliance couldn't complete the request. Try again shortly.");
     expect(screen.queryByRole("status")).not.toBeInTheDocument();
     expect(screen.queryByRole("link", { name: "Playbooks" })).not.toBeInTheDocument();
+  });
+
+  it("does not present a dead delivery warning or synthetic item statuses", async () => {
+    render(<MemoryRouter><Consultant /></MemoryRouter>);
+
+    const useCaseCard = (await screen.findByText("Employee identity sync")).closest("article");
+    expect(useCaseCard).not.toBeNull();
+    expect(useCaseCard?.querySelector(".status-chip")).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: /Employee onboarding/ }));
+    expect(await screen.findByRole("heading", { name: "Architecture decisions" })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Solution delivery" })).toHaveAttribute("href", "/consultant/solution-delivery");
+    expect(screen.queryByText(/not available in this checkout/)).not.toBeInTheDocument();
+
+    const supervisorChild = screen.getByText("identity-reader").closest(".consultant-component");
+    expect(supervisorChild).not.toBeNull();
+    expect(within(supervisorChild as HTMLElement).queryByText("Needs attention")).not.toBeInTheDocument();
+    expect(supervisorChild?.querySelector(".status-chip")).not.toBeInTheDocument();
   });
 });

@@ -89,10 +89,12 @@ test("completes the safe local setup journey and exercises primary UI surfaces",
   await expect(page.getByText("Setup complete")).toBeVisible();
 
   await page.goto("/playbooks");
+  await page.locator("#app-client-selector").selectOption(clientId);
   const qbr = page.locator("article").filter({ hasText: "Quarterly Business Review" });
   await expect(qbr).toBeVisible();
   await qbr.getByLabel("Period start").fill("2026-01-01");
   await qbr.getByLabel("Period end").fill("2026-03-31");
+  await expect(qbr.getByRole("button", { name: "Preview" })).toBeEnabled();
   await qbr.getByRole("button", { name: "Preview" }).click();
   await expect(page.getByRole("status")).toContainText("Preview ready for Quarterly Business Review.");
 

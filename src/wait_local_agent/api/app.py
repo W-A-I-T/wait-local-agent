@@ -26,6 +26,7 @@ from slowapi.extension import _rate_limit_exceeded_handler
 from slowapi.middleware import SlowAPIMiddleware
 from slowapi.util import get_remote_address
 from starlette.exceptions import HTTPException as StarletteHTTPException
+from starlette.middleware.sessions import SessionMiddleware
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 from starlette.staticfiles import StaticFiles
 from starlette.types import Scope
@@ -69,7 +70,10 @@ from wait_local_agent.collectors import (
 from wait_local_agent.communication import ConfiguredCommunicationProvider
 from wait_local_agent.config import Settings, load_settings
 from wait_local_agent.confluence import ConfluenceClient, ConfluenceReadResponse
-from wait_local_agent.connector_factory import ConnectorFactoryError
+from wait_local_agent.connector_factory import (
+    ConnectorFactoryError,
+    validate_connector_instance,
+)
 from wait_local_agent.connectors import (
     draft_connectwise_ticket_action,
     draft_halopsa_ticket_action,
@@ -166,6 +170,7 @@ from wait_local_agent.models import (
     MAX_EVENT_RETRIES,
     MAX_EVENT_RETRY_DELAY_SECONDS,
     AgentDefinition,
+    ConnectorInstance,
     ConsultantDiscoverySession,
     WorkflowRun,
 )
@@ -193,6 +198,7 @@ from wait_local_agent.observability import (
     TICKET_METRICS_DERIVATION,
     build_analytics_summary,
 )
+from wait_local_agent.oidc import get_or_create_session_signing_key
 from wait_local_agent.operational_graph import OperationalGraphService
 from wait_local_agent.power_apps import (
     PowerAppsPlanError,
@@ -997,6 +1003,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             allow_power_platform_deployment=False,
         )
     store = Store(active_settings.data_path)
+    vault = SecretVault(active_settings.vault_path)
+    session_signing_key = get_or_create_session_signing_key(active_settings, vault)
     if not active_settings.demo_mode and not admin_credential_configured(active_settings, store):
         raise RuntimeError(
             "refusing non-demo startup without an admin credential; configure WAIT_ADMIN_TOKEN or "
@@ -1083,6 +1091,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     )
     app.state.settings = active_settings
     app.state.store = store
+    app.state.vault = vault
     app.state.scheduler = scheduler
     app.state.limiter = limiter
     app.state.update_status_cache = update_status_cache
@@ -1102,6 +1111,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.add_middleware(
         TrustedHostMiddleware,
         allowed_hosts=list(active_settings.trusted_hosts),
+    )
+    app.add_middleware(
+        SessionMiddleware,
+        secret_key=session_signing_key,
+        session_cookie="wait_oidc_txn",
+        max_age=600,
+        same_site="lax",
+        https_only=active_settings.session_cookie_secure,
     )
     app.add_middleware(SlowAPIMiddleware)
     configure_pack_routes(
@@ -1425,6 +1442,23 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         context: AdminAccess,
     ) -> dict[str, object]:
         _require_msp_operator(context)
+        connector_type = payload.connector_type.strip().casefold()
+        if payload.credential_ref and connector_type in {"autotask", "syncro", "servicenow"}:
+            candidate = ConnectorInstance(
+                connector_instance_id="pending-validation",
+                connector_type=connector_type,
+                display_name=payload.display_name,
+                client_id=payload.client_id,
+                credential_ref=payload.credential_ref,
+                config_json=payload.config_json,
+                status="inactive",
+                created_at="",
+                updated_at="",
+            )
+            try:
+                validate_connector_instance(candidate, base_settings=active_settings, vault=vault)
+            except ConnectorFactoryError as exc:
+                raise HTTPException(status_code=422, detail=str(exc)) from exc
         try:
             instance = store.create_connector_instance(
                 payload.connector_type,

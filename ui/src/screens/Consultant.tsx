@@ -2,7 +2,14 @@ import { FormEvent, useCallback, useEffect, useState } from "react";
 import { AlertTriangle, Compass, RefreshCw } from "lucide-react";
 import { Link } from "react-router-dom";
 import { useDashboard } from "../app/DashboardContext";
-import { ApiRequestError, apiFetch } from "../api/client";
+import { ClientIdSelect } from "../components/ClientIdSelect";
+import {
+  ApiRequestError,
+  CLIENT_SCOPE_ERROR_MESSAGE,
+  apiFetch,
+  isCapabilityRequiredDetail,
+  isClientScopeErrorDetail,
+} from "../api/client";
 import { StatusChip } from "../components/StatusChip";
 import { humanizeName } from "../lib/fields";
 import type {
@@ -100,7 +107,17 @@ const INITIAL_SECTION_STATES: SectionLoadStates = {
 
 function sectionStateForError(error: unknown): SectionLoadState {
   if (error instanceof ApiRequestError && error.status === 403) {
-    return { status: "gated", detail: apiRequestReason(error) };
+    const detail = error.detail ?? apiRequestReason(error);
+    if (isCapabilityRequiredDetail(detail)) {
+      return {
+        status: "gated",
+        detail: typeof detail.remediation === "string" ? detail.remediation : undefined,
+      };
+    }
+    return {
+      status: "error",
+      detail: isClientScopeErrorDetail(detail) ? CLIENT_SCOPE_ERROR_MESSAGE : error.message,
+    };
   }
   if (error instanceof ApiRequestError && error.status === 404) {
     return { status: "empty" };
@@ -148,7 +165,9 @@ function SectionLoadNotice({
 export function Consultant() {
   const {
     canWrite,
+    clients = [],
     clientId: scopedClientId,
+    selectedClientId,
     authState,
     writeHealth,
   } = useDashboard();
@@ -675,7 +694,7 @@ export function Consultant() {
   }
 
   async function promoteDiscovery() {
-    const clientId = resolveClientId(selected?.client_id, scopedClientId, discoveryClientId, blueprints[0]?.client_id);
+    const clientId = resolveClientId(selected?.client_id, scopedClientId, selectedClientId, discoveryClientId || blueprints[0]?.client_id);
     if (!clientId || !discoveryResult || discoveryResult.readiness !== "ready_for_architecture") {
       setMessage("Complete the required discovery evidence before saving a solution blueprint.");
       return;
@@ -748,7 +767,7 @@ export function Consultant() {
   }
 
   async function runEmployeeOnboardingDemo() {
-    const clientId = resolveClientId(selected?.client_id, scopedClientId, discoveryClientId, blueprints[0]?.client_id);
+    const clientId = resolveClientId(selected?.client_id, scopedClientId, selectedClientId, discoveryClientId || blueprints[0]?.client_id);
     if (!selected || !clientId || !employeeOnboardingEntityId.trim()) {
       setMessage("Select a saved blueprint and provide an existing tenant-scoped ticket before running the local walkthrough.");
       return;
@@ -777,7 +796,7 @@ export function Consultant() {
   const workflowComponents = architecture?.components.filter((component) => component.kind === "workflow") ?? [];
 
   function currentClientId() {
-    return selected?.client_id?.trim() || scopedClientId.trim() || discoveryClientId.trim() || blueprints[0]?.client_id?.trim() || "";
+    return selected?.client_id?.trim() || scopedClientId.trim() || selectedClientId?.trim() || discoveryClientId.trim() || blueprints[0]?.client_id?.trim() || "";
   }
 
   return (
@@ -861,14 +880,14 @@ export function Consultant() {
       <section className="panel">
         <div className="panel-heading">
           <div>
-            <h2>Employee onboarding walkthrough</h2>
-            <p className="screen-note">Run the canonical bounded local fixture through discovery, architecture, supervisor execution, evaluation, governance, delivery, and audit.</p>
+            <h2>Blueprint walkthrough</h2>
+            <p className="screen-note">Run the selected blueprint through discovery, architecture, supervisor execution, evaluation, governance, delivery, and audit.</p>
           </div>
           {employeeOnboardingDemo ? <StatusChip status="completed" /> : null}
         </div>
         <div className="notice">
           <strong>Local fixture only.</strong>{" "}
-          No Microsoft, PSA, RMM, documentation, Teams, live-provider, or deployment call is started. The walkthrough generates only local review manifests and a non-deployable package. It requires an existing tenant-scoped ticket and never seeds one. You can start without a ticket in Solution discovery or blueprints.
+          No external connector or deployment call is started. The walkthrough generates only local review manifests and a non-deployable package. It requires an existing tenant-scoped ticket and never seeds one. You can start without a ticket in Solution discovery or blueprints.
         </div>
         <div className="grid">
           <label>
@@ -881,7 +900,7 @@ export function Consultant() {
           </label>
         </div>
         <button type="button" onClick={() => void runEmployeeOnboardingDemo()} disabled={!canWrite || employeeOnboardingLoading || !selected}>
-          {employeeOnboardingLoading ? "Running local walkthrough…" : "Run local onboarding walkthrough"}
+          {employeeOnboardingLoading ? "Running blueprint walkthrough…" : "Run blueprint walkthrough"}
         </button>
         {!selected ? <p className="screen-note">Select a saved blueprint above before running the walkthrough.</p> : null}
         {!canWrite ? <p className="screen-note">Technician access is required to run the local fixture.</p> : null}
@@ -933,14 +952,15 @@ export function Consultant() {
         </div>
         <form className="draft-form" onSubmit={(event) => void assessDiscovery(event)}>
           <div className="grid">
-            <label>
-              Customer workspace ID
-              <input
-                value={discoveryClientId || selected?.client_id || scopedClientId || blueprints[0]?.client_id || ""}
-                onChange={(event) => setDiscoveryClientId(event.target.value)}
-                placeholder="acme"
-              />
-            </label>
+            <ClientIdSelect
+              label="Customer workspace ID"
+              value={discoveryClientId || selected?.client_id || scopedClientId || selectedClientId || blueprints[0]?.client_id || ""}
+              onChange={setDiscoveryClientId}
+              clients={clients}
+              required
+              allowFreeform
+              id="discovery-client-id"
+            />
             <label>
               Solution name
               <input
@@ -1223,7 +1243,6 @@ export function Consultant() {
                       <strong>{child.id}</strong>
                       <span>{child.kind} · {child.context_policy ?? "bounded structured context"}</span>
                     </div>
-                    <StatusChip status="evidence_partial" />
                   </div>
                 ))}
               </div>
@@ -1394,9 +1413,6 @@ export function Consultant() {
               </article>
             </div>
           ) : null}
-          <div className="notice consultant-delivery-link">
-            <strong>Ready to package?</strong> The Solution Delivery screen is not available in this checkout; complete the review-only chain here and hand off only after that surface is restored.
-          </div>
         </section>
       ) : null}
     </div>
@@ -1608,7 +1624,6 @@ function UseCaseCard({ useCase }: { useCase: ConsultantUseCase }) {
         <span>Services: {useCase.services.join(", ")}</span>
         <span>Approval boundaries: {useCase.approval_boundaries.join(", ")}</span>
       </div>
-      <StatusChip status="evidence_partial" />
     </article>
   );
 }

@@ -2,6 +2,12 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { Audit } from "../src/screens/Audit";
 
+vi.mock("../src/app/DashboardContext", () => ({
+  useDashboard: () => ({
+    clients: [{ client_id: "acme", name: "Acme Support", status: "active" }]
+  })
+}));
+
 describe("Audit export filters", () => {
   beforeEach(() => {
     vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL) => {

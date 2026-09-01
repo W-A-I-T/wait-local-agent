@@ -43,3 +43,30 @@ separate fixed-scope token and client/user mapping.
 Outbound connector calls require `WAIT_ALLOW_HTTP_PROBING=true`. Live
 mutations also require `WAIT_ALLOW_WRITE_ACTIONS=true`, a supported action, and
 the relevant approval gate.
+
+## Connector instances
+
+HaloPSA, ConnectWise PSA, Autotask, Syncro, and ServiceNow can be configured as
+persisted Connector Instances from **Integrations → Connector Instances**.
+The instance stores non-secret configuration and a reference to the local
+vault; credential material is never stored in `config_json` or returned by the
+API. Existing environment-based configuration remains the bootstrap fallback
+for appliance-wide provider access.
+
+For instance setup, Autotask uses a base URL plus username, secret, and API
+integration code. Syncro uses an API key and subdomain. ServiceNow uses its
+instance URL plus username and password, matching the current Basic Auth Table
+API client. Instance reads remain gated by `WAIT_ALLOW_HTTP_PROBING`, and the
+instance origin must be listed in `WAIT_CONNECTOR_INSTANCE_ALLOWED_HOSTS`.
+Connector polling is read-only and records health and last-successful-sync
+state in the existing `sync_cursors` table.
+
+## Microsoft sign-in
+
+Microsoft Entra OIDC is configured from **Settings → People & Access**. The
+optional first-boot defaults are `WAIT_OIDC_TENANT_ID`,
+`WAIT_OIDC_CLIENT_ID`, `WAIT_OIDC_PUBLIC_BASE_URL`, and
+`WAIT_OIDC_AUTO_PROVISION_CLIENT_ID`; saved database values take precedence.
+The client secret is entered through the dashboard and stored only in the
+Fernet vault. See the [Entra OIDC walkthrough](entra-oidc.md) for app
+registration, redirect URI, and trusted-host requirements.

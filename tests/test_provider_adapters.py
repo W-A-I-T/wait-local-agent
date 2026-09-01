@@ -5,6 +5,7 @@ from typing import Any, cast
 
 import pytest
 
+from wait_local_agent.autotask import AutotaskReadResponse
 from wait_local_agent.models import (
     ConnectorReadResult,
     ConnectWiseReadResponse,
@@ -14,10 +15,15 @@ from wait_local_agent.models import (
     HaloTicket,
 )
 from wait_local_agent.provider_adapters import (
+    AutotaskTicketAdapter,
     ConnectWiseTicketAdapter,
     HaloTicketAdapter,
     ProviderTicketAdapter,
+    ServiceNowIncidentAdapter,
+    SyncroTicketAdapter,
 )
+from wait_local_agent.servicenow import ServiceNowReadResponse
+from wait_local_agent.syncro import SyncroReadResponse
 
 
 @dataclass
@@ -36,6 +42,36 @@ class _ConnectWiseClient:
     calls: list[tuple[object, object]]
 
     def list_tickets(self, *args: object, **kwargs: object) -> ConnectWiseReadResponse:
+        self.calls.append((args, kwargs))
+        return self.response
+
+
+@dataclass
+class _AutotaskClient:
+    response: AutotaskReadResponse
+    calls: list[tuple[object, object]]
+
+    def list_tickets(self, *args: object, **kwargs: object) -> AutotaskReadResponse:
+        self.calls.append((args, kwargs))
+        return self.response
+
+
+@dataclass
+class _SyncroClient:
+    response: SyncroReadResponse
+    calls: list[tuple[object, object]]
+
+    def list_tickets(self, *args: object, **kwargs: object) -> SyncroReadResponse:
+        self.calls.append((args, kwargs))
+        return self.response
+
+
+@dataclass
+class _ServiceNowClient:
+    response: ServiceNowReadResponse
+    calls: list[tuple[object, object]]
+
+    def list_incidents(self, *args: object, **kwargs: object) -> ServiceNowReadResponse:
         self.calls.append((args, kwargs))
         return self.response
 
@@ -175,3 +211,127 @@ def test_adapters_count_unexpected_item_shapes_and_missing_values() -> None:
         [],
     )
     assert ConnectWiseTicketAdapter("instance").fetch_page(connectwise, page=1, page_size=1).dropped_count == 3
+
+
+def test_autotask_adapter_maps_normalized_ticket_fields() -> None:
+    client = _AutotaskClient(
+        AutotaskReadResponse(
+            ConnectorReadResult("ready", "ok", 1),
+            [
+                {
+                    "id": "at-1",
+                    "company_id": "company-a",
+                    "title": "Subject",
+                    "description": "Body",
+                    "priority": "High",
+                    "status": "Open",
+                }
+            ],
+        ),
+        [],
+    )
+    page = AutotaskTicketAdapter("instance-at").fetch_page(client, page=2, page_size=5)
+    assert client.calls == [((), {"page": 2, "page_size": 5})]
+    assert page.records[0].external_client_id == "company-a"
+    assert page.records[0].subject == "Subject"
+    assert page.records[0].body == "Body"
+    assert page.http_status == 200
+
+
+def test_autotask_adapter_drops_non_mapping_and_missing_identity_fields() -> None:
+    client = _AutotaskClient(
+        AutotaskReadResponse(
+            ConnectorReadResult("ready", "ok", 0),
+            [cast(Any, object()), {"company_id": "company-a"}, {"id": "at-2"}],
+        ),
+        [],
+    )
+
+    page = AutotaskTicketAdapter("instance-at").fetch_page(client, page=1, page_size=5)
+
+    assert page.records == []
+    assert page.dropped_count == 3
+
+
+def test_syncro_adapter_maps_normalized_ticket_fields() -> None:
+    client = _SyncroClient(
+        SyncroReadResponse(
+            ConnectorReadResult("ready", "ok", 1),
+            [
+                {
+                    "id": "sy-1",
+                    "customer_id": "customer-a",
+                    "customer_name": "Customer",
+                    "subject": "Subject",
+                    "priority": "High",
+                    "status": "Open",
+                }
+            ],
+        ),
+        [],
+    )
+    page = SyncroTicketAdapter("instance-sy").fetch_page(client, page=2, page_size=5)
+    assert client.calls == [((), {"page": 2})]
+    assert page.records[0].external_client_id == "customer-a"
+    assert page.records[0].client == "Customer"
+    assert page.records[0].body == ""
+
+
+def test_syncro_adapter_drops_non_mapping_and_missing_identity_fields() -> None:
+    client = _SyncroClient(
+        SyncroReadResponse(
+            ConnectorReadResult("ready", "ok", 0),
+            [cast(Any, object()), {"customer_id": "customer-a"}, {"id": "sy-2"}],
+        ),
+        [],
+    )
+
+    page = SyncroTicketAdapter("instance-sy").fetch_page(client, page=1, page_size=5)
+
+    assert page.records == []
+    assert page.dropped_count == 3
+
+
+def test_servicenow_incident_adapter_uses_existing_incident_read_capability() -> None:
+    client = _ServiceNowClient(
+        ServiceNowReadResponse(
+            ConnectorReadResult("ready", "ok", 1),
+            [
+                {
+                    "sys_id": "sn-1",
+                    "company": "company-a",
+                    "short_description": "Subject",
+                    "description": "Body",
+                    "priority": "2",
+                    "state": "New",
+                }
+            ],
+        ),
+        [],
+    )
+    page = ServiceNowIncidentAdapter("instance-sn").fetch_page(cast(Any, client), page=2, page_size=5)
+    assert client.calls == [((), {"page": 2, "page_size": 5})]
+    assert page.records[0].external_id == "sn-1"
+    assert page.records[0].external_client_id == "company-a"
+    assert page.records[0].status == "New"
+
+
+def test_servicenow_incident_adapter_drops_non_mapping_and_missing_identity_fields() -> None:
+    client = _ServiceNowClient(
+        ServiceNowReadResponse(
+            ConnectorReadResult("ready", "ok", 0),
+            [cast(Any, object()), {"company": "company-a"}, {"sys_id": "sn-2"}],
+        ),
+        [],
+    )
+
+    page = ServiceNowIncidentAdapter("instance-sn").fetch_page(cast(Any, client), page=1, page_size=5)
+
+    assert page.records == []
+    assert page.dropped_count == 3
+
+
+def test_new_provider_adapters_are_registered() -> None:
+    assert isinstance(ProviderTicketAdapter.for_connector("autotask", "instance"), AutotaskTicketAdapter)
+    assert isinstance(ProviderTicketAdapter.for_connector("syncro", "instance"), SyncroTicketAdapter)
+    assert isinstance(ProviderTicketAdapter.for_connector("servicenow", "instance"), ServiceNowIncidentAdapter)

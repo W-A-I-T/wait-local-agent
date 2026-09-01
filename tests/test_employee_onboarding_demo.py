@@ -22,9 +22,7 @@ def test_employee_onboarding_demo_composes_local_fixture_stages(settings) -> Non
             "update tickets set client_id = ? where id = ?",
             ("acme", "TCK-1001"),
         )
-    blueprint = json.loads(
-        Path("examples/consultant/employee-onboarding-blueprint.json").read_text(encoding="utf-8")
-    )
+    blueprint = json.loads(Path("examples/consultant/employee-onboarding-blueprint.json").read_text(encoding="utf-8"))
 
     result = run_employee_onboarding_demo(
         store=store,
@@ -38,7 +36,19 @@ def test_employee_onboarding_demo_composes_local_fixture_stages(settings) -> Non
     assert stages["discovery"]["status"] == "complete"
     assert stages["environment"]["probe_performed"] is False
     assert stages["supervisor"]["status"] == "completed"
-    assert len(stages["supervisor"]["children"]) == 7
+    assert len(stages["supervisor"]["children"]) == len(result["fixture_child_agents"]) == 5
+    assert {child["role"] for child in result["fixture_child_agents"]} == {
+        "identity-microsoft-365-entra",
+        "endpoint-intune-ninjaone",
+        "documentation-sharepoint-hudu",
+        "communications-teams",
+        "psa-connectwise",
+    }
+    assert "Employee onboarding supervisor" in result["request"]
+    assert (
+        "Systems/services: Microsoft 365, Entra, Intune, SharePoint, Teams, ConnectWise, NinjaOne, Hudu"
+        in result["request"]
+    )
     assert stages["evaluation"]["execution_started"] is True
     assert stages["evaluation"]["production_readiness"] == "pass"
     assert stages["governance"]["status"] == "needs_review"
@@ -69,8 +79,55 @@ def test_employee_onboarding_demo_composes_local_fixture_stages(settings) -> Non
         "external_systems_require_environment_verification": True,
         "sensitive_operations_require_human_approval": True,
     }
-    assert result["audit"]["agent_run_count"] == 8
+    assert result["audit"]["agent_run_count"] == len(result["fixture_child_agents"]) + 1
     assert result["audit"]["audit_event_count"] > 0
+
+
+def test_employee_onboarding_demo_uses_selected_blueprint_content(settings, tmp_path) -> None:
+    store = Store(settings.data_path)
+    ingest_local(store, Path("examples/sample_tickets/tickets.json"))
+    with store._connect() as connection:  # noqa: SLF001 - bind the isolated fixture tenant.
+        connection.execute(
+            "update tickets set client_id = ? where id = ?",
+            ("acme", "TCK-1001"),
+        )
+    first = json.loads(Path("examples/consultant/employee-onboarding-blueprint.json").read_text(encoding="utf-8"))
+    second = {
+        **first,
+        "solution": {"name": "Employee offboarding supervisor"},
+        "business_goal": {"statement": "Automate auditable employee offboarding"},
+        "systems": ["Okta", "Jamf", "ServiceNow"],
+        "discovery": {
+            "solution_name": "Employee offboarding supervisor",
+            "business_goal": "Automate auditable employee offboarding",
+            "systems": ["Okta", "Jamf", "ServiceNow"],
+        },
+    }
+
+    first_result = run_employee_onboarding_demo(
+        store=store,
+        settings=settings,
+        blueprint_payload=first,
+        persist_blueprint=False,
+        output_directory=str(tmp_path / "first"),
+    )
+    second_result = run_employee_onboarding_demo(
+        store=store,
+        settings=settings,
+        blueprint_payload=second,
+        persist_blueprint=False,
+        output_directory=str(tmp_path / "second"),
+    )
+
+    assert first_result["request"] != second_result["request"]
+    assert {child["role"] for child in first_result["fixture_child_agents"]} != {
+        child["role"] for child in second_result["fixture_child_agents"]
+    }
+    assert {child["role"] for child in second_result["fixture_child_agents"]} == {
+        "identity-okta",
+        "endpoint-jamf",
+        "psa-servicenow",
+    }
 
 
 def test_employee_onboarding_demo_requires_a_scoped_fixture_ticket(settings) -> None:

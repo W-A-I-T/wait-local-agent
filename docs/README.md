@@ -15,6 +15,7 @@ bounded by the current code and the verification notes in the relevant pages.
 - [CLI quickstart](getting-started/quickstart-cli.md) — install and exercise the local CLI.
 - [Local demo](getting-started/local-demo.md) — use deterministic local demo data and flows.
 - [Configuration](getting-started/configuration.md) — safety flags, authentication, and demo mode.
+- [Microsoft sign-in](getting-started/entra-oidc.md) — configure tenant-pinned Entra ID OIDC with PKCE.
 - [Technician quickstart](getting-started/technician-quickstart.md) — resolve one ticket through chat, review, approval, execution, and audit.
 
 ## Concepts

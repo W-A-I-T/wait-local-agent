@@ -81,13 +81,13 @@ export const connectorSetup = {
   },
   syncro: {
     label: "Syncro",
-    tier: "env",
+    tier: "instance",
     envVars: ["WAIT_SYNCRO_BASE_URL", "WAIT_SYNCRO_API_TOKEN"],
-    docsNote: "Syncro is configured at appliance scope for read-only ticket and customer lookup."
+    docsNote: "Use appliance-wide Syncro settings for one shared connection, or use a Connector Instance when each WAIT client needs its own credentials."
   },
   servicenow: {
     label: "ServiceNow",
-    tier: "env",
+    tier: "instance",
     envVars: [
       "WAIT_SERVICENOW_BASE_URL",
       "WAIT_SERVICENOW_USERNAME",
@@ -95,11 +95,11 @@ export const connectorSetup = {
       "WAIT_SERVICENOW_API_VERSION",
       "WAIT_SERVICENOW_PAGE_SIZE"
     ],
-    docsNote: "ServiceNow is configured at appliance scope for read-only Table API lookup and approval-gated updates."
+    docsNote: "Use appliance-wide ServiceNow settings for one shared connection, or use a Connector Instance when each WAIT client needs its own credentials."
   },
   autotask: {
     label: "Autotask PSA",
-    tier: "env",
+    tier: "instance",
     envVars: [
       "WAIT_AUTOTASK_BASE_URL",
       "WAIT_AUTOTASK_USERNAME",
@@ -107,7 +107,7 @@ export const connectorSetup = {
       "WAIT_AUTOTASK_INTEGRATION_CODE",
       "WAIT_AUTOTASK_PAGE_SIZE"
     ],
-    docsNote: "Autotask is configured at appliance scope for read-only PSA lookup and approval-gated ticket actions."
+    docsNote: "Use appliance-wide Autotask settings for one shared connection, or use a Connector Instance when each WAIT client needs its own credentials."
   },
   m365: {
     label: "Microsoft 365 / Entra",

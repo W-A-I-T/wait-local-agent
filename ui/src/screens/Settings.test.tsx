@@ -1,58 +1,62 @@
 import { render, screen } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
-import { beforeEach, describe, expect, it, vi } from "vitest";
-import { apiFetch } from "../api/client";
-import { useDashboard } from "../app/DashboardContext";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { Settings } from "./Settings";
 
-vi.mock("../api/client", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("../api/client")>();
-  return { ...actual, apiFetch: vi.fn() };
-});
-vi.mock("../app/DashboardContext", () => ({ useDashboard: vi.fn() }));
+const dashboardState = vi.hoisted(() => ({
+  authState: "demo" as "demo" | "authenticated" | "local-open",
+  isAdmin: true,
+  loading: false,
+  role: "admin" as "admin" | "viewer"
+}));
 
-const mockedApiFetch = vi.mocked(apiFetch);
-const mockedDashboard = vi.mocked(useDashboard);
+vi.mock("../app/DashboardContext", () => ({
+  useDashboard: () => dashboardState
+}));
+
+afterEach(() => {
+  dashboardState.authState = "demo";
+  dashboardState.isAdmin = true;
+  dashboardState.loading = false;
+  dashboardState.role = "admin";
+  vi.restoreAllMocks();
+  vi.unstubAllGlobals();
+});
 
 function installSettingsResponses(demoMode: boolean) {
-  mockedApiFetch.mockImplementation(async (path) => {
-    switch (path) {
-      case "/settings/providers":
-        return { local_model_provider: "demo", vector_backend: "local" } as never;
-      case "/settings/security":
-        return {
-          api_token_configured: false,
-          admin_token_configured: false,
-          tech_token_configured: false,
-          viewer_token_configured: false,
-          api_auth_required: false,
-          demo_mode: demoMode
-        } as never;
-      case "/packs":
-      case "/secrets":
-        return [] as never;
-      case "/update-status":
-        return { status: "current", detail: "No update available." } as never;
-      case "/founder/lp-status":
-        throw new Error("launch passport not configured");
-      default:
-        throw new Error(`Unexpected request: ${String(path)}`);
+  const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+    const path = String(input);
+    if (path === "/settings/providers") {
+      return jsonResponse({ local_model_provider: "demo", vector_backend: "local" });
     }
+    if (path === "/settings/security") {
+      return jsonResponse({
+        api_token_configured: false,
+        admin_token_configured: false,
+        tech_token_configured: false,
+        viewer_token_configured: false,
+        api_auth_required: false,
+        demo_mode: demoMode
+      });
+    }
+    if (path === "/packs" || path === "/secrets") {
+      return jsonResponse([]);
+    }
+    if (path === "/update-status") {
+      return jsonResponse({ status: "current", detail: "No update available." });
+    }
+    if (path === "/founder/lp-status") {
+      return jsonResponse({ error: "launch passport not configured" }, 409);
+    }
+    throw new Error(`Unexpected request: ${path}`);
   });
+  vi.stubGlobal("fetch", fetchMock);
+  return fetchMock;
 }
 
 describe("Settings demo mode explanation", () => {
-  beforeEach(() => {
-    vi.clearAllMocks();
-    mockedDashboard.mockReturnValue({
-      authState: "local-open",
-      isAdmin: true,
-      loading: false,
-      role: "admin"
-    } as never);
-  });
-
   it("explains the active restrictions and restart-only change mechanism", async () => {
+    dashboardState.authState = "local-open";
     installSettingsResponses(true);
 
     render(
@@ -69,6 +73,7 @@ describe("Settings demo mode explanation", () => {
   });
 
   it("omits the active restriction explanation when demo mode is off", async () => {
+    dashboardState.authState = "local-open";
     installSettingsResponses(false);
 
     render(
@@ -82,3 +87,105 @@ describe("Settings demo mode explanation", () => {
     expect(screen.queryByText(/Write actions and Power Platform deployment are disabled/)).not.toBeInTheDocument();
   });
 });
+
+describe("Settings loading", () => {
+  it("keeps successful settings visible when demo mode forbids the secrets listing", async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const path = String(input);
+      if (path === "/settings/providers") {
+        return jsonResponse({ local_model_provider: "llama.cpp", vector_backend: "local" });
+      }
+      if (path === "/settings/security") {
+        return jsonResponse({ api_token_configured: false, demo_mode: true });
+      }
+      if (path === "/packs") {
+        return jsonResponse([{ name: "Core pack", version: "1.2.3", locked: true, requires_license: false }]);
+      }
+      if (path === "/secrets") {
+        return jsonResponse({ detail: "Secrets are unavailable in demo mode." }, 403);
+      }
+      if (path === "/update-status") {
+        return jsonResponse({ status: "current", detail: "Current" });
+      }
+      if (path === "/founder/lp-status") {
+        return jsonResponse({ error: "launch passport not configured" }, 409);
+      }
+      throw new Error(`Unexpected request: ${path}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(<MemoryRouter><Settings /></MemoryRouter>);
+
+    expect(await screen.findByText("Settings loaded.")).toBeInTheDocument();
+    expect(screen.getByText("Provider mode").parentElement).toHaveTextContent("llama.cpp");
+    expect(screen.getByText("Demo mode").parentElement).toHaveTextContent("enabled");
+    expect(screen.getByText("Update check").parentElement).toHaveTextContent("current");
+    expect(screen.getByText("Core pack")).toBeInTheDocument();
+    expect(screen.getByText("unavailable in demo mode")).toBeInTheDocument();
+    expect(screen.getByText("Vault contents are unavailable in demo mode.")).toBeInTheDocument();
+    expect(screen.queryByText(/Administrator role required for admin settings/)).not.toBeInTheDocument();
+    expect(fetchMock.mock.calls.map(([input]) => String(input))).toEqual(expect.arrayContaining([
+      "/settings/providers",
+      "/settings/security",
+      "/packs",
+      "/secrets",
+      "/update-status",
+      "/founder/lp-status"
+    ]));
+  });
+
+  it("keeps the role-required message for a real security permission failure", async () => {
+    dashboardState.authState = "authenticated";
+    dashboardState.isAdmin = false;
+    dashboardState.role = "viewer";
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const path = String(input);
+      if (path === "/settings/security") {
+        return jsonResponse({ detail: "forbidden" }, 403);
+      }
+      if (path === "/settings/providers") {
+        return jsonResponse({ local_model_provider: "llama.cpp", vector_backend: "local" });
+      }
+      if (path === "/packs" || path === "/secrets") {
+        return jsonResponse([]);
+      }
+      if (path === "/update-status") {
+        return jsonResponse({ status: "current", detail: "Current" });
+      }
+      throw new Error(`Unexpected request: ${path}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(<MemoryRouter><Settings /></MemoryRouter>);
+
+    expect(await screen.findByText("Administrator role required for admin settings. Current role: viewer.")).toBeInTheDocument();
+  });
+
+  it("preserves the populated Vault state when secrets are available", async () => {
+    dashboardState.authState = "authenticated";
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const path = String(input);
+      if (path === "/settings/providers") return jsonResponse({ local_model_provider: "llama.cpp", vector_backend: "local" });
+      if (path === "/settings/security") return jsonResponse({ api_token_configured: false, demo_mode: false });
+      if (path === "/packs") return jsonResponse([]);
+      if (path === "/secrets") return jsonResponse([{ key: "WAIT_API_KEY", configured: true, required_for: "Provider" }]);
+      if (path === "/update-status") return jsonResponse({ status: "current", detail: "Current" });
+      if (path === "/founder/lp-status") return jsonResponse({ error: "launch passport not configured" }, 409);
+      throw new Error(`Unexpected request: ${path}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(<MemoryRouter><Settings /></MemoryRouter>);
+
+    expect(await screen.findByText("WAIT_API_KEY")).toBeInTheDocument();
+    expect(screen.getByText("1 keys")).toBeInTheDocument();
+    expect(screen.queryByText(/unavailable in demo mode/)).not.toBeInTheDocument();
+  });
+});
+
+function jsonResponse(body: unknown, status = 200): Response {
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: { "Content-Type": "application/json" }
+  });
+}
