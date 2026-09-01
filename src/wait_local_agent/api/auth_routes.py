@@ -29,7 +29,7 @@ from wait_local_agent.sessions import (
     hash_session_token,
     session_expiries,
 )
-from wait_local_agent.store import PrincipalDetails, Store, hash_credential
+from wait_local_agent.store import PrincipalDetails, PrincipalInvariantError, Store, hash_credential
 from wait_local_agent.vault import SecretVault, SecretVaultError
 
 AdminAccess = Annotated[AuthContext, Depends(require_role(Role.ADMIN))]
@@ -363,6 +363,9 @@ def create_auth_router(limiter: Limiter | None = None) -> APIRouter:
                     store.revoke_principal_sessions(normalized_id)
             if payload.display_name is not None:
                 store.set_principal_display_name(normalized_id, payload.display_name)
+        except PrincipalInvariantError as exc:
+            _audit_principal_rejection(store, "principal.updated", normalized_id, str(exc), context)
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
         except KeyError as exc:
             raise HTTPException(status_code=404, detail="principal not found") from exc
         except ValueError as exc:
@@ -381,10 +384,12 @@ def create_auth_router(limiter: Limiter | None = None) -> APIRouter:
         principal = _find_principal(store, principal_id)
         if principal is None:
             raise HTTPException(status_code=404, detail="principal not found")
-        if not principal.active:
-            raise HTTPException(status_code=409, detail="credentials require an active principal")
         token = secrets.token_urlsafe(32)
-        credential_hash = store.add_principal_credential(principal.principal_id, token)
+        try:
+            credential_hash = store.add_principal_credential(principal.principal_id, token)
+        except PrincipalInvariantError as exc:
+            _audit_principal_rejection(store, "principal.credential.issued", principal.principal_id, str(exc), context)
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
         store.add_audit_event(
             "principal.credential.issued",
             principal.principal_id,
@@ -416,6 +421,9 @@ def create_auth_router(limiter: Limiter | None = None) -> APIRouter:
             raise HTTPException(status_code=404, detail="credential not found")
         try:
             store.revoke_principal_credential(payload.credential_hash)
+        except PrincipalInvariantError as exc:
+            _audit_principal_rejection(store, "principal.credential.revoked", normalized_id, str(exc), context)
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
         except (KeyError, ValueError) as exc:
             raise HTTPException(status_code=404, detail="credential not found") from exc
         store.add_audit_event(
@@ -445,6 +453,10 @@ def create_auth_router(limiter: Limiter | None = None) -> APIRouter:
             raise HTTPException(status_code=404, detail="client not found")
         try:
             store.add_principal_client_role(normalized_id, normalized_client_id, payload.role)
+        except PrincipalInvariantError as exc:
+            subject_id = f"{normalized_id}:{normalized_client_id}:{payload.role}"
+            _audit_principal_rejection(store, "principal.client_role.added", subject_id, str(exc), context)
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
         except sqlite3.IntegrityError as exc:
             raise HTTPException(status_code=409, detail="client role already exists") from exc
         except (KeyError, ValueError) as exc:
@@ -470,7 +482,16 @@ def create_auth_router(limiter: Limiter | None = None) -> APIRouter:
         if _find_principal(store, normalized_id) is None:
             raise HTTPException(status_code=404, detail="principal not found")
         try:
-            store.remove_principal_client_role(normalized_id, payload.client_id, payload.role)
+            store.remove_principal_client_role(
+                normalized_id,
+                payload.client_id,
+                payload.role,
+                actor_principal_id=context.principal_id,
+            )
+        except PrincipalInvariantError as exc:
+            subject_id = f"{normalized_id}:{payload.client_id.strip()}:{payload.role}"
+            _audit_principal_rejection(store, "principal.client_role.removed", subject_id, str(exc), context)
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
         except KeyError as exc:
             raise HTTPException(status_code=404, detail="client role not found") from exc
         except ValueError as exc:
@@ -497,6 +518,9 @@ def create_auth_router(limiter: Limiter | None = None) -> APIRouter:
             raise HTTPException(status_code=404, detail="principal not found")
         try:
             store.add_principal_global_role(normalized_id, payload.role)
+        except PrincipalInvariantError as exc:
+            _audit_principal_rejection(store, "principal.global_role.added", normalized_id, str(exc), context)
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
         except sqlite3.IntegrityError as exc:
             raise HTTPException(status_code=409, detail="global role already exists") from exc
         except (KeyError, ValueError) as exc:
@@ -525,6 +549,9 @@ def create_auth_router(limiter: Limiter | None = None) -> APIRouter:
             raise HTTPException(status_code=404, detail="principal not found")
         try:
             store.remove_principal_global_role(normalized_id, payload.role)
+        except PrincipalInvariantError as exc:
+            _audit_principal_rejection(store, "principal.global_role.removed", normalized_id, str(exc), context)
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
         except KeyError as exc:
             raise HTTPException(status_code=404, detail="global role not found") from exc
         except ValueError as exc:
@@ -687,6 +714,16 @@ def _require_management_access(context: AuthContext) -> None:
 
 def _actor_id(context: AuthContext) -> str:
     return context.principal_id or context.approver_id or "bootstrap-admin"
+
+
+def _audit_principal_rejection(
+    store: Store,
+    event_type: str,
+    subject_id: str,
+    detail: str,
+    context: AuthContext,
+) -> None:
+    store.add_audit_event(event_type, subject_id, detail, approver_id=_actor_id(context))
 
 
 def _auth_view(
