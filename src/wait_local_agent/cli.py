@@ -446,7 +446,7 @@ def issue_principal_credential_command(
     if principal is None:
         raise typer.BadParameter("principal not found")
     if not principal.active:
-        raise typer.BadParameter("credentials require an active principal")
+        raise typer.BadParameter("inactive principals cannot receive credentials")
     raw_token = secrets.token_urlsafe(32)
     credential_hash = store.add_principal_credential(principal.principal_id, raw_token)
     store.add_audit_event(
@@ -551,7 +551,12 @@ def remove_principal_role_command(
         if client_id is None:
             raise typer.BadParameter("--client-id is required for a client role")
         try:
-            store.remove_principal_client_role(normalized_id, client_id, role)
+            store.remove_principal_client_role(
+                normalized_id,
+                client_id,
+                role,
+                actor_principal_id=context.principal_id,
+            )
         except (KeyError, ValueError) as exc:
             raise typer.BadParameter(str(exc)) from exc
         event_type = "principal.client_role.removed"

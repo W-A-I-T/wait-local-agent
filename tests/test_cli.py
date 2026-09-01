@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 import zipfile
 from dataclasses import replace
 from pathlib import Path
@@ -47,6 +48,8 @@ from wait_local_agent.sharepoint import SharePointDocument, SharePointReadRespon
 from wait_local_agent.smart_actions import SmartActionService
 from wait_local_agent.store import Store
 from wait_local_agent.syncro import SyncroCommentsResponse, SyncroReadResponse
+
+ANSI_CSI_SEQUENCE = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")
 
 
 @pytest.fixture(autouse=True)
@@ -2348,6 +2351,11 @@ def test_cli_error_edges_for_new_commands(monkeypatch, tmp_path) -> None:
 
 
 def test_principal_cli_commands_round_trip_and_enforce_management_gate(monkeypatch, tmp_path) -> None:
+    def normalize_bad_parameter_output(output: str) -> str:
+        without_ansi = ANSI_CSI_SEQUENCE.sub("", output)
+        without_box_drawing = re.sub(r"[\u2500-\u257f]", "", without_ansi)
+        return " ".join(without_box_drawing.split()).strip()
+
     data_path = tmp_path / "state.db"
     monkeypatch.setenv("WAIT_DATA_PATH", str(data_path))
     monkeypatch.setenv("WAIT_DEMO_MODE", "false")
@@ -2420,6 +2428,26 @@ def test_principal_cli_commands_round_trip_and_enforce_management_gate(monkeypat
             "admin-token",
         ],
     )
+    store.create_principal("backup-admin", kind="staff", display_name="Backup admin")
+    store.add_principal_credential("backup-admin", "backup-admin-token")
+    store.add_principal_global_role("backup-admin")
+    forbidden_global_role = runner.invoke(
+        app,
+        ["principals", "remove-role", "tech", "msp_admin", "--global", "--token", "admin-token"],
+    )
+    restored_client_role = runner.invoke(
+        app,
+        [
+            "principals",
+            "add-role",
+            "tech",
+            "technician",
+            "--client-id",
+            "alpha",
+            "--token",
+            "admin-token",
+        ],
+    )
     removed_global_role = runner.invoke(
         app,
         ["principals", "remove-role", "tech", "msp_admin", "--global", "--token", "admin-token"],
@@ -2430,6 +2458,12 @@ def test_principal_cli_commands_round_trip_and_enforce_management_gate(monkeypat
     )
     assert removed_client_role.exit_code == 0, removed_client_role.output
     assert removed_client_role.output.strip() == "role_removed=tech:alpha:technician"
+    assert forbidden_global_role.exit_code != 0, forbidden_global_role.output
+    assert "an active principal must retain a client role or the msp_admin role" in normalize_bad_parameter_output(
+        forbidden_global_role.output
+    )
+    assert restored_client_role.exit_code == 0, restored_client_role.output
+    assert restored_client_role.output.strip() == "role_added=tech:alpha:technician"
     assert removed_global_role.exit_code == 0, removed_global_role.output
     assert removed_global_role.output.strip() == "role_removed=tech"
     assert revoked.exit_code == 0, revoked.output
@@ -2444,9 +2478,9 @@ def test_principal_cli_commands_round_trip_and_enforce_management_gate(monkeypat
         ["principals", "create", "invalid", "--kind", "unknown", "--token", "admin-token"],
     )
     assert duplicate.exit_code != 0
-    assert "principal already exists" in duplicate.output
+    assert "principal already exists" in normalize_bad_parameter_output(duplicate.output)
     assert invalid_kind.exit_code != 0
-    assert "principal kind must be customer or staff" in invalid_kind.output
+    assert "principal kind must be customer or staff" in normalize_bad_parameter_output(invalid_kind.output)
 
 
 def test_principal_cli_mutations_are_refused_in_demo_mode(monkeypatch, tmp_path) -> None:

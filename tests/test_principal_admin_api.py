@@ -8,6 +8,7 @@ from fastapi import HTTPException
 from fastapi.testclient import TestClient
 from starlette.requests import Request
 
+import wait_local_agent.rbac as rbac_module
 from wait_local_agent.api.app import create_app
 from wait_local_agent.api.auth_routes import (
     PrincipalPatchRequest,
@@ -16,7 +17,7 @@ from wait_local_agent.api.auth_routes import (
     _store,
 )
 from wait_local_agent.rbac import AuthContext, Role, resolve_auth_context
-from wait_local_agent.store import Store, hash_credential
+from wait_local_agent.store import PrincipalInvariantError, Store, hash_credential
 
 
 def _auth(token: str) -> dict[str, str]:
@@ -99,6 +100,7 @@ def test_principal_management_crud_credentials_roles_and_audit(settings) -> None
     secure = _secure(settings)
     store = Store(secure.data_path)
     store.create_client("alpha", "Alpha")
+    store.create_client("beta", "Beta")
     _seed_operator(store)
     client = TestClient(create_app(secure))
 
@@ -127,6 +129,7 @@ def test_principal_management_crud_credentials_roles_and_audit(settings) -> None
     )
     assert global_role.status_code == 200
     assert global_role.json()["global_roles"] == ["msp_admin"]
+    store.add_principal_client_role("tech", "beta", "viewer")
 
     issued = client.post("/auth/principals/tech/credentials", headers=_auth("operator-secret"))
     assert issued.status_code == 200
@@ -212,6 +215,247 @@ def test_principal_management_is_double_gated_and_has_self_lockout_guards(settin
     assert self_deactivate.status_code == 409
     assert self_demote.status_code == 409
     assert store.find_principal_by_credential_hash(hash_credential("operator-secret")) is not None
+
+
+def test_principal_management_rejects_msp_admin_for_customer_principal(settings) -> None:
+    secure = _secure(settings)
+    store = Store(secure.data_path)
+    _seed_operator(store)
+    store.create_principal("customer", kind="customer", display_name="Customer")
+    client = TestClient(create_app(secure))
+
+    response = client.post(
+        "/auth/principals/customer/global-roles",
+        headers=_auth("operator-secret"),
+        json={"role": "msp_admin"},
+    )
+
+    assert response.status_code == 409
+    assert response.json()["detail"] == "only staff principals can receive the msp_admin role"
+    customer = next(item for item in store.list_principals_with_details() if item.principal_id == "customer")
+    assert customer.global_roles == ()
+
+
+def test_principal_management_rejects_customer_membership_on_second_client(settings) -> None:
+    secure = _secure(settings)
+    store = Store(secure.data_path)
+    store.create_client("alpha", "Alpha")
+    store.create_client("beta", "Beta")
+    _seed_operator(store)
+    store.create_principal("customer", kind="customer", display_name="Customer")
+    store.add_principal_client_role("customer", "alpha", "viewer")
+    client = TestClient(create_app(secure))
+
+    response = client.post(
+        "/auth/principals/customer/client-roles",
+        headers=_auth("operator-secret"),
+        json={"client_id": "beta", "role": "viewer"},
+    )
+
+    assert response.status_code == 409
+    assert response.json()["detail"] == "customer principals can belong to exactly one client"
+    customer = next(item for item in store.list_principals_with_details() if item.principal_id == "customer")
+    assert customer.client_roles == (("alpha", "viewer"),)
+
+
+def test_principal_management_rejects_active_final_client_role_removal(settings) -> None:
+    secure = _secure(settings)
+    store = Store(secure.data_path)
+    store.create_client("alpha", "Alpha")
+    _seed_operator(store)
+    store.create_principal("target", kind="staff", display_name="Target")
+    store.add_principal_client_role("target", "alpha", "viewer")
+    client = TestClient(create_app(secure))
+
+    response = client.request(
+        "DELETE",
+        "/auth/principals/target/client-roles",
+        headers=_auth("operator-secret"),
+        json={"client_id": "alpha", "role": "viewer"},
+    )
+
+    assert response.status_code == 409
+    assert response.json()["detail"] == "an active principal must retain a client role or the msp_admin role"
+    target = next(item for item in store.list_principals_with_details() if item.principal_id == "target")
+    assert target.client_roles == (("alpha", "viewer"),)
+
+
+def test_principal_management_rejects_authenticated_final_client_scope_removal(settings, monkeypatch) -> None:
+    secure = _secure(settings)
+    store = Store(secure.data_path)
+    store.create_client("alpha", "Alpha")
+    store.create_principal("self", kind="staff", display_name="Self")
+    store.add_principal_credential("self", "self-scope-token")
+    store.add_principal_client_role("self", "alpha", "admin")
+    client = TestClient(create_app(secure))
+    monkeypatch.setattr(
+        rbac_module,
+        "resolve_auth_context",
+        lambda *_args, **_kwargs: AuthContext(
+            role=Role.ADMIN,
+            presented_token="self-scope-token",
+            principal_id="self",
+            is_msp_admin=True,
+        ),
+    )
+
+    response = client.request(
+        "DELETE",
+        "/auth/principals/self/client-roles",
+        headers=_auth("self-scope-token"),
+        json={"client_id": "alpha", "role": "admin"},
+    )
+
+    assert response.status_code == 409
+    assert response.json()["detail"] == "the authenticated principal cannot remove its final access scope"
+    assert store.list_principals_with_details()[0].client_roles == (("alpha", "admin"),)
+
+
+def test_principal_management_rejects_credential_for_inactive_principal(settings) -> None:
+    secure = _secure(settings)
+    store = Store(secure.data_path)
+    _seed_operator(store)
+    store.create_principal("inactive", kind="staff", display_name="Inactive")
+    store.set_principal_active("inactive", False)
+    client = TestClient(create_app(secure))
+
+    response = client.post(
+        "/auth/principals/inactive/credentials",
+        headers=_auth("operator-secret"),
+    )
+
+    assert response.status_code == 409
+    assert response.json()["detail"] == "inactive principals cannot receive credentials"
+    assert store.list_principal_credentials("inactive") == []
+
+
+def test_principal_management_preserves_last_active_msp_admin_credential(settings) -> None:
+    secure = _secure(settings)
+    store = Store(secure.data_path)
+    store.create_principal("sole-admin", kind="staff", display_name="Sole admin")
+    credential_hash = store.add_principal_credential("sole-admin", "sole-admin-token")
+    store.add_principal_global_role("sole-admin")
+    client = TestClient(create_app(secure))
+    headers = _auth("bootstrap-admin")
+
+    deactivated = client.patch(
+        "/auth/principals/sole-admin",
+        headers=headers,
+        json={"active": False},
+    )
+    revoked = client.post(
+        "/auth/principals/sole-admin/credentials/revoke",
+        headers=headers,
+        json={"credential_hash": credential_hash},
+    )
+    removed = client.request(
+        "DELETE",
+        "/auth/principals/sole-admin/global-roles",
+        headers=headers,
+        json={"role": "msp_admin"},
+    )
+
+    expected = "the final active msp_admin credential cannot be removed"
+    assert deactivated.status_code == 409
+    assert deactivated.json()["detail"] == expected
+    assert revoked.status_code == 409
+    assert revoked.json()["detail"] == expected
+    assert removed.status_code == 409
+    assert removed.json()["detail"] == expected
+    assert store.has_msp_admin_credential() is True
+
+
+def test_principal_management_allows_non_final_msp_admin_credential_and_role_changes(settings) -> None:
+    secure = _secure(settings)
+    store = Store(secure.data_path)
+    store.create_client("alpha", "Alpha")
+    _seed_operator(store)
+    store.create_principal("target", kind="staff", display_name="Target")
+    first_hash = store.add_principal_credential("target", "target-first-token")
+    store.add_principal_credential("target", "target-second-token")
+    store.add_principal_client_role("target", "alpha", "admin")
+    store.add_principal_global_role("target")
+
+    store.revoke_principal_credential(first_hash)
+    store.remove_principal_global_role("target")
+
+    target = next(item for item in store.list_principals_with_details() if item.principal_id == "target")
+    assert target.global_roles == ()
+    assert target.client_roles == (("alpha", "admin"),)
+
+
+def test_principal_management_rejects_global_role_removal_without_another_scope(settings) -> None:
+    secure = _secure(settings)
+    store = Store(secure.data_path)
+    _seed_operator(store)
+    store.create_principal("target", kind="staff", display_name="Target")
+    store.add_principal_global_role("target")
+    client = TestClient(create_app(secure))
+
+    response = client.request(
+        "DELETE",
+        "/auth/principals/target/global-roles",
+        headers=_auth("operator-secret"),
+        json={"role": "msp_admin"},
+    )
+
+    assert response.status_code == 409
+    assert response.json()["detail"] == "an active principal must retain a client role or the msp_admin role"
+
+
+def test_principal_store_rejects_deactivation_of_final_active_msp_admin(settings) -> None:
+    store = Store(settings.data_path)
+    store.create_principal("sole-admin", kind="staff", display_name="Sole admin")
+    store.add_principal_credential("sole-admin", "sole-admin-token")
+    store.add_principal_global_role("sole-admin")
+
+    with pytest.raises(PrincipalInvariantError, match="final active msp_admin credential"):
+        store.set_principal_active("sole-admin", False)
+
+    sole_admin = next(item for item in store.list_principals_with_details() if item.principal_id == "sole-admin")
+    assert sole_admin.active is True
+
+
+def test_principal_store_revokes_credential_by_unique_hash_prefix(settings) -> None:
+    store = Store(settings.data_path)
+    _seed_operator(store)
+    store.create_principal("target", kind="staff", display_name="Target")
+    credential_hash = store.add_principal_credential("target", "target-prefix-token")
+    store.add_principal_global_role("target")
+
+    store.revoke_principal_credential(credential_hash[:12])
+
+    credentials = store.list_principal_credentials("target")
+    assert len(credentials) == 1
+    assert credentials[0].active is False
+
+
+def test_principal_store_rejects_unmatched_credential_hash_prefix(settings) -> None:
+    store = Store(settings.data_path)
+    _seed_operator(store)
+
+    with pytest.raises(KeyError) as missing:
+        store.revoke_principal_credential("missing-prefix")
+
+    assert missing.value.args == ("missing-prefix",)
+
+
+def test_principal_store_rejects_client_role_removal_for_missing_principal(settings) -> None:
+    store = Store(settings.data_path)
+
+    with pytest.raises(KeyError) as missing:
+        store.remove_principal_client_role("missing", "alpha", "viewer")
+
+    assert missing.value.args == ("missing",)
+
+
+def test_principal_store_rejects_global_role_removal_for_missing_principal(settings) -> None:
+    store = Store(settings.data_path)
+
+    with pytest.raises(KeyError) as missing:
+        store.remove_principal_global_role("missing")
+
+    assert missing.value.args == ("missing",)
 
 
 def test_principal_management_refuses_all_writes_in_demo_mode(settings) -> None:

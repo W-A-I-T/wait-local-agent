@@ -224,7 +224,14 @@ def test_principal_resolution_rejects_invalid_memberships_and_roles(settings) ->
     customer_with_multiple_memberships.create_principal("customer-many")
     customer_with_multiple_memberships.add_principal_credential("customer-many", "many-secret")
     customer_with_multiple_memberships.add_principal_client_role("customer-many", "client-a", "viewer")
-    customer_with_multiple_memberships.add_principal_client_role("customer-many", "client-b", "viewer")
+    with sqlite3.connect(customer_with_multiple_memberships.path) as connection:
+        connection.execute(
+            """
+            insert into principal_client_roles (principal_id, client_id, role)
+            values (?, ?, ?)
+            """,
+            ("customer-many", "client-b", "viewer"),
+        )
     with pytest.raises(HTTPException, match="invalid client membership"):
         resolve_auth_context(secured, "Bearer many-secret", customer_with_multiple_memberships)
 
