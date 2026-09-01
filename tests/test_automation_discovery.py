@@ -3,6 +3,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+from fastapi.testclient import TestClient
+
 from packs.automation_discovery.service import (
     HistoricalTimeEntry,
     build_historical_discovery,
@@ -10,6 +12,7 @@ from packs.automation_discovery.service import (
     import_time_entries,
 )
 from tests.support import ensure_test_client
+from wait_local_agent.api.app import create_app
 from wait_local_agent.client_scope import BoundClients
 from wait_local_agent.store import Store
 
@@ -133,3 +136,91 @@ def test_mapping_readiness_reports_cross_system_families(settings) -> None:
     assert families["documentation"]["verified"] == 1
     assert families["m365"]["verified"] == 1
     assert families["security"]["verified"] == 1
+
+
+def test_discovery_routes_are_scoped_and_import_only_permitted_evidence(settings, tmp_path) -> None:
+    store = Store(settings.data_path)
+    client_id = ensure_test_client(store)
+    _seed_tickets(store, tmp_path, client_id)
+    connector_id = _verified_mapping(store, client_id, "halopsa")
+    client = TestClient(create_app(settings))
+
+    status = client.get("/packs/automation-discovery/status")
+    categories = client.get("/packs/automation-discovery/categories")
+    historical = client.get(
+        "/packs/automation-discovery/historical",
+        params={"client_id": client_id, "days": 30, "min_tickets": 3},
+    )
+    readiness = client.get(
+        "/packs/automation-discovery/mapping-readiness",
+        params={"client_id": client_id},
+    )
+
+    assert status.status_code == 200
+    assert status.json()["external_writes"] is False
+    assert categories.status_code == 200
+    assert {item["category_id"] for item in categories.json()} >= {
+        "password-mfa-authentication",
+        "security-alert",
+    }
+    assert historical.status_code == 200
+    assert historical.json()["client_id"] == client_id
+    assert readiness.status_code == 200
+    assert readiness.json()["verified_count"] == 1
+
+    payload = {
+        "client_id": client_id,
+        "entries": [
+            {
+                "ticket_id": "AUTH-1",
+                "connector_instance_id": connector_id,
+                "external_time_entry_id": "route-time-1",
+                "minutes": 20,
+                "work_type": "remote support",
+                "occurred_at": "2026-08-30T18:00:00Z",
+                "source_system": "test-psa",
+            }
+        ],
+    }
+    imported = client.post("/packs/automation-discovery/time-entries/import", json=payload)
+    duplicate = client.post("/packs/automation-discovery/time-entries/import", json=payload)
+
+    assert imported.status_code == 200
+    assert imported.json() == {
+        "client_id": client_id,
+        "inserted": 1,
+        "duplicate": 0,
+        "rejected": 0,
+        "external_writes": False,
+    }
+    assert duplicate.status_code == 200
+    assert duplicate.json()["duplicate"] == 1
+
+    unknown_ticket = client.post(
+        "/packs/automation-discovery/time-entries/import",
+        json={**payload, "entries": [{**payload["entries"][0], "ticket_id": "not-in-acme"}]},
+    )
+    unknown_connector = client.post(
+        "/packs/automation-discovery/time-entries/import",
+        json={
+            **payload,
+            "entries": [{**payload["entries"][0], "connector_instance_id": "not-in-acme"}],
+        },
+    )
+
+    assert unknown_ticket.status_code == 400
+    assert "selected client scope" in unknown_ticket.json()["detail"]
+    assert unknown_connector.status_code == 400
+    assert "client-bound" in unknown_connector.json()["detail"]
+
+
+def test_discovery_routes_require_one_explicit_client(settings) -> None:
+    client = TestClient(create_app(settings))
+
+    historical = client.get("/packs/automation-discovery/historical")
+    readiness = client.get("/packs/automation-discovery/mapping-readiness")
+
+    assert historical.status_code == 400
+    assert readiness.status_code == 400
+    assert historical.json()["detail"] == "automation discovery requires one explicit client"
+    assert readiness.json()["detail"] == "automation discovery requires one explicit client"
