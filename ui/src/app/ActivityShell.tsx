@@ -3,6 +3,11 @@ import { Link, useLocation } from "react-router-dom";
 
 export const activityTabs = [
   {
+    to: "/activity/runs",
+    label: "All Runs",
+    description: "Unified tenant-scoped history across executions and source run stores."
+  },
+  {
     to: "/automation/events",
     label: "Events",
     description: "Inbound events and their delivery to subscriptions."
@@ -25,7 +30,7 @@ export const activityTabs = [
   {
     to: "/executions",
     label: "Executions",
-    description: "Workflow and agent execution history."
+    description: "Canonical workflow and agent execution records with step and artifact detail."
   },
   {
     to: "/backfills",
