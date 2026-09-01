@@ -4,6 +4,7 @@ import { apiFetch } from "../api/client";
 import { useDashboard } from "../app/DashboardContext";
 import { EmptyState } from "../components/EmptyState";
 import { LoadingState } from "../components/LoadingState";
+import type { OidcConfig, PrincipalIdentity } from "../api/types";
 
 type ClientRole = "end_user" | "viewer" | "technician" | "admin";
 
@@ -23,6 +24,19 @@ type Principal = {
   global_roles: string[];
   credential_count: number;
   credentials: PrincipalCredential[];
+  identities: PrincipalIdentity[];
+};
+
+const emptyOidcConfig: OidcConfig = {
+  enabled: false,
+  tenant_id: "",
+  client_id: "",
+  public_base_url: "",
+  auto_provision_enabled: false,
+  auto_provision_tenant_id: "",
+  auto_provision_client_id: "",
+  auto_provision_role: "viewer",
+  client_secret_configured: false
 };
 
 type Notice = { kind: "success" | "danger"; message: string } | null;
@@ -48,14 +62,22 @@ export function PrincipalsAdmin() {
   const [notice, setNotice] = useState<Notice>(null);
   const [oneTimeToken, setOneTimeToken] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
+  const [oidcConfig, setOidcConfig] = useState<OidcConfig>(emptyOidcConfig);
+  const [oidcSecret, setOidcSecret] = useState("");
+  const [identitySubject, setIdentitySubject] = useState("");
+  const [identityKind, setIdentityKind] = useState<"oid" | "email">("email");
 
   const refresh = useCallback(async (clearNotice = true) => {
     setLoading(true);
     if (clearNotice) setNotice(null);
     try {
-      const rows = await apiFetch<Principal[]>("/auth/principals");
+      const [rows, config] = await Promise.all([
+        apiFetch<Principal[]>("/auth/principals"),
+        apiFetch<OidcConfig>("/auth/oidc/config")
+      ]);
       const next = Array.isArray(rows) ? rows : [];
       setPrincipals(next);
+      setOidcConfig({ ...emptyOidcConfig, ...config });
       setSelectedId((current) => next.some((principal) => principal.principal_id === current) ? current : (next[0]?.principal_id ?? ""));
     } catch (error) {
       setNotice({ kind: "danger", message: error instanceof Error ? error.message : "People and access data could not be loaded." });
@@ -74,6 +96,7 @@ export function PrincipalsAdmin() {
     () => principals.find((principal) => principal.principal_id === selectedId) ?? null,
     [principals, selectedId]
   );
+  const selectedIdentities = selected?.identities ?? [];
 
   async function submitCreate(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -173,6 +196,49 @@ export function PrincipalsAdmin() {
     }
   }
 
+  async function saveOidcConfig(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setBusy(true);
+    setNotice(null);
+    try {
+      const saved = await apiFetch<OidcConfig>("/auth/oidc/config", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ...oidcConfig, client_secret: oidcSecret })
+      });
+      setOidcConfig(saved);
+      setOidcSecret("");
+      setNotice({ kind: "success", message: "Microsoft sign-in settings saved." });
+    } catch (error) {
+      setNotice({ kind: "danger", message: error instanceof Error ? error.message : "Microsoft sign-in settings could not be saved." });
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function changeIdentity(method: "POST" | "DELETE", identity?: PrincipalIdentity) {
+    if (!selected) return;
+    const subject = identity?.subject ?? identitySubject.trim();
+    const subjectKind = identity?.subject_kind ?? identityKind;
+    if (!subject) return;
+    setBusy(true);
+    setNotice(null);
+    try {
+      await apiFetch<Principal>(`/auth/principals/${encodeURIComponent(selected.principal_id)}/identities`, {
+        method,
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ subject, subject_kind: subjectKind })
+      });
+      setIdentitySubject("");
+      await refresh(false);
+      setNotice({ kind: "success", message: method === "POST" ? "Microsoft identity linked." : "Microsoft identity unlinked." });
+    } catch (error) {
+      setNotice({ kind: "danger", message: error instanceof Error ? error.message : "Microsoft identity change failed." });
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function copyToken() {
     if (!oneTimeToken || !navigator.clipboard) return;
     await navigator.clipboard.writeText(oneTimeToken);
@@ -207,6 +273,26 @@ export function PrincipalsAdmin() {
             <option value="customer">Customer</option>
           </select>
           <button type="submit" disabled={busy || !newPrincipalId.trim() || !newDisplayName.trim()}>Create principal</button>
+        </form>
+      </section>
+
+      <section className="panel" aria-labelledby="oidc-config-heading">
+        <div className="panel-heading"><div><h3 id="oidc-config-heading">Microsoft sign-in</h3><p className="screen-note">Connect a single Microsoft Entra tenant. The client secret is write-only and stays in the encrypted vault.</p></div></div>
+        <form onSubmit={(event) => void saveOidcConfig(event)}>
+          <label htmlFor="oidc-tenant-id">Tenant ID</label>
+          <input id="oidc-tenant-id" value={oidcConfig.tenant_id} onChange={(event) => setOidcConfig({ ...oidcConfig, tenant_id: event.target.value })} disabled={busy} />
+          <label htmlFor="oidc-client-id">Application (client) ID</label>
+          <input id="oidc-client-id" value={oidcConfig.client_id} onChange={(event) => setOidcConfig({ ...oidcConfig, client_id: event.target.value })} disabled={busy} />
+          <label htmlFor="oidc-public-base-url">Public base URL</label>
+          <input id="oidc-public-base-url" type="url" placeholder="https://wait.example.com" value={oidcConfig.public_base_url} onChange={(event) => setOidcConfig({ ...oidcConfig, public_base_url: event.target.value })} disabled={busy} />
+          <label htmlFor="oidc-client-secret">Client secret</label>
+          <input id="oidc-client-secret" type="password" autoComplete="new-password" value={oidcSecret} onChange={(event) => setOidcSecret(event.target.value)} disabled={busy} placeholder={oidcConfig.client_secret_configured ? "Secret already stored" : "Enter secret once"} />
+          <label><input type="checkbox" checked={oidcConfig.enabled} onChange={(event) => setOidcConfig({ ...oidcConfig, enabled: event.target.checked })} disabled={busy} /> Enable Microsoft sign-in</label>
+          <label><input type="checkbox" checked={oidcConfig.auto_provision_enabled} onChange={(event) => setOidcConfig({ ...oidcConfig, auto_provision_enabled: event.target.checked })} disabled={busy} /> Allow new accounts from this exact tenant</label>
+          <p className="screen-note">Auto-provisioning is off by default. When enabled, new accounts receive viewer access only for the configured WAIT client.</p>
+          <label htmlFor="oidc-auto-client">Auto-provision WAIT client ID</label>
+          <input id="oidc-auto-client" value={oidcConfig.auto_provision_client_id} onChange={(event) => setOidcConfig({ ...oidcConfig, auto_provision_client_id: event.target.value })} disabled={busy} />
+          <button type="submit" disabled={busy}>Save Microsoft sign-in</button>
         </form>
       </section>
 
@@ -264,6 +350,15 @@ export function PrincipalsAdmin() {
           <section aria-labelledby="principal-credentials-heading">
             <div className="panel-heading"><h4 id="principal-credentials-heading">Credentials</h4><button type="button" onClick={() => void issueCredential()} disabled={busy || !selected.active}>Issue credential</button></div>
             {selected.credentials.length ? <ul>{selected.credentials.map((credential) => <li key={credential.credential_hash_prefix}>{credential.credential_hash_prefix}… · {credential.active ? "Active" : "Revoked"} {credential.active ? <button type="button" onClick={() => void revokeCredential(credential)} disabled={busy}>Revoke</button> : null}</li>)}</ul> : <p className="screen-note">No credentials issued.</p>}
+          </section>
+          <section aria-labelledby="principal-identities-heading">
+            <h4 id="principal-identities-heading">Microsoft identities</h4>
+            {selectedIdentities.length ? <ul>{selectedIdentities.map((identity) => <li key={`${identity.subject_kind}:${identity.subject}`}>{identity.subject_kind === "oid" ? `OID: ${identity.subject}` : `Email invite: ${identity.subject}`} <button type="button" onClick={() => void changeIdentity("DELETE", identity)} disabled={busy}>Unlink</button></li>)}</ul> : <p className="screen-note">No Microsoft identities linked.</p>}
+            <label htmlFor="identity-kind">Link type</label>
+            <select id="identity-kind" value={identityKind} onChange={(event) => setIdentityKind(event.target.value as "oid" | "email")} disabled={busy}><option value="email">Email invite</option><option value="oid">Entra object ID</option></select>
+            <label htmlFor="identity-subject">Email or object ID</label>
+            <input id="identity-subject" value={identitySubject} onChange={(event) => setIdentitySubject(event.target.value)} disabled={busy} />
+            <button type="button" onClick={() => void changeIdentity("POST")} disabled={busy || !identitySubject.trim()}>Link Microsoft identity</button>
           </section>
           <Link to="/microsoft-admin/access">Manage Microsoft Admin capability grants</Link>
         </aside>

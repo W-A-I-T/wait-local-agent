@@ -26,6 +26,7 @@ from slowapi.extension import _rate_limit_exceeded_handler
 from slowapi.middleware import SlowAPIMiddleware
 from slowapi.util import get_remote_address
 from starlette.exceptions import HTTPException as StarletteHTTPException
+from starlette.middleware.sessions import SessionMiddleware
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 from starlette.staticfiles import StaticFiles
 from starlette.types import Scope
@@ -193,6 +194,7 @@ from wait_local_agent.observability import (
     TICKET_METRICS_DERIVATION,
     build_analytics_summary,
 )
+from wait_local_agent.oidc import get_or_create_session_signing_key
 from wait_local_agent.operational_graph import OperationalGraphService
 from wait_local_agent.power_apps import (
     PowerAppsPlanError,
@@ -997,6 +999,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             allow_power_platform_deployment=False,
         )
     store = Store(active_settings.data_path)
+    vault = SecretVault(active_settings.vault_path)
+    session_signing_key = get_or_create_session_signing_key(active_settings, vault)
     if not active_settings.demo_mode and not admin_credential_configured(active_settings, store):
         raise RuntimeError(
             "refusing non-demo startup without an admin credential; configure WAIT_ADMIN_TOKEN or "
@@ -1083,6 +1087,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     )
     app.state.settings = active_settings
     app.state.store = store
+    app.state.vault = vault
     app.state.scheduler = scheduler
     app.state.limiter = limiter
     app.state.update_status_cache = update_status_cache
@@ -1102,6 +1107,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.add_middleware(
         TrustedHostMiddleware,
         allowed_hosts=list(active_settings.trusted_hosts),
+    )
+    app.add_middleware(
+        SessionMiddleware,
+        secret_key=session_signing_key,
+        session_cookie="wait_oidc_txn",
+        max_age=600,
+        same_site="lax",
+        https_only=active_settings.session_cookie_secure,
     )
     app.add_middleware(SlowAPIMiddleware)
     configure_pack_routes(

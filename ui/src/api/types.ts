@@ -1725,6 +1725,27 @@ export type PrincipalAdminView = {
   global_roles: string[];
   credential_count: number;
   credentials: PrincipalCredential[];
+  identities: PrincipalIdentity[];
+};
+
+export type PrincipalIdentity = {
+  issuer: string;
+  subject: string;
+  subject_kind: "oid" | "email";
+  created_at: string;
+  last_login_at: string | null;
+};
+
+export type OidcConfig = {
+  enabled: boolean;
+  tenant_id: string;
+  client_id: string;
+  public_base_url: string;
+  auto_provision_enabled: boolean;
+  auto_provision_tenant_id: string;
+  auto_provision_client_id: string;
+  auto_provision_role: "viewer";
+  client_secret_configured: boolean;
 };
 
 export type FounderUploadPreview = {

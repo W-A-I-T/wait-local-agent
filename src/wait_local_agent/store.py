@@ -208,6 +208,16 @@ class PrincipalCredentialSummary:
 
 
 @dataclass(frozen=True)
+class PrincipalIdentity:
+    issuer: str
+    subject: str
+    subject_kind: str
+    principal_id: str
+    created_at: str
+    last_login_at: str | None
+
+
+@dataclass(frozen=True)
 class PrincipalDetails:
     principal_id: str
     principal_kind: str
@@ -225,6 +235,17 @@ def hash_credential(credential: str) -> str:
     if not isinstance(credential, str) or not credential.strip():
         raise ValueError("credential must be a non-empty string")
     return hashlib.sha256(credential.encode("utf-8")).hexdigest()
+
+
+def _principal_identity_from_row(row: sqlite3.Row) -> PrincipalIdentity:
+    return PrincipalIdentity(
+        issuer=str(row["issuer"]),
+        subject=str(row["subject"]),
+        subject_kind=str(row["subject_kind"]),
+        principal_id=str(row["principal_id"]),
+        created_at=str(row["created_at"]),
+        last_login_at=str(row["last_login_at"]) if row["last_login_at"] is not None else None,
+    )
 
 
 class Store:
@@ -295,6 +316,7 @@ class Store:
                     Migration(6, "poll_lease", self._apply_poll_lease_migration),
                     Migration(7, "operational_graph", self._apply_operational_graph_migration),
                     Migration(8, "auth_sessions_and_config", self._apply_auth_sessions_and_config_migration),
+                    Migration(9, "principal_identities", self._apply_principal_identities_migration),
                 )
             )
             self._apply_startup_repairs(connection)
@@ -712,6 +734,30 @@ class Store:
         )
 
     @staticmethod
+    def _apply_principal_identities_migration(connection: sqlite3.Connection) -> None:
+        """Persist OIDC links without introducing a second user model."""
+
+        connection.execute(
+            """
+            create table if not exists principal_identities (
+                issuer text not null,
+                subject text not null,
+                subject_kind text not null check (subject_kind in ('oid', 'email')),
+                principal_id text not null references principals(principal_id) on delete cascade,
+                created_at text not null,
+                last_login_at text,
+                primary key (issuer, subject, subject_kind)
+            )
+            """
+        )
+        connection.execute(
+            """
+            create index if not exists idx_principal_identities_principal
+            on principal_identities (principal_id)
+            """
+        )
+
+    @staticmethod
     def _apply_operational_graph_migration(connection: sqlite3.Connection) -> None:
         """Add the client-scoped operational graph tables without changing existing data."""
 
@@ -980,6 +1026,189 @@ class Store:
             )
             for row in rows
         ]
+
+    def get_app_config(self, config_key: str) -> str | None:
+        normalized_key = config_key.strip()
+        if not normalized_key:
+            raise ValueError("config_key must be non-empty")
+        with self._connect() as connection:
+            row = connection.execute(
+                "select config_value from app_config where config_key = ?", (normalized_key,)
+            ).fetchone()
+        return None if row is None else row[0]
+
+    def set_app_config(self, config_key: str, config_value: str, *, updated_by: str | None = None) -> None:
+        normalized_key = config_key.strip()
+        if not normalized_key:
+            raise ValueError("config_key must be non-empty")
+        with self._connect() as connection:
+            connection.execute(
+                """
+                insert into app_config (config_key, config_value, updated_at, updated_by)
+                values (?, ?, ?, ?)
+                on conflict(config_key) do update set
+                  config_value = excluded.config_value,
+                  updated_at = excluded.updated_at,
+                  updated_by = excluded.updated_by
+                """,
+                (normalized_key, config_value, utc_now(), updated_by),
+            )
+
+    def add_principal_identity(
+        self,
+        principal_id: str,
+        issuer: str,
+        subject: str,
+        subject_kind: str,
+    ) -> PrincipalIdentity:
+        normalized_id = principal_id.strip()
+        normalized_issuer = issuer.strip().rstrip("/")
+        normalized_kind = subject_kind.strip().lower()
+        normalized_subject = subject.strip().casefold() if normalized_kind == "email" else subject.strip()
+        if not normalized_id or not normalized_issuer or not normalized_subject:
+            raise ValueError("principal identity fields must be non-empty")
+        if normalized_kind not in {"oid", "email"}:
+            raise ValueError("unsupported principal identity kind")
+        with self._connect() as connection:
+            if connection.execute(
+                "select 1 from principals where principal_id = ?", (normalized_id,)
+            ).fetchone() is None:
+                raise KeyError(normalized_id)
+            now = utc_now()
+            connection.execute(
+                """
+                insert into principal_identities
+                  (issuer, subject, subject_kind, principal_id, created_at, last_login_at)
+                values (?, ?, ?, ?, ?, null)
+                """,
+                (normalized_issuer, normalized_subject, normalized_kind, normalized_id, now),
+            )
+            row = connection.execute(
+                """
+                select issuer, subject, subject_kind, principal_id, created_at, last_login_at
+                from principal_identities where issuer = ? and subject = ? and subject_kind = ?
+                """,
+                (normalized_issuer, normalized_subject, normalized_kind),
+            ).fetchone()
+        if row is None:
+            raise RuntimeError("principal identity was not persisted")
+        return _principal_identity_from_row(row)
+
+    def remove_principal_identity(self, principal_id: str, issuer: str, subject: str, subject_kind: str) -> None:
+        normalized_id = principal_id.strip()
+        normalized_issuer = issuer.strip().rstrip("/")
+        normalized_kind = subject_kind.strip().lower()
+        normalized_subject = subject.strip().casefold() if normalized_kind == "email" else subject.strip()
+        with self._connect() as connection:
+            cursor = connection.execute(
+                """
+                delete from principal_identities
+                where principal_id = ? and issuer = ? and subject = ? and subject_kind = ?
+                """,
+                (normalized_id, normalized_issuer, normalized_subject, normalized_kind),
+            )
+        if cursor.rowcount != 1:
+            raise KeyError((normalized_id, normalized_issuer, normalized_subject, normalized_kind))
+
+    def list_principal_identities(self, principal_id: str) -> list[PrincipalIdentity]:
+        normalized_id = principal_id.strip()
+        if not normalized_id:
+            raise ValueError("principal_id must be non-empty")
+        with self._connect() as connection:
+            rows = connection.execute(
+                """
+                select issuer, subject, subject_kind, principal_id, created_at, last_login_at
+                from principal_identities where principal_id = ?
+                order by subject_kind, subject
+                """,
+                (normalized_id,),
+            ).fetchall()
+        return [_principal_identity_from_row(row) for row in rows]
+
+    def find_principal_by_identity(self, issuer: str, subject: str, subject_kind: str) -> str | None:
+        normalized_issuer = issuer.strip().rstrip("/")
+        normalized_kind = subject_kind.strip().lower()
+        normalized_subject = subject.strip().casefold() if normalized_kind == "email" else subject.strip()
+        if not normalized_issuer or not normalized_subject or normalized_kind not in {"oid", "email"}:
+            return None
+        with self._connect() as connection:
+            row = connection.execute(
+                """
+                select i.principal_id
+                from principal_identities i
+                join principals p on p.principal_id = i.principal_id
+                where i.issuer = ? and i.subject = ? and i.subject_kind = ? and p.active = 1
+                """,
+                (normalized_issuer, normalized_subject, normalized_kind),
+            ).fetchone()
+        return None if row is None else str(row[0])
+
+    def mark_identity_login(self, issuer: str, subject: str, subject_kind: str, *, at: str | None = None) -> bool:
+        normalized_issuer = issuer.strip().rstrip("/")
+        normalized_kind = subject_kind.strip().lower()
+        normalized_subject = subject.strip().casefold() if normalized_kind == "email" else subject.strip()
+        with self._connect() as connection:
+            cursor = connection.execute(
+                """
+                update principal_identities set last_login_at = ?
+                where issuer = ? and subject = ? and subject_kind = ?
+                """,
+                (at or utc_now(), normalized_issuer, normalized_subject, normalized_kind),
+            )
+        return cursor.rowcount == 1
+
+    def upgrade_email_identity(
+        self,
+        issuer: str,
+        email: str,
+        oid: str,
+        *,
+        at: str | None = None,
+    ) -> str | None:
+        """Consume one email invite and replace it with the permanent Entra OID link."""
+
+        normalized_issuer = issuer.strip().rstrip("/")
+        normalized_email = email.strip().casefold()
+        normalized_oid = oid.strip()
+        if not normalized_issuer or not normalized_email or not normalized_oid:
+            return None
+        login_at = at or utc_now()
+        with self._connect() as connection:
+            connection.execute("begin immediate")
+            oid_row = connection.execute(
+                """
+                select principal_id from principal_identities
+                where issuer = ? and subject = ? and subject_kind = 'oid'
+                """,
+                (normalized_issuer, normalized_oid),
+            ).fetchone()
+            email_row = connection.execute(
+                """
+                select i.principal_id from principal_identities i
+                join principals p on p.principal_id = i.principal_id
+                where i.issuer = ? and i.subject = ? and i.subject_kind = 'email' and p.active = 1
+                """,
+                (normalized_issuer, normalized_email),
+            ).fetchone()
+            if email_row is None:
+                return None
+            principal_id = str(email_row[0])
+            if oid_row is not None and str(oid_row[0]) != principal_id:
+                return None
+            connection.execute(
+                "delete from principal_identities where issuer = ? and subject = ? and subject_kind = 'email'",
+                (normalized_issuer, normalized_email),
+            )
+            connection.execute(
+                """
+                insert into principal_identities
+                  (issuer, subject, subject_kind, principal_id, created_at, last_login_at)
+                values (?, ?, 'oid', ?, ?, ?)
+                on conflict(issuer, subject, subject_kind) do update set last_login_at = excluded.last_login_at
+                """,
+                (normalized_issuer, normalized_oid, principal_id, login_at, login_at),
+            )
+        return principal_id
 
     def list_principals_with_details(self) -> list[PrincipalDetails]:
         with self._connect() as connection:
