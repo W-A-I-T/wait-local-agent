@@ -1,11 +1,18 @@
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { apiFetch } from "../../api/client";
+import { ApiRequestError, apiFetch } from "../../api/client";
 import type { ClientDirectoryEntry } from "../../api/types";
 import { Clients } from "../Clients";
 
 vi.mock("../../api/client", () => ({
-  apiFetch: vi.fn()
+  apiFetch: vi.fn(),
+  ApiRequestError: class ApiRequestError extends Error {
+    status?: number;
+    constructor(message: string, _technicalDetail: string, status?: number) {
+      super(message);
+      this.status = status;
+    }
+  }
 }));
 
 vi.mock("../../app/DashboardContext", () => ({
@@ -137,6 +144,102 @@ describe("Clients", () => {
     await act(async () => { screen.getByRole("tab", { name: "Details" }).click(); });
     await act(async () => { screen.getByRole("tab", { name: "Environment" }).click(); });
     expect(await screen.findByRole("alert")).toHaveTextContent("environment is no longer available");
+  });
+
+  it("applies environment filters, resets paging, and navigates pages", async () => {
+    const graph = {
+      refs: [
+        { id: 1, client_id: "acme", entity_type: "device", source_system: "rmm", external_id: "D-1", display_name: "Laptop", provenance: "rmm-seed", last_seen: "2020-01-01T00:00:00Z" },
+        { id: 2, client_id: "acme", entity_type: "user", source_system: "m365", external_id: "U-1", display_name: "Avery", provenance: "m365-seed" }
+      ],
+      links: [{ id: 3, client_id: "acme", from_ref_id: 2, to_ref_id: 1, link_type: "owns", provenance: "m365-seed" }],
+      total_refs: 12,
+      total_links: 8,
+      has_more: true
+    };
+    mockedApiFetch.mockImplementation((path) => {
+      if (path === "/clients") return Promise.resolve([{ client_id: "acme", name: "Acme", status: "active" }]) as ReturnType<typeof apiFetch>;
+      if (path === "/clients/acme") return Promise.resolve({ client_id: "acme", name: "Acme", status: "active", created_at: "now", updated_at: "now" }) as ReturnType<typeof apiFetch>;
+      return Promise.resolve(graph) as ReturnType<typeof apiFetch>;
+    });
+
+    render(<Clients />);
+    await screen.findByText("Acme");
+    await act(async () => { screen.getByRole("button", { name: "Acme" }).click(); });
+    await act(async () => { screen.getByRole("tab", { name: "Environment" }).click(); });
+    expect(await screen.findByText("12 entities · 8 relationships")).toBeInTheDocument();
+
+    await act(async () => { screen.getByRole("button", { name: "Next" }).click(); });
+    expect(await screen.findByText("Page 2")).toBeInTheDocument();
+    expect(mockedApiFetch).toHaveBeenCalledWith("/clients/acme/graph?offset=100");
+    expect(screen.getByRole("button", { name: "Previous" })).not.toBeDisabled();
+
+    await act(async () => { fireEvent.change(screen.getByLabelText("Environment type filter"), { target: { value: "device" } }); });
+    await waitFor(() => expect(mockedApiFetch).toHaveBeenCalledWith("/clients/acme/graph?entity_type=device"));
+    await screen.findByRole("option", { name: "rmm" });
+    await act(async () => { fireEvent.change(screen.getByLabelText("Environment source filter"), { target: { value: "rmm" } }); });
+    await waitFor(() => expect(mockedApiFetch).toHaveBeenCalledWith("/clients/acme/graph?entity_type=device&source_system=rmm"));
+    await screen.findByRole("option", { name: "owns" });
+    await act(async () => { fireEvent.change(screen.getByLabelText("Environment relationship filter"), { target: { value: "owns" } }); });
+    expect(await screen.findByText("Page 1")).toBeInTheDocument();
+    await waitFor(() => expect(mockedApiFetch).toHaveBeenCalledWith("/clients/acme/graph?entity_type=device&source_system=rmm&link_type=owns"));
+  });
+
+  it("renders stale and fallback environment values and handles inventory syncs", async () => {
+    const graph = {
+      refs: [{ id: 1, client_id: "acme", entity_type: "device", source_system: "rmm", external_id: "D-1", display_name: "", provenance: "collector", last_seen: "2020-01-01T00:00:00Z" }],
+      links: [],
+      has_more: false
+    };
+    mockedApiFetch.mockImplementation((path, init) => {
+      if (path === "/clients") return Promise.resolve([{ client_id: "acme", name: "Acme", status: "active" }]) as ReturnType<typeof apiFetch>;
+      if (path === "/clients/acme") return Promise.resolve({ client_id: "acme", name: "Acme", status: "active", created_at: "now", updated_at: "now" }) as ReturnType<typeof apiFetch>;
+      if (path === "/clients/acme/graph/sync-rmm") return Promise.resolve({ devices: 1, alerts: 2, links: 1, errors: ["RMM warning"] }) as ReturnType<typeof apiFetch>;
+      if (path === "/clients/acme/graph/sync-m365") return Promise.resolve({ users: 1, devices: 2, links: 3, errors: ["M365 warning"] }) as ReturnType<typeof apiFetch>;
+      if (path === "/clients/acme/graph" && init?.method === "POST") return Promise.resolve(graph) as ReturnType<typeof apiFetch>;
+      return Promise.resolve(graph) as ReturnType<typeof apiFetch>;
+    });
+
+    render(<Clients />);
+    await screen.findByText("Acme");
+    await act(async () => { screen.getByRole("button", { name: "Acme" }).click(); });
+    await act(async () => { screen.getByRole("tab", { name: "Environment" }).click(); });
+    expect((await screen.findAllByText("D-1")).length).toBeGreaterThan(0);
+    expect(screen.getByText("Stale")).toBeInTheDocument();
+    expect(screen.getByText("1 entities · 0 relationships")).toBeInTheDocument();
+    expect(screen.getByText("No relationships are linked to these entities.")).toBeInTheDocument();
+
+    await act(async () => { screen.getByRole("button", { name: "Sync from RMM" }).click(); });
+    expect(await screen.findByText("1 device synced")).toBeInTheDocument();
+    expect(screen.getByText("2 alerts synced")).toBeInTheDocument();
+    expect(screen.getByText("Needs attention: RMM warning")).toBeInTheDocument();
+
+    await act(async () => { screen.getByRole("button", { name: "Sync from Microsoft 365" }).click(); });
+    expect(await screen.findByText("1 user synced")).toBeInTheDocument();
+    expect(screen.getByText("2 devices synced")).toBeInTheDocument();
+    expect(screen.getByText("Needs attention: M365 warning")).toBeInTheDocument();
+    expect(mockedApiFetch).toHaveBeenCalledWith("/clients/acme/graph/sync-m365", { method: "POST" });
+  });
+
+  it("shows sync-specific errors for unavailable adapters", async () => {
+    const graph = { refs: [], links: [], total_refs: 0, total_links: 0, has_more: false };
+    mockedApiFetch.mockImplementation((path) => {
+      if (path === "/clients") return Promise.resolve([{ client_id: "acme", name: "Acme", status: "active" }]) as ReturnType<typeof apiFetch>;
+      if (path === "/clients/acme") return Promise.resolve({ client_id: "acme", name: "Acme", status: "active", created_at: "now", updated_at: "now" }) as ReturnType<typeof apiFetch>;
+      if (path.endsWith("sync-rmm")) return Promise.reject(new Error("RMM offline")) as ReturnType<typeof apiFetch>;
+      if (path.endsWith("sync-m365")) return Promise.reject(new ApiRequestError("conflict", "conflict", 409)) as ReturnType<typeof apiFetch>;
+      return Promise.resolve(graph) as ReturnType<typeof apiFetch>;
+    });
+
+    render(<Clients />);
+    await screen.findByText("Acme");
+    await act(async () => { screen.getByRole("button", { name: "Acme" }).click(); });
+    await act(async () => { screen.getByRole("tab", { name: "Environment" }).click(); });
+    await screen.findByText("No environment entities are linked to this client yet.");
+    await act(async () => { screen.getByRole("button", { name: "Sync from RMM" }).click(); });
+    expect(await screen.findByText("RMM offline")).toBeInTheDocument();
+    await act(async () => { screen.getByRole("button", { name: "Sync from Microsoft 365" }).click(); });
+    expect(await screen.findByText(/Microsoft 365 sync is unavailable/)).toBeInTheDocument();
   });
 
   it("creates a client and refreshes the directory", async () => {

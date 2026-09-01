@@ -38,3 +38,4 @@
 
 - 2026-09-01: Added focused coverage top-up for M365/RMM graph seeding error and empty-payload edges, combined inventory sync, graph-sync scheduler skip/failure paths, and connector poll boundary/failure paths. Pytest was intentionally not run per task instruction.
 - 2026-09-01: Added deterministic scheduler guard and validation coverage; pytest intentionally not run.
+- 2026-09-01: Added Clients Environment-tab component coverage for filters, pagination, summary/stale rendering, and RMM/Microsoft 365 sync success and error states. `cd ui && npx vitest run src/screens/__tests__/Clients.test.tsx --reporter=dot` passed: 11 tests.
