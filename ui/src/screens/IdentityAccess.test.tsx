@@ -100,4 +100,26 @@ describe("IdentityAccess", () => {
     expect(await screen.findByRole("status")).toHaveTextContent("invalid principal data");
     expect(screen.getByText("No database principals")).toBeInTheDocument();
   });
+
+  it("reactivates an inactive principal and refreshes its controls", async () => {
+    const inactive = { ...principal, active: false, credentials: [] };
+    const reactivated = { ...inactive, active: true };
+    mockedApiFetch.mockImplementation((path, init) => {
+      if (path === "/packs/operator-control/principals" && !init) return Promise.resolve([inactive]) as ReturnType<typeof apiFetch>;
+      if (path === "/packs/operator-control/principals/tech-alpha" && init?.method === "PATCH") return Promise.resolve(reactivated) as ReturnType<typeof apiFetch>;
+      throw new Error(`Unexpected request: ${path}`);
+    });
+
+    render(<IdentityAccess />);
+
+    expect(await screen.findByText("Alpha technician")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Reactivate" }));
+
+    expect(await screen.findByRole("status")).toHaveTextContent("Principal reactivated");
+    expect(screen.getByRole("button", { name: "Deactivate" })).toBeInTheDocument();
+    expect(mockedApiFetch).toHaveBeenCalledWith(
+      "/packs/operator-control/principals/tech-alpha",
+      expect.objectContaining({ method: "PATCH", body: JSON.stringify({ active: true }) })
+    );
+  });
 });
