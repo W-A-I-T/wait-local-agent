@@ -1,6 +1,6 @@
 import { FormEvent, useCallback, useEffect, useState } from "react";
 import { AlertTriangle, Compass, RefreshCw } from "lucide-react";
-import { Link } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import { useDashboard } from "../app/DashboardContext";
 import { ClientIdSelect } from "../components/ClientIdSelect";
 import {
@@ -12,6 +12,7 @@ import {
 } from "../api/client";
 import { StatusChip } from "../components/StatusChip";
 import { humanizeName } from "../lib/fields";
+import { collectHandoffArtifacts, SOLUTION_DELIVERY_ROUTE } from "../lib/solutionDeliveryHandoff";
 import type {
   ArchitectureDecision,
   ConsultantArchitecture,
@@ -171,6 +172,7 @@ export function Consultant() {
     authState,
     writeHealth,
   } = useDashboard();
+  const navigate = useNavigate();
   const [blueprints, setBlueprints] = useState<ConsultantBlueprint[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [blueprintDetail, setBlueprintDetail] = useState<ConsultantBlueprint | null>(null);
@@ -766,6 +768,31 @@ export function Consultant() {
     }
   }
 
+  function sendToSolutionDelivery() {
+    const artifacts = collectHandoffArtifacts(powerAppsArtifact, flowPlan);
+    if (artifacts.length === 0) {
+      setMessage("Build a Power Apps artifact or prepare a Power Automate plan before sending it to Solution delivery.");
+      return;
+    }
+    const clientIds = Array.from(new Set(
+      artifacts
+        .map((artifact) => artifact.client_id)
+        .filter((clientId): clientId is string => typeof clientId === "string" && clientId.trim().length > 0),
+    ));
+    if (clientIds.length > 1) {
+      setMessage("Build or prepare artifacts for one tenant before sending them to Solution delivery.");
+      return;
+    }
+    const clientId = clientIds[0] ?? currentClientId();
+    if (!clientId) {
+      setMessage("A tenant scope is required before sending artifacts to Solution delivery.");
+      return;
+    }
+    navigate(SOLUTION_DELIVERY_ROUTE, {
+      state: { source: "solutions-architect", clientId, artifacts },
+    });
+  }
+
   async function runEmployeeOnboardingDemo() {
     const clientId = resolveClientId(selected?.client_id, scopedClientId, selectedClientId, discoveryClientId || blueprints[0]?.client_id);
     if (!selected || !clientId || !employeeOnboardingEntityId.trim()) {
@@ -1275,6 +1302,22 @@ export function Consultant() {
           </div>
         </section>
       ) : null}
+
+      <section className="panel">
+        <div className="panel-heading">
+          <div>
+            <h2>Solution delivery handoff</h2>
+            <p className="screen-note">Carry reviewed Power Apps and Power Automate artifacts into the delivery package.</p>
+          </div>
+        </div>
+        <div className="row-actions">
+          <button type="button" onClick={sendToSolutionDelivery} disabled={!powerAppsArtifact && !flowPlan}>
+            Send to Solution delivery
+          </button>
+          <Link className="inline-link" to={SOLUTION_DELIVERY_ROUTE}>Open Solution delivery</Link>
+        </div>
+        <p className="screen-note">{collectHandoffArtifacts(powerAppsArtifact, flowPlan).length} artifact(s) ready for handoff.</p>
+      </section>
 
       {selected ? (
         <section className="panel" aria-labelledby="evaluate-ship-heading">
