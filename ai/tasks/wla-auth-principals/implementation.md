@@ -63,3 +63,5 @@ API upgrade was necessary for this additive change.
 Run the focused Python API tests in the project CI/runtime with a functioning
 HTTP test client, then complete the required read-only cross-family review and
 human merge gate.
+
+Resolved the gitleaks false positives for the principals UI fixture and diagnostics placeholders.

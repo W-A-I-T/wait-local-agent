@@ -20,7 +20,7 @@ const principal = {
   client_roles: [["alpha", "technician"]] as Array<[string, "technician"]>,
   global_roles: [],
   credential_count: 1,
-  credentials: [{ credential_hash_prefix: "abcdef123456", active: true, created_at: "2026-08-31T00:00:00Z" }]
+  credentials: [{ credential_hash_prefix: "ph0000000000", active: true, created_at: "2026-08-31T00:00:00Z" }]
 };
 
 function renderScreen() {
