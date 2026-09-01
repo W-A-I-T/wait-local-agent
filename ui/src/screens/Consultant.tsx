@@ -801,148 +801,145 @@ export function Consultant() {
 
   return (
     <div className="screen-stack">
-      <section className="panel">
-        <div className="panel-heading">
-          <div>
-            <h2>Solutions Architect blueprints</h2>
-            <p className="screen-note"><Compass size={16} aria-hidden="true" /> Design and review local solution plans.</p>
-          </div>
-          <button className="icon-button" type="button" onClick={() => void refresh()} disabled={loading}>
-            <RefreshCw size={16} aria-hidden="true" /> Refresh
-          </button>
-          <Link className="inline-link" to="/consultant/solution-delivery">Solution delivery</Link>
-        </div>
-        {message ? <div className="notice danger" role="alert"><AlertTriangle size={16} aria-hidden="true" />{message}</div> : null}
-        {playbookNotice ? <div className="notice success" role="status">{playbookNotice} <Link to="/playbooks">Playbooks</Link></div> : null}
-        <SectionLoadNotice section="blueprints" state={sectionStates.blueprints} onRetry={() => void loadBlueprints()} />
-        {sectionStates.blueprints.status === "loading" && blueprints.length === 0 ? <p className="screen-note">Loading solution blueprints…</p> : null}
-        {sectionStates.blueprints.status !== "loading" && sectionStates.blueprints.status !== "gated" && sectionStates.blueprints.status !== "error" && blueprints.length === 0 ? (
-          <>
-            <p className="screen-note">No solution blueprints are available for this tenant.</p>
-            <p>No solution blueprints yet. Create one: run <a href="#solution-discovery">Solution discovery below</a>, then Promote the result to a blueprint.</p>
-          </>
-        ) : blueprints.length > 0 ? (
-          <div className="consultant-blueprint-list">
-            {blueprints.map((blueprint) => (
-              <button
-                className={`consultant-blueprint ${selectedId === blueprint.id ? "selected" : ""}`}
-                key={blueprint.id}
-                type="button"
-                onClick={() => void inspectBlueprint(blueprint.id)}
-              >
-                <strong>{blueprint.solution.name}</strong>
-                <span>Tenant {blueprint.client_id} · Risk {blueprint.risk}</span>
-                <em>{blueprint.agents.length} agents · {blueprint.workflows.length} workflows</em>
-              </button>
-            ))}
-          </div>
-        ) : null}
-      </section>
+      <p className="screen-note consultant-page-intro">This page bundles six related but distinct tools for designing and reviewing automation solutions — read each section's heading before acting.</p>
 
-      {selected ? (
-        <section className="panel" aria-labelledby="blueprint-detail-heading">
+      <div className="consultant-group">
+        <div className="consultant-group-heading">
+          <h2>Solution blueprints</h2>
+          <p className="consultant-group-note">Saved solution plans for this tenant. Create a new one from Solution discovery below, or select an existing one to review or continue its architecture and delivery review.</p>
+        </div>
+        <section className="panel">
           <div className="panel-heading">
             <div>
-              <h2 id="blueprint-detail-heading">Blueprint detail</h2>
-              <p className="screen-note">The saved blueprint record is the source artifact for the review chain.</p>
+              <h2>Solutions Architect blueprints</h2>
+              <p className="screen-note"><Compass size={16} aria-hidden="true" /> Design and review local solution plans.</p>
             </div>
-            {blueprintDetail ? <StatusChip status="completed" /> : null}
+            <button className="icon-button" type="button" onClick={() => void refresh()} disabled={loading}>
+              <RefreshCw size={16} aria-hidden="true" /> Refresh
+            </button>
           </div>
-          <SectionLoadNotice section="blueprintDetail" state={sectionStates.blueprintDetail} onRetry={() => void inspectBlueprint(selected.id)} />
-          {sectionStates.blueprintDetail.status === "loading" ? <p className="screen-note">Loading blueprint detail…</p> : null}
-          {sectionStates.blueprintDetail.status === "empty" ? <p className="screen-note">Blueprint detail is not available yet.</p> : null}
-          {blueprintDetail ? <BlueprintDetailView blueprint={blueprintDetail} /> : null}
+          {message ? <div className="notice danger" role="alert"><AlertTriangle size={16} aria-hidden="true" />{message}</div> : null}
+          {playbookNotice ? <div className="notice success" role="status">{playbookNotice} <Link to="/playbooks">Playbooks</Link></div> : null}
+          <SectionLoadNotice section="blueprints" state={sectionStates.blueprints} onRetry={() => void loadBlueprints()} />
+          {sectionStates.blueprints.status === "loading" && blueprints.length === 0 ? <p className="screen-note">Loading solution blueprints…</p> : null}
+          {sectionStates.blueprints.status !== "loading" && sectionStates.blueprints.status !== "gated" && sectionStates.blueprints.status !== "error" && blueprints.length === 0 ? (
+            <>
+              <p className="screen-note">No solution blueprints are available for this tenant.</p>
+              <p>No solution blueprints yet. Create one: run <a href="#solution-discovery">Solution discovery below</a>, then Promote the result to a blueprint.</p>
+            </>
+          ) : blueprints.length > 0 ? (
+            <div className="consultant-blueprint-list">
+              {blueprints.map((blueprint) => (
+                <button
+                  className={`consultant-blueprint ${selectedId === blueprint.id ? "selected" : ""}`}
+                  key={blueprint.id}
+                  type="button"
+                  onClick={() => void inspectBlueprint(blueprint.id)}
+                >
+                  <strong>{blueprint.solution.name}</strong>
+                  <span>Tenant {blueprint.client_id} · Risk {blueprint.risk}</span>
+                  <em>{blueprint.agents.length} agents · {blueprint.workflows.length} workflows</em>
+                </button>
+              ))}
+            </div>
+          ) : null}
+          <p className="screen-note">Looking for packaging, deployment, or rollback? See{" "}<Link to="/consultant/solution-delivery">Solution delivery</Link> — a separate review-only screen.</p>
         </section>
-      ) : null}
 
-      <section className="panel" aria-labelledby="environment-discovery-heading">
-        <div className="panel-heading">
-          <div>
-            <h2 id="environment-discovery-heading">Environment discovery</h2>
-            <p className="screen-note">Check the configured connector boundaries before architecture and delivery review.</p>
-          </div>
-          {environmentResult ? <StatusChip status={environmentResult.readiness} /> : null}
-        </div>
-        <div className="notice">
-          <strong>{writeHealth?.status === "blocked" ? "Safe Mode is active." : "Read-only probe."}</strong>{" "}
-          This checks configured connector health only; it does not write to an external system or deploy anything.
-        </div>
-        <button type="button" onClick={() => void probeEnvironment()} disabled={!canWrite || sectionStates.environment.status === "loading" || !currentClientId()}>
-          {sectionStates.environment.status === "loading" ? "Probing environment…" : "Probe environment"}
-        </button>
-        {!currentClientId() ? <p className="screen-note">Select a blueprint or provide a tenant scope in Solution discovery first.</p> : null}
-        {!canWrite ? <p className="screen-note">Technician access is required to probe environment evidence.</p> : null}
-        <SectionLoadNotice section="environment" state={sectionStates.environment} onRetry={() => void probeEnvironment()} />
-        {sectionStates.environment.status === "empty" && environmentResult === null && selected ? <p className="screen-note">Probe the environment to collect connector evidence for this blueprint.</p> : null}
-        {environmentResult ? <EnvironmentEvidence result={environmentResult} /> : null}
-      </section>
-
-      <section className="panel">
-        <div className="panel-heading">
-          <div>
-            <h2>Blueprint walkthrough</h2>
-            <p className="screen-note">Run the selected blueprint through discovery, architecture, supervisor execution, evaluation, governance, delivery, and audit.</p>
-          </div>
-          {employeeOnboardingDemo ? <StatusChip status="completed" /> : null}
-        </div>
-        <div className="notice">
-          <strong>Local fixture only.</strong>{" "}
-          No external connector or deployment call is started. The walkthrough generates only local review manifests and a non-deployable package. It requires an existing tenant-scoped ticket and never seeds one. You can start without a ticket in Solution discovery or blueprints.
-        </div>
-        <div className="grid">
-          <label>
-            Existing ticket or entity ID
-            <input
-              value={employeeOnboardingEntityId}
-              onChange={(event) => setEmployeeOnboardingEntityId(event.target.value)}
-              placeholder="TCK-1001"
-            />
-          </label>
-        </div>
-        <button type="button" onClick={() => void runEmployeeOnboardingDemo()} disabled={!canWrite || employeeOnboardingLoading || !selected}>
-          {employeeOnboardingLoading ? "Running blueprint walkthrough…" : "Run blueprint walkthrough"}
-        </button>
-        {!selected ? <p className="screen-note">Select a saved blueprint above before running the walkthrough.</p> : null}
-        {!canWrite ? <p className="screen-note">Technician access is required to run the local fixture.</p> : null}
-        {employeeOnboardingDemo ? (
-          <div className="notice">
-            <strong>{employeeOnboardingDemo.stages.blueprint.solution_name} completed in {employeeOnboardingDemo.mode} mode.</strong>{" "}
-            Supervisor: {employeeOnboardingDemo.stages.supervisor.status}. Evaluation: {employeeOnboardingDemo.stages.evaluation.production_readiness}. Governance: {employeeOnboardingDemo.stages.governance.status}. Delivery: {employeeOnboardingDemo.stages.delivery.production_readiness}. Artifacts: {employeeOnboardingDemo.stages.artifacts.items.length} review-only.
-            <br />{employeeOnboardingDemo.audit.agent_run_count} local agent runs · {employeeOnboardingDemo.audit.audit_event_count} audit events · live provider execution: {employeeOnboardingDemo.boundaries.live_provider_execution ? "started" : "not started"} · deployable package: {employeeOnboardingDemo.boundaries.deployable_package_generated ? "generated" : "not generated"}.
-          </div>
-        ) : null}
-        {employeeOnboardingDemo?.stages.artifacts.delivery_bundle ? (
-          <div className="panel-subsection" aria-label="Solutions Architect delivery handoff">
+        {selected ? (
+          <section className="panel" aria-labelledby="blueprint-detail-heading">
             <div className="panel-heading">
               <div>
-                <h3>Delivery handoff</h3>
-                <p className="screen-note">A deterministic, redacted review bundle is ready for operator handoff.</p>
+                <h2 id="blueprint-detail-heading">Blueprint detail</h2>
+                <p className="screen-note">The saved blueprint record is the source artifact for the review chain.</p>
               </div>
-              <StatusChip status="evidence_partial" />
+              {blueprintDetail ? <StatusChip status="completed" /> : null}
             </div>
-            <p>
-              <strong>Review-only.</strong> {employeeOnboardingDemo.stages.artifacts.delivery_bundle.manifest.files.length} files · {employeeOnboardingDemo.stages.artifacts.delivery_bundle.manifest.deployment_targets.join(", ")} · deployable: {employeeOnboardingDemo.stages.artifacts.delivery_bundle.manifest.deployable ? "yes" : "no"}.
-            </p>
-            {employeeOnboardingDemo.stages.artifacts.delivery_bundle_digest ? (
-              <p className="screen-note">Bundle digest: <code>{employeeOnboardingDemo.stages.artifacts.delivery_bundle_digest}</code></p>
-            ) : null}
-            <details>
-              <summary>Review bundle files and open items</summary>
-              <ul>
-                {employeeOnboardingDemo.stages.artifacts.delivery_bundle.manifest.files.map((file) => (
-                  <li key={file.path}><code>{file.path}</code> · {file.digest}</li>
-                ))}
-              </ul>
-              <p><strong>Still required before any deployment:</strong></p>
-              <ul>
-                {employeeOnboardingDemo.stages.artifacts.delivery_bundle.manifest.open_items.map((item) => <li key={item}>{item}</li>)}
-              </ul>
-            </details>
-          </div>
+            <SectionLoadNotice section="blueprintDetail" state={sectionStates.blueprintDetail} onRetry={() => void inspectBlueprint(selected.id)} />
+            {sectionStates.blueprintDetail.status === "loading" ? <p className="screen-note">Loading blueprint detail…</p> : null}
+            {sectionStates.blueprintDetail.status === "empty" ? <p className="screen-note">Blueprint detail is not available yet.</p> : null}
+            {blueprintDetail ? <BlueprintDetailView blueprint={blueprintDetail} /> : null}
+          </section>
         ) : null}
-      </section>
+      </div>
 
-      <section className="panel" id="solution-discovery">
+      <div className="consultant-group">
+        <div className="consultant-group-heading">
+          <h2>Blueprint walkthrough</h2>
+          <p className="consultant-group-note">A bounded local demo that runs the selected blueprint through discovery, architecture, supervisor execution, evaluation, governance, delivery, and audit end-to-end using local fixtures only — no live system is touched.</p>
+        </div>
+        <section className="panel">
+          <div className="panel-heading">
+            <div>
+              <h2>Blueprint walkthrough</h2>
+              <p className="screen-note">Run the selected blueprint through discovery, architecture, supervisor execution, evaluation, governance, delivery, and audit.</p>
+            </div>
+            {employeeOnboardingDemo ? <StatusChip status="completed" /> : null}
+          </div>
+          <div className="notice">
+            <strong>Local fixture only.</strong>{" "}
+            No external connector or deployment call is started. The walkthrough generates only local review manifests and a non-deployable package. It requires an existing tenant-scoped ticket and never seeds one. You can start without a ticket in Solution discovery or blueprints.
+          </div>
+          <div className="grid">
+            <label>
+              Existing ticket or entity ID
+              <input
+                value={employeeOnboardingEntityId}
+                onChange={(event) => setEmployeeOnboardingEntityId(event.target.value)}
+                placeholder="TCK-1001"
+              />
+            </label>
+          </div>
+          <button type="button" onClick={() => void runEmployeeOnboardingDemo()} disabled={!canWrite || employeeOnboardingLoading || !selected}>
+            {employeeOnboardingLoading ? "Running blueprint walkthrough…" : "Run blueprint walkthrough"}
+          </button>
+          {!selected ? <p className="screen-note">Select a saved blueprint above before running the walkthrough.</p> : null}
+          {!canWrite ? <p className="screen-note">Technician access is required to run the local fixture.</p> : null}
+          {employeeOnboardingDemo ? (
+            <div className="notice">
+              <strong>{employeeOnboardingDemo.stages.blueprint.solution_name} completed in {employeeOnboardingDemo.mode} mode.</strong>{" "}
+              Supervisor: {employeeOnboardingDemo.stages.supervisor.status}. Evaluation: {employeeOnboardingDemo.stages.evaluation.production_readiness}. Governance: {employeeOnboardingDemo.stages.governance.status}. Delivery: {employeeOnboardingDemo.stages.delivery.production_readiness}. Artifacts: {employeeOnboardingDemo.stages.artifacts.items.length} review-only.
+              <br />{employeeOnboardingDemo.audit.agent_run_count} local agent runs · {employeeOnboardingDemo.audit.audit_event_count} audit events · live provider execution: {employeeOnboardingDemo.boundaries.live_provider_execution ? "started" : "not started"} · deployable package: {employeeOnboardingDemo.boundaries.deployable_package_generated ? "generated" : "not generated"}.
+            </div>
+          ) : null}
+          {employeeOnboardingDemo?.stages.artifacts.delivery_bundle ? (
+            <div className="panel-subsection" aria-label="Solutions Architect delivery handoff">
+              <div className="panel-heading">
+                <div>
+                  <h3>Delivery handoff</h3>
+                  <p className="screen-note">A deterministic, redacted review bundle is ready for operator handoff.</p>
+                </div>
+                <StatusChip status="evidence_partial" />
+              </div>
+              <p>
+                <strong>Review-only.</strong> {employeeOnboardingDemo.stages.artifacts.delivery_bundle.manifest.files.length} files · {employeeOnboardingDemo.stages.artifacts.delivery_bundle.manifest.deployment_targets.join(", ")} · deployable: {employeeOnboardingDemo.stages.artifacts.delivery_bundle.manifest.deployable ? "yes" : "no"}.
+              </p>
+              {employeeOnboardingDemo.stages.artifacts.delivery_bundle_digest ? (
+                <p className="screen-note">Bundle digest: <code>{employeeOnboardingDemo.stages.artifacts.delivery_bundle_digest}</code></p>
+              ) : null}
+              <details>
+                <summary>Review bundle files and open items</summary>
+                <ul>
+                  {employeeOnboardingDemo.stages.artifacts.delivery_bundle.manifest.files.map((file) => (
+                    <li key={file.path}><code>{file.path}</code> · {file.digest}</li>
+                  ))}
+                </ul>
+                <p><strong>Still required before any deployment:</strong></p>
+                <ul>
+                  {employeeOnboardingDemo.stages.artifacts.delivery_bundle.manifest.open_items.map((item) => <li key={item}>{item}</li>)}
+                </ul>
+              </details>
+            </div>
+          ) : null}
+        </section>
+      </div>
+
+      <div className="consultant-group">
+        <div className="consultant-group-heading">
+          <h2>Design a new solution</h2>
+          <p className="consultant-group-note">Capture explicit requirements for a brand-new automation from scratch, then promote the result into a saved blueprint above.</p>
+        </div>
+        <section className="panel" id="solution-discovery">
         <div className="panel-heading">
           <div>
             <h2>Solution discovery</h2>
@@ -1109,13 +1106,19 @@ export function Consultant() {
             </div>
           )}
         </div>
-      </section>
+        </section>
+      </div>
 
-      <section className="panel">
+      <div className="consultant-group">
+        <div className="consultant-group-heading">
+          <h2>Reference: Solutions Architect use cases</h2>
+          <p className="consultant-group-note">Read-only reference for common Microsoft automation patterns — these entries cannot be edited here. To build your own, use Solution discovery above instead.</p>
+        </div>
+        <section className="panel">
         <div className="panel-heading">
           <div>
             <h2>Solutions Architect use cases</h2>
-            <p className="screen-note">Review starting points for Microsoft work. These entries are planning guidance only.</p>
+            <p className="screen-note">Read-only reference for common Microsoft automation patterns — these entries cannot be edited here. To build your own, use Solution discovery above instead.</p>
           </div>
           {monitoring ? <StatusChip status={monitoring.failed_runs ? "needs_review" : "completed"} /> : null}
         </div>
@@ -1136,13 +1139,20 @@ export function Consultant() {
             {useCases.map((useCase) => <UseCaseCard useCase={useCase} key={useCase.id} />)}
           </div>
         ) : sectionStates.useCases.status !== "loading" && sectionStates.useCases.status !== "gated" && sectionStates.useCases.status !== "error" ? <p>No Solutions Architect use cases are available.</p> : null}
-      </section>
+        </section>
+      </div>
 
-      <section className="panel">
+      <div className="consultant-group">
+        <div className="consultant-group-heading">
+          <h2>Power Apps builder</h2>
+          <p className="consultant-group-note">Build a review-only app handoff from an editable local template.</p>
+        </div>
+        <section className="panel">
         <div className="panel-heading">
           <div>
             <h2>Power Apps builder</h2>
             <p className="screen-note">Generate a local Dataverse and Canvas app handoff for review. No Microsoft write or deployment starts.</p>
+            <p>This is an independent tool with its own editable template below — it does not change based on the blueprint selected above, and its defaults (app name, tables, screens, actions) are a starting point you can replace for any project.</p>
           </div>
           {powerAppsArtifact ? <StatusChip status="completed" /> : null}
         </div>
@@ -1177,7 +1187,36 @@ export function Consultant() {
             <br />Credentials, Dataverse writes, execution, and deployment were not started.
           </div>
         ) : null}
-      </section>
+        </section>
+      </div>
+
+      <div className="consultant-group">
+        <div className="consultant-group-heading">
+          <h2>Architecture, evaluation &amp; delivery</h2>
+          <p className="consultant-group-note">Once a blueprint is selected: confirm environment readiness, load its architecture, then run governance, evaluation, and a review-only delivery plan.</p>
+        </div>
+
+        <section className="panel" aria-labelledby="environment-discovery-heading">
+          <div className="panel-heading">
+            <div>
+              <h2 id="environment-discovery-heading">Environment discovery</h2>
+              <p className="screen-note">Check the configured connector boundaries before architecture and delivery review.</p>
+            </div>
+            {environmentResult ? <StatusChip status={environmentResult.readiness} /> : null}
+          </div>
+          <div className="notice">
+            <strong>{writeHealth?.status === "blocked" ? "Safe Mode is active." : "Read-only probe."}</strong>{" "}
+            This checks configured connector health only; it does not write to an external system or deploy anything.
+          </div>
+          <button type="button" onClick={() => void probeEnvironment()} disabled={!canWrite || sectionStates.environment.status === "loading" || !currentClientId()}>
+            {sectionStates.environment.status === "loading" ? "Probing environment…" : "Probe environment"}
+          </button>
+          {!currentClientId() ? <p className="screen-note">Select a blueprint or provide a tenant scope in Solution discovery first.</p> : null}
+          {!canWrite ? <p className="screen-note">Technician access is required to probe environment evidence.</p> : null}
+          <SectionLoadNotice section="environment" state={sectionStates.environment} onRetry={() => void probeEnvironment()} />
+          {sectionStates.environment.status === "empty" && environmentResult === null && selected ? <p className="screen-note">Probe the environment to collect connector evidence for this blueprint.</p> : null}
+          {environmentResult ? <EnvironmentEvidence result={environmentResult} /> : null}
+        </section>
 
       {selected && architecture ? (
         <section className="panel">
@@ -1185,6 +1224,7 @@ export function Consultant() {
             <div>
               <h2>{selected.solution.name}</h2>
               <p className="screen-note">Existing runtime mapping only; no execution or deployment is started.</p>
+              <p className="screen-note">Acting on: {selected.solution.name} (tenant {selected.client_id}).</p>
             </div>
             <StatusChip status={architecture.readiness === "ready" ? "completed" : "evidence_partial"} />
           </div>
@@ -1266,7 +1306,8 @@ export function Consultant() {
         </section>
       ) : selected ? (
         <section className="panel">
-          <p>Choose the blueprint to load its architecture view.</p>
+          <p>Load {selected.solution.name}'s architecture to see its implementation mapping, workflow designer drafts, and supervisor delegation.</p>
+          <p className="screen-note">Acting on: {selected.solution.name} (tenant {selected.client_id}).</p>
           <div className="row-actions">
             <button type="button" onClick={() => void inspectBlueprint(selected.id)}>Load architecture</button>
             <button type="button" onClick={() => void generatePlaybook()} disabled={!canWrite || playbookLoading}>
@@ -1415,6 +1456,7 @@ export function Consultant() {
           ) : null}
         </section>
       ) : null}
+      </div>
     </div>
   );
 }

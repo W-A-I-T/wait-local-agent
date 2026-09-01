@@ -584,6 +584,29 @@ nav a:hover {
   gap: 18px;
 }
 
+.consultant-group {
+  display: grid;
+  gap: 10px;
+}
+
+.consultant-group-heading {
+  display: grid;
+  gap: 4px;
+  padding: 0 2px;
+}
+
+.consultant-group-heading h2 {
+  color: #253633;
+  font-size: 1.08rem;
+  margin: 0;
+}
+
+.consultant-group-note {
+  color: #60706a;
+  font-size: 0.88rem;
+  margin: 0;
+}
+
 .automations-shell {
   display: grid;
   gap: 18px;
