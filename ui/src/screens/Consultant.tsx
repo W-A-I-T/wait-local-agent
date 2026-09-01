@@ -1239,7 +1239,6 @@ export function Consultant() {
                       <strong>{child.id}</strong>
                       <span>{child.kind} · {child.context_policy ?? "bounded structured context"}</span>
                     </div>
-                    <StatusChip status="evidence_partial" />
                   </div>
                 ))}
               </div>
@@ -1410,9 +1409,6 @@ export function Consultant() {
               </article>
             </div>
           ) : null}
-          <div className="notice consultant-delivery-link">
-            <strong>Ready to package?</strong> The Solution Delivery screen is not available in this checkout; complete the review-only chain here and hand off only after that surface is restored.
-          </div>
         </section>
       ) : null}
     </div>
@@ -1624,7 +1620,6 @@ function UseCaseCard({ useCase }: { useCase: ConsultantUseCase }) {
         <span>Services: {useCase.services.join(", ")}</span>
         <span>Approval boundaries: {useCase.approval_boundaries.join(", ")}</span>
       </div>
-      <StatusChip status="evidence_partial" />
     </article>
   );
 }
