@@ -14,13 +14,16 @@ import httpx
 from wait_local_agent.autotask import AutotaskClient
 from wait_local_agent.config import Settings
 from wait_local_agent.connectwise import ConnectWiseClient
+from wait_local_agent.dattormm import DattoRmmAdapter
 from wait_local_agent.halopsa import HaloPSAClient
 from wait_local_agent.models import ConnectorInstance
+from wait_local_agent.ncentral import NCentralRmmAdapter
 from wait_local_agent.net_security import (
     PinnedIpTransport,
     Resolver,
     validate_provider_origin,
 )
+from wait_local_agent.ninjaone import NinjaOneRmmAdapter
 from wait_local_agent.servicenow import ServiceNowClient
 from wait_local_agent.store import _contains_sensitive_config_key
 from wait_local_agent.syncro import SyncroClient
@@ -41,7 +44,16 @@ class VaultReader(Protocol):
         ...
 
 
-type ReadClient = HaloPSAClient | ConnectWiseClient | AutotaskClient | SyncroClient | ServiceNowClient
+type ReadClient = (
+    HaloPSAClient
+    | ConnectWiseClient
+    | AutotaskClient
+    | SyncroClient
+    | ServiceNowClient
+    | NinjaOneRmmAdapter
+    | DattoRmmAdapter
+    | NCentralRmmAdapter
+)
 type Builder = Callable[[Settings, httpx.BaseTransport], ReadClient]
 
 SUPPORTED_CONNECTOR_TYPES: frozenset[str]
@@ -67,12 +79,27 @@ def _build_servicenow(settings: Settings, transport: httpx.BaseTransport) -> Ser
     return ServiceNowClient(settings, transport=transport)
 
 
+def _build_ninjaone(settings: Settings, transport: httpx.BaseTransport) -> NinjaOneRmmAdapter:
+    return NinjaOneRmmAdapter(settings, transport=transport)
+
+
+def _build_dattormm(settings: Settings, transport: httpx.BaseTransport) -> DattoRmmAdapter:
+    return DattoRmmAdapter(settings, transport=transport)
+
+
+def _build_ncentral(settings: Settings, transport: httpx.BaseTransport) -> NCentralRmmAdapter:
+    return NCentralRmmAdapter(settings, transport=transport)
+
+
 _BUILDERS: dict[str, Builder] = {
     "halopsa": _build_halopsa,
     "connectwise": _build_connectwise,
     "autotask": _build_autotask,
     "syncro": _build_syncro,
     "servicenow": _build_servicenow,
+    "ninjaone": _build_ninjaone,
+    "dattormm": _build_dattormm,
+    "ncentral": _build_ncentral,
 }
 SUPPORTED_CONNECTOR_TYPES = frozenset(_BUILDERS)
 
@@ -81,11 +108,29 @@ _CONNECTWISE_CREDENTIAL_KEYS = frozenset({"company", "public_key", "private_key"
 _AUTOTASK_CREDENTIAL_KEYS = frozenset({"integration_code", "username", "secret"})
 _SYNCRO_CREDENTIAL_KEYS = frozenset({"api_key", "subdomain"})
 _SERVICENOW_CREDENTIAL_KEYS = frozenset({"username", "password"})
+_NINJAONE_CREDENTIAL_KEYS = frozenset({"access_token"})
+_DATTORMM_CREDENTIAL_KEYS = frozenset({"access_token"})
+_NCENTRAL_CREDENTIAL_KEYS = frozenset({"access_token"})
 _HALO_CONFIG_KEYS = frozenset({"base_url"})
 _CONNECTWISE_CONFIG_KEYS = frozenset({"base_url", "api_version"})
 _AUTOTASK_CONFIG_KEYS = frozenset({"base_url"})
 _SYNCRO_CONFIG_KEYS = frozenset({"base_url"})
 _SERVICENOW_CONFIG_KEYS = frozenset({"base_url", "api_version"})
+_NINJAONE_CONFIG_KEYS = frozenset({"base_url", "organization_map_json", "page_size"})
+_DATTORMM_CONFIG_KEYS = frozenset({"base_url", "site_map_json", "page_size"})
+_NCENTRAL_CONFIG_KEYS = frozenset({"base_url", "org_unit_map_json", "page_size"})
+# Syncro derives its origin from the credential subdomain. All other
+# instance-backed providers require an explicit, policy-validated base URL.
+_BASE_URL_REQUIRED_BY_TYPE: dict[str, bool] = {
+    "halopsa": True,
+    "connectwise": True,
+    "autotask": True,
+    "syncro": False,
+    "servicenow": True,
+    "ninjaone": True,
+    "dattormm": True,
+    "ncentral": True,
+}
 _VERSION_PATTERN = re.compile(r"^[0-9]{4}\.[0-9]+$")
 _SUBDOMAIN_PATTERN = re.compile(r"^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$")
 _SERVICENOW_VERSION_PATTERN = re.compile(r"^[A-Za-z0-9_]{1,20}$")
@@ -136,6 +181,9 @@ def _credential_error(connector_type: str) -> ConnectorFactoryError:
         "autotask": "integration_code, username, secret",
         "syncro": "api_key, subdomain",
         "servicenow": "username, password",
+        "ninjaone": "access_token",
+        "dattormm": "access_token",
+        "ncentral": "access_token",
     }[connector_type]
     labels = {
         "halopsa": "HaloPSA",
@@ -143,6 +191,9 @@ def _credential_error(connector_type: str) -> ConnectorFactoryError:
         "autotask": "Autotask",
         "syncro": "Syncro",
         "servicenow": "ServiceNow",
+        "ninjaone": "NinjaOne",
+        "dattormm": "Datto RMM",
+        "ncentral": "N-central",
     }
     return ConnectorFactoryError(
         f"invalid {labels[connector_type]} credentials; expected keys: {expected}"
@@ -178,6 +229,9 @@ def _load_credentials(
         "autotask": _AUTOTASK_CREDENTIAL_KEYS,
         "syncro": _SYNCRO_CREDENTIAL_KEYS,
         "servicenow": _SERVICENOW_CREDENTIAL_KEYS,
+        "ninjaone": _NINJAONE_CREDENTIAL_KEYS,
+        "dattormm": _DATTORMM_CREDENTIAL_KEYS,
+        "ncentral": _NCENTRAL_CREDENTIAL_KEYS,
     }[connector_type]
     if set(payload) != expected or any(not _non_empty_string(value) for value in payload.values()):
         raise _credential_error(connector_type)
@@ -205,11 +259,14 @@ def _load_config(instance: ConnectorInstance, *, connector_type: str) -> dict[st
         "autotask": _AUTOTASK_CONFIG_KEYS,
         "syncro": _SYNCRO_CONFIG_KEYS,
         "servicenow": _SERVICENOW_CONFIG_KEYS,
+        "ninjaone": _NINJAONE_CONFIG_KEYS,
+        "dattormm": _DATTORMM_CONFIG_KEYS,
+        "ncentral": _NCENTRAL_CONFIG_KEYS,
     }[connector_type]
     if set(payload) - expected:
         raise ConnectorFactoryError("connector config_json contains unsupported fields")
     base_url = payload.get("base_url")
-    if connector_type != "syncro" and not _non_empty_string(base_url):
+    if _BASE_URL_REQUIRED_BY_TYPE[connector_type] and not _non_empty_string(base_url):
         raise ConnectorFactoryError("connector config_json requires a base_url")
     if connector_type == "connectwise" and "api_version" in payload:
         version = payload["api_version"]
@@ -219,6 +276,26 @@ def _load_config(instance: ConnectorInstance, *, connector_type: str) -> dict[st
         version = payload["api_version"]
         if not isinstance(version, str):
             raise ConnectorFactoryError("ServiceNow API version is invalid")
+    map_keys = {
+        "ninjaone": "organization_map_json",
+        "dattormm": "site_map_json",
+        "ncentral": "org_unit_map_json",
+    }
+    map_key = map_keys.get(connector_type)
+    if map_key is not None and map_key in payload:
+        mapping = payload[map_key]
+        if not isinstance(mapping, str) or not mapping.strip():
+            raise ConnectorFactoryError(f"{connector_type} tenant mapping is invalid")
+        try:
+            parsed_mapping = json.loads(mapping)
+        except ValueError as exc:
+            raise ConnectorFactoryError(f"{connector_type} tenant mapping is invalid") from exc
+        if not isinstance(parsed_mapping, dict):
+            raise ConnectorFactoryError(f"{connector_type} tenant mapping is invalid")
+    if "page_size" in payload:
+        page_size = payload["page_size"]
+        if isinstance(page_size, bool) or not isinstance(page_size, int) or page_size < 1:
+            raise ConnectorFactoryError("connector page_size is invalid")
     return payload
 
 
@@ -284,6 +361,11 @@ def _validate_servicenow_version(value: object) -> str:
     return version
 
 
+def _config_page_size(config: Mapping[str, object], default: int) -> int:
+    value = config.get("page_size", default)
+    return value if isinstance(value, int) and not isinstance(value, bool) else default
+
+
 def _sanitized_settings(
     base_settings: Settings,
     *,
@@ -313,6 +395,18 @@ def _sanitized_settings(
             "servicenow_base_url": "",
             "servicenow_api_version": "",
             "autotask_base_url": "",
+            "ninjaone_base_url": "",
+            "ninjaone_access_token": "",
+            "ninjaone_organization_map_json": "",
+            "ninjaone_page_size": 50,
+            "datto_rmm_base_url": "",
+            "datto_rmm_access_token": "",
+            "datto_rmm_site_map_json": "",
+            "datto_rmm_page_size": 50,
+            "ncentral_base_url": "",
+            "ncentral_access_token": "",
+            "ncentral_org_unit_map_json": "",
+            "ncentral_page_size": 50,
         }
     )
     if connector_type == "halopsa":
@@ -352,7 +446,7 @@ def _sanitized_settings(
                 "syncro_api_token": credentials["api_key"],
             }
         )
-    else:
+    elif connector_type == "servicenow":
         effective_version = config.get("api_version", base_settings.servicenow_api_version)
         values.update(
             {
@@ -360,6 +454,33 @@ def _sanitized_settings(
                 "servicenow_username": credentials["username"],
                 "servicenow_password": credentials["password"],
                 "servicenow_api_version": _validate_servicenow_version(effective_version),
+            }
+        )
+    elif connector_type == "ninjaone":
+        values.update(
+            {
+                "ninjaone_base_url": base_url,
+                "ninjaone_access_token": credentials["access_token"],
+                "ninjaone_organization_map_json": str(config.get("organization_map_json", "")),
+                "ninjaone_page_size": _config_page_size(config, base_settings.ninjaone_page_size),
+            }
+        )
+    elif connector_type == "dattormm":
+        values.update(
+            {
+                "datto_rmm_base_url": base_url,
+                "datto_rmm_access_token": credentials["access_token"],
+                "datto_rmm_site_map_json": str(config.get("site_map_json", "")),
+                "datto_rmm_page_size": _config_page_size(config, base_settings.datto_rmm_page_size),
+            }
+        )
+    else:
+        values.update(
+            {
+                "ncentral_base_url": base_url,
+                "ncentral_access_token": credentials["access_token"],
+                "ncentral_org_unit_map_json": str(config.get("org_unit_map_json", "")),
+                "ncentral_page_size": _config_page_size(config, base_settings.ncentral_page_size),
             }
         )
     return replace(base_settings, **cast(Any, values))

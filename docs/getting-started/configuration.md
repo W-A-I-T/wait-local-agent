@@ -56,8 +56,14 @@ for appliance-wide provider access.
 For instance setup, Autotask uses a base URL plus username, secret, and API
 integration code. Syncro uses an API key and subdomain. ServiceNow uses its
 instance URL plus username and password, matching the current Basic Auth Table
-API client. Instance reads remain gated by `WAIT_ALLOW_HTTP_PROBING`, and the
-instance origin must be listed in `WAIT_CONNECTOR_INSTANCE_ALLOWED_HOSTS`.
+API client. NinjaOne, Datto RMM, and N-able N-central use the existing
+provider access token plus base URL and a non-secret client-to-provider map:
+`organization_map_json`, `site_map_json`, or `org_unit_map_json`, respectively.
+Instance reads remain gated by `WAIT_ALLOW_HTTP_PROBING`, and every instance
+origin must be listed in `WAIT_CONNECTOR_INSTANCE_ALLOWED_HOSTS`. RMM graph
+sync resolves an active client-scoped instance first, then an active MSP-wide
+instance, then the existing environment provider, and finally the local
+collector. Multiple active instances at the selected tier fail closed.
 Connector polling is read-only and records health and last-successful-sync
 state in the existing `sync_cursors` table.
 

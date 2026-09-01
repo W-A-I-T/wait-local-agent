@@ -7,7 +7,7 @@ import { StatusChip } from "../components/StatusChip";
 import { EmptyState } from "../components/EmptyState";
 import { LoadingState } from "../components/LoadingState";
 
-type ConnectorType = "halopsa" | "connectwise" | "autotask" | "syncro" | "servicenow";
+type ConnectorType = "halopsa" | "connectwise" | "autotask" | "syncro" | "servicenow" | "ninjaone" | "dattormm" | "ncentral";
 
 type DiscoveredCompany = {
   externalCompanyId: string;
@@ -40,6 +40,10 @@ type ConnectForm = {
   syncroSubdomain: string;
   serviceNowUsername: string;
   serviceNowPassword: string;
+  rmmAccessToken: string;
+  ninjaOrganizationMap: string;
+  dattoSiteMap: string;
+  ncentralOrgUnitMap: string;
 };
 
 type InstanceEditDraft = {
@@ -69,7 +73,11 @@ const initialConnectForm: ConnectForm = {
   syncroApiKey: "",
   syncroSubdomain: "",
   serviceNowUsername: "",
-  serviceNowPassword: ""
+  serviceNowPassword: "",
+  rmmAccessToken: "",
+  ninjaOrganizationMap: "",
+  dattoSiteMap: "",
+  ncentralOrgUnitMap: ""
 };
 
 const demoSecretStorageNotice = "Secret storage is unavailable in demo mode — credentials can't be saved here. In a real deployment this stores the credential in the local vault.";
@@ -421,7 +429,15 @@ export function ConnectorInstances() {
         ? connectForm.autotaskUsername.trim() && connectForm.autotaskSecret.trim() && connectForm.autotaskIntegrationCode.trim()
         : connectForm.connectorType === "syncro"
           ? connectForm.syncroApiKey.trim() && connectForm.syncroSubdomain.trim()
-          : connectForm.serviceNowUsername.trim() && connectForm.serviceNowPassword.trim();
+          : connectForm.connectorType === "servicenow"
+            ? connectForm.serviceNowUsername.trim() && connectForm.serviceNowPassword.trim()
+            : connectForm.rmmAccessToken.trim() && (
+                connectForm.connectorType === "ninjaone"
+                  ? connectForm.ninjaOrganizationMap.trim()
+                  : connectForm.connectorType === "dattormm"
+                    ? connectForm.dattoSiteMap.trim()
+                    : connectForm.ncentralOrgUnitMap.trim()
+              );
   const connectFormReady = Boolean(
     connectForm.displayName.trim()
       && (connectForm.connectorType === "syncro" || connectForm.baseUrl.trim())
@@ -478,18 +494,28 @@ export function ConnectorInstances() {
                 api_key: connectForm.syncroApiKey.trim(),
                 subdomain: connectForm.syncroSubdomain.trim()
               }
-            : {
-                username: connectForm.serviceNowUsername.trim(),
-                password: connectForm.serviceNowPassword.trim()
-              };
+            : connectorType === "servicenow"
+              ? {
+                  username: connectForm.serviceNowUsername.trim(),
+                  password: connectForm.serviceNowPassword.trim()
+                }
+              : {
+                  access_token: connectForm.rmmAccessToken.trim()
+                };
     const config: Record<string, string> = connectorType === "syncro"
       ? {}
-      : {
+      : connectorType === "ninjaone"
+        ? { base_url: connectForm.baseUrl.trim(), organization_map_json: connectForm.ninjaOrganizationMap.trim() }
+        : connectorType === "dattormm"
+          ? { base_url: connectForm.baseUrl.trim(), site_map_json: connectForm.dattoSiteMap.trim() }
+          : connectorType === "ncentral"
+            ? { base_url: connectForm.baseUrl.trim(), org_unit_map_json: connectForm.ncentralOrgUnitMap.trim() }
+            : {
           base_url: connectForm.baseUrl.trim(),
           ...(connectorType === "connectwise" || connectorType === "servicenow"
             ? { api_version: connectForm.apiVersion.trim() }
             : {})
-        };
+              };
 
     try {
       await apiFetch<void>("/secrets", {
@@ -579,14 +605,14 @@ export function ConnectorInstances() {
               <h2 id="connect-system-heading">Connect a system (credentials are encrypted into the local vault under a generated reference)</h2>
               <span>Administrator setup</span>
             </div>
-            <span>Per-client instance</span>
+            <span>Client or MSP-wide instance</span>
           </div>
-          <p className="screen-note">Connect a supported PSA or ticketing system. Appliance-wide environment configuration remains available as a bootstrap fallback.</p>
+          <p className="screen-note">Connect a supported PSA, ticketing, or RMM system. Appliance-wide environment configuration remains available as a bootstrap fallback.</p>
           {connectNotice ? <div className="notice" role="status">{connectNotice}</div> : null}
           {connectError ? <div className="notice danger" role="alert">{connectError}</div> : null}
           <form className="draft-form" onSubmit={(event) => void connect(event)}>
             <fieldset>
-              <legend>PSA / Ticketing</legend>
+              <legend>PSA / RMM</legend>
               <label htmlFor="connector-provider">Provider</label>
               <select
                 id="connector-provider"
@@ -607,6 +633,9 @@ export function ConnectorInstances() {
                 <option value="autotask">Autotask PSA</option>
                 <option value="syncro">Syncro</option>
                 <option value="servicenow">ServiceNow</option>
+                <option value="ninjaone">NinjaOne</option>
+                <option value="dattormm">Datto RMM</option>
+                <option value="ncentral">N-able N-central</option>
               </select>
             </fieldset>
 
@@ -628,7 +657,7 @@ export function ConnectorInstances() {
                 <span id="syncro-subdomain-help" className="field-help">The subdomain from your Syncro address, for example acme in acme.syncromsp.com.</span>
               </label>
             ) : (
-              <label htmlFor="connector-base-url">{connectForm.connectorType === "servicenow" ? "ServiceNow instance URL" : "Base URL"}
+            <label htmlFor="connector-base-url">{connectForm.connectorType === "servicenow" ? "ServiceNow instance URL" : connectForm.connectorType === "ninjaone" || connectForm.connectorType === "dattormm" || connectForm.connectorType === "ncentral" ? "Provider base URL" : "Base URL"}
                 <input id="connector-base-url" value={connectForm.baseUrl} onChange={(event) => updateConnectForm("baseUrl", event.target.value)} required />
               </label>
             )}
@@ -704,7 +733,7 @@ export function ConnectorInstances() {
                 </label>
                 <span id="syncro-api-key-help" className="field-help">{credentialFieldHelp}</span>
               </>
-            ) : (
+            ) : connectForm.connectorType === "servicenow" ? (
               <>
                 <label htmlFor="servicenow-username">Username
                   <input id="servicenow-username" aria-describedby="servicenow-username-help" value={connectForm.serviceNowUsername} onChange={(event) => updateConnectForm("serviceNowUsername", event.target.value)} required />
@@ -714,6 +743,39 @@ export function ConnectorInstances() {
                   <input id="servicenow-password" aria-describedby="servicenow-password-help" type="password" value={connectForm.serviceNowPassword} onChange={(event) => updateConnectForm("serviceNowPassword", event.target.value)} required />
                 </label>
                 <span id="servicenow-password-help" className="field-help">{credentialFieldHelp}</span>
+              </>
+            ) : connectForm.connectorType === "ninjaone" ? (
+              <>
+                <label htmlFor="rmm-access-token">Access token
+                  <input id="rmm-access-token" aria-describedby="rmm-access-token-help" type="password" value={connectForm.rmmAccessToken} onChange={(event) => updateConnectForm("rmmAccessToken", event.target.value)} required />
+                </label>
+                <span id="rmm-access-token-help" className="field-help">{credentialFieldHelp}</span>
+                <label htmlFor="ninjaone-organization-map">NinjaOne organization map JSON
+                  <textarea id="ninjaone-organization-map" aria-describedby="ninjaone-organization-map-help" rows={3} value={connectForm.ninjaOrganizationMap} onChange={(event) => updateConnectForm("ninjaOrganizationMap", event.target.value)} required spellCheck={false} />
+                </label>
+                <span id="ninjaone-organization-map-help" className="field-help">Map WAIT client IDs to NinjaOne organization IDs, for example {`{"acme":42}`}.</span>
+              </>
+            ) : connectForm.connectorType === "dattormm" ? (
+              <>
+                <label htmlFor="rmm-access-token">Access token
+                  <input id="rmm-access-token" aria-describedby="rmm-access-token-help" type="password" value={connectForm.rmmAccessToken} onChange={(event) => updateConnectForm("rmmAccessToken", event.target.value)} required />
+                </label>
+                <span id="rmm-access-token-help" className="field-help">{credentialFieldHelp}</span>
+                <label htmlFor="datto-site-map">Datto RMM site map JSON
+                  <textarea id="datto-site-map" aria-describedby="datto-site-map-help" rows={3} value={connectForm.dattoSiteMap} onChange={(event) => updateConnectForm("dattoSiteMap", event.target.value)} required spellCheck={false} />
+                </label>
+                <span id="datto-site-map-help" className="field-help">Map WAIT client IDs to Datto site UIDs, for example {`{"acme":"site-uid"}`}.</span>
+              </>
+            ) : (
+              <>
+                <label htmlFor="rmm-access-token">Access token
+                  <input id="rmm-access-token" aria-describedby="rmm-access-token-help" type="password" value={connectForm.rmmAccessToken} onChange={(event) => updateConnectForm("rmmAccessToken", event.target.value)} required />
+                </label>
+                <span id="rmm-access-token-help" className="field-help">{credentialFieldHelp}</span>
+                <label htmlFor="ncentral-org-unit-map">N-central organization-unit map JSON
+                  <textarea id="ncentral-org-unit-map" aria-describedby="ncentral-org-unit-map-help" rows={3} value={connectForm.ncentralOrgUnitMap} onChange={(event) => updateConnectForm("ncentralOrgUnitMap", event.target.value)} required spellCheck={false} />
+                </label>
+                <span id="ncentral-org-unit-map-help" className="field-help">Map WAIT client IDs to N-central organization-unit IDs, for example {`{"acme":[100]}`}.</span>
               </>
             )}
 

@@ -46,6 +46,7 @@ describe("connector setup metadata", () => {
     expect(connectorSetup.autotask.tier).toBe("instance");
     expect(connectorSetup.syncro.tier).toBe("instance");
     expect(connectorSetup.servicenow.tier).toBe("instance");
+    expect(connectorSetup.rmm.tier).toBe("instance");
     expect(connectorSetup.hudu.tier).toBe("env");
     expect(connectorSetup.m365.tier).toBe("env");
   });

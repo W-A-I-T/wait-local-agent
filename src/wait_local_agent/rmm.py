@@ -4,11 +4,26 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass, field
-from typing import Literal, Protocol
+from typing import Any, Literal, Protocol, cast
 
 from wait_local_agent.client_scope import AllClients
 from wait_local_agent.config import Settings
+from wait_local_agent.models import ConnectorInstance
 from wait_local_agent.store import Store
+
+RMM_INSTANCE_TYPES = frozenset({"ninjaone", "dattormm", "ncentral"})
+
+
+class RmmProviderResolutionError(Exception):
+    """Raised when an RMM provider cannot be selected without guessing."""
+
+
+class RmmInstanceStore(Protocol):
+    def list_connector_instances(self) -> list[ConnectorInstance]:
+        ...
+
+    def get_connector_instance(self, connector_instance_id: str) -> ConnectorInstance | None:
+        ...
 
 
 @dataclass(frozen=True)
@@ -178,8 +193,58 @@ class LocalCollectorRmmAdapter:
         )
 
 
-def rmm_provider_from_settings(settings: Settings, store: Store) -> RmmInventoryProvider:
-    """Select a configured vendor adapter without making network calls."""
+def rmm_provider_from_settings(
+    settings: Settings,
+    store: RmmInstanceStore,
+    client_id: str | None = None,
+    vault: Any | None = None,
+) -> RmmInventoryProvider:
+    """Select a vendor adapter, preferring an unambiguous active instance."""
+    normalized_client_id = client_id.strip() if isinstance(client_id, str) else ""
+    if normalized_client_id:
+        try:
+            instances = store.list_connector_instances()
+        except Exception as exc:
+            raise RmmProviderResolutionError("RMM connector instances could not be loaded") from exc
+        active_rmm = [
+            instance
+            for instance in instances
+            if str(instance.status).strip().casefold() == "active"
+            and str(instance.connector_type).strip().casefold() in RMM_INSTANCE_TYPES
+        ]
+        client_instances = [
+            instance
+            for instance in active_rmm
+            if isinstance(instance.client_id, str) and instance.client_id.strip() == normalized_client_id
+        ]
+        candidates = client_instances
+        tier = "client-scoped"
+        if not candidates:
+            candidates = [
+                instance
+                for instance in active_rmm
+                if instance.client_id is None or not str(instance.client_id).strip()
+            ]
+            tier = "MSP-wide"
+        if len(candidates) > 1:
+            raise RmmProviderResolutionError(
+                f"ambiguous active RMM connector instances at the {tier} tier for client "
+                f"{normalized_client_id}"
+            )
+        if candidates:
+            from wait_local_agent.connector_factory import ConnectorFactoryError, build_read_client_for
+
+            try:
+                provider = build_read_client_for(
+                    store,
+                    candidates[0].connector_instance_id,
+                    base_settings=settings,
+                    vault=vault,
+                )
+            except ConnectorFactoryError as exc:
+                raise RmmProviderResolutionError(str(exc)) from exc
+            return provider  # type: ignore[return-value]
+
     if settings.ninjaone_base_url or settings.ninjaone_access_token:
         from wait_local_agent.ninjaone import NinjaOneRmmAdapter
 
@@ -187,11 +252,11 @@ def rmm_provider_from_settings(settings: Settings, store: Store) -> RmmInventory
     if settings.datto_rmm_base_url or settings.datto_rmm_access_token:
         from wait_local_agent.dattormm import DattoRmmAdapter
 
-        return DattoRmmAdapter(settings, store=store)
+        return DattoRmmAdapter(settings, store=cast(Store, store))
     if settings.ncentral_base_url or settings.ncentral_access_token:
         from wait_local_agent.ncentral import NCentralRmmAdapter
 
-        return NCentralRmmAdapter(settings, store=store)
+        return NCentralRmmAdapter(settings, store=cast(Store, store))
     if settings.n_sight_base_url or settings.n_sight_api_key:
         from wait_local_agent.nsight import NSightRmmAdapter
 
@@ -203,7 +268,7 @@ def rmm_provider_from_settings(settings: Settings, store: Store) -> RmmInventory
     ):
         from wait_local_agent.kaseya import KaseyaRmmAdapter
 
-        return KaseyaRmmAdapter(settings, store=store)
+        return KaseyaRmmAdapter(settings, store=cast(Store, store))
     if (
         settings.screenconnect_base_url
         or settings.screenconnect_extension_id
@@ -212,7 +277,7 @@ def rmm_provider_from_settings(settings: Settings, store: Store) -> RmmInventory
         from wait_local_agent.screenconnect import ScreenConnectRmmAdapter
 
         return ScreenConnectRmmAdapter(settings)
-    return LocalCollectorRmmAdapter(store)
+    return LocalCollectorRmmAdapter(cast(Store, store))
 
 
 __all__ = [
@@ -223,5 +288,7 @@ __all__ = [
     "RmmScript",
     "RmmScriptExecution",
     "RmmScriptPreview",
+    "RMM_INSTANCE_TYPES",
+    "RmmProviderResolutionError",
     "rmm_provider_from_settings",
 ]

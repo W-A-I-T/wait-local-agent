@@ -251,7 +251,7 @@ from wait_local_agent.reports.msp import (
 )
 from wait_local_agent.reports.renderers import redact_text, redact_value, report_as_dict
 from wait_local_agent.reports.service import ReportService
-from wait_local_agent.rmm import rmm_provider_from_settings
+from wait_local_agent.rmm import RmmProviderResolutionError, rmm_provider_from_settings
 from wait_local_agent.scalepad import (
     ScalePadAssessmentResponse,
     ScalePadClient,
@@ -1343,9 +1343,18 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         scope = _resolve_client_target_scope(context, client_id)
         if store.get_client(scope, client_id) is None:
             raise HTTPException(status_code=404, detail="client not found")
-        if rmm_provider.adapter_id != "local-collector" and not active_settings.allow_http_probing:
+        try:
+            client_rmm_provider = rmm_provider_from_settings(
+                active_settings,
+                store,
+                client_id,
+                vault,
+            )
+        except RmmProviderResolutionError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        if client_rmm_provider.adapter_id != "local-collector" and not active_settings.allow_http_probing:
             raise HTTPException(status_code=409, detail="RMM read probing is disabled")
-        return dict(operational_graph_service.seed_rmm_inventory(scope))
+        return dict(OperationalGraphService(store, rmm_provider=client_rmm_provider).seed_rmm_inventory(scope))
 
     @app.patch("/clients/{client_id}")
     def update_client_status(
@@ -1443,7 +1452,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     ) -> dict[str, object]:
         _require_msp_operator(context)
         connector_type = payload.connector_type.strip().casefold()
-        if payload.credential_ref and connector_type in {"autotask", "syncro", "servicenow"}:
+        if payload.credential_ref and connector_type in {
+            "autotask",
+            "syncro",
+            "servicenow",
+            "ninjaone",
+            "dattormm",
+            "ncentral",
+        }:
             candidate = ConnectorInstance(
                 connector_instance_id="pending-validation",
                 connector_type=connector_type,

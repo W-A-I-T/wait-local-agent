@@ -136,7 +136,7 @@ export const connectorSetup = {
   },
   rmm: {
     label: "RMM",
-    tier: "env",
+    tier: "instance",
     envVars: [
       "WAIT_NINJAONE_BASE_URL",
       "WAIT_NINJAONE_ACCESS_TOKEN",
@@ -165,7 +165,7 @@ export const connectorSetup = {
       "WAIT_SCREENCONNECT_CLIENT_SESSIONS_MAP_JSON",
       "WAIT_SCREENCONNECT_SCRIPT_CATALOG_JSON"
     ],
-    docsNote: "The RMM card represents NinjaOne, Datto RMM, N-able N-sight, N-able N-central, Kaseya VSA X, and ScreenConnect. Configure one vendor family at appliance scope with its explicit WAIT-client mapping."
+    docsNote: "NinjaOne, Datto RMM, and N-able N-central support Connector Instances for client-specific credentials; N-sight, Kaseya, and ScreenConnect remain appliance-wide."
   }
 } as const satisfies Record<string, ConnectorSetup>;
 
