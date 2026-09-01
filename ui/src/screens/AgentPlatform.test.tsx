@@ -107,7 +107,14 @@ describe("AgentPlatform", () => {
   });
 
   it("disables mutation controls for read-only operators", async () => {
-    mockedUseDashboard.mockReturnValue({ canWrite: false, role: "viewer" } as ReturnType<typeof useDashboard>);
+    mockedUseDashboard.mockReturnValue({
+      canWrite: false,
+      role: "viewer",
+      clients: [{ client_id: "acme", name: "Acme Support", status: "active" }],
+      selectedClientId: "acme",
+      liveWritesReady: false,
+      writeHealthResolved: true
+    } as unknown as ReturnType<typeof useDashboard>);
     render(<AgentPlatform />);
 
     expect(await screen.findByRole("button", { name: "Store revision" })).toBeDisabled();
@@ -151,7 +158,7 @@ describe("AgentPlatform", () => {
     expect(screen.getByText("blocked")).toBeInTheDocument();
   });
 
-  it("requires an explicit client scope and reports invalid memory input", async () => {
+  it("requires an explicit client scope before loading pack data", async () => {
     mockedUseDashboard.mockReturnValue({
       canWrite: true,
       role: "admin",
@@ -164,6 +171,17 @@ describe("AgentPlatform", () => {
     render(<AgentPlatform />);
 
     expect(await screen.findByRole("alert")).toHaveTextContent("Choose a client");
+    expect(await screen.findByRole("heading", { name: "Choose a client to load Agent Platform data" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Store revision" })).not.toBeInTheDocument();
+    expect(mockedApiFetch).not.toHaveBeenCalledWith("/packs/agent-platform/memories");
+    expect(mockedApiFetch).not.toHaveBeenCalledWith("/packs/agent-platform/skills");
+    expect(mockedApiFetch).not.toHaveBeenCalledWith("/packs/agent-platform/iterations");
+    expect(mockedApiFetch).not.toHaveBeenCalledWith("/packs/agent-platform/technicians");
+  });
+
+  it("reports invalid memory input without sending a failed save", async () => {
+    render(<AgentPlatform />);
+
     fireEvent.change(screen.getByLabelText("Key"), { target: { value: "support-policy" } });
     fireEvent.change(screen.getByLabelText("Provenance"), { target: { value: "operator note" } });
     fireEvent.change(screen.getByLabelText("JSON value"), { target: { value: "not-json" } });

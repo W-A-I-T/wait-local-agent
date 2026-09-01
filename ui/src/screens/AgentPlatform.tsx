@@ -736,11 +736,20 @@ export function AgentPlatform() {
         </div>
         {message ? <div className="notice danger" role="alert">{message}</div> : null}
       </section>
-      {tab === "memory" ? <MemoryPanel canWrite={canWrite} /> : null}
-      {tab === "skills" ? <SkillsPanel canWrite={canWrite} /> : null}
-      {tab === "iterations" ? <IterationsPanel canWrite={canWrite} /> : null}
-      {tab === "technicians" ? <TechniciansPanel canWrite={canWrite} isAdmin={role === "admin"} /> : null}
-      {tab === "attachments" ? <AttachmentsPanel canWrite={canWrite} maxBytes={status?.attachment_max_bytes} /> : null}
+      {selectedClientId ? (
+        <>
+          {tab === "memory" ? <MemoryPanel canWrite={canWrite} /> : null}
+          {tab === "skills" ? <SkillsPanel canWrite={canWrite} /> : null}
+          {tab === "iterations" ? <IterationsPanel canWrite={canWrite} /> : null}
+          {tab === "technicians" ? <TechniciansPanel canWrite={canWrite} isAdmin={role === "admin"} /> : null}
+          {tab === "attachments" ? <AttachmentsPanel canWrite={canWrite} maxBytes={status?.attachment_max_bytes} /> : null}
+        </>
+      ) : (
+        <EmptyState
+          title="Choose a client to load Agent Platform data"
+          why="Select one client in the workspace scope selector before viewing or changing governed data."
+        />
+      )}
     </div>
   );
 }
