@@ -17,6 +17,7 @@ export function Settings() {
   const [security, setSecurity] = useState<SecuritySettings | null>(null);
   const [packs, setPacks] = useState<PackInfo[]>([]);
   const [secrets, setSecrets] = useState<SecretRecord[]>([]);
+  const [secretLoadState, setSecretLoadState] = useState<"available" | "demo_unavailable" | "unavailable">("available");
   const [status, setStatus] = useState<UpdateStatus | null>(null);
   const [statusMessage, setStatusMessage] = useState("");
   const [launchPassport, setLaunchPassport] = useState<LaunchPassportStatus | null>(null);
@@ -34,11 +35,14 @@ export function Settings() {
 
   const refresh = useCallback(async () => {
     try {
-      const [providerRows, securityRows, packRows, secretRows, updateRows, launchPassportResult] = await Promise.all([
+      const [providerRows, securityRows, packRows, secretResult, updateRows, launchPassportResult] = await Promise.all([
         apiFetch<ProviderSettings>("/settings/providers"),
         apiFetch<SecuritySettings>("/settings/security"),
         apiFetch<PackInfo[]>("/packs"),
-        apiFetch<SecretRecord[]>("/secrets"),
+        apiFetch<SecretRecord[]>("/secrets").then(
+          (value) => ({ kind: "available" as const, value }),
+          (error: unknown) => ({ kind: "unavailable" as const, error })
+        ),
         apiFetch<UpdateStatus>("/update-status"),
         canViewLaunchPassport
           ? apiFetch<LaunchPassportStatus>("/founder/lp-status").then(
@@ -50,7 +54,13 @@ export function Settings() {
       setProviders(providerRows);
       setSecurity(securityRows);
       setPacks(packRows);
-      setSecrets(secretRows);
+      if (secretResult.kind === "available") {
+        setSecrets(secretResult.value);
+        setSecretLoadState("available");
+      } else {
+        setSecrets([]);
+        setSecretLoadState(isDemoModeSecretsUnavailable(secretResult.error, securityRows) ? "demo_unavailable" : "unavailable");
+      }
       setStatus(updateRows);
       if (launchPassportResult.kind === "available") {
         setLaunchPassport(projectLaunchPassportStatus(launchPassportResult.value));
@@ -440,8 +450,10 @@ export function Settings() {
       <section className="panel">
         <div className="panel-heading">
           <h2>Vault (advanced)</h2>
-          <span>{secrets.length} keys</span>
+          <span>{secretLoadState === "demo_unavailable" ? "unavailable in demo mode" : `${secrets.length} keys`}</span>
         </div>
+        {secretLoadState === "demo_unavailable" ? <p className="screen-note">Vault contents are unavailable in demo mode.</p> : null}
+        {secretLoadState === "unavailable" ? <p className="screen-note">Vault contents are temporarily unavailable.</p> : null}
         <p className="screen-note">
           The vault stores credentials referenced by Connector Instances. Environment-provider settings are read from
           the vault only when <code>WAIT_SECRETS_BACKEND=fernet</code>, and the vault key must exactly match the
@@ -490,4 +502,8 @@ export function Settings() {
 function isLaunchPassportNotConfigured(error: unknown): boolean {
   return error instanceof ApiRequestError
     && (error.status === 409 || /not configured/i.test(`${error.message} ${error.technicalDetail}`));
+}
+
+function isDemoModeSecretsUnavailable(error: unknown, security: SecuritySettings): boolean {
+  return security.demo_mode === true && error instanceof ApiRequestError && error.status === 403;
 }
