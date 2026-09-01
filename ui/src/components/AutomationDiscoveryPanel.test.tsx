@@ -1,10 +1,15 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { apiFetch } from "../api/client";
+import type { ClientDirectoryEntry } from "../api/types";
 import { AutomationDiscoveryPanel } from "./AutomationDiscoveryPanel";
 
 vi.mock("../api/client", () => ({ apiFetch: vi.fn() }));
 const mockedApiFetch = vi.mocked(apiFetch);
+const clients: ClientDirectoryEntry[] = [
+  { client_id: "acme", name: "Acme Support", status: "active" },
+  { client_id: "globex", name: "Globex IT", status: "active" }
+];
 
 const result = {
   client_id: "acme",
@@ -54,7 +59,7 @@ describe("AutomationDiscoveryPanel", () => {
   beforeEach(() => mockedApiFetch.mockReset());
 
   it("requires a client before running discovery", () => {
-    render(<AutomationDiscoveryPanel />);
+    render(<AutomationDiscoveryPanel clients={clients} />);
     fireEvent.click(screen.getByRole("button", { name: "Analyze ticket history" }));
     expect(screen.getByRole("alert")).toHaveTextContent("Select a client");
     expect(mockedApiFetch).not.toHaveBeenCalled();
@@ -62,9 +67,9 @@ describe("AutomationDiscoveryPanel", () => {
 
   it("loads and renders evidence-backed opportunities", async () => {
     mockedApiFetch.mockResolvedValue(result);
-    render(<AutomationDiscoveryPanel />);
+    render(<AutomationDiscoveryPanel clients={clients} />);
 
-    fireEvent.change(screen.getByLabelText("Discovery client ID"), { target: { value: " acme " } });
+    fireEvent.change(screen.getByRole("combobox", { name: "Discovery client" }), { target: { value: "acme" } });
     fireEvent.change(screen.getByLabelText("History window"), { target: { value: "90" } });
     fireEvent.click(screen.getByRole("button", { name: "Analyze ticket history" }));
 
@@ -95,13 +100,22 @@ describe("AutomationDiscoveryPanel", () => {
       },
       next_step: "Collect more historical evidence before reviewing an automation candidate."
     });
-    render(<AutomationDiscoveryPanel />);
-    fireEvent.change(screen.getByLabelText("Discovery client ID"), { target: { value: "acme" } });
+    render(<AutomationDiscoveryPanel clients={clients} />);
+    fireEvent.change(screen.getByRole("combobox", { name: "Discovery client" }), { target: { value: "acme" } });
     fireEvent.click(screen.getByRole("button", { name: "Analyze ticket history" }));
 
     expect(await screen.findByText("No repeated ticket family reached the selected evidence threshold.")).toBeInTheDocument();
     expect(screen.getByText("Unavailable")).toBeInTheDocument();
     expect(screen.getByText(/no labor duration was inferred/i)).toBeInTheDocument();
     expect(screen.getByText(/Collect more historical evidence/)).toBeInTheDocument();
+  });
+
+  it("does not request discovery for a client outside the permitted directory", () => {
+    render(<AutomationDiscoveryPanel clients={[]} />);
+    fireEvent.change(screen.getByRole("combobox", { name: "Discovery client" }), { target: { value: "globex" } });
+    fireEvent.click(screen.getByRole("button", { name: "Analyze ticket history" }));
+
+    expect(screen.getByRole("alert")).toHaveTextContent("Select a client");
+    expect(mockedApiFetch).not.toHaveBeenCalled();
   });
 });

@@ -123,7 +123,7 @@ export function Analytics() {
         <p className="screen-note">Model cost is an estimate from provider-reported tokens and rates configured by the operator. Missing pricing or usage stays unpriced.</p>
       </section>
 
-      <AutomationDiscoveryPanel />
+      <AutomationDiscoveryPanel clients={clients} />
 
       <section className="panel analytics-filter-panel">
         <div className="panel-heading">

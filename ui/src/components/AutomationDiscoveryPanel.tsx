@@ -1,5 +1,7 @@
 import { useState } from "react";
 import { apiFetch } from "../api/client";
+import type { ClientDirectoryEntry } from "../api/types";
+import { ClientIdSelect } from "./ClientIdSelect";
 
 type WorkflowMatch = {
   id: string;
@@ -53,7 +55,7 @@ type DiscoveryResult = {
   next_step: string;
 };
 
-export function AutomationDiscoveryPanel() {
+export function AutomationDiscoveryPanel({ clients = [] }: { clients?: ClientDirectoryEntry[] }) {
   const [clientId, setClientId] = useState("");
   const [days, setDays] = useState(60);
   const [minTickets, setMinTickets] = useState(3);
@@ -63,7 +65,7 @@ export function AutomationDiscoveryPanel() {
 
   const runDiscovery = () => {
     const normalizedClient = clientId.trim();
-    if (!normalizedClient) {
+    if (!normalizedClient || !clients.some((client) => client.client_id === normalizedClient)) {
       setMessage("Select a client before analyzing historical tickets.");
       return;
     }
@@ -101,10 +103,18 @@ export function AutomationDiscoveryPanel() {
       </div>
 
       <div className="analytics-filters">
-        <label>
-          Discovery client ID
-          <input value={clientId} onChange={(event) => setClientId(event.target.value)} placeholder="Required client" />
-        </label>
+        <ClientIdSelect
+          label="Discovery client"
+          value={clientId}
+          onChange={(value) => {
+            setClientId(value);
+            setResult(null);
+            setMessage("");
+          }}
+          clients={clients}
+          required
+          id="automation-discovery-client"
+        />
         <label>
           History window
           <select value={days} onChange={(event) => setDays(Number(event.target.value))}>
