@@ -108,6 +108,37 @@ def _package(tmp_path: Path, artifacts: list[dict[str, object]] | None = None) -
     )
 
 
+def _entity_artifact(client_id: str = "acme") -> dict[str, object]:
+    return {
+        "format": "wait-local-agent.power-apps-artifact",
+        "format_version": 1,
+        "client_id": client_id,
+        "app_name": "Dataverse entities",
+        "dataverse": {
+            "tables": [
+                {
+                    "logical_name": "employee",
+                    "display_name": "Employee",
+                    "columns": [{"logical_name": "display_name", "display_name": "Display name"}],
+                }
+            ]
+        },
+        "credentials_included": False,
+        "execution_started": False,
+        "deployment_started": False,
+    }
+
+
+def _flow_plan() -> dict[str, object]:
+    return build_power_automate_flow_plan(
+        client_id="acme",
+        workflow_id="employee_onboarding",
+        workflow_name="Employee onboarding",
+        trigger="HR onboarding request",
+        steps=[{"id": "review", "name": "Review", "kind": "approval"}],
+    )
+
+
 def _redigest(package: dict[str, object]) -> None:
     unsigned = dict(package)
     unsigned.pop("package_digest", None)
@@ -120,6 +151,7 @@ def test_package_is_deterministic_and_emits_official_yaml_layout(tmp_path: Path)
 
     assert first == second
     assert first["deployable"] is True
+    assert first["package_status"] == "partial_source"
     assert first["execution_started"] is False
     assert first["deployment_started"] is False
     files = cast(list[dict[str, object]], first["files"])
@@ -139,6 +171,11 @@ def test_package_is_deterministic_and_emits_official_yaml_layout(tmp_path: Path)
     assert "modernflows/employee_onboarding/flow.yml" in paths
     assert "connectors/hr_api/connector.yml" in paths
     assert "unsupported/components.json" in paths
+    assert "design_only/components.json" in paths
+    design_only = cast(list[dict[str, object]], first["design_only_components"])
+    assert design_only[0]["path"] == "modernflows/employee_onboarding"
+    assert design_only[0]["format"] == "wait-local-agent.power-automate-flow-plan"
+    assert design_only[0]["reason"]
     solution_components = cast(
         str,
         next(
@@ -163,6 +200,40 @@ def test_package_is_deterministic_and_emits_official_yaml_layout(tmp_path: Path)
     assert build_deployable_blueprint_package is build_power_platform_package
     assert validate_deployable_blueprint_package is validate_power_platform_package
     assert materialize_deployable_blueprint_package is materialize_power_platform_package
+
+
+def test_entity_only_package_reports_deployable_source(tmp_path: Path) -> None:
+    package = _package(tmp_path, [_entity_artifact()])
+
+    assert package["deployable"] is True
+    assert package["package_status"] == "deployable_source"
+    assert package["design_only_components"] == []
+
+
+def test_flow_bearing_package_reports_partial_source_and_names_the_design_only_flow(tmp_path: Path) -> None:
+    package = _package(tmp_path, [_entity_artifact(), _flow_plan()])
+    files = cast(list[dict[str, object]], package["files"])
+    design_only = cast(list[dict[str, object]], package["design_only_components"])
+
+    assert package["deployable"] is True
+    assert package["package_status"] == "partial_source"
+    assert design_only[0]["path"] == "modernflows/employee_onboarding"
+    assert design_only[0]["reason"]
+    assert "design_only/components.json" in {item["path"] for item in files}
+
+
+def test_package_without_any_import_complete_component_is_not_deployable(tmp_path: Path) -> None:
+    package = _package(tmp_path, [_flow_plan()])
+
+    assert package["deployable"] is False
+    with pytest.raises(PowerPlatformPackageError, match="contains no component that will import"):
+        validate_power_platform_package(package)
+
+
+def test_package_validation_accepts_partial_source(tmp_path: Path) -> None:
+    package = _package(tmp_path, [_entity_artifact(), _flow_plan()])
+
+    assert validate_power_platform_package(package) == package["package_digest"]
 
 
 def test_yaml_sources_preserve_empty_collections_and_quote_yaml_boolean_words(tmp_path: Path) -> None:
@@ -359,6 +430,11 @@ def test_package_validation_rederives_file_and_package_digests(tmp_path: Path) -
         validate_power_platform_package(tampered)
 
     tampered = json.loads(json.dumps(package))
+    tampered["design_only_components"] = [{"secret_value": "leaked"}]
+    with pytest.raises(PowerPlatformPackageError, match="secret-like"):
+        validate_power_platform_package(tampered)
+
+    tampered = json.loads(json.dumps(package))
     json_file = next(item for item in tampered["files"] if item["path"] == "unsupported/components.json")
     json_file["content"] = '{"password":"leaked"}'
     json_file["digest"] = f"sha256:{__import__('hashlib').sha256(json_file['content'].encode()).hexdigest()}"
@@ -540,7 +616,7 @@ def test_build_and_artifact_validation_failure_branches(tmp_path: Path, monkeypa
         _package(tmp_path, [{"format": "unknown", "value": "x" * (240 * 16 + 1)}])
     with pytest.raises(PowerPlatformPackageError, match="credentials"):
         _package(tmp_path, [{"format": "unknown", "credentials_included": True}])
-    assert _package(tmp_path, [{"format": "unknown", "password": None}])["deployable"] is True
+    assert _package(tmp_path, [{"format": "unknown", "password": None}])["deployable"] is False
 
     oversized: dict[str, object] = {"format": "unknown", "items": ["x" * 380 for _ in range(768)]}
     with pytest.raises(PowerPlatformPackageError, match="input size"):
@@ -571,12 +647,13 @@ def test_package_validation_rejects_malformed_metadata_and_caps(tmp_path: Path) 
         validate_power_platform_package(cast(dict[str, object], []))
     invalid_cases: list[tuple[str, object, str]] = [
         ("format", "wrong", "unsupported"),
-        ("deployable", False, "deployable_source"),
+        ("deployable", False, "contains no component that will import"),
         ("credentials_included", True, "credentials"),
         ("execution_started", True, "execution"),
         ("output_directory", f"{base['output_directory']} ", "canonical"),
         ("solution", [], "solution"),
         ("unsupported_components", {}, "unsupported_components"),
+        ("design_only_components", {}, "design_only_components"),
         ("files", [], "package.files"),
     ]
     for key, value, message in invalid_cases:

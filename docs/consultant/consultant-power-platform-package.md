@@ -24,8 +24,25 @@ A flow artifact must carry its trigger and actions under `power_automate`, the
 same shape returned by `POST /consultant/workflows/power-automate/plan`. The
 emitted `flow.yml` records the trigger type and name plus every action's unique
 name, display name, kind, type, method, optional existing tool reference, and
-approval flag. A flow artifact missing that section is rejected rather than
-packaged with empty flow metadata.
+approval flag. It is a design document, not an importable cloud flow definition.
+An importable flow requires a `clientdata` Logic Apps definition with
+`connectionReferences`, named trigger and action maps, and `runAfter` ordering;
+the emitted source does not provide those structures. A flow artifact missing
+its `power_automate` section is rejected rather than packaged with empty flow
+metadata.
+
+Package readiness is reported per component class. `deployable_source` means
+every emitted component class is import-complete. `partial_source` means the
+package contains a usable import-complete component but also contains a
+design-only emitted component. `deployable` is true only when the package
+contains at least one import-complete artifact component; a package containing
+only design-only or unsupported artifacts is not deployable. Unsupported
+artifacts are not emitted into the source and remain separately listed below.
+`design_only_components` lists emitted design documents, including each
+component path, format, and reason, and is also written to
+`design_only/components.json`. `unsupported_components` and
+`unsupported/components.json` remain the separate record for artifact formats
+with no supported source mapping.
 
 ## API
 

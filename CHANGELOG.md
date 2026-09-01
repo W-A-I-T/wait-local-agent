@@ -6,6 +6,10 @@ All notable changes to WAIT Local Agent will be documented in this file.
 
 ### Breaking
 
+- Power Platform source package metadata now includes `design_only_components`;
+  `package_status` may be `partial_source`, and package digests change for
+  flow-bearing solutions.
+
 - Power Automate source packaging now rejects flat `trigger`/`steps` flow
   artifacts with an explicit error; trigger and actions must be nested under
   `power_automate`.
@@ -54,6 +58,9 @@ All notable changes to WAIT Local Agent will be documented in this file.
   ticket identifier.
 
 ### Fixed
+
+- Power Platform package deployability is now computed from emitted component
+  readiness instead of being asserted by a hardcoded value.
 
 - Power Platform deployment and rollback approvals now reject re-execution
   after any terminal execution status, preserving the original promotion
