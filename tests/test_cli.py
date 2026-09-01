@@ -49,6 +49,8 @@ from wait_local_agent.smart_actions import SmartActionService
 from wait_local_agent.store import Store
 from wait_local_agent.syncro import SyncroCommentsResponse, SyncroReadResponse
 
+ANSI_CSI_SEQUENCE = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")
+
 
 @pytest.fixture(autouse=True)
 def cli_defaults_to_explicit_demo_mode(monkeypatch) -> None:
@@ -2350,8 +2352,9 @@ def test_cli_error_edges_for_new_commands(monkeypatch, tmp_path) -> None:
 
 def test_principal_cli_commands_round_trip_and_enforce_management_gate(monkeypatch, tmp_path) -> None:
     def normalize_bad_parameter_output(output: str) -> str:
-        without_box_drawing = re.sub(r"[\u2500-\u257f]", "", output)
-        return " ".join(without_box_drawing.split())
+        without_ansi = ANSI_CSI_SEQUENCE.sub("", output)
+        without_box_drawing = re.sub(r"[\u2500-\u257f]", "", without_ansi)
+        return " ".join(without_box_drawing.split()).strip()
 
     data_path = tmp_path / "state.db"
     monkeypatch.setenv("WAIT_DATA_PATH", str(data_path))
