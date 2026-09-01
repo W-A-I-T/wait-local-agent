@@ -3,7 +3,10 @@ import { MemoryRouter } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { TechnicianChat } from "../src/screens/TechnicianChat";
 
-const dashboard = vi.hoisted(() => ({ canWrite: true }));
+const dashboard = vi.hoisted(() => ({
+  canWrite: true,
+  clients: [{ client_id: "acme", name: "Acme Support", status: "active" }]
+}));
 
 vi.mock("../src/app/DashboardContext", () => ({
   useDashboard: () => dashboard

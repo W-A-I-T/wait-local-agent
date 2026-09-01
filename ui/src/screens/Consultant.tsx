@@ -2,6 +2,7 @@ import { FormEvent, useCallback, useEffect, useState } from "react";
 import { AlertTriangle, Compass, RefreshCw } from "lucide-react";
 import { Link } from "react-router-dom";
 import { useDashboard } from "../app/DashboardContext";
+import { ClientIdSelect } from "../components/ClientIdSelect";
 import {
   ApiRequestError,
   CLIENT_SCOPE_ERROR_MESSAGE,
@@ -164,6 +165,7 @@ function SectionLoadNotice({
 export function Consultant() {
   const {
     canWrite,
+    clients = [],
     clientId: scopedClientId,
     authState,
     writeHealth,
@@ -949,14 +951,15 @@ export function Consultant() {
         </div>
         <form className="draft-form" onSubmit={(event) => void assessDiscovery(event)}>
           <div className="grid">
-            <label>
-              Customer workspace ID
-              <input
-                value={discoveryClientId || selected?.client_id || scopedClientId || blueprints[0]?.client_id || ""}
-                onChange={(event) => setDiscoveryClientId(event.target.value)}
-                placeholder="acme"
-              />
-            </label>
+            <ClientIdSelect
+              label="Customer workspace ID"
+              value={discoveryClientId || selected?.client_id || scopedClientId || blueprints[0]?.client_id || ""}
+              onChange={setDiscoveryClientId}
+              clients={clients}
+              required
+              allowFreeform
+              id="discovery-client-id"
+            />
             <label>
               Solution name
               <input

@@ -2,6 +2,7 @@ import { FormEvent, useCallback, useEffect, useState } from "react";
 import { useDashboard } from "../app/DashboardContext";
 import { apiFetch } from "../api/client";
 import { type KnowledgeChunk, type KnowledgeDocument } from "../api/types";
+import { ClientIdSelect } from "../components/ClientIdSelect";
 
 export type KnowledgeParser = "auto" | "plain" | "markdown" | "pdf";
 
@@ -12,7 +13,7 @@ export function parserPayload(parser: KnowledgeParser): "" | "basic" | "pypdf" {
 }
 
 export function Knowledge() {
-  const { isAdmin, canWrite } = useDashboard();
+  const { clients = [], isAdmin, canWrite } = useDashboard();
   const [documents, setDocuments] = useState<KnowledgeDocument[]>([]);
   const [chunks, setChunks] = useState<KnowledgeChunk[]>([]);
   const [path, setPath] = useState("");
@@ -167,10 +168,7 @@ export function Knowledge() {
               Search backend
               <input value={searchBackend} onChange={(event) => setSearchBackend(event.target.value)} placeholder="sqlite, fts, or qdrant" />
             </label>
-            <label>
-              Client ID
-              <input value={searchClientId} onChange={(event) => setSearchClientId(event.target.value)} placeholder="Optional client scope" />
-            </label>
+            <ClientIdSelect label="Client ID" value={searchClientId} onChange={setSearchClientId} clients={clients} id="knowledge-search-client-id" />
           </div>
         </details>
         <div className="source-results">

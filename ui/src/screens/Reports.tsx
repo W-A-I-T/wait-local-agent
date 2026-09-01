@@ -1,6 +1,7 @@
 import { FormEvent, useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import { useDashboard } from "../app/DashboardContext";
 import { ApiRequestError, apiFetch, apiFetchBlob } from "../api/client";
+import { ClientIdSelect } from "../components/ClientIdSelect";
 import {
   type EvidenceReport,
   type EvidenceStatus,
@@ -54,7 +55,7 @@ const CHECK_SCOPES: Record<string, string> = {
 };
 
 export function Reports() {
-  const { role, roleResolved } = useDashboard();
+  const { clients = [], role, roleResolved } = useDashboard();
   const [reports, setReports] = useState<EvidenceReport[]>([]);
   const [hardeningRuns, setHardeningRuns] = useState<HardeningRun[]>([]);
   const [restoreExercises, setRestoreExercises] = useState<RestoreExercise[]>([]);
@@ -324,10 +325,7 @@ export function Reports() {
               Report type
               <input value={reportType} onChange={(event) => setReportType(event.target.value)} placeholder="Filter reports" />
             </label>
-            <label>
-              Client scope (admin only; others are bound)
-              <input value={clientId} onChange={(event) => setClientId(event.target.value)} />
-            </label>
+            <ClientIdSelect label="Client scope (admin only; others are bound)" value={clientId} onChange={setClientId} clients={clients} id="report-client-id" />
             <label>
               Project
               <input value={projectId} onChange={(event) => setProjectId(event.target.value)} />

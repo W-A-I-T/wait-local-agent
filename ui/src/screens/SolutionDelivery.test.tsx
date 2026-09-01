@@ -21,6 +21,7 @@ function baseDashboard() {
     approvalRequests: [] as ApprovalRequest[],
     canWrite: true,
     clientId: "acme",
+    clients: [{ client_id: "acme", name: "Acme Support", status: "active" }],
     executeApproval: vi.fn().mockResolvedValue(undefined),
     isAdmin: true,
     refresh: vi.fn().mockResolvedValue(undefined),
