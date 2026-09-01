@@ -327,6 +327,7 @@ def test_identity_lifecycle_updates_roles_and_rejects_unsafe_shapes(settings) ->
         "credential_rotation": True,
         "unified_activity": True,
     }
+    assert api.get("/packs/operator-control/principals", headers=_auth("bootstrap-admin")).json() == []
     principal, _ = create_principal(
         store,
         principal_id="staff-alpha",
