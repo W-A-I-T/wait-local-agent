@@ -17,3 +17,10 @@ ab32db28ff5b1ff73cae06a53ac043bc71c2b4dc:tests/test_update_channel.py:generic-ap
 2c2408b47397e92458c2e2c80c31b1cf82293663:tests/test_update_channel.py:generic-api-key:25
 2c2408b47397e92458c2e2c80c31b1cf82293663:tests/test_update_channel.py:generic-api-key:27
 350d90b5dee6493890094418f62024eeab637ae1:docs/local-demo.md:curl-auth-header:83
+# Re-detected on other in-flight branches sharing this repository's full ref
+# set (gitleaks scans all refs, not just the PR's own diff) as of 2026-09-01.
+# Same known-safe categories: fake test fixtures and a docs placeholder token.
+0a4168ec3cfede1b199d53b6b4a8c102718cbf3b:ui/src/screens/PrincipalsAdmin.test.tsx:generic-api-key:23
+f85235d54fdd160bef17c917dc36a5e9704f8d22:tests/test_diagnostics.py:aws-access-token:148
+f85235d54fdd160bef17c917dc36a5e9704f8d22:tests/test_diagnostics.py:aws-access-token:234
+f5f4fc7f05dfea30775d62ccbc93cc76e66c940f:docs/getting-started/local-demo.md:curl-auth-header:107
