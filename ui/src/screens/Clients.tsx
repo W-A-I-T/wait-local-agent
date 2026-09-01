@@ -53,6 +53,7 @@ export function Clients() {
   const [mutationBusy, setMutationBusy] = useState(false);
   const [verifyingMappingId, setVerifyingMappingId] = useState<string | null>(null);
   const [formError, setFormError] = useState("");
+  const [deploymentMode, setDeploymentMode] = useState<string | null>(null);
 
   const loadClients = useCallback(async () => {
     setLoading(true);
@@ -69,6 +70,11 @@ export function Clients() {
   }, []);
 
   useEffect(() => { void loadClients(); }, [loadClients]);
+  useEffect(() => {
+    void apiFetch<{ mode: string | null }>("/setup/mode")
+      .then((result) => setDeploymentMode(result.mode))
+      .catch(() => setDeploymentMode(null));
+  }, []);
 
   const selectClient = useCallback(async (clientId: string) => {
     setSelectedClientId(clientId);
@@ -249,6 +255,7 @@ export function Clients() {
         </div>
         <div className="analytics-filter-actions">
           <a className="secondary-button" href="/?onboarding=1&step=0">Return to setup</a>
+          {deploymentMode !== "smb" ? <a className="secondary-button" href="/client-discovery">Discover clients</a> : null}
           <RoleGate role={role} resolved={roleResolved} allowed={["admin"]}>
             <button className="secondary-button" type="button" onClick={beginCreate}>New client</button>
           </RoleGate>

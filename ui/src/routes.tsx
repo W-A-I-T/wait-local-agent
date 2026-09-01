@@ -33,6 +33,7 @@ import { Schedules } from "./screens/Schedules";
 import { ConnectorInstances } from "./screens/ConnectorInstances";
 import { SyncReconciliation } from "./screens/SyncReconciliation";
 import { Clients } from "./screens/Clients";
+import { ClientDiscovery } from "./screens/ClientDiscovery";
 import { Login } from "./screens/Login";
 import { M365Actions } from "./screens/M365Actions";
 import { MicrosoftAdmin } from "./screens/MicrosoftAdmin";
@@ -100,6 +101,7 @@ export function AppRoutes() {
       <Route path="login" element={<Login />} />
       <Route index element={<Overview />} />
       <Route path="clients" element={<Clients />} />
+      <Route path="client-discovery" element={<ClientDiscovery />} />
       <Route path="connectors" element={<Connectors />} />
       <Route path="m365-actions" element={<M365Actions />} />
       <Route

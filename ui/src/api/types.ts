@@ -47,6 +47,37 @@ export type Client = {
 
 export type ClientDirectoryEntry = Pick<Client, "client_id" | "name" | "status">;
 
+export type DeploymentMode = "msp" | "smb";
+
+export type ClientCandidate = {
+  candidate_id: string;
+  connector_instance_id: string;
+  provider: string;
+  external_id: string;
+  display_name: string;
+  domains_json: string;
+  provenance: string;
+  first_seen: string;
+  last_seen: string;
+  match_state: "verified" | "proposed" | "ambiguous" | "unmatched" | "conflicting" | "dismissed";
+  matched_client_id: string | null;
+  match_reason: string;
+  confidence: number;
+};
+
+export type DiscoveryResponse = {
+  items: ClientCandidate[];
+  page: number;
+  page_size: number;
+  summary: {
+    discovered: number;
+    reconciled: number;
+    need_confirmation: number;
+    unmatched: number;
+    conflicts: number;
+  };
+};
+
 export type EntityRef = {
   id: number;
   client_id: string;

@@ -35,6 +35,7 @@ from wait_local_agent.models import (
     AuditEvent,
     CanonicalAsset,
     Client,
+    ClientCandidate,
     ClientConnectorMapping,
     CollectorRun,
     CollectorSource,
@@ -317,6 +318,7 @@ class Store:
                     Migration(7, "operational_graph", self._apply_operational_graph_migration),
                     Migration(8, "auth_sessions_and_config", self._apply_auth_sessions_and_config_migration),
                     Migration(9, "principal_identities", self._apply_principal_identities_migration),
+                    Migration(10, "client_candidates", self._apply_client_candidates_migration),
                 )
             )
             self._apply_startup_repairs(connection)
@@ -758,6 +760,35 @@ class Store:
         )
 
     @staticmethod
+    def _apply_client_candidates_migration(connection: sqlite3.Connection) -> None:
+        connection.execute(
+            """
+            create table if not exists client_candidates (
+                candidate_id text primary key,
+                connector_instance_id text not null references connector_instances(connector_instance_id)
+                  on delete cascade,
+                provider text not null,
+                external_id text not null,
+                display_name text not null,
+                domains_json text not null default '[]',
+                provenance text not null,
+                first_seen text not null,
+                last_seen text not null,
+                match_state text not null check (
+                  match_state in ('verified','proposed','ambiguous','unmatched','conflicting','dismissed')
+                ),
+                matched_client_id text references clients(client_id),
+                match_reason text not null default '',
+                confidence real not null default 0.0,
+                unique(connector_instance_id, external_id)
+            )
+            """
+        )
+        connection.execute(
+            "create index if not exists idx_client_candidates_state on client_candidates(match_state, last_seen desc)"
+        )
+
+    @staticmethod
     def _apply_operational_graph_migration(connection: sqlite3.Connection) -> None:
         """Add the client-scoped operational graph tables without changing existing data."""
 
@@ -1053,6 +1084,155 @@ class Store:
                 """,
                 (normalized_key, config_value, utc_now(), updated_by),
             )
+
+    def upsert_client_candidate(
+        self,
+        candidate: ClientCandidate,
+        *,
+        preserve_state: bool = True,
+    ) -> ClientCandidate:
+        """Insert or refresh one provider candidate without duplicating it."""
+
+        if not candidate.candidate_id.strip() or not candidate.connector_instance_id.strip():
+            raise ValueError("candidate and connector instance IDs must be non-empty")
+        if not candidate.external_id.strip() or not candidate.display_name.strip():
+            raise ValueError("candidate external_id and display_name must be non-empty")
+        if candidate.match_state not in {"verified", "proposed", "ambiguous", "unmatched", "conflicting", "dismissed"}:
+            raise ValueError("unsupported candidate match state")
+        with self._connect() as connection:
+            connection.execute(
+                """
+                insert into client_candidates
+                  (candidate_id, connector_instance_id, provider, external_id, display_name,
+                   domains_json, provenance, first_seen, last_seen, match_state,
+                   matched_client_id, match_reason, confidence)
+                values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                on conflict(connector_instance_id, external_id) do update set
+                  display_name = excluded.display_name,
+                  domains_json = excluded.domains_json,
+                  provenance = excluded.provenance,
+                  last_seen = excluded.last_seen,
+                  match_state = case
+                    when client_candidates.match_state = 'verified' then 'verified'
+                    when client_candidates.match_state = 'dismissed' then 'dismissed'
+                    when ? then excluded.match_state
+                    else client_candidates.match_state
+                  end,
+                  matched_client_id = case
+                    when client_candidates.match_state in ('verified', 'dismissed')
+                      then client_candidates.matched_client_id
+                    when ? then excluded.matched_client_id
+                    else client_candidates.matched_client_id
+                  end,
+                  match_reason = case
+                    when client_candidates.match_state in ('verified', 'dismissed') then client_candidates.match_reason
+                    when ? then excluded.match_reason
+                    else client_candidates.match_reason
+                  end,
+                  confidence = case
+                    when client_candidates.match_state in ('verified', 'dismissed') then client_candidates.confidence
+                    when ? then excluded.confidence
+                    else client_candidates.confidence
+                  end
+                """,
+                (
+                    candidate.candidate_id,
+                    candidate.connector_instance_id,
+                    candidate.provider,
+                    candidate.external_id,
+                    candidate.display_name,
+                    candidate.domains_json,
+                    candidate.provenance,
+                    candidate.first_seen,
+                    candidate.last_seen,
+                    candidate.match_state,
+                    candidate.matched_client_id,
+                    candidate.match_reason,
+                    candidate.confidence,
+                    int(not preserve_state),
+                    int(not preserve_state),
+                    int(not preserve_state),
+                    int(not preserve_state),
+                ),
+            )
+            row = connection.execute(
+                "select * from client_candidates where connector_instance_id = ? and external_id = ?",
+                (candidate.connector_instance_id, candidate.external_id),
+            ).fetchone()
+        if row is None:  # pragma: no cover - successful insert/upsert always returns a row
+            raise RuntimeError("client candidate could not be stored")
+        return _candidate_from_row(row)
+
+    def list_client_candidates(
+        self,
+        *,
+        match_state: str | None = None,
+        offset: int = 0,
+        limit: int = 100,
+    ) -> list[ClientCandidate]:
+        if offset < 0 or limit < 1 or limit > 500:
+            raise ValueError("candidate pagination is out of bounds")
+        clauses: list[str] = []
+        params: list[object] = []
+        if match_state is not None:
+            if match_state not in {"verified", "proposed", "ambiguous", "unmatched", "conflicting", "dismissed"}:
+                raise ValueError("unsupported candidate match state")
+            clauses.append("match_state = ?")
+            params.append(match_state)
+        where = f"where {' and '.join(clauses)}" if clauses else ""
+        with self._connect() as connection:
+            rows = connection.execute(
+                f"select * from client_candidates {where} order by last_seen desc, candidate_id limit ? offset ?",  # nosec B608: where is fixed internal SQL
+                [*params, limit, offset],
+            ).fetchall()
+        return [_candidate_from_row(row) for row in rows]
+
+    def get_client_candidate(self, candidate_id: str) -> ClientCandidate | None:
+        normalized_id = _normalize_client_id(candidate_id)
+        if normalized_id is None:
+            return None
+        with self._connect() as connection:
+            row = connection.execute(
+                "select * from client_candidates where candidate_id = ?", (normalized_id,)
+            ).fetchone()
+        return _candidate_from_row(row) if row else None
+
+    def set_client_candidate_state(
+        self,
+        candidate_id: str,
+        match_state: str,
+        *,
+        matched_client_id: str | None = None,
+        match_reason: str = "",
+        confidence: float = 0.0,
+    ) -> ClientCandidate | None:
+        normalized_id = _normalize_client_id(candidate_id)
+        if normalized_id is None:
+            return None
+        if match_state not in {"verified", "proposed", "ambiguous", "unmatched", "conflicting", "dismissed"}:
+            raise ValueError("unsupported candidate match state")
+        if not 0.0 <= confidence <= 1.0:
+            raise ValueError("candidate confidence must be between 0 and 1")
+        with self._connect() as connection:
+            connection.execute(
+                """
+                update client_candidates
+                set match_state = ?, matched_client_id = ?, match_reason = ?, confidence = ?
+                where candidate_id = ?
+                """,
+                (match_state, matched_client_id, match_reason, confidence, normalized_id),
+            )
+            row = connection.execute(
+                "select * from client_candidates where candidate_id = ?", (normalized_id,)
+            ).fetchone()
+        return _candidate_from_row(row) if row else None
+
+    def count_client_candidates(self) -> dict[str, int]:
+        with self._connect() as connection:
+            rows = connection.execute(
+                "select match_state, count(*) as count from client_candidates group by match_state"
+            ).fetchall()
+        return {str(row["match_state"]): int(row["count"]) for row in rows}
 
     def add_principal_identity(
         self,
@@ -10252,6 +10432,12 @@ def _connector_instance_from_row(row: sqlite3.Row) -> ConnectorInstance:
 
 def _mapping_from_row(row: sqlite3.Row) -> ClientConnectorMapping:
     return ClientConnectorMapping(**dict(row))
+
+
+def _candidate_from_row(row: sqlite3.Row) -> ClientCandidate:
+    payload = dict(row)
+    payload["confidence"] = float(payload["confidence"])
+    return ClientCandidate(**payload)
 
 
 def _sync_cursor_from_row(row: sqlite3.Row) -> SyncCursor:
