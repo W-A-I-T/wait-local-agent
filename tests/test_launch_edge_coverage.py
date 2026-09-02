@@ -30,10 +30,10 @@ def test_api_token_not_required_in_demo_mode_even_when_configured(settings) -> N
     assert ok.status_code == 200
 
 
-def test_audit_export_api_rejects_unsupported_format(settings) -> None:
+def test_audit_events_export_api_rejects_unsupported_format(settings) -> None:
     client = TestClient(create_app(settings))
 
-    response = client.get("/audit/export", params={"export_format": "xml"})
+    response = client.get("/audit-events/export", params={"format": "xml"})
 
     assert response.status_code == 422
 

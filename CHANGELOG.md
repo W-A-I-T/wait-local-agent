@@ -21,6 +21,11 @@ All notable changes to WAIT Local Agent will be documented in this file.
   `WAIT_ALLOW_INSECURE_PROVIDER_TRANSPORT=true` only when plain HTTP is
   deliberately required for all provider origins on a trusted network.
 
+### Removed
+
+- Removed the duplicate `GET /audit/export` route; use
+  `GET /audit-events/export` with the `format` query parameter.
+
 ### Changed
 
 - Scheduled jobs now declare single-instance execution and a bounded 300-second
@@ -31,6 +36,11 @@ All notable changes to WAIT Local Agent will be documented in this file.
 - The operator shell now reports the aggregate write gate across configured PSA
   connectors, keeps administrator-only surfaces behind role checks, and makes
   the separate customer portal boundary explicit in navigation.
+- Appliance Health now lets administrators confirm and run an on-demand
+  backup, then review its persisted ID, status, size, and timestamp. The
+  Automation Discovery panel now exposes pack status, categories, mapping
+  readiness, and credential-free time-entry evidence import with role-aware
+  loading and error states.
 - The Solutions Architect screen (renamed from Consultant) now surfaces the
   architecture decision engine, including per-component chosen targets,
   rationale, alternatives, requirements, and a decision-engine summary.
