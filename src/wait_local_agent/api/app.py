@@ -80,7 +80,11 @@ from wait_local_agent.collectors import (
     default_registry,
 )
 from wait_local_agent.communication import ConfiguredCommunicationProvider
-from wait_local_agent.config import Settings, load_settings
+from wait_local_agent.config import (
+    Settings,
+    load_settings,
+    validate_secrets_backend_configuration,
+)
 from wait_local_agent.confluence import ConfluenceClient, ConfluenceReadResponse
 from wait_local_agent.connector_factory import (
     ConnectorFactoryError,
@@ -1168,6 +1172,7 @@ def _resolve_ui_dist() -> Path | None:
 
 def create_app(settings: Settings | None = None) -> FastAPI:
     active_settings = settings or load_settings()
+    validate_secrets_backend_configuration(active_settings)
     if active_settings.demo_mode:
         active_settings = replace(
             active_settings,

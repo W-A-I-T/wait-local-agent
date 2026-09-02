@@ -84,6 +84,13 @@ from wait_local_agent.syncro import SyncroCommentsResponse, SyncroReadResponse
 from wait_local_agent.vault import SecretVault
 
 
+def test_app_rejects_invalid_secrets_backend_at_construction(settings) -> None:
+    invalid_settings = replace(settings, secrets_backend="vault")
+
+    with pytest.raises(ValueError, match=r"WAIT_SECRETS_BACKEND=.*vault"):
+        create_app(invalid_settings)
+
+
 def test_validation_errors_redact_sensitive_route_inputs(settings) -> None:
     client = TestClient(create_app(settings))
 

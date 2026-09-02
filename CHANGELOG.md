@@ -4,6 +4,13 @@ All notable changes to WAIT Local Agent will be documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+
+- Invalid `WAIT_SECRETS_BACKEND` values now refuse startup instead of silently
+  selecting the environment backend; Fernet vault read failures are surfaced
+  during settings load, and short non-demo bootstrap tokens emit value-free
+  startup warnings.
+
 ### Breaking
 
 - Power Platform solution packages now use the proven XML layout under

@@ -5,7 +5,7 @@ from pathlib import Path
 import pytest
 
 from wait_local_agent.config import Settings, load_settings, validate_scheduler_worker_configuration
-from wait_local_agent.vault import SecretVault
+from wait_local_agent.vault import SecretVault, SecretVaultError
 
 
 def test_safe_defaults_are_disabled(monkeypatch) -> None:
@@ -464,14 +464,79 @@ def test_fernet_secret_backend_overrides_env_values(monkeypatch, tmp_path) -> No
     assert settings.license_key == "vault-license-key"
 
 
-def test_invalid_secrets_backend_falls_back_to_env(monkeypatch) -> None:
-    monkeypatch.setenv("WAIT_SECRETS_BACKEND", "sqlite")
-    monkeypatch.setenv("WAIT_HUDU_API_KEY", "env-key")
+@pytest.mark.parametrize("backend", ["vault", "sqlite", ""])
+def test_invalid_secrets_backend_is_rejected(monkeypatch, backend: str) -> None:
+    monkeypatch.setenv("WAIT_SECRETS_BACKEND", backend)
+
+    with pytest.raises(ValueError) as exc_info:
+        load_settings()
+
+    message = str(exc_info.value)
+    assert "WAIT_SECRETS_BACKEND" in message
+    assert repr(backend) in message
+    assert "env" in message
+    assert "fernet" in message
+
+
+@pytest.mark.parametrize("backend", ["env", " ENV ", "fernet", " FERNET "])
+def test_supported_secrets_backend_values_are_normalized(monkeypatch, backend: str) -> None:
+    monkeypatch.setenv("WAIT_SECRETS_BACKEND", backend)
 
     settings = load_settings()
 
-    assert settings.secrets_backend == "env"
-    assert settings.hudu_api_key == "env-key"
+    assert settings.secrets_backend == backend.strip().lower()
+
+
+def test_fernet_secret_vault_errors_propagate_during_settings_load(monkeypatch) -> None:
+    monkeypatch.setenv("WAIT_SECRETS_BACKEND", "fernet")
+
+    def raise_vault_error(*_args, **_kwargs):
+        raise SecretVaultError("vault unavailable")
+
+    monkeypatch.setattr(SecretVault, "get", raise_vault_error)
+
+    with pytest.raises(SecretVaultError, match="vault unavailable"):
+        load_settings()
+
+
+@pytest.mark.parametrize(
+    ("variable", "token"),
+    [
+        ("WAIT_ADMIN_TOKEN", "short-admin"),
+        ("WAIT_TECH_TOKEN", "short-tech"),
+        ("WAIT_VIEWER_TOKEN", "short-viewer"),
+        ("WAIT_API_TOKEN", "short-api"),
+    ],
+)
+def test_short_bootstrap_token_logs_one_warning_without_value(
+    monkeypatch, caplog, variable: str, token: str
+) -> None:
+    monkeypatch.setenv(variable, token)
+
+    with caplog.at_level("WARNING", logger="wait_local_agent.config"):
+        load_settings()
+
+    warnings = [record for record in caplog.records if record.levelname == "WARNING"]
+    assert len(warnings) == 1
+    assert variable in warnings[0].message
+    assert token not in warnings[0].message
+
+
+def test_bootstrap_token_warning_is_skipped_for_strong_tokens_and_demo_mode(
+    monkeypatch, caplog
+) -> None:
+    for variable in ("WAIT_ADMIN_TOKEN", "WAIT_TECH_TOKEN", "WAIT_VIEWER_TOKEN", "WAIT_API_TOKEN"):
+        monkeypatch.setenv(variable, "a" * 16)
+
+    with caplog.at_level("WARNING", logger="wait_local_agent.config"):
+        load_settings()
+    assert not caplog.records
+
+    monkeypatch.setenv("WAIT_ADMIN_TOKEN", "short-admin")
+    monkeypatch.setenv("WAIT_DEMO_MODE", "true")
+    with caplog.at_level("WARNING", logger="wait_local_agent.config"):
+        load_settings()
+    assert not caplog.records
 
 
 def test_non_positive_timeout_env_falls_back_to_default(monkeypatch) -> None:
@@ -482,16 +547,12 @@ def test_non_positive_timeout_env_falls_back_to_default(monkeypatch) -> None:
     assert settings.local_model_timeout_seconds == 20.0
 
 
-def test_environment_helpers_cover_optional_values_and_invalid_secret_vault(monkeypatch, tmp_path) -> None:
-    vault_path = tmp_path / "corrupt-vault"
-    vault = SecretVault.initialize(vault_path)
-    vault.secrets_path.write_bytes(b"sample-invalid-vault-payload")
+def test_environment_helpers_cover_optional_values(monkeypatch) -> None:
     monkeypatch.setenv("WAIT_MODEL_INPUT_COST_USD_PER_MILLION_TOKENS", "0")
     monkeypatch.setenv("WAIT_MODEL_OUTPUT_COST_USD_PER_MILLION_TOKENS", " ")
     monkeypatch.setenv("WAIT_LOCAL_MODEL_TIMEOUT_SECONDS", "15")
     monkeypatch.setenv("WAIT_COMMUNICATION_EMAIL_PORT", "2525")
-    monkeypatch.setenv("WAIT_SECRETS_BACKEND", "fernet")
-    monkeypatch.setenv("WAIT_VAULT_PATH", str(vault_path))
+    monkeypatch.setenv("WAIT_SECRETS_BACKEND", "env")
     monkeypatch.setenv("WAIT_REMOTE_MODEL_API_KEY", "sample-model-value")
 
     settings = load_settings()
