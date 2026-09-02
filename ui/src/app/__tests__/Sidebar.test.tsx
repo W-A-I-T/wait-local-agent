@@ -94,9 +94,11 @@ describe("Sidebar navigation IA", () => {
       expect(within(drawer).getByRole("link", { name: label })).toHaveAttribute("href", path);
     }
 
+    const links = screen.getAllByRole("link");
     for (const [label, path] of destinations) {
-      expect(screen.getAllByRole("link", { name: label })).toHaveLength(1);
-      expect(screen.getByRole("link", { name: label })).toHaveAttribute("href", path);
+      const matchingLinks = links.filter((link) => link.textContent?.trim() === label);
+      expect(matchingLinks).toHaveLength(1);
+      expect(matchingLinks[0]).toHaveAttribute("href", path);
     }
   });
 

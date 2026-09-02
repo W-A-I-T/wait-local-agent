@@ -62,7 +62,7 @@ All notable changes to WAIT Local Agent will be documented in this file.
 - Power Platform deployment and rollback execution now enforce the minimum CLI
   version and block when the installed version cannot be determined.
 
-- Flaky diagnostics and Microsoft Administrator tests now isolate legitimate uptime changes and concurrent notices.
+- Flaky diagnostics, Sidebar navigation, Solutions Architect, and Microsoft Administrator tests now isolate legitimate timing changes and avoid repeated full-tree queries under coverage.
 
 - Power Platform package deployability is now computed from emitted component
   readiness instead of being asserted by a hardcoded value.

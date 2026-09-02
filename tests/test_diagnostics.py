@@ -168,6 +168,11 @@ def test_bundle_manifest_hashes_entries_and_is_deterministic(
     monotonic_values = iter((100.1, 101.1))
     monkeypatch.setattr(diagnostics_module, "_PROCESS_STARTED_MONOTONIC", 100.0)
     monkeypatch.setattr(diagnostics_module.time, "monotonic", lambda: next(monotonic_values))
+    monkeypatch.setattr(
+        diagnostics_module.shutil,
+        "disk_usage",
+        lambda _path: SimpleNamespace(free=128 * 1024 * 1024),
+    )
 
     first = build_support_bundle(settings, store, case_id="case-private-44")
     first_bytes = first.path.read_bytes()
@@ -187,8 +192,8 @@ def test_bundle_manifest_hashes_entries_and_is_deterministic(
     assert first_system["uptime_seconds"] == 0
     assert second_system["uptime_seconds"] == 1
     # uptime_seconds is excluded because it advances between collections;
-    # process_started_at is captured once at process start, and free_disk_bytes
-    # is rounded to MiB, so both remain part of the stable system subset.
+    # process_started_at is captured once at process start, and disk usage is
+    # pinned at the collector boundary so both remain part of the stable system subset.
     stable_first_system = {key: value for key, value in first_system.items() if key != "uptime_seconds"}
     stable_second_system = {key: value for key, value in second_system.items() if key != "uptime_seconds"}
     assert stable_first_system == stable_second_system
