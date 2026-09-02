@@ -24,7 +24,6 @@
       "GET /approval-requests/{request_id}": "exposed",
       "GET /audit": "exposed",
       "GET /audit-events/export": "exposed",
-      "GET /audit/export": "exposed",
       "GET /auth/role": "exposed",
       "GET /auth/session": "exposed",
       "GET /auth/principals": "admin",

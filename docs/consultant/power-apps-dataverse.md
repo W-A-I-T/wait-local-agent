@@ -27,5 +27,8 @@ For local automation, place the request fields in a JSON file and run:
 wait-local-agent microsoft power-apps plan plan.json
 ```
 
+The Power Apps planner is API/CLI only — not available in the dashboard. The
+command above emits the reviewable plan artifact.
+
 The CLI emits the same JSON artifact as the API. Credentials and service-role
 keys are not accepted as plan inputs.

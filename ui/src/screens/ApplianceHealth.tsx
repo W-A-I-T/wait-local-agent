@@ -1,6 +1,6 @@
-import { useCallback, useEffect, useState } from "react";
-import { apiFetch } from "../api/client";
-import type { ApplianceHealth as ApplianceHealthResponse, HardeningRun, UpdateStatus } from "../api/types";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { ApiRequestError, apiFetch } from "../api/client";
+import type { ApplianceHealth as ApplianceHealthResponse, BackupRun, BackupStatusResponse, HardeningRun, UpdateStatus } from "../api/types";
 import { useDashboard } from "../app/DashboardContext";
 import { RoleGate } from "../components/RoleGate";
 import { StatusChip } from "../components/StatusChip";
@@ -25,6 +25,12 @@ export function ApplianceHealth() {
   const [hardeningRuns, setHardeningRuns] = useState<HardeningRun[]>([]);
   const [loading, setLoading] = useState(false);
   const [statusMessage, setStatusMessage] = useState("");
+  const [backupStatus, setBackupStatus] = useState<BackupStatusResponse | null>(null);
+  const [backupLoading, setBackupLoading] = useState(false);
+  const [backupMessage, setBackupMessage] = useState("");
+  const [backupError, setBackupError] = useState("");
+  const [confirmingBackup, setConfirmingBackup] = useState(false);
+  const backupRunInFlight = useRef(false);
   const canView = roleResolved && isAdmin;
 
   const refresh = useCallback(async () => {
@@ -63,6 +69,33 @@ export function ApplianceHealth() {
       void refresh();
     }
   }, [canView, refresh]);
+
+  const confirmBackup = async () => {
+    if (backupRunInFlight.current || health?.demo_mode !== false) return;
+    backupRunInFlight.current = true;
+    setBackupLoading(true);
+    setConfirmingBackup(false);
+    setBackupMessage("");
+    setBackupError("");
+    try {
+      const requestedRun = await apiFetch<BackupRun>("/backups/run", { method: "POST" });
+      const status = await apiFetch<BackupStatusResponse>("/backups");
+      setBackupStatus(status);
+      const recordedRun = status.items.find((run) => run.backup_run_id === requestedRun.backup_run_id) ?? status.items[0];
+      if (recordedRun) {
+        setBackupMessage(`Backup run ${recordedRun.backup_run_id} recorded with status ${recordedRun.status}.`);
+      } else {
+        setBackupMessage(`Backup run ${requestedRun.backup_run_id} returned status ${requestedRun.status}, but no run record was found.`);
+      }
+    } catch (error: unknown) {
+      setBackupError(error instanceof ApiRequestError || error instanceof Error
+        ? error.message
+        : "Unable to run a backup on this appliance.");
+    } finally {
+      backupRunInFlight.current = false;
+      setBackupLoading(false);
+    }
+  };
 
   const latestHardeningRun = hardeningRuns[0];
   const accessRole = role ?? (isAdmin ? "admin" : "viewer");
@@ -162,8 +195,59 @@ export function ApplianceHealth() {
             </div>
           ) : <p className="screen-note">No hardening runs have been recorded yet.</p>}
         </section>
+
+        <section className="panel" aria-labelledby="backup-run-heading">
+          <div className="panel-heading">
+            <div>
+              <h2 id="backup-run-heading">On-demand backup</h2>
+              <p className="screen-note">Create an encrypted appliance backup and verify its persisted run record.</p>
+            </div>
+            <span>{backupStatus?.total ?? "admin only"}</span>
+          </div>
+
+          {health?.demo_mode === true ? (
+            <p className="screen-note">Backup runs are unavailable in demo mode.</p>
+          ) : health === null ? (
+            <p className="screen-note">Backup controls will be available after appliance health loads.</p>
+          ) : null}
+          {backupError ? <div className="notice danger" role="alert">{backupError}</div> : null}
+          {backupMessage ? <div className="notice" role="status">{backupMessage}</div> : null}
+
+          <button
+            type="button"
+            disabled={backupLoading || health?.demo_mode !== false}
+            title={health?.demo_mode === true ? "Backup runs are unavailable in demo mode" : undefined}
+            onClick={() => setConfirmingBackup(true)}
+          >
+            {backupLoading ? "Running backup…" : "Run backup now"}
+          </button>
+
+          {confirmingBackup ? (
+            <div className="notice confirm-panel" role="alertdialog" aria-label="Confirm backup run">
+              <p>Run an encrypted backup now? This may take a moment and will create a new appliance backup record.</p>
+              <div className="row-actions">
+                <button type="button" onClick={() => void confirmBackup()} disabled={backupLoading}>Confirm backup run</button>
+                <button type="button" className="icon-button" onClick={() => setConfirmingBackup(false)} disabled={backupLoading}>Cancel</button>
+              </div>
+            </div>
+          ) : null}
+
+          {backupStatus?.items[0] ? <BackupRunSummary run={backupStatus.items[0]} /> : null}
+        </section>
       </div>
     </RoleGate>
+  );
+}
+
+function BackupRunSummary({ run }: { run: BackupRun }) {
+  return (
+    <div className="connection-state" aria-label="Latest backup run">
+      <StatusChip status={run.status} />
+      <span>Run {run.backup_run_id}</span>
+      <span>Size: {formatBytes(run.size_bytes)}</span>
+      <span>Finished: {run.finished_at || run.started_at || "Not recorded"}</span>
+      {run.failure_summary ? <span>{run.failure_summary}</span> : null}
+    </div>
   );
 }
 
@@ -216,4 +300,11 @@ function sortLatest(runs: HardeningRun[]): HardeningRun[] {
     const rightDate = right.completed_at || right.started_at;
     return rightDate.localeCompare(leftDate);
   });
+}
+
+function formatBytes(value: number | null): string {
+  if (value === null) return "Not recorded";
+  if (value < 1024) return `${value} B`;
+  if (value < 1024 * 1024) return `${(value / 1024).toFixed(1)} KB`;
+  return `${(value / (1024 * 1024)).toFixed(1)} MB`;
 }

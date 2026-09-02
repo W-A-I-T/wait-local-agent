@@ -94,3 +94,7 @@ connector actions, but it does not provision a Copilot, acquire credentials,
 publish a channel, or call Microsoft services. MCP server/client and Work IQ
 integration are also available behind explicit configuration. Production
 deployment remains a separate approval-gated operation.
+
+The Copilot Studio planner is API/CLI only — not available in the dashboard.
+Use `wait-local-agent microsoft copilot-studio plan copilot.json` to create its
+review-only handoff.

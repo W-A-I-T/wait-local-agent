@@ -88,6 +88,48 @@ export type DiscoveryResponse = {
   };
 };
 
+export type AutomationDiscoveryStatus = {
+  status: string;
+  external_writes: boolean;
+  discovery_source: string;
+  measured_labor_source: string;
+};
+
+export type AutomationDiscoveryCategory = {
+  category_id: string;
+  label: string;
+  patterns: string[];
+  workflows: string[];
+  playbooks: string[];
+  prerequisites: string[];
+  default_minutes_estimate: number;
+};
+
+export type AutomationMappingReadiness = {
+  client_id?: string;
+  families: Record<string, { verified: number; unverified: number }>;
+  mappings: Array<{
+    mapping_id: string;
+    connector_instance_id: string;
+    connector_type: string;
+    family: string;
+    external_company_id: string;
+    external_company_name: string;
+    verified: boolean;
+  }>;
+  verified_count: number;
+  unverified_count: number;
+  coverage_goal: string[];
+};
+
+export type AutomationTimeEntryImportResponse = {
+  client_id: string;
+  inserted: number;
+  duplicate: number;
+  rejected: number;
+  external_writes: boolean;
+};
+
 export type EntityRef = {
   id: number;
   client_id: string;
