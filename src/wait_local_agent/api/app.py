@@ -4263,9 +4263,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         page_size: int = 50,
         client_id: str | None = None,
     ) -> dict[str, object]:
-        scope = resolve_client_scope(context, requested_client_from(request, client_id))
+        # Halo tickets are provider rows.  They carry the provider's customer
+        # identifier, not a WAIT client boundary, so scope validation here is
+        # intentionally separate from response filtering.
+        resolve_client_scope(context, requested_client_from(request, client_id))
         response = halopsa_client.list_tickets(page=page, page_size=page_size)
-        return _halopsa_response("tickets.list", response, scope=scope)
+        return _halopsa_response("tickets.list", response)
 
     @app.get("/connectors/halopsa/tickets/{ticket_id}")
     @limiter.limit(active_settings.rate_limit_connector)
@@ -7716,16 +7719,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     def _halopsa_response(
         read_type: str,
         response: HaloReadResponse,
-        *,
-        scope: ClientScope | None = None,
     ) -> dict[str, object]:
         items = response.items
-        if isinstance(scope, BoundClients):
-            items = [
-                item
-                for item in items
-                if _normalize_client_id(getattr(item, "client_id", None)) in scope.client_ids
-            ]
         result = asdict(response.result)
         result["count"] = len(items)
         _audit_halopsa_read(read_type, response.result.status, len(items))

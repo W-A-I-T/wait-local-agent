@@ -12,6 +12,7 @@ from fastapi.routing import APIRoute
 from fastapi.testclient import TestClient
 from starlette.requests import Request
 
+import wait_local_agent.api.app as app_module
 from tests.support import ensure_test_clients
 from wait_local_agent.api.app import (
     EndUserMessageRequest,
@@ -22,6 +23,7 @@ from wait_local_agent.api.app import (
     create_app,
 )
 from wait_local_agent.client_scope import AllClients, BoundClients, requested_client_from, resolve_client_scope
+from wait_local_agent.models import HaloReadResponse, HaloReadResult, HaloTicket
 from wait_local_agent.rbac import AuthContext, Role, resolve_auth_context
 from wait_local_agent.store import Store
 
@@ -215,6 +217,53 @@ def test_requested_client_header_is_one_shared_precedence_boundary() -> None:
     assert requested_client_from(request, "alpha") == "alpha"
     with pytest.raises(HTTPException, match="conflicting client scopes"):
         requested_client_from(request, "beta")
+
+
+def test_halopsa_selected_scope_validates_without_filtering_provider_rows(settings, monkeypatch) -> None:
+    secure_settings = replace(
+        settings,
+        demo_mode=False,
+        client_id="alpha",
+        admin_token="admin-token",
+    )
+    store = Store(secure_settings.data_path)
+    ensure_test_clients(store, "alpha", "beta")
+    store.create_principal("alpha-viewer", kind="staff")
+    store.add_principal_credential("alpha-viewer", "alpha-viewer-token")
+    store.add_principal_client_role("alpha-viewer", "alpha", "viewer")
+
+    class FakeHaloClient:
+        def __init__(self, _settings) -> None:
+            pass
+
+        def list_tickets(self, page: int = 1, page_size: int = 50) -> HaloReadResponse:
+            return HaloReadResponse(
+                HaloReadResult("ready", f"page {page}, size {page_size}", 1),
+                [HaloTicket("HALO-1", "Provider ticket", "Open", "High", "provider-customer", "Provider")],
+            )
+
+    monkeypatch.setattr(app_module, "HaloPSAClient", FakeHaloClient)
+    app = create_app(secure_settings)
+    context = resolve_auth_context(secure_settings, "Bearer alpha-viewer-token", app.state.store)
+    endpoint = next(
+        route.endpoint
+        for route in app.routes
+        if isinstance(route, APIRoute) and route.path == "/connectors/halopsa/tickets"
+    )
+
+    def scoped_request() -> Request:
+        return Request({
+            "type": "http",
+            "method": "GET",
+            "path": "/connectors/halopsa/tickets",
+            "headers": [(b"x-wait-client-id", b"alpha")],
+        })
+
+    selected = endpoint(request=scoped_request(), context=context, page=1, page_size=50, client_id=None)
+
+    assert selected["items"][0]["id"] == "HALO-1"
+    with pytest.raises(HTTPException, match="conflicting"):
+        endpoint(request=scoped_request(), context=context, page=1, page_size=50, client_id="beta")
 
 
 def test_collection_routes_honor_selected_client_header(settings) -> None:

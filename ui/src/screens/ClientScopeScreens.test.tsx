@@ -5,8 +5,12 @@ import { useDashboard } from "../app/DashboardContext";
 import { ActivityRuns } from "./ActivityRuns";
 import { Audit } from "./Audit";
 import { Executions } from "./Executions";
+import { Overview } from "./Overview";
 
 vi.mock("../app/DashboardContext", () => ({ useDashboard: vi.fn() }));
+vi.mock("../components/SetupStatus", () => ({
+  SetupStatus: () => <div>Setup status</div>
+}));
 
 const mockedUseDashboard = vi.mocked(useDashboard);
 const clients = [{ client_id: "alpha", name: "Alpha Support", status: "active" }];
@@ -25,7 +29,23 @@ describe("client-scoped activity screens", () => {
       requests.push({ path: String(input), headers: new Headers(init?.headers) });
       return new Response(JSON.stringify([]), { headers: { "Content-Type": "application/json" } });
     }));
-    mockedUseDashboard.mockReturnValue({ selectedClientId: "alpha", clients } as never);
+    mockedUseDashboard.mockReturnValue({
+      selectedClientId: "alpha",
+      clients,
+      connectors: [],
+      liveWritesReady: false,
+      writeHealth: { status: "blocked", message: "Writes are gated.", count: 0 },
+      workflowRuns: [],
+      eventHistory: [],
+      eventDeliveries: [],
+      retryEventDelivery: vi.fn(),
+      canWrite: false,
+      isConfigured: true,
+      configurationLoading: false,
+      roleResolved: true,
+      isAdmin: false,
+      isMspAdmin: false
+    } as never);
     window.localStorage.setItem("wait-local-agent-selected-client", "alpha");
   });
 
@@ -43,6 +63,12 @@ describe("client-scoped activity screens", () => {
     expect(await screen.findByText("Scoped to Alpha Support")).toBeInTheDocument();
     const request = requests.find((entry) => entry.path.startsWith(path));
     expect(request?.headers.get("X-WAIT-Client-ID")).toBe("alpha");
+  });
+
+  it("shows the selected scope on the Operations Overview", () => {
+    renderScreen(<Overview />);
+
+    expect(screen.getByText("Scoped to Alpha Support")).toBeInTheDocument();
   });
 
   it("shows All clients and omits the scope header when the selector is cleared", async () => {
