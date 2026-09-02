@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 import json
+import time
 from dataclasses import asdict, is_dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Annotated, Any, cast
 from uuid import uuid4
@@ -35,7 +36,8 @@ from wait_local_agent.lp_client import (
     scrub_upstream_value,
     validate_launch_passport_base_url,
 )
-from wait_local_agent.lp_polling import PollOutcome, poll_scan
+from wait_local_agent.lp_polling import POLL_TERMINAL_STATES, PollOutcome, PollStatus, poll_scan_once
+from wait_local_agent.models import utc_now
 from wait_local_agent.rbac import AuthContext, Role, require_role
 from wait_local_agent.store import Store
 from wait_local_agent.vault import SecretVault, SecretVaultError
@@ -159,8 +161,8 @@ def create_router() -> APIRouter:
             # response contract.  Only values returned by the HTTP client are
             # treated as untrusted Launch Passport responses and projected.
             return json_object(invoke_founder(pack, "lp_status"), operation="lp_status")
-        settings, _store, config = require_open_config(request)
-        return open_founder_status(settings, config)
+        settings, store, config = require_open_config(request)
+        return open_founder_status(settings, config, store)
 
     @router.get("/founder/results")
     def founder_results(request: Request, _: AdminAccess) -> dict[str, object]:
@@ -405,23 +407,62 @@ def open_founder_upload(
         )
         if not isinstance(result_payload, dict):
             result_payload = result.as_dict()
-    store.mark_founder_artifact_uploaded(artifact_id)
+        store.mark_founder_artifact_uploaded(artifact_id)
     scan_id = _scan_id_from_payload(result_payload)
     if scan_id:
+        queued_at = utc_now()
         store.update_founder_artifact_remote(
             artifact_id,
             scan_id=scan_id,
             scan_status=_scan_status_from_payload(result_payload),
             scan=result_payload,
             polling_status="queued",
+            polling_started_at=queued_at,
+            next_attempt_at=queued_at,
+            polling_attempts=0,
         )
     return project_founder_upload(result_payload)
 
 
-def open_founder_status(settings: Settings, config: dict[str, str]) -> dict[str, object]:
+def open_founder_status(
+    settings: Settings,
+    config: dict[str, str],
+    store: Store | None = None,
+) -> dict[str, object]:
     with _open_client(settings, config) as client:
         status_payload = _sanitize_client_value(client, client.status())
-        return project_founder_status(status_payload, project_id=config["lp_project_id"])
+    result = project_founder_status(status_payload, project_id=config["lp_project_id"])
+    if store is not None:
+        artifact = next(
+            (
+                item
+                for item in store.list_founder_artifacts(config["lp_project_id"])
+                if item.get("remote_scan_id")
+            ),
+            None,
+        )
+        if artifact is not None:
+            result.update(
+                {
+                    "polling_status": artifact["polling_status"] or "queued",
+                    "last_polled_at": _optional_timestamp(artifact["last_polled_at"]),
+                    "next_attempt_at": _optional_timestamp(artifact["next_attempt_at"]),
+                    "attempts": artifact["polling_attempts"],
+                    "polling_error": _optional_timestamp(artifact["polling_error"]),
+                }
+            )
+        else:
+            result.update(
+                {
+                    "polling_status": "idle",
+                    "last_polled_at": None,
+                    "next_attempt_at": None,
+                    "attempts": 0,
+                    "polling_error": None,
+                }
+            )
+        result["polling"] = "scheduler_enabled" if settings.scheduler_enabled else "scheduler_disabled"
+    return result
 
 
 def open_founder_results(settings: Settings, config: dict[str, str]) -> dict[str, object]:
@@ -481,12 +522,16 @@ def open_founder_launch_scan(
         response["guidance"] = "This token cannot launch scans; finish the scan in Launch Passport."
     scan_id = _scan_id_from_payload(result)
     if artifact_id and scan_id:
+        queued_at = utc_now()
         store.update_founder_artifact_remote(
             artifact_id,
             scan_id=scan_id,
             scan_status=_scan_status_from_payload(result),
             scan=result,
             polling_status="queued",
+            polling_started_at=queued_at,
+            next_attempt_at=queued_at,
+            polling_attempts=0,
         )
     return response
 
@@ -501,16 +546,175 @@ def watch_founder_scan(
     max_duration: float = 3600.0,
     max_attempts: int = 120,
 ) -> dict[str, object]:
-    with _open_client(settings, config) as client:
-        outcome = poll_scan(
-            client,
-            config["lp_project_id"],
+    started_at = utc_now()
+    attempts = 0
+    delay = 30.0
+    while True:
+        outcome = advance_founder_scan_once(
+            settings,
+            store,
+            config,
             scan_id,
+            artifact_id=artifact_id,
             max_duration=max_duration,
             max_attempts=max_attempts,
+            attempts=attempts,
+            polling_started_at=started_at,
         )
-    _persist_poll_outcome(store, artifact_id, outcome)
-    return outcome.as_dict()
+        if outcome is None:
+            time.sleep(min(delay, max_duration))
+            delay = min(delay * 2, 600.0)
+            continue
+        if outcome.status in POLL_TERMINAL_STATES:
+            return outcome.as_dict()
+        attempts = outcome.attempts
+        time.sleep(min(max(delay, outcome.retry_after or 0.0), max_duration))
+        delay = min(max(outcome.retry_after or 0.0, delay * 2), 600.0)
+
+
+def advance_founder_scan_once(
+    settings: Settings,
+    store: Store,
+    config: dict[str, str],
+    scan_id: str,
+    *,
+    artifact_id: str | None = None,
+    max_duration: float = 3600.0,
+    max_attempts: int = 120,
+    attempts: int = 0,
+    polling_started_at: str | None = None,
+) -> PollOutcome | None:
+    """Perform and persist one bounded Launch Passport polling iteration."""
+    if max_duration <= 0 or max_attempts <= 0:
+        raise ValueError("polling bounds must be positive")
+    if settings.demo_mode or settings.offline_mode:
+        outcome = PollOutcome(
+            "unavailable",
+            scan_id,
+            attempts,
+            0.0,
+            error="scan polling is unavailable in this mode",
+        )
+        _persist_poll_progress(store, artifact_id, outcome, started_at=polling_started_at)
+        return outcome
+
+    record = store.get_founder_artifact(artifact_id) if artifact_id else None
+    if record is None and artifact_id is None:
+        record = next(
+            (
+                item
+                for item in store.list_founder_artifacts(config["lp_project_id"])
+                if item.get("remote_scan_id") == scan_id
+            ),
+            None,
+        )
+        if record is not None:
+            artifact_id = str(record["artifact_id"])
+    if record is not None:
+        stored_attempts = record["polling_attempts"]
+        attempts = stored_attempts if isinstance(stored_attempts, int) and stored_attempts >= 0 else 0
+        polling_started_at = str(record["polling_started_at"]) or polling_started_at or utc_now()
+        stored_status = str(record["polling_status"])
+        if stored_status in POLL_TERMINAL_STATES:
+            started = _parse_timestamp(polling_started_at) or datetime.now(UTC)
+            elapsed = max(0.0, (datetime.now(UTC) - started).total_seconds())
+            stored_scan = record["remote_scan"]
+            stored_report = record["latest_report"]
+            return PollOutcome(
+                cast(PollStatus, stored_status),
+                str(record["remote_scan_id"]) or scan_id,
+                attempts,
+                elapsed,
+                scan=stored_scan if isinstance(stored_scan, dict) else None,
+                report=stored_report if isinstance(stored_report, (dict, list)) else None,
+                error=str(record["polling_error"]) or None,
+            )
+    polling_started_at = polling_started_at or utc_now()
+    started = _parse_timestamp(polling_started_at) or datetime.now(UTC)
+    now = datetime.now(UTC)
+    elapsed = max(0.0, (now - started).total_seconds())
+    if attempts >= max_attempts or elapsed >= max_duration:
+        outcome = PollOutcome("timed_out", scan_id, attempts, elapsed, error="scan polling timed out")
+        _persist_poll_progress(store, artifact_id, outcome, started_at=polling_started_at)
+        return outcome
+
+    claim_started = utc_now()
+    if artifact_id and not store.claim_founder_artifact_poll(
+        artifact_id,
+        claimed_at=claim_started,
+        stale_before=(datetime.now(UTC) - timedelta(seconds=120)).isoformat(),
+    ):
+        return None
+    try:
+        with _open_client(settings, config) as client:
+            outcome = poll_scan_once(
+                client,
+                config["lp_project_id"],
+                scan_id,
+                attempts=attempts,
+                elapsed_seconds=elapsed,
+            )
+        current_elapsed = max(elapsed, (datetime.now(UTC) - started).total_seconds())
+        if outcome.status not in POLL_TERMINAL_STATES and (
+            outcome.attempts >= max_attempts or current_elapsed >= max_duration
+        ):
+            outcome = PollOutcome(
+                "timed_out",
+                outcome.scan_id,
+                outcome.attempts,
+                current_elapsed,
+                scan=outcome.scan,
+                error="scan polling timed out",
+            )
+        _persist_poll_progress(store, artifact_id, outcome, started_at=polling_started_at)
+        return outcome
+    finally:
+        if artifact_id:
+            store.release_founder_artifact_poll(artifact_id)
+
+
+def _persist_poll_progress(
+    store: Store,
+    artifact_id: str | None,
+    outcome: PollOutcome,
+    *,
+    started_at: str | None,
+) -> None:
+    if not artifact_id:
+        return
+    now = datetime.now(UTC)
+    if outcome.status in POLL_TERMINAL_STATES:
+        next_attempt_at = ""
+    else:
+        delay = min(max(outcome.retry_after or 0.0, 30.0 * (2 ** min(max(outcome.attempts - 1, 0), 5))), 600.0)
+        next_attempt_at = (now + timedelta(seconds=delay)).isoformat()
+    store.update_founder_artifact_remote(
+        artifact_id,
+        scan_id=outcome.scan_id,
+        scan_status=_scan_status_from_payload(outcome.scan or {}),
+        scan=outcome.scan,
+        report_reference=_report_reference(outcome.report),
+        report=outcome.report,
+        polling_status=outcome.status,
+        polling_started_at=started_at or now.isoformat(),
+        last_polled_at=now.isoformat(),
+        next_attempt_at=next_attempt_at,
+        polling_attempts=outcome.attempts,
+        polling_error=outcome.error or "",
+    )
+
+
+def _parse_timestamp(value: str) -> datetime | None:
+    try:
+        parsed = datetime.fromisoformat(value)
+    except (TypeError, ValueError):
+        return None
+    return parsed.astimezone(UTC) if parsed.tzinfo is not None else parsed.replace(tzinfo=UTC)
+
+
+def _optional_timestamp(value: object) -> str | None:
+    text = str(value) if value else ""
+    return text or None
 
 
 def _open_client(settings: Settings, config: dict[str, str]) -> LaunchPassportClient:
@@ -526,21 +730,6 @@ def _open_client(settings: Settings, config: dict[str, str]) -> LaunchPassportCl
         config["lp_base_url"],
         token_provider,
         allow_insecure_transport=settings.allow_insecure_provider_transport,
-    )
-
-
-def _persist_poll_outcome(store: Store, artifact_id: str | None, outcome: PollOutcome) -> None:
-    if not artifact_id:
-        return
-    report_reference = _report_reference(outcome.report)
-    store.update_founder_artifact_remote(
-        artifact_id,
-        scan_id=outcome.scan_id,
-        scan_status=_scan_status_from_payload(outcome.scan or {}),
-        scan=outcome.scan,
-        report_reference=report_reference,
-        report=outcome.report,
-        polling_status=outcome.status,
     )
 
 

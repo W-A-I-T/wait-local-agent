@@ -53,5 +53,5 @@ approval boundaries.
 
 `support bundle --preview` writes no archive. `support bundle --output PATH`
 creates a private bounded ZIP and prints its digest. `support upload` always
-records a local refusal and exits nonzero because this release has no automatic
-network sender.
+records that upload is not available in this edition and exits nonzero because
+this release has no network sender.

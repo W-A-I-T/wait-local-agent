@@ -40,6 +40,7 @@ if TYPE_CHECKING:
 
 _ALL_CLIENTS = AllClients()
 LOGGER = logging.getLogger(__name__)
+FOUNDER_POLL_INTERVAL_SECONDS = 30
 
 # Persisted jobs may outlive a process restart. Keep a single invocation in
 # flight and allow a bounded restart delay without replaying a backlog.
@@ -71,6 +72,8 @@ class SchedulerManager:
         self._ingestion_poller = ingestion_poller
         self._graph_sync_runner = graph_sync_runner
         self._baseline_snapshot_runner = baseline_snapshot_runner
+        self._settings = settings
+        self._founder_poll_idle_logged = False
         self._backup_runner = backup_runner
         if self._backup_runner is None and settings is not None:
             self._backup_runner = lambda: create_scheduled_backup(store, settings)
@@ -100,6 +103,15 @@ class SchedulerManager:
                 self._retry_due_event_deliveries,
                 trigger=IntervalTrigger(seconds=EVENT_RETRY_POLL_SECONDS, timezone=UTC),
                 id=self._retry_job_identity(),
+                replace_existing=True,
+                coalesce=True,
+                max_instances=1,
+            )
+        if self._settings is None or (not self._settings.demo_mode and not self._settings.offline_mode):
+            self._scheduler.add_job(
+                self._run_founder_poll_job,
+                trigger=IntervalTrigger(seconds=FOUNDER_POLL_INTERVAL_SECONDS, timezone=UTC),
+                id=self._founder_poll_job_identity(),
                 replace_existing=True,
                 coalesce=True,
                 max_instances=1,
@@ -280,6 +292,65 @@ class SchedulerManager:
             client_id=run.client_id,
             actor="scheduler",
         )
+
+    async def _run_founder_poll_job(self) -> None:
+        """Run one bounded founder poll iteration off the event loop."""
+
+        await asyncio.to_thread(self._run_founder_poll_iteration)
+
+    def _run_founder_poll_iteration(self) -> None:
+        settings = self._settings
+        if settings is None:
+            self._log_founder_poll_idle("settings_not_configured")
+            return
+        if settings.demo_mode or settings.offline_mode:
+            self._log_founder_poll_idle("safe_mode")
+            return
+
+        from wait_local_agent.api.founder import (
+            advance_founder_scan_once,
+            resolve_open_config,
+        )
+
+        try:
+            config = resolve_open_config(settings, self._store)
+        except Exception:  # noqa: BLE001 - optional founder polling must not affect the scheduler
+            self._log_founder_poll_idle("launch_passport_not_configured")
+            return
+
+        now = datetime.now(UTC)
+        candidate = next(
+            (
+                artifact
+                for artifact in self._store.list_founder_poll_candidates(config["lp_project_id"])
+                if _founder_poll_due(artifact.get("next_attempt_at"), now)
+            ),
+            None,
+        )
+        if candidate is None:
+            self._log_founder_poll_idle("no_due_scan")
+            return
+        artifact_id = str(candidate["artifact_id"])
+        scan_id = str(candidate["remote_scan_id"])
+        outcome = advance_founder_scan_once(
+            settings,
+            self._store,
+            config,
+            scan_id,
+            artifact_id=artifact_id,
+        )
+        if outcome is not None:
+            self._store.add_audit_event(
+                "founder.polling_advanced",
+                artifact_id,
+                f"founder scan polling -> {outcome.status}",
+            )
+
+    def _log_founder_poll_idle(self, reason: str) -> None:
+        if self._founder_poll_idle_logged:
+            return
+        self._founder_poll_idle_logged = True
+        LOGGER.info("founder_polling_idle reason=%s", reason)
 
     async def _run_backup_job(self, scheduled_job: ScheduledJob) -> None:
         await asyncio.to_thread(
@@ -714,6 +785,22 @@ class SchedulerManager:
     @staticmethod
     def _retry_job_identity() -> str:
         return "event-delivery-retry-worker"
+
+    @staticmethod
+    def _founder_poll_job_identity() -> str:
+        return "founder-scan-poll-worker"
+
+
+def _founder_poll_due(value: object, now: datetime) -> bool:
+    if not isinstance(value, str) or not value.strip():
+        return True
+    try:
+        scheduled = datetime.fromisoformat(value)
+    except ValueError:
+        return True
+    if scheduled.tzinfo is None:
+        scheduled = scheduled.replace(tzinfo=UTC)
+    return scheduled.astimezone(UTC) <= now
 
 
 def validate_cron_expression(cron: str, timezone: str = "UTC") -> None:

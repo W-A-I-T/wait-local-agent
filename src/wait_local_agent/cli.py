@@ -687,7 +687,7 @@ def support_upload(
     settings = load_settings()
     store = Store(settings.data_path)
     reason = support_upload_refusal(settings, consent=consent)
-    store.add_audit_event("support.upload_refused", "support-bundle", reason)
+    store.add_audit_event("support.upload_unavailable", "support-bundle", reason)
     typer.echo(reason)
     raise typer.Exit(code=1)
 

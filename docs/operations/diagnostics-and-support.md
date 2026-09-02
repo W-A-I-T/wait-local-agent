@@ -23,9 +23,9 @@ wait-local-agent support upload --consent
 
 `support doctor` prints the allowlisted summary. Bundle preview writes no file.
 Bundle creation writes a private local archive, optionally copies it to the
-operator-selected output path, and prints its SHA-256 digest. Automatic upload
-is not implemented: `support upload` records a local refusal and exits nonzero,
-including when an endpoint is configured.
+operator-selected output path, and prints its SHA-256 digest. Support upload is
+not available in this edition: `support upload` records the unavailability and
+exits nonzero. Download remains available for an operator-approved transfer.
 
 ## Local API
 
@@ -33,8 +33,8 @@ including when an endpoint is configured.
 - `POST /diagnostics/bundle/preview` returns the fixed inclusion and exclusion
   lists without writing a file.
 - `POST /diagnostics/bundle` creates and returns the ZIP archive.
-- `POST /diagnostics/bundle/upload` records and returns a refusal; it performs
-  no network transfer.
+- `POST /diagnostics/bundle/upload` returns `501` with
+  `support_upload_unavailable`; it performs no network transfer.
 
 Every request receives a validated `X-Correlation-ID` response header. A valid
 incoming value is reused; an invalid or missing value is replaced. Run entry

@@ -46,7 +46,7 @@ const summary = {
   hardening: { status: "completed", expected_check_count: 4, result_count: 4 },
   update_status: { status: "not_checked", detail: "offline", configured: false },
   correlation_ids: [],
-  support_upload: { configured: false, available: false }
+  support_upload: { available: false, reason: "not_available_in_this_edition" }
 };
 
 describe("Diagnostics and support screen", () => {
@@ -80,8 +80,8 @@ describe("Diagnostics and support screen", () => {
 
     expect(await screen.findByText("ticket bodies")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Download" })).toBeEnabled();
-    expect(screen.getByRole("button", { name: "Upload" })).toBeDisabled();
-    expect(screen.getByText("Upload is unavailable while this appliance is offline.")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Upload" })).not.toBeInTheDocument();
+    expect(screen.getByText("Support upload is not available in this edition. Download remains available.")).toBeInTheDocument();
     expect(fetchMock.mock.calls.map(([input]) => String(input))).toEqual(
       expect.arrayContaining(["/diagnostics/summary", "/packs/status", "/diagnostics/bundle/preview"])
     );

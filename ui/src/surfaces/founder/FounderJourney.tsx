@@ -223,6 +223,26 @@ export function FounderJourney() {
     return () => { cancelled = true; };
   }, [step]);
 
+  useEffect(() => {
+    if (step !== 3 || !launchResult) return;
+    let cancelled = false;
+    const refreshPollingStatus = async () => {
+      const body = await request<unknown>("/founder/lp-status");
+      if (cancelled || !body) return;
+      const projected = projectLaunchPassportStatus(body);
+      setLaunchPassport(projected);
+      if (projected.polling_status === "completed" && !results) {
+        setResults(projectFounderResults(await request<unknown>("/founder/results")));
+      }
+    };
+    void refreshPollingStatus();
+    const timer = window.setInterval(() => void refreshPollingStatus(), 5000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [launchResult, results, step]);
+
   async function launchScan(): Promise<void> {
     setConfirmingLaunch(false);
     setIsBusy(true);
@@ -373,6 +393,9 @@ export function FounderJourney() {
                 </section>
               </div>
               {launchResult ? <div className="connection-state" role="status"><strong>Launch result</strong><pre className="smart-action-code"><code>{JSON.stringify(launchResult, null, 2)}</code></pre></div> : null}
+              {launchPassport?.polling_status && launchPassport.polling_status !== "idle" ? (
+                <p className="screen-note" role="status">Scan polling: {pollingStateLabel(launchPassport)}</p>
+              ) : null}
               {results ? (
                 <section aria-labelledby="founder-current-results-heading">
                   <h3 id="founder-current-results-heading">Results</h3>
@@ -422,6 +445,12 @@ export function uploadProgressLabel(status: string): string {
     return "not completed";
   }
   return "not completed";
+}
+
+export function pollingStateLabel(status: Pick<LaunchPassportStatus, "polling_status" | "attempts" | "polling_error">): string {
+  if (status.polling_status === "running") return `running (attempt ${status.attempts ?? 0})`;
+  if (status.polling_status === "failed") return `failed: ${status.polling_error || "scan polling failed"}`;
+  return status.polling_status || "unknown";
 }
 
 function safeFounderState(value: unknown, key = ""): unknown {

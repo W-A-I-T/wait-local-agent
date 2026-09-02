@@ -986,7 +986,7 @@ def test_founder_error_handlers_map_remote_failures(error, code) -> None:
 
 def test_open_routes_and_handlers_cover_optional_config_fallbacks(monkeypatch, settings) -> None:
     monkeypatch.setattr(founder_module, "get_pack", lambda _name: None)
-    monkeypatch.setattr(founder_module, "open_founder_status", lambda _settings, _config: {"status": "ok"})
+    monkeypatch.setattr(founder_module, "open_founder_status", lambda _settings, _config, _store=None: {"status": "ok"})
     monkeypatch.setattr(founder_module, "open_founder_results", lambda _settings, _config: {"scans": []})
     store = Store(settings.data_path)
     founder_module.configure_founder(settings, store, "https://lp.test", "project-1", "token")

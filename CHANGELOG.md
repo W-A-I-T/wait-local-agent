@@ -32,6 +32,11 @@ All notable changes to WAIT Local Agent will be documented in this file.
 
 ### Changed
 
+- Founder browser scans now advance through the appliance scheduler, with
+  bounded persisted polling progress and truthful status timestamps.
+- Diagnostics now state that support upload is unavailable in this edition;
+  local bundle download remains available.
+
 - Scheduled jobs now declare single-instance execution and a bounded 300-second
   misfire grace period; startup rejects multi-worker configurations while the
   in-process scheduler is enabled.
@@ -91,6 +96,10 @@ All notable changes to WAIT Local Agent will be documented in this file.
 - Fixed Settings update checks and collector exports to use their backend POST
   contracts, routed desktop Microsoft sign-in through the configured API base,
   and added frontend route/method contract guards for the development proxy.
+- Founder Launch Passport polling no longer remains queued after a browser
+  launch, and terminal scan states are not polled again.
+- The diagnostics API and screen no longer advertise a support upload action
+  that always fails; upload refusal is consistently reported as `501`.
 - SPA HTML fallbacks now opt out of caching and vary on `Accept`, API requests
   explicitly negotiate JSON, and the dashboard no longer repeatedly rate-limits
   its local write-health check or Halo ticket bootstrap request.

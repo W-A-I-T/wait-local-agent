@@ -21,7 +21,6 @@ export function DiagnosticsSupport() {
   const [summary, setSummary] = useState<DiagnosticsSummary | null>(null);
   const [packs, setPacks] = useState<PackStatus[]>([]);
   const [preview, setPreview] = useState<SupportBundlePreview | null>(null);
-  const [consent, setConsent] = useState(false);
   const [loading, setLoading] = useState(false);
   const [statusMessage, setStatusMessage] = useState("");
   const canView = roleResolved && isAdmin;
@@ -89,18 +88,6 @@ export function DiagnosticsSupport() {
     }
   }
 
-  async function requestUpload() {
-    try {
-      await apiFetch("/diagnostics/bundle/upload", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ consent })
-      });
-    } catch (error) {
-      setStatusMessage(error instanceof Error ? error.message : "Upload is unavailable.");
-    }
-  }
-
   const accessRole = role ?? (isAdmin ? "admin" : "viewer");
   const system = summary?.system && !isDegraded(summary.system) ? summary.system : null;
   const configuration = summary?.configuration && !isDegraded(summary.configuration) ? summary.configuration : null;
@@ -108,7 +95,6 @@ export function DiagnosticsSupport() {
   const failures = summary && Array.isArray(summary.failed_executions) ? summary.failed_executions : [];
   const hardening = summary?.hardening && !isDegraded(summary.hardening) ? summary.hardening : null;
   const update = summary?.update_status && !isDegraded(summary.update_status) ? summary.update_status : null;
-  const uploadDisabledReason = uploadReason(summary);
 
   return (
     <RoleGate
@@ -204,6 +190,7 @@ export function DiagnosticsSupport() {
         <section className="panel">
           <div className="panel-heading"><h2>Diagnostic bundle</h2><span>Local and redacted</span></div>
           <p className="screen-note">Preview the fixed section list before creating an archive. Customer work content is excluded.</p>
+          {summary?.support_upload.available === false ? <p className="screen-note">Support upload is not available in this edition. Download remains available.</p> : null}
           <button type="button" onClick={() => void generatePreview()}>Generate diagnostic bundle</button>
           {preview ? (
             <div className="grid">
@@ -217,19 +204,7 @@ export function DiagnosticsSupport() {
               </section>
               <div className="row-actions">
                 <button type="button" onClick={() => void downloadBundle()}>Download</button>
-                <label>
-                  <input type="checkbox" checked={consent} onChange={(event) => setConsent(event.target.checked)} />
-                  I approve a support transfer
-                </label>
-                <button
-                  type="button"
-                  onClick={() => void requestUpload()}
-                  disabled={Boolean(uploadDisabledReason) || !consent}
-                >
-                  Upload
-                </button>
               </div>
-              {uploadDisabledReason ? <p className="screen-note">{uploadDisabledReason}</p> : null}
             </div>
           ) : null}
         </section>
@@ -245,15 +220,6 @@ function isDegraded(value: object): value is { status: "degraded"; section: stri
 function databaseIntegrity(summary: DiagnosticsSummary | null): string | undefined {
   if (!summary || isDegraded(summary.database)) return undefined;
   return summary.database.integrity_check;
-}
-
-function uploadReason(summary: DiagnosticsSummary | null): string {
-  if (!summary) return "Upload availability has not been loaded.";
-  const configuration = !isDegraded(summary.configuration) ? summary.configuration : null;
-  if (configuration?.offline_mode) return "Upload is unavailable while this appliance is offline.";
-  if (configuration?.demo_mode) return "Upload is unavailable in demo mode.";
-  if (!summary.support_upload.configured) return "No support destination is configured. Download remains available.";
-  return "";
 }
 
 function StatusRow({ label, value, status }: { label: string; value?: string; status?: string }) {
