@@ -1631,12 +1631,12 @@ def test_approval_execution_state_covers_governed_connector_branches(settings, m
             allow_write_actions=True,
             allow_power_platform_deployment=True,
             power_platform_workspace=tmp_path,
+            pac_path=tmp_path / "no-such-pac",
         ),
     )
-    assert workspace_blocked["block_reason"] in {
-        "The pac executable is not available on the local PATH.",
-        "WAIT_POWER_PLATFORM_WORKSPACE must already exist.",
-    }
+    assert workspace_blocked["block_reason"] == (
+        "WAIT_PAC_PATH is configured but is not an executable regular file."
+    )
 
 
 def test_api_exposes_expired_approval_and_rejects_late_approval(settings) -> None:

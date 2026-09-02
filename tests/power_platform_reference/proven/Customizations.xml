@@ -1,0 +1,44 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<ImportExportXml xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+  <Entities>
+    <Entity>
+      <Name LocalizedName="Employee" OriginalName="Employee">wait_employee</Name>
+      <EntityInfo>
+        <entity Name="wait_employee">
+          <LocalizedNames><LocalizedName description="Employee" languagecode="1033" /></LocalizedNames>
+          <LocalizedCollectionNames><LocalizedCollectionName description="Employees" languagecode="1033" /></LocalizedCollectionNames>
+          <Descriptions><Description description="Employee record" languagecode="1033" /></Descriptions>
+          <attributes>
+            <attribute PhysicalName="wait_name">
+              <Type>nvarchar</Type><Name>wait_name</Name><LogicalName>wait_name</LogicalName>
+              <RequiredLevel>none</RequiredLevel><DisplayMask>PrimaryName|ValidForAdvancedFind|ValidForForm|ValidForGrid</DisplayMask>
+              <ImeMode>auto</ImeMode><ValidForCreateApi>1</ValidForCreateApi><ValidForReadApi>1</ValidForReadApi>
+              <ValidForUpdateApi>1</ValidForUpdateApi><IsCustomField>1</IsCustomField><IsAuditEnabled>0</IsAuditEnabled>
+              <IsSecured>0</IsSecured><IntroducedVersion>1.0</IntroducedVersion><IsCustomizable>1</IsCustomizable>
+              <IsRenameable>1</IsRenameable><MaxLength>100</MaxLength><Length>100</Length><Format>text</Format>
+              <displaynames><displayname description="Name" languagecode="1033" /></displaynames>
+            </attribute>
+          </attributes>
+          <EntitySetName>wait_employees</EntitySetName>
+          <IsCustomEntity>1</IsCustomEntity><OwnershipTypeMask>UserOwned</OwnershipTypeMask>
+          <PrimaryNameAttribute>wait_name</PrimaryNameAttribute>
+          <IntroducedVersion>1.0</IntroducedVersion>
+        </entity>
+      </EntityInfo>
+    </Entity>
+  </Entities>
+  <Roles />
+  <Workflows />
+  <FieldSecurityProfiles />
+  <Templates />
+  <EntityMaps />
+  <EntityRelationships />
+  <OrganizationSettings />
+  <optionsets />
+  <CustomControls />
+  <SolutionPluginAssemblies />
+  <EntityDataProviders />
+  <Languages>
+    <Language>1033</Language>
+  </Languages>
+</ImportExportXml>

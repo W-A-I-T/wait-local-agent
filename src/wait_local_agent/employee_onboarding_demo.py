@@ -441,17 +441,18 @@ def _build_review_artifacts(client_id: str) -> list[dict[str, Any]]:
             app_name="Employee onboarding workspace",
             entities=[
                 {
-                    "logical_name": "employee",
+                    "logical_name": "wait_employee",
                     "display_name": "Employee",
+                    "primary_name_column": "wait_display_name",
                     "fields": [
-                        {"name": "display_name", "type": "string", "required": True},
-                        {"name": "start_date", "type": "date", "required": True},
+                        {"name": "wait_display_name", "type": "string", "required": True},
+                        {"name": "wait_start_date", "type": "date", "required": True},
                     ],
                 }
             ],
             screens=[
-                {"id": "employee_browse", "title": "Employees", "entity": "employee", "mode": "browse"},
-                {"id": "employee_edit", "title": "Edit employee", "entity": "employee", "mode": "edit"},
+                {"id": "employee_browse", "title": "Employees", "entity": "wait_employee", "mode": "browse"},
+                {"id": "employee_edit", "title": "Edit employee", "entity": "wait_employee", "mode": "edit"},
             ],
             actions=[
                 {"id": "employee_lookup", "connector_id": "m365", "method": "GET"},

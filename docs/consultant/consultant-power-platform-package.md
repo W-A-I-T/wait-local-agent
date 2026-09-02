@@ -1,19 +1,30 @@
-# Consultant Power Platform YAML source package
+# Consultant Power Platform XML source package
 
 WAIT Local Agent can convert validated, credential-free consultant artifacts
-into a deterministic local source package using the official Power Platform
-YAML source-control layout. This is a source handoff suitable for a later
-operator-run `pac solution pack --folder <source-root> --zipfile <zip-path>`
+into a deterministic local source package using the proven Power Platform
+XML solution layout. This is a source handoff suitable for a later
+operator-run `pac solution pack --folder <source-root> --zipfile <zip-path> --packagetype Unmanaged`
 command. It is not a solution ZIP,
 provider import, live environment verification, or deployment result.
 
-The package contains `solutions/<name>/solution.yml`,
-`solutioncomponents.yml`, `rootcomponents.yml`, and
-`missingdependencies.yml`; a publisher manifest under `publishers/`; and
-mapped Dataverse, modern-flow, and custom-connector sources under
-`entities/`, `modernflows/`, and `connectors/`. Canvas app binaries are not
-synthesized. They are recorded under `unsupported/components.json` with an
-explicit reason, so a package never claims a missing `.msapp` is packable.
+The package contains `Other/Solution.xml`, `Other/Customizations.xml`, and
+`Other/Relationships.xml` at the pack-folder root. Dataverse entities whose
+logical names begin with the requested publisher prefix plus `_` and whose
+primary name column is explicitly declared are emitted, along with their
+confidently mapped string attributes, in
+`Other/Customizations.xml`; the solution manifest, publisher block, numeric
+entity root components, and missing-dependency element are emitted in
+`Other/Solution.xml`. The relationships file carries the proven empty
+`EntityRelationships` element. Canvas app binaries are not synthesized and
+are recorded under `unsupported/components.json` with an explicit reason.
+The primary name can be declared as the table's `primary_name_column` or as
+`primary: true` on exactly one column. A string column's declared `max_length`
+must be 1-4000; when it is absent, the package uses the documented default of
+100 for both `MaxLength` and `Length`.
+Modern flows remain design-only because the package does not contain a Logic
+Apps `clientdata` definition. Custom connectors remain design-only because
+the emitted WAIT connector metadata is not the Power Platform custom connector
+definition made from `apiDefinition.swagger.json` and `apiProperties.json`.
 
 Every source file has a SHA-256 digest and the package has a digest over its
 canonical JSON representation. Component IDs are UUID5 values derived from
@@ -22,27 +33,27 @@ call, PAC invocation, or credential is involved.
 
 A flow artifact must carry its trigger and actions under `power_automate`, the
 same shape returned by `POST /consultant/workflows/power-automate/plan`. The
-emitted `flow.yml` records the trigger type and name plus every action's unique
-name, display name, kind, type, method, optional existing tool reference, and
-approval flag. It is a design document, not an importable cloud flow definition.
+flow is retained as a design-only component with its path and reason in
+`design_only_components`; no fake flow source file is emitted. It is not an
+importable cloud flow definition.
 An importable flow requires a `clientdata` Logic Apps definition with
 `connectionReferences`, named trigger and action maps, and `runAfter` ordering;
-the emitted source does not provide those structures. A flow artifact missing
+the package does not provide those structures. A flow artifact missing
 its `power_automate` section is rejected rather than packaged with empty flow
 metadata.
 
 Package readiness is reported per component class. `deployable_source` means
 every emitted component class is import-complete. `partial_source` means the
 package contains a usable import-complete component but also contains a
-design-only emitted component. `deployable` is true only when the package
-contains at least one import-complete artifact component; a package containing
-only design-only or unsupported artifacts is not deployable. Unsupported
-artifacts are not emitted into the source and remain separately listed below.
-`design_only_components` lists emitted design documents, including each
-component path, format, and reason, and is also written to
-`design_only/components.json`. `unsupported_components` and
+design-only emitted component, including a partially mapped entity. `deployable`
+is true only when the package contains at least one import-complete artifact
+component; a package containing only design-only or unsupported artifacts is
+not deployable. Unsupported artifacts are not emitted into the source and
+remain separately listed below. `design_only_components` lists design-only
+components, including each component path, format, and reason, and is also
+written to `design_only/components.json`. `unsupported_components` and
 `unsupported/components.json` remain the separate record for artifact formats
-with no supported source mapping.
+with no supported XML source mapping.
 
 ## API
 
@@ -70,8 +81,10 @@ mismatches, secret-like values, digest mismatches, and unsafe source paths are
 rejected. With writes disabled, materialization returns `status: "blocked"`
 without creating files. A successful result verifies every on-disk digest and
 returns a PAC pack preview whose `--folder` is the validated materialization
-directory and whose `--zipfile` is a deterministic sibling path inside that
-directory.
+directory, whose `--zipfile` is a deterministic sibling path inside that
+directory, and whose pack type is `Unmanaged`. Packing requires no
+`pac solution init`: the materialized directory already contains the complete
+solution source.
 
 ## CLI
 
@@ -88,11 +101,8 @@ requires admin scope. The CLI does not execute PAC.
 
 ## Compatibility
 
-Power Platform YAML source-control support requires Microsoft.PowerApps.CLI
-2.4.1 or newer. The [Microsoft YAML source-control format reference](https://learn.microsoft.com/en-us/power-platform/alm/solution-source-control-yaml-format)
-documents YAML detection through
-`solutions/<SolutionUniqueName>/solution.yml` and the pack command as
-`pac solution pack --zipfile <zipPath> --folder <repositoryRoot>`. The package
-records this minimum version and uses the validated materialization directory
-as the folder. Provider credentials, licensing, environment authorization, and
-deployment approval remain separate operator responsibilities.
+The proven XML solution format was packed and imported with
+Microsoft.PowerApps.CLI 2.4.1. The package records that minimum version and
+uses the validated materialization directory as the folder. Provider
+credentials, licensing, environment authorization, and deployment approval
+remain separate operator responsibilities.

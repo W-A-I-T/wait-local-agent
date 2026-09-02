@@ -57,6 +57,7 @@ def test_power_apps_artifact_builds_bounded_reviewable_files_without_deployment(
             {"id": "employee_create", "connector_id": "m365", "method": "POST", "approval_required": True},
         ],
     )
+    cast(list[dict[str, object]], payload["entities"])[0]["primary_name_column"] = "display_name"
     result = build_power_apps_artifact(
         client_id=cast(str, payload["client_id"]),
         app_name=cast(str, payload["app_name"]),
@@ -75,6 +76,7 @@ def test_power_apps_artifact_builds_bounded_reviewable_files_without_deployment(
 
     assert result["format"] == "wait-local-agent.power-apps-artifact"
     assert solution["publisher_prefix"] == "wait"
+    assert first_table["primary_name_column"] == "display_name"
     assert columns[0]["type"] == "String"
     assert cast(list[dict[str, object]], screens[0]["controls"])[0]["type"] == "gallery"
     assert cast(list[dict[str, object]], screens[1]["controls"])[0]["type"] == "form"
@@ -137,6 +139,27 @@ def test_power_apps_plan_rejects_duplicate_and_bounded_shapes() -> None:
     payload = _plan(entities=[{"logical_name": "employee", "fields": [{"name": "name"}, {"name": "name"}]}])
     with pytest.raises(PowerAppsPlanError, match="duplicate field"):
         build_power_apps_plan(**payload)
+
+
+def test_power_apps_artifact_rejects_primary_name_column_not_declared() -> None:
+    payload = _plan(
+        entities=[
+            {
+                "logical_name": "employee",
+                "primary_name_column": "missing_name",
+                "fields": [{"name": "display_name"}],
+            }
+        ]
+    )
+
+    with pytest.raises(PowerAppsPlanError, match="primary_name_column must name a declared field"):
+        build_power_apps_artifact(
+            client_id=cast(str, payload["client_id"]),
+            app_name=cast(str, payload["app_name"]),
+            entities=cast(list[dict[str, object]], payload["entities"]),
+            screens=cast(list[dict[str, object]], payload["screens"]),
+            actions=cast(list[dict[str, object]], payload["actions"]),
+        )
 
 
 @pytest.mark.parametrize(
