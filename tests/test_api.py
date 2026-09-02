@@ -1992,7 +1992,11 @@ def test_scheduled_job_routes_cover_rbac_validation_and_live_scheduler_registrat
         assert created.json()["timezone"] == "America/Vancouver"
         assert app.state.scheduler._scheduler is not None
         job_ids = {job.id for job in app.state.scheduler._scheduler.get_jobs()}
-        assert job_ids == {"event-delivery-retry-worker", f"scheduled-job:{job_id}"}
+        assert job_ids == {
+            "event-delivery-retry-worker",
+            "founder-scan-poll-worker",
+            f"scheduled-job:{job_id}",
+        }
         assert listed.status_code == 200
         assert listed.json()[0]["id"] == job_id
 

@@ -2,7 +2,7 @@ import { fireEvent, render, screen } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { Settings } from "../src/screens/Settings";
-import { FounderJourney, uploadProgressLabel } from "../src/surfaces/founder/FounderJourney";
+import { FounderJourney, pollingStateLabel, uploadProgressLabel } from "../src/surfaces/founder/FounderJourney";
 
 const dashboardState = vi.hoisted(() => ({ loading: false, role: "admin" as "admin" | "viewer", authState: "local-open" as "local-open" | "authenticated" | null }));
 const founderProjectorState = vi.hoisted(() => ({ returnNullLaunchPassport: false }));
@@ -212,6 +212,7 @@ describe("wla-wp17 Launch Passport UI", () => {
       if (path === "/founder/upload/art-1") return jsonResponse({ status: "uploaded" });
       if (path === "/founder/lp-status") return jsonResponse({ status: "connected", lp_project_id: "project-1" });
       if (path === "/founder/results") return jsonResponse({ project_id: "project-1", scans: [{}], latest_report: { id: "report-1" } });
+      if (path === "/founder/preflight/latest" || path === "/founder/vault") return jsonResponse({});
       throw new Error(`Unexpected request: ${path}`);
     }));
 
@@ -241,6 +242,7 @@ describe("wla-wp17 Launch Passport UI", () => {
       if (path === "/founder/upload/art-1") return jsonResponse({ status: "uploaded" });
       if (path === "/founder/lp-status") return jsonResponse({});
       if (path === "/founder/results") return jsonResponse({ scans: [], latest_report: null });
+      if (path === "/founder/preflight/latest" || path === "/founder/vault") return jsonResponse({});
       throw new Error(`Unexpected request: ${path}`);
     }));
 
@@ -268,6 +270,7 @@ describe("wla-wp17 Launch Passport UI", () => {
       if (path === "/founder/upload/art-1") return jsonResponse({ status: "uploaded" });
       if (path === "/founder/lp-status") return jsonResponse({ status: "connected", lp_project_id: "project-1" });
       if (path === "/founder/results") return jsonResponse({ project_id: "project-1", scans: { items: [{ id: "scan-1" }] } });
+      if (path === "/founder/preflight/latest" || path === "/founder/vault") return jsonResponse({});
       throw new Error(`Unexpected request: ${path}`);
     }));
 
@@ -301,6 +304,7 @@ describe("wla-wp17 Launch Passport UI", () => {
           latest_report: { message: token }
         });
       }
+      if (path === "/founder/preflight/latest" || path === "/founder/vault") return jsonResponse({});
       throw new Error(`Unexpected request: ${path}`);
     }));
 
@@ -318,6 +322,13 @@ describe("wla-wp17 Launch Passport UI", () => {
     expect(await screen.findByRole("heading", { name: "Results" })).toBeInTheDocument();
     expect(screen.getByText("Unknown")).toBeInTheDocument();
     expect(document.body.textContent).not.toContain(token);
+  });
+
+  it("labels persisted polling states without inventing completion", () => {
+    expect(pollingStateLabel({ polling_status: "queued", attempts: 0, polling_error: null })).toBe("queued");
+    expect(pollingStateLabel({ polling_status: "running", attempts: 3, polling_error: null })).toBe("running (attempt 3)");
+    expect(pollingStateLabel({ polling_status: "completed", attempts: 4, polling_error: null })).toBe("completed");
+    expect(pollingStateLabel({ polling_status: "failed", attempts: 4, polling_error: "remote failure" })).toBe("failed: remote failure");
   });
 
   it("does not render founder controls for a non-admin role", () => {

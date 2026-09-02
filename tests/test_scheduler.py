@@ -22,6 +22,7 @@ from wait_local_agent.rbac import Role
 from wait_local_agent.scheduler import (
     SchedulerManager,
     _backup_retention_count,
+    _founder_poll_due,
     _schedule_trigger,
     _validate_schedule_target,
     validate_cron_expression,
@@ -128,6 +129,15 @@ def test_founder_polling_idle_ticks_do_not_write_audit_rows(
         manager.shutdown()
 
     asyncio.run(scenario())
+
+
+def test_founder_poll_due_handles_empty_invalid_naive_and_aware_values() -> None:
+    now = datetime(2026, 8, 16, 12, 0, tzinfo=UTC)
+    assert _founder_poll_due(None, now) is True
+    assert _founder_poll_due("", now) is True
+    assert _founder_poll_due("not-a-timestamp", now) is True
+    assert _founder_poll_due("2026-08-16T11:59:00", now) is True
+    assert _founder_poll_due("2026-08-16T12:01:00+00:00", now) is False
 
 
 def test_scheduler_job_callable_creates_same_approval_path_as_manual_run(tmp_path: Path, settings) -> None:

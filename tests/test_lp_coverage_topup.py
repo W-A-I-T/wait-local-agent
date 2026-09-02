@@ -26,7 +26,7 @@ from wait_local_agent.lp_client import (
     LaunchPassportRequestError,
     LaunchPassportUnauthorized,
 )
-from wait_local_agent.lp_polling import PollOutcome, poll_scan
+from wait_local_agent.lp_polling import PollOutcome, poll_scan, poll_scan_once
 from wait_local_agent.rbac import Role
 from wait_local_agent.scheduler import SchedulerManager
 from wait_local_agent.store import Store
@@ -183,6 +183,18 @@ def test_poll_report_failures_are_returned_without_raising(error: Exception) -> 
         else "latest report request failed"
     )
     assert outcome.error == expected
+
+
+def test_poll_scan_once_rejects_negative_progress() -> None:
+    client = PollClient([])
+    with pytest.raises(ValueError, match="project id"):
+        poll_scan_once(client, "", "scan-1")
+    with pytest.raises(ValueError, match="scan id"):
+        poll_scan_once(client, "project-1", "")
+    with pytest.raises(ValueError, match="must not be negative"):
+        poll_scan_once(client, "project-1", "scan-1", attempts=-1)
+    with pytest.raises(ValueError, match="must not be negative"):
+        poll_scan_once(client, "project-1", "scan-1", elapsed_seconds=-1)
 
 
 def lp_client(handler):
@@ -528,6 +540,124 @@ def test_founder_scheduler_advances_once_and_stops_after_terminal(monkeypatch, s
 
     manager._run_founder_poll_iteration()  # noqa: SLF001
     assert polling_client.calls == 2
+
+
+def test_founder_watch_retries_claim_contention_and_honors_retry_after(monkeypatch, settings, tmp_path) -> None:
+    store = configured(settings, tmp_path)
+    outcomes = iter(
+        [
+            None,
+            PollOutcome("retrying", "scan-1", 1, 0.1, retry_after=75),
+            PollOutcome("completed", "scan-1", 2, 0.2),
+        ]
+    )
+    events: list[tuple[str, float | None]] = []
+
+    def advance(*_args: object, **_kwargs: object) -> PollOutcome | None:
+        events.append(("advance", None))
+        return next(outcomes)
+
+    monkeypatch.setattr(founder_module, "advance_founder_scan_once", advance)
+    monkeypatch.setattr(founder_module.time, "sleep", lambda seconds: events.append(("sleep", seconds)))
+
+    result = founder_module.watch_founder_scan(
+        settings,
+        store,
+        {"lp_project_id": "project-1"},
+        "scan-1",
+        max_duration=120,
+    )
+
+    assert result["status"] == "completed"
+    assert events == [("advance", None), ("sleep", 30.0), ("advance", None), ("sleep", 75), ("advance", None)]
+
+
+def test_founder_advance_covers_safe_mode_timeout_claim_and_terminal_lookup(monkeypatch, settings, tmp_path) -> None:
+    store = configured(settings, tmp_path)
+    store.save_founder_artifact(
+        artifact_id="artifact-1", project_id="project-1", bundle_hash="hash", bundle={"metadata": {}}
+    )
+    config = {"lp_project_id": "project-1", "lp_base_url": "https://lp.test", "token_vault_ref": "ref"}
+
+    monkeypatch.setattr(founder_module, "_open_client", lambda *_args: pytest.fail("safe mode must not open a client"))
+    safe = founder_module.advance_founder_scan_once(
+        replace(settings, demo_mode=True), store, config, "scan-1", artifact_id="artifact-1"
+    )
+    assert safe is not None and safe.status == "unavailable"
+    assert store.get_founder_artifact("artifact-1")["polling_status"] == "unavailable"
+
+    active_settings = replace(settings, demo_mode=False, offline_mode=False)
+    store.update_founder_artifact_remote(
+        "artifact-1",
+        scan_id="scan-1",
+        polling_status="queued",
+        polling_started_at="not-a-timestamp",
+        next_attempt_at="",
+        polling_attempts=1,
+    )
+    timed_out = founder_module.advance_founder_scan_once(
+        active_settings, store, config, "scan-1", artifact_id="artifact-1", max_attempts=1
+    )
+    assert timed_out is not None and timed_out.status == "timed_out"
+
+    store.update_founder_artifact_remote(
+        "artifact-1", polling_status="queued", polling_started_at="", polling_attempts=0
+    )
+    monkeypatch.setattr(store, "claim_founder_artifact_poll", lambda *_args, **_kwargs: False)
+    assert founder_module.advance_founder_scan_once(
+        active_settings, store, config, "scan-1", artifact_id="artifact-1"
+    ) is None
+
+    store.update_founder_artifact_remote(
+        "artifact-1",
+        polling_status="completed",
+        polling_started_at="2026-08-01T00:00:00",
+        polling_attempts=4,
+        scan={"status": "completed"},
+        report=[{"id": "report-1"}],
+        polling_error="",
+    )
+    terminal = founder_module.advance_founder_scan_once(active_settings, store, config, "scan-1")
+    assert terminal is not None and terminal.status == "completed"
+    assert terminal.attempts == 4
+    assert terminal.report == [{"id": "report-1"}]
+    assert founder_module._parse_timestamp("2026-08-01T00:00:00") is not None
+    assert founder_module._parse_timestamp("2026-08-01T00:00:00+00:00") is not None
+    assert founder_module._parse_timestamp("bad") is None
+    assert founder_module._optional_timestamp("") is None
+    assert founder_module._optional_timestamp("2026-08-01") == "2026-08-01"
+
+
+def test_founder_advance_marks_timeout_after_final_active_request(monkeypatch, settings, tmp_path) -> None:
+    store = configured(settings, tmp_path)
+    store.save_founder_artifact(
+        artifact_id="artifact-1", project_id="project-1", bundle_hash="hash", bundle={"metadata": {}}
+    )
+    store.update_founder_artifact_remote(
+        "artifact-1", scan_id="scan-1", polling_status="queued", polling_started_at="", polling_attempts=0
+    )
+
+    class RunningClient:
+        def __enter__(self) -> RunningClient:
+            return self
+
+        def __exit__(self, *_args: object) -> None:
+            return None
+
+        def get_scan(self, _scan_id: str) -> dict[str, object]:
+            return {"status": "running"}
+
+    monkeypatch.setattr(founder_module, "_open_client", lambda *_args: RunningClient())
+    outcome = founder_module.advance_founder_scan_once(
+        replace(settings, demo_mode=False, offline_mode=False),
+        store,
+        {"lp_project_id": "project-1"},
+        "scan-1",
+        artifact_id="artifact-1",
+        max_attempts=1,
+    )
+    assert outcome is not None and outcome.status == "timed_out"
+    assert store.get_founder_artifact("artifact-1")["polling_status"] == "timed_out"
 
 
 def test_founder_payload_and_report_helpers_cover_fallback_shapes() -> None:
