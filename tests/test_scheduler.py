@@ -86,7 +86,45 @@ def test_scheduler_registers_bounded_event_retry_worker(tmp_path: Path, settings
         assert manager._scheduler is not None  # noqa: SLF001
         retry_job = manager._scheduler.get_job(manager._retry_job_identity())  # noqa: SLF001
         assert retry_job is not None
+        founder_job = manager._scheduler.get_job(manager._founder_poll_job_identity())  # noqa: SLF001
+        assert founder_job is not None
+        assert founder_job.max_instances == 1
+        assert founder_job.coalesce is True
         manager._retry_due_event_deliveries()  # noqa: SLF001
+        manager.shutdown()
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize(
+    ("case", "mode_values"),
+    [
+        ("demo", {"demo_mode": True, "offline_mode": False}),
+        ("offline", {"demo_mode": False, "offline_mode": True}),
+        ("not_configured", {"demo_mode": False, "offline_mode": False}),
+    ],
+)
+def test_founder_polling_idle_ticks_do_not_write_audit_rows(
+    tmp_path: Path, settings, case: str, mode_values: dict[str, bool]
+) -> None:
+    runtime_settings = replace(settings, **mode_values)
+    store = Store(tmp_path / f"founder-{case}.db")
+    manager = SchedulerManager(store, enabled=True, settings=runtime_settings)
+
+    async def scenario() -> None:
+        manager.start()
+
+        assert manager._scheduler is not None  # noqa: SLF001
+        founder_job = manager._scheduler.get_job(manager._founder_poll_job_identity())  # noqa: SLF001
+        if case in {"demo", "offline"}:
+            assert founder_job is None
+        else:
+            assert founder_job is not None
+
+        for _ in range(10):
+            manager._run_founder_poll_iteration()  # noqa: SLF001
+
+        assert store.list_audit_events() == []
         manager.shutdown()
 
     asyncio.run(scenario())

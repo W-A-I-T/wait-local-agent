@@ -1657,7 +1657,7 @@ export type DiagnosticsSummary = {
   hardening: { status: string; expected_check_count?: number; result_count?: number } | DiagnosticSectionError;
   update_status: { status: string; detail: string; configured: boolean } | DiagnosticSectionError;
   correlation_ids: string[] | DiagnosticSectionError;
-  support_upload: { configured: boolean; available: boolean };
+  support_upload: { available: boolean; reason: string };
 };
 
 export type SupportBundlePreview = {
@@ -1939,6 +1939,12 @@ export type LaunchPassportStatus = {
   status: "connected" | "unreachable" | "not_authorized" | "unknown";
   lp_project_id?: string;
   token_configured: boolean;
+  polling?: "scheduler_enabled" | "scheduler_disabled";
+  polling_status?: "idle" | "queued" | "running" | "retrying" | "completed" | "failed" | "canceled" | "timed_out" | "not_authorized" | "unavailable" | "unknown";
+  last_polled_at?: string | null;
+  next_attempt_at?: string | null;
+  attempts?: number;
+  polling_error?: string | null;
   capabilities?: {
     launch_scan?: boolean;
   };

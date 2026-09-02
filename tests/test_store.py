@@ -109,6 +109,23 @@ def test_store_migrates_populated_prechange_schema_idempotently(tmp_path: Path) 
     assert document is not None and document["client_id"] is None
 
 
+def test_store_lists_only_non_terminal_founder_poll_candidates(tmp_path: Path) -> None:
+    store = Store(tmp_path / "founder-polling.db")
+    for artifact_id, project_id in (("active", "project-1"), ("terminal", "project-1"), ("other", "project-2")):
+        store.save_founder_artifact(
+            artifact_id=artifact_id,
+            project_id=project_id,
+            bundle_hash="hash",
+            bundle={"metadata": {}},
+        )
+    store.update_founder_artifact_remote("active", scan_id="scan-1", polling_status="running")
+    store.update_founder_artifact_remote("terminal", scan_id="scan-2", polling_status="completed")
+    store.update_founder_artifact_remote("other", scan_id="scan-3", polling_status="queued")
+
+    assert [item["artifact_id"] for item in store.list_founder_poll_candidates("project-1")] == ["active"]
+    assert {item["artifact_id"] for item in store.list_founder_poll_candidates()} == {"active", "other"}
+
+
 def test_store_reads_legacy_agent_execution_timezone_column(tmp_path: Path) -> None:
     store = Store(tmp_path / "state.db")
     with store._connect() as connection:  # noqa: SLF001

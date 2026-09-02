@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from types import ModuleType, SimpleNamespace
 from typing import Any, cast
@@ -27,6 +28,7 @@ from wait_local_agent.lp_client import (
 )
 from wait_local_agent.lp_polling import PollOutcome, poll_scan
 from wait_local_agent.rbac import Role
+from wait_local_agent.scheduler import SchedulerManager
 from wait_local_agent.store import Store
 from wait_local_agent.update_channel import UpdateStatus
 
@@ -396,16 +398,136 @@ def test_founder_launch_and_watch_persist_remote_state(monkeypatch, settings, tm
         {"scan_id": "scan-1", "state": "completed"},
         {"report": {"id": "r1"}},
     )
-    monkeypatch.setattr(founder_module, "poll_scan", lambda *_args, **_kwargs: outcome)
+    events: list[str] = []
+
+    def advance(*_args: object, **_kwargs: object) -> PollOutcome:
+        events.append("advance")
+        return outcome
+
+    monkeypatch.setattr(founder_module, "advance_founder_scan_once", advance)
+    monkeypatch.setattr(founder_module.time, "sleep", lambda _seconds: events.append("sleep"))
     first_watch = cast(dict[str, object], founder_module.watch_founder_scan(settings, store, config, "scan-1"))
     assert first_watch["status"] == "completed"
+    assert events == ["advance"]
     watched = cast(
         dict[str, object],
         founder_module.watch_founder_scan(settings, store, config, "scan-1", artifact_id="artifact-1"),
     )
+    assert events == ["advance", "advance"]
     report = cast(dict[str, object], watched["report"])
     assert cast(dict[str, object], report["report"])["id"] == "r1"
     client.close()
+
+
+def test_founder_watch_advances_before_initial_backoff(monkeypatch, settings, tmp_path) -> None:
+    store = configured(settings, tmp_path)
+    outcomes = iter(
+        [
+            PollOutcome("running", "scan-1", 1, 0.1),
+            PollOutcome("completed", "scan-1", 2, 0.2),
+        ]
+    )
+    events: list[tuple[str, float | None]] = []
+
+    def advance(*_args: object, **_kwargs: object) -> PollOutcome:
+        events.append(("advance", None))
+        return next(outcomes)
+
+    monkeypatch.setattr(founder_module, "advance_founder_scan_once", advance)
+    monkeypatch.setattr(founder_module.time, "sleep", lambda seconds: events.append(("sleep", seconds)))
+
+    result = founder_module.watch_founder_scan(
+        settings,
+        store,
+        {"lp_project_id": "project-1"},
+        "scan-1",
+        max_duration=120,
+    )
+
+    assert result["status"] == "completed"
+    assert events == [("advance", None), ("sleep", 30.0), ("advance", None)]
+
+
+def test_founder_scheduler_advances_once_and_stops_after_terminal(monkeypatch, settings, tmp_path) -> None:
+    runtime_settings = replace(settings, demo_mode=False, scheduler_enabled=True)
+    store = Store(tmp_path / "scheduler-founder.db")
+    store.save_founder_artifact(
+        artifact_id="artifact-1", project_id="project-1", bundle_hash="hash", bundle={"metadata": {}}
+    )
+    queued_at = datetime.now(UTC).isoformat()
+    store.update_founder_artifact_remote(
+        "artifact-1",
+        scan_id="scan-1",
+        polling_status="queued",
+        polling_started_at=queued_at,
+        next_attempt_at=queued_at,
+        polling_attempts=0,
+    )
+
+    class PollingClient:
+        def __init__(self) -> None:
+            self.responses: list[dict[str, object]] = [{"status": "running"}, {"status": "completed"}]
+            self.calls = 0
+
+        def __enter__(self) -> PollingClient:
+            return self
+
+        def __exit__(self, *_args: object) -> None:
+            return None
+
+        def get_scan(self, scan_id: str) -> dict[str, object]:
+            self.calls += 1
+            return self.responses.pop(0)
+
+        def latest_report(self, project_id: str) -> dict[str, object]:
+            return {"id": "report-1"}
+
+        def status(self) -> dict[str, object]:
+            return {"status": "connected", "capabilities": {"launch_scan": True}}
+
+    polling_client = PollingClient()
+    monkeypatch.setattr(founder_module, "_open_client", lambda *_args: polling_client)
+    monkeypatch.setattr(
+        founder_module,
+        "resolve_open_config",
+        lambda *_args: {"lp_project_id": "project-1", "lp_base_url": "https://lp.test", "token_vault_ref": "ref"},
+    )
+    manager = SchedulerManager(store, enabled=False, settings=runtime_settings)
+
+    manager._run_founder_poll_iteration()  # noqa: SLF001
+    artifact = cast(dict[str, object], store.get_founder_artifact("artifact-1"))
+    assert artifact["polling_status"] == "running"
+    assert artifact["polling_attempts"] == 1
+
+    with store._connect() as connection:  # noqa: SLF001
+        connection.execute("update founder_artifacts set next_attempt_at = '' where artifact_id = 'artifact-1'")
+    manager._run_founder_poll_iteration()  # noqa: SLF001
+    artifact = cast(dict[str, object], store.get_founder_artifact("artifact-1"))
+    assert artifact["polling_status"] == "completed"
+    assert polling_client.calls == 2
+    status = founder_module.open_founder_status(
+        runtime_settings,
+        {"lp_project_id": "project-1", "lp_base_url": "https://lp.test", "token_vault_ref": "ref"},
+        store,
+    )
+    assert status["polling_status"] == "completed"
+    assert status["attempts"] == 2
+    assert status["last_polled_at"]
+    assert status["next_attempt_at"] is None
+
+    monkeypatch.setattr(founder_module.time, "sleep", lambda _seconds: pytest.fail("terminal scans must not wait"))
+    watched = founder_module.watch_founder_scan(
+        runtime_settings,
+        store,
+        {"lp_project_id": "project-1", "lp_base_url": "https://lp.test", "token_vault_ref": "ref"},
+        "scan-1",
+        artifact_id="artifact-1",
+    )
+    assert watched["status"] == "completed"
+    assert polling_client.calls == 2
+
+    manager._run_founder_poll_iteration()  # noqa: SLF001
+    assert polling_client.calls == 2
 
 
 def test_founder_payload_and_report_helpers_cover_fallback_shapes() -> None:

@@ -340,6 +340,7 @@ class Store:
             Migration(12, "commercial_activations", self._apply_commercial_activations_migration),
             Migration(13, "document_authority", self._apply_document_authority_migration),
             Migration(14, "backup_runs", self._apply_backup_runs_migration),
+            Migration(15, "founder_polling_state", self._apply_founder_polling_state_migration),
         )
 
     def _apply_principals_migration(self, connection: sqlite3.Connection) -> None:
@@ -893,6 +894,20 @@ class Store:
         connection.execute(
             "create index if not exists idx_backup_runs_finished_at on backup_runs (finished_at desc)"
         )
+
+    @staticmethod
+    def _apply_founder_polling_state_migration(connection: sqlite3.Connection) -> None:
+        """Persist bounded appliance-side founder polling progress."""
+
+        for column_name, definition in (
+            ("polling_started_at", "text not null default ''"),
+            ("last_polled_at", "text not null default ''"),
+            ("next_attempt_at", "text not null default ''"),
+            ("polling_attempts", "integer not null default 0"),
+            ("polling_error", "text not null default ''"),
+            ("polling_claimed_at", "text not null default ''"),
+        ):
+            Store._ensure_column(connection, "founder_artifacts", column_name, definition)
 
     @staticmethod
     def _apply_operational_graph_migration(connection: sqlite3.Connection) -> None:
@@ -3642,7 +3657,13 @@ class Store:
                 remote_scan_json text not null default '{}',
                 latest_report_reference text not null default '',
                 latest_report_json text not null default '{}',
-                polling_status text not null default ''
+                polling_status text not null default '',
+                polling_started_at text not null default '',
+                last_polled_at text not null default '',
+                next_attempt_at text not null default '',
+                polling_attempts integer not null default 0,
+                polling_error text not null default '',
+                polling_claimed_at text not null default ''
             )
             """
         )
@@ -10524,7 +10545,13 @@ class Store:
                   remote_scan_json='{}',
                   latest_report_reference='',
                   latest_report_json='{}',
-                  polling_status=''
+                  polling_status='',
+                  polling_started_at='',
+                  last_polled_at='',
+                  next_attempt_at='',
+                  polling_attempts=0,
+                  polling_error='',
+                  polling_claimed_at=''
                 """,
                 (artifact_id, project_id, bundle_hash, _json_dumps(bundle), utc_now()),
             )
@@ -10549,6 +10576,24 @@ class Store:
             ).fetchall()
         return [self._founder_artifact_from_row(row) for row in rows]
 
+    def list_founder_poll_candidates(self, project_id: str = "") -> list[dict[str, object]]:
+        """Return only non-terminal artifacts that have a remote scan to poll."""
+
+        with self._connect() as connection:
+            rows = connection.execute(
+                """
+                select * from founder_artifacts
+                where (? = '' or project_id = ?)
+                  and remote_scan_id <> ''
+                  and polling_status not in (
+                    'completed', 'failed', 'canceled', 'timed_out', 'not_authorized', 'unavailable'
+                  )
+                order by created_at desc, artifact_id
+                """,
+                (project_id, project_id),
+            ).fetchall()
+        return [self._founder_artifact_from_row(row) for row in rows]
+
     def update_founder_artifact_remote(
         self,
         artifact_id: str,
@@ -10559,8 +10604,28 @@ class Store:
         report_reference: str | None = None,
         report: dict[str, object] | list[object] | None = None,
         polling_status: str | None = None,
+        polling_started_at: str | None = None,
+        last_polled_at: str | None = None,
+        next_attempt_at: str | None = None,
+        polling_attempts: int | None = None,
+        polling_error: str | None = None,
     ) -> None:
-        if all(value is None for value in (scan_id, scan_status, scan, report_reference, report, polling_status)):
+        if all(
+            value is None
+            for value in (
+                scan_id,
+                scan_status,
+                scan,
+                report_reference,
+                report,
+                polling_status,
+                polling_started_at,
+                last_polled_at,
+                next_attempt_at,
+                polling_attempts,
+                polling_error,
+            )
+        ):
             return
         with self._connect() as connection:
             connection.execute(
@@ -10571,7 +10636,12 @@ class Store:
                     remote_scan_json = coalesce(?, remote_scan_json),
                     latest_report_reference = coalesce(?, latest_report_reference),
                     latest_report_json = coalesce(?, latest_report_json),
-                    polling_status = coalesce(?, polling_status)
+                    polling_status = coalesce(?, polling_status),
+                    polling_started_at = coalesce(?, polling_started_at),
+                    last_polled_at = coalesce(?, last_polled_at),
+                    next_attempt_at = coalesce(?, next_attempt_at),
+                    polling_attempts = coalesce(?, polling_attempts),
+                    polling_error = coalesce(?, polling_error)
                 where artifact_id = ?
                 """,
                 (
@@ -10581,8 +10651,44 @@ class Store:
                     report_reference,
                     _json_dumps_value(report) if report is not None else None,
                     polling_status,
+                    polling_started_at,
+                    last_polled_at,
+                    next_attempt_at,
+                    polling_attempts,
+                    polling_error,
                     artifact_id,
                 ),
+            )
+
+    def claim_founder_artifact_poll(
+        self,
+        artifact_id: str,
+        *,
+        claimed_at: str,
+        stale_before: str,
+    ) -> bool:
+        """Claim one poll briefly so a CLI watcher and scheduler do not race."""
+
+        with self._connect() as connection:
+            updated = connection.execute(
+                """
+                update founder_artifacts
+                set polling_claimed_at = ?
+                where artifact_id = ?
+                  and polling_status not in (
+                    'completed', 'failed', 'canceled', 'timed_out', 'not_authorized', 'unavailable'
+                  )
+                  and (polling_claimed_at = '' or polling_claimed_at <= ?)
+                """,
+                (claimed_at, artifact_id, stale_before),
+            )
+        return updated.rowcount == 1
+
+    def release_founder_artifact_poll(self, artifact_id: str) -> None:
+        with self._connect() as connection:
+            connection.execute(
+                "update founder_artifacts set polling_claimed_at = '' where artifact_id = ?",
+                (artifact_id,),
             )
 
     def mark_founder_artifact_previewed(self, artifact_id: str) -> None:
@@ -10639,6 +10745,11 @@ class Store:
             "latest_report_reference": str(row["latest_report_reference"]),
             "latest_report": _json_value_or_empty(row["latest_report_json"]),
             "polling_status": str(row["polling_status"]),
+            "polling_started_at": str(row["polling_started_at"]),
+            "last_polled_at": str(row["last_polled_at"]),
+            "next_attempt_at": str(row["next_attempt_at"]),
+            "polling_attempts": int(row["polling_attempts"]),
+            "polling_error": str(row["polling_error"]),
         }
 
     def get_report(self, report_id: str) -> GeneratedReport | None:

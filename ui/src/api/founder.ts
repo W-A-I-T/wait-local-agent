@@ -18,6 +18,9 @@ const SCAN_STATES = new Set<FounderScanState>([
   "cancelled",
   "unknown"
 ]);
+const POLLING_STATES = new Set<NonNullable<LaunchPassportStatus["polling_status"]>>([
+  "idle", "queued", "running", "retrying", "completed", "failed", "canceled", "timed_out", "not_authorized", "unavailable", "unknown"
+]);
 const UPLOAD_STATES = new Set(["pending", "pending_upload", "uploaded", "completed", "failed", "unknown"]);
 
 export function projectFounderScan(value: unknown): FounderScanView | null {
@@ -56,11 +59,23 @@ export function projectLaunchPassportStatus(value: unknown): LaunchPassportStatu
   const record = asRecord(value);
   const projectId = safeIdentifier(record?.lp_project_id);
   const capabilities = asRecord(record?.capabilities);
+  const pollingStatus = typeof record?.polling_status === "string" && POLLING_STATES.has(record.polling_status as NonNullable<LaunchPassportStatus["polling_status"]>)
+    ? record.polling_status as NonNullable<LaunchPassportStatus["polling_status"]>
+    : undefined;
+  const attempts = nonNegativeInteger(record?.attempts);
   return {
     status: normalizeState(record?.status ?? record?.state, CONNECTION_STATES, "unknown") as LaunchPassportStatus["status"],
     token_configured: record?.token_configured === true,
     ...(projectId ? { lp_project_id: projectId } : {}),
-    capabilities: { launch_scan: capabilities?.launch_scan === true }
+    capabilities: { launch_scan: capabilities?.launch_scan === true },
+    ...(pollingStatus ? { polling_status: pollingStatus } : {}),
+    ...(typeof record?.polling === "string" && (record.polling === "scheduler_enabled" || record.polling === "scheduler_disabled")
+      ? { polling: record.polling }
+      : {}),
+    ...(typeof record?.last_polled_at === "string" ? { last_polled_at: record.last_polled_at } : {}),
+    ...(typeof record?.next_attempt_at === "string" ? { next_attempt_at: record.next_attempt_at } : {}),
+    ...(attempts !== undefined ? { attempts } : {}),
+    ...(typeof record?.polling_error === "string" ? { polling_error: record.polling_error || null } : {})
   };
 }
 

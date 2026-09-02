@@ -17,6 +17,7 @@ from pathlib import Path
 from typing import Annotated, Literal, cast
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request, Response
+from fastapi import status as http_status
 from fastapi.encoders import jsonable_encoder
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import FileResponse, JSONResponse
@@ -4109,16 +4110,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     ) -> dict[str, object]:
         _require_msp_operator(context)
         reason = support_upload_refusal(active_settings, consent=payload.consent)
-        store.add_audit_event("support.upload_refused", "support-bundle", reason)
-        if not payload.consent:
-            status_code = 400
-        elif active_settings.offline_mode or active_settings.demo_mode:
-            status_code = 403
-        elif not active_settings.support_upload_endpoint:
-            status_code = 409
-        else:
-            status_code = 501
-        raise HTTPException(status_code=status_code, detail=scrub_diagnostic_text(reason))
+        store.add_audit_event("support.upload_unavailable", "support-bundle", scrub_diagnostic_text(reason))
+        raise HTTPException(
+            status_code=http_status.HTTP_501_NOT_IMPLEMENTED,
+            detail={
+                "code": "support_upload_unavailable",
+                "message": scrub_diagnostic_text(reason),
+            },
+        )
 
     @app.post("/backup/restore-exercises")
     def create_restore_exercise(

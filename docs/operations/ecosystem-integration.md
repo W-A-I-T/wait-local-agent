@@ -158,6 +158,12 @@ When the user configures LP credentials:
 5. On completion: `wait founder scan-report` fetches the LP report summary
 6. LP dashboard link shown for full report
 
+After the browser starts a scan, polling runs inside the appliance's bounded
+scheduler. Each scheduler run performs at most one non-blocking status request;
+the persisted status, timestamps, and attempt count are exposed by the founder
+status endpoint. The CLI watcher keeps its existing blocking watch behavior by
+using the same single-advance operation between waits.
+
 ---
 
 ## Artifact Retention Rules

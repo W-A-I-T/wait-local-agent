@@ -80,7 +80,7 @@ class DiagnosticsSummary:
     hardening: dict[str, object]
     update_status: dict[str, object]
     correlation_ids: list[str] | dict[str, object]
-    support_upload: dict[str, bool]
+    support_upload: dict[str, object]
 
     def to_dict(self) -> dict[str, object]:
         return {
@@ -159,10 +159,8 @@ def collect_diagnostics(settings: Settings, store: Store) -> DiagnosticsSummary:
             lambda: _collect_correlation_ids(store),
         ),
         support_upload={
-            "configured": bool(settings.support_upload_endpoint),
-            "available": bool(
-                settings.support_upload_endpoint and not settings.offline_mode and not settings.demo_mode
-            ),
+            "available": False,
+            "reason": "not_available_in_this_edition",
         },
     )
 
@@ -241,14 +239,9 @@ def build_support_bundle(
 
 def support_upload_refusal(settings: Settings, *, consent: bool) -> str:
     if not consent:
-        return "explicit consent is required"
-    if settings.offline_mode:
-        return "support upload is unavailable in offline mode"
-    if settings.demo_mode:
-        return "support upload is unavailable in demo mode"
-    if not settings.support_upload_endpoint:
-        return "support upload is not configured"
-    return "automatic support upload is not available; download the bundle for approved transfer"
+        return "explicit consent is required; support upload is not available in this edition"
+    del settings
+    return "support upload is not available in this edition"
 
 
 def _best_effort(section: str, collector: Callable[[], Any]) -> Any:

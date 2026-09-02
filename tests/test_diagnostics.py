@@ -137,6 +137,10 @@ def test_summary_uses_explicit_safe_shape_and_authoritative_version(settings: Se
     rendered = json.dumps(summary, sort_keys=True)
     assert str(settings.data_path) not in rendered
     assert str(settings.log_dir) not in rendered
+    assert summary["support_upload"] == {
+        "available": False,
+        "reason": "not_available_in_this_edition",
+    }
 
 
 def test_application_version_matches_package_version(settings: Settings) -> None:
@@ -350,19 +354,17 @@ async def test_upload_route_refuses_unconfigured_sender_and_audits(
             headers=_auth("bootstrap-admin-token"),
             json={"consent": True},
         )
-    assert response.status_code == 409
-    assert response.json()["detail"] == "support upload is not configured"
-    assert application.state.store.list_audit_events()[-1].event_type == "support.upload_refused"
+    assert response.status_code == 501
+    assert response.json()["detail"]["code"] == "support_upload_unavailable"
+    assert application.state.store.list_audit_events()[-1].event_type == "support.upload_unavailable"
 
 
 def test_upload_refusal_reasons_are_fail_closed(settings: Settings) -> None:
     refusal = diagnostics_module.support_upload_refusal
-    assert refusal(settings, consent=False) == "explicit consent is required"
-    assert "offline mode" in refusal(replace(settings, offline_mode=True), consent=True)
-    assert "demo mode" in refusal(replace(settings, demo_mode=True), consent=True)
-    assert refusal(replace(settings, demo_mode=False), consent=True) == "support upload is not configured"
-    configured = replace(settings, demo_mode=False, support_upload_endpoint="https://support.invalid/upload")
-    assert "not available" in refusal(configured, consent=True)
+    assert "explicit consent is required" in refusal(settings, consent=False)
+    unavailable = "support upload is not available in this edition"
+    assert refusal(replace(settings, offline_mode=True), consent=True) == unavailable
+    assert refusal(replace(settings, demo_mode=True), consent=True) == unavailable
 
 
 @pytest.mark.anyio
@@ -422,17 +424,15 @@ def test_log_formatter_handles_correlation_exception_and_duplicate_setup(setting
     root.setLevel(previous_level)
 
 
-def test_logging_and_upload_configuration_from_environment(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+def test_logging_configuration_from_environment(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     monkeypatch.setenv("WAIT_DATA_PATH", str(tmp_path / "state.db"))
     monkeypatch.setenv("WAIT_LOG_DIR", str(tmp_path / "bounded-logs"))
     monkeypatch.setenv("WAIT_LOG_MAX_BYTES", "4096")
     monkeypatch.setenv("WAIT_LOG_BACKUP_COUNT", "2")
-    monkeypatch.setenv("WAIT_SUPPORT_UPLOAD_ENDPOINT", "https://support.invalid/upload")
     loaded = load_settings()
     assert loaded.log_dir == tmp_path / "bounded-logs"
     assert loaded.log_max_bytes == 4096
     assert loaded.log_backup_count == 2
-    assert loaded.support_upload_endpoint == "https://support.invalid/upload"
 
 
 def test_default_log_directory_is_not_repo_relative(monkeypatch: pytest.MonkeyPatch, settings: Settings) -> None:
@@ -625,5 +625,5 @@ def test_support_cli_commands(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -
     assert bundle.exit_code == 0, bundle.output
     assert zipfile.is_zipfile(output)
     assert upload.exit_code == 1
-    assert "demo mode" in upload.output
-    assert Store(data_path).list_audit_events()[-1].event_type == "support.upload_refused"
+    assert "not available in this edition" in upload.output
+    assert Store(data_path).list_audit_events()[-1].event_type == "support.upload_unavailable"

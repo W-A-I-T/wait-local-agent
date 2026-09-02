@@ -13,9 +13,21 @@ from wait_local_agent.lp_client import (
     LaunchPassportUnauthorized,
 )
 
-PollStatus = Literal["completed", "failed", "canceled", "timed_out", "not_authorized", "unavailable"]
+PollStatus = Literal[
+    "queued",
+    "running",
+    "retrying",
+    "unknown",
+    "completed",
+    "failed",
+    "canceled",
+    "timed_out",
+    "not_authorized",
+    "unavailable",
+]
 TERMINAL_SCAN_STATES = frozenset({"completed", "failed", "canceled"})
 ACTIVE_SCAN_STATES = frozenset({"queued", "running", "retrying", "unknown"})
+POLL_TERMINAL_STATES = TERMINAL_SCAN_STATES | {"timed_out", "not_authorized", "unavailable"}
 
 
 class ScanPollClient(Protocol):
@@ -82,62 +94,127 @@ def poll_scan(
         if elapsed >= max_duration:
             return _timeout(scan_id, attempts, elapsed)
 
-        attempts += 1
-        try:
-            scan = client.get_scan(scan_id)
-        except LaunchPassportRateLimited as exc:
-            last_error = "Launch Passport polling was rate limited"
-            last_retry_after = exc.retry_after
-            delay = min(max(delay, exc.retry_after or 0.0), max_delay)
+        outcome = poll_scan_once(
+            client,
+            project_id,
+            scan_id,
+            attempts=attempts,
+            elapsed_seconds=clock() - started,
+        )
+        attempts = outcome.attempts
+        if outcome.status in POLL_TERMINAL_STATES:
+            return _outcome(
+                outcome.status,
+                scan_id,
+                attempts,
+                clock() - started,
+                scan=outcome.scan,
+                report=outcome.report,
+                error=outcome.error or last_error,
+                retry_after=outcome.retry_after or last_retry_after,
+            )
+        if outcome.status == "retrying":
+            last_error = outcome.error
+            last_retry_after = outcome.retry_after
+            delay = min(max(delay, outcome.retry_after or 0.0), max_delay)
             continue
-        except (LaunchPassportUnauthorized, LaunchPassportForbidden):
-            return _outcome(
-                "not_authorized", scan_id, attempts, clock() - started, error="scan polling is not authorized"
-            )
-        except LaunchPassportInsufficientCredits:
-            return _outcome(
-                "unavailable",
-                scan_id,
-                attempts,
-                clock() - started,
-                error="Launch Passport credits are insufficient",
-            )
-        except LaunchPassportError:
-            return _outcome(
-                "unavailable", scan_id, attempts, clock() - started, error="scan polling request failed"
-            )
-        except Exception:
-            return _outcome("unavailable", scan_id, attempts, clock() - started, error="scan polling failed")
-
-        state = _scan_state(scan)
-        if state in TERMINAL_SCAN_STATES:
-            report: dict[str, Any] | list[Any] | None = None
-            report_error: str | None = None
-            if state == "completed":
-                try:
-                    report = client.latest_report(project_id)
-                except (LaunchPassportUnauthorized, LaunchPassportForbidden):
-                    report_error = "latest report is not authorized"
-                except LaunchPassportError:
-                    report_error = "latest report request failed"
-                except Exception:
-                    report_error = "latest report request failed"
-            return _outcome(
-                state,  # type: ignore[arg-type]
-                scan_id,
-                attempts,
-                clock() - started,
-                scan=scan,
-                report=report,
-                error=report_error or last_error,
-                retry_after=last_retry_after,
-            )
-
-        if state not in ACTIVE_SCAN_STATES:
+        if outcome.status == "unknown":
             last_error = "Launch Passport returned an unknown scan state"
         delay = min(delay * 2, max_delay)
 
     return _timeout(scan_id, attempts, clock() - started, error=last_error, retry_after=last_retry_after)
+
+
+def poll_scan_once(
+    client: ScanPollClient,
+    project_id: str,
+    scan_id: str,
+    *,
+    attempts: int = 0,
+    elapsed_seconds: float = 0.0,
+) -> PollOutcome:
+    """Advance one remote scan state without sleeping or looping.
+
+    This is the scheduler-safe primitive.  Callers own persistence, retry
+    timing, and the overall duration/attempt budget.
+    """
+    if not project_id.strip() or not scan_id.strip():
+        raise ValueError("project id and scan id are required")
+    if attempts < 0 or elapsed_seconds < 0:
+        raise ValueError("polling progress must not be negative")
+
+    next_attempt = attempts + 1
+    try:
+        scan = client.get_scan(scan_id)
+    except LaunchPassportRateLimited as exc:
+        return _outcome(
+            "retrying",
+            scan_id,
+            next_attempt,
+            elapsed_seconds,
+            error="Launch Passport polling was rate limited",
+            retry_after=exc.retry_after,
+        )
+    except (LaunchPassportUnauthorized, LaunchPassportForbidden):
+        return _outcome(
+            "not_authorized",
+            scan_id,
+            next_attempt,
+            elapsed_seconds,
+            error="scan polling is not authorized",
+        )
+    except LaunchPassportInsufficientCredits:
+        return _outcome(
+            "unavailable",
+            scan_id,
+            next_attempt,
+            elapsed_seconds,
+            error="Launch Passport credits are insufficient",
+        )
+    except LaunchPassportError:
+        return _outcome(
+            "unavailable",
+            scan_id,
+            next_attempt,
+            elapsed_seconds,
+            error="scan polling request failed",
+        )
+    except Exception:
+        return _outcome("unavailable", scan_id, next_attempt, elapsed_seconds, error="scan polling failed")
+
+    state = _scan_state(scan)
+    if state in TERMINAL_SCAN_STATES:
+        report: dict[str, Any] | list[Any] | None = None
+        report_error: str | None = None
+        if state == "completed":
+            try:
+                report = client.latest_report(project_id)
+            except (LaunchPassportUnauthorized, LaunchPassportForbidden):
+                report_error = "latest report is not authorized"
+            except LaunchPassportError:
+                report_error = "latest report request failed"
+            except Exception:
+                report_error = "latest report request failed"
+        return _outcome(
+            state,  # type: ignore[arg-type]
+            scan_id,
+            next_attempt,
+            elapsed_seconds,
+            scan=scan,
+            report=report,
+            error=report_error,
+        )
+
+    if state in ACTIVE_SCAN_STATES:
+        return _outcome(state, scan_id, next_attempt, elapsed_seconds, scan=scan)  # type: ignore[arg-type]
+    return _outcome(
+        "unknown",
+        scan_id,
+        next_attempt,
+        elapsed_seconds,
+        scan=scan,
+        error="Launch Passport returned an unknown scan state",
+    )
 
 
 def _scan_state(scan: dict[str, Any]) -> str:
