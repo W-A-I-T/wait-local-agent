@@ -2,14 +2,16 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
-from typing import cast
+from typing import Any, cast
 
 import pytest
 
+import wait_local_agent.scheduler as scheduler_module
 from tests.support import ingest_local
 from wait_local_agent.agents import AgentService
 from wait_local_agent.config import Settings
@@ -19,6 +21,7 @@ from wait_local_agent.models import ScheduledJob
 from wait_local_agent.rbac import Role
 from wait_local_agent.scheduler import (
     SchedulerManager,
+    _backup_retention_count,
     _schedule_trigger,
     _validate_schedule_target,
     validate_cron_expression,
@@ -654,6 +657,53 @@ def test_scheduler_deterministic_noop_and_validation_edges(tmp_path: Path, monke
         validate_scheduled_report_params({"client_id": "acme", "period_days": 0})
     with pytest.raises(ValueError, match="include client_id"):
         validate_scheduled_report_params({"period_days": 1})
+
+
+def test_scheduler_backup_registration_and_runner_edges(tmp_path: Path, monkeypatch) -> None:
+    store = Store(tmp_path / "backup-edges.db")
+    manager = SchedulerManager(store, enabled=False)
+
+    with pytest.raises(ValueError, match="appliance-level"):
+        manager.register("", "0 9 * * *", {"client_id": "tenant"}, job_kind="backup")
+    failed = manager.run_backup()
+    assert failed.status == "failed"
+    assert failed.failure_summary == "backup creation failed"
+
+    destination = tmp_path / "backups" / "state-string.db.enc"
+    destination.parent.mkdir()
+    destination.write_bytes(b"backup")
+    string_manager = SchedulerManager(store, enabled=False, backup_runner=cast(Any, lambda: str(destination)))
+    monkeypatch.setattr(scheduler_module, "prune_backup_files", lambda *_args: 1)
+    pruned = string_manager.run_backup()
+    assert pruned.status == "succeeded"
+    assert pruned.destination == str(destination.resolve())
+    assert pruned.failure_summary == "retention pruning failed"
+
+    monkeypatch.setattr(scheduler_module, "prune_backup_files", lambda *_args: (_ for _ in ()).throw(OSError("busy")))
+    failed_prune = string_manager.run_backup()
+    assert failed_prune.status == "succeeded"
+    assert failed_prune.failure_summary == "retention pruning failed"
+
+
+def test_scheduler_baseline_and_completion_guards_are_noops(tmp_path: Path, caplog) -> None:
+    store = Store(tmp_path / "scheduler-guards.db")
+    manager = SchedulerManager(store, enabled=False)
+    missing_runner = ScheduledJob(
+        id=1, template_id="", cron="0 9 * * *", params_json="{}", paused=False,
+        created_at="", updated_at="", job_kind="baseline_snapshot", entity_id="client-a",
+    )
+    missing_scope = replace(missing_runner, id=2, entity_id=" ")
+
+    with caplog.at_level(logging.WARNING):
+        asyncio.run(manager._run_baseline_snapshot_job(missing_runner))  # noqa: SLF001
+        asyncio.run(manager._run_baseline_snapshot_job(missing_scope))  # noqa: SLF001
+    assert caplog.messages.count("Scheduled baseline snapshot skipped: runner or client scope is not configured") == 2
+
+    manager._dispatch_completion(  # noqa: SLF001
+        run_id=None, ticket_id="T-1", template_id="template", status="completed", actor="scheduler"
+    )
+    store.set_app_config("backup.retention_count", "not-an-integer")
+    assert _backup_retention_count(store) == 7
 
 
 def test_scheduler_connector_poll_missing_entity_and_failure_are_audited(tmp_path: Path, monkeypatch) -> None:

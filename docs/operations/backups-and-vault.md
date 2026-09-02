@@ -40,6 +40,18 @@ wait-local-agent backup create .wait-local-agent/backups/state.db.enc --encrypt
 wait-local-agent backup restore .wait-local-agent/backups/state.db.enc --encrypted
 ```
 
+The appliance can also create encrypted backups from its scheduler. Create an
+`Appliance backup` schedule in Scheduled Jobs, or use the admin-only
+`POST /backups/run` endpoint for an on-demand run. Scheduled and on-demand
+runs are recorded in the operator backup status surface; the default retention
+is seven generated backup files. An administrator can override it with the
+appliance configuration key `backup.retention_count`.
+
+Backup history records metadata only. The API never streams backup contents or
+the Fernet key. A successful creation is not proof that the artifact can be
+recovered; use `run_restore_exercise` (or the restore-exercise API) and inspect
+the last evidence reference in `GET /backups`.
+
 The backup API and CLI operate on the local SQLite state. Restore is an
 operator action and should be tested against a copy or recovery environment
 before replacing active state. Backup and restore paths must remain inside the

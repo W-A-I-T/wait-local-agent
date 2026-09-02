@@ -117,4 +117,24 @@ describe("ScheduledJobs", () => {
       params: { client_id: "acme", ticket_id: "T-1", input: { priority: "high" } }
     });
   });
+
+  it("creates an appliance backup schedule without tenant parameters", async () => {
+    render(<ScheduledJobs />);
+
+    await screen.findByText("Scheduled Jobs");
+    fireEvent.change(screen.getByLabelText("Schedule type"), { target: { value: "backup" } });
+    fireEvent.click(screen.getByRole("button", { name: "Create schedule" }));
+
+    await waitFor(() => expect(jobs).toHaveBeenCalledWith(
+      "/scheduled-jobs",
+      expect.objectContaining({ method: "POST" })
+    ));
+    const request = jobs.mock.calls.find(([, init]) => init?.method === "POST")?.[1] as RequestInit;
+    expect(JSON.parse(String(request.body))).toEqual({
+      job_kind: "backup",
+      cron: "0 */6 * * *",
+      timezone: "UTC",
+      params: {}
+    });
+  });
 });

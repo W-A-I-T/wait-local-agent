@@ -14,7 +14,7 @@ export function ScheduledJobs() {
   const [playbooks, setPlaybooks] = useState<MspPlaybook[]>([]);
   const [loading, setLoading] = useState(true);
   const hasLoadedRef = useRef(false);
-  const [scheduleKind, setScheduleKind] = useState<"workflow" | "playbook" | "agent" | "report" | "graph_sync">("workflow");
+  const [scheduleKind, setScheduleKind] = useState<"workflow" | "playbook" | "agent" | "report" | "graph_sync" | "backup">("workflow");
   const [templateId, setTemplateId] = useState("");
   const [reportType, setReportType] = useState<"qbr" | "automation_opportunity" | "recurring_service_review">("qbr");
   const [agentId, setAgentId] = useState("");
@@ -90,7 +90,9 @@ export function ScheduledJobs() {
     if (requiresClientScope) params = { ...params, client_id: selectedClientId };
 
     try {
-      const body: ScheduledJobRequestBody = scheduleKind === "graph_sync"
+      const body: ScheduledJobRequestBody = scheduleKind === "backup"
+        ? { job_kind: "backup", cron, timezone: timezone.trim(), params: {} }
+        : scheduleKind === "graph_sync"
         ? { job_kind: "graph_sync", graph_sync: true, entity_id: selectedClientId!, cron, timezone: timezone.trim(), params }
         : scheduleKind === "playbook"
         ? { playbook_id: playbookId, cron, timezone: timezone.trim(), params }
@@ -143,12 +145,13 @@ export function ScheduledJobs() {
           <div className="grid">
             <label>
               Schedule type
-              <select value={scheduleKind} onChange={(event) => setScheduleKind(event.target.value as "workflow" | "playbook" | "agent" | "report" | "graph_sync")}>
+              <select value={scheduleKind} onChange={(event) => setScheduleKind(event.target.value as "workflow" | "playbook" | "agent" | "report" | "graph_sync" | "backup")}>
                 <option value="workflow">Workflow template</option>
                 <option value="playbook">MSP playbook</option>
                 <option value="agent">Agent definition</option>
                 <option value="report">Client report</option>
                 <option value="graph_sync">Environment sync</option>
+                <option value="backup">Appliance backup</option>
               </select>
             </label>
             {scheduleKind === "workflow" ? (
@@ -178,6 +181,8 @@ export function ScheduledJobs() {
                   <option value="recurring_service_review">Recurring service review</option>
                 </select>
               </label>
+            ) : scheduleKind === "backup" ? (
+              <div className="notice">Creates an encrypted local appliance backup. MSP administrator access is required.</div>
             ) : (
               <>
                 {agents.filter((agent) => agent.trigger === "scheduled" && agent.enabled).length === 0 ? <EmptyState title="No scheduled agents available" why="Agents exist, but none are scheduled and enabled. Enable an agent with a scheduled trigger before creating an agent schedule." /> : <label>
@@ -272,6 +277,7 @@ export function ScheduledJobs() {
 
 function jobTargetLabel(job: ScheduledJob): string {
   if (job.job_kind === "graph_sync") return `Environment sync for ${job.client_id ?? job.entity_id}`;
+  if (job.job_kind === "backup") return "Encrypted appliance backup";
   if (job.job_kind === "agent") return `Agent ${job.agent_id}`;
   if (job.job_kind === "report") return `Report ${job.template_id}`;
   if (job.job_kind === "playbook") return `Playbook ${job.playbook_id ?? job.template_id}`;

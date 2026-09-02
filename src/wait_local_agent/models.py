@@ -721,6 +721,17 @@ class ScheduledJob:
 
 
 @dataclass(frozen=True)
+class BackupRun:
+    backup_run_id: int
+    started_at: str
+    finished_at: str
+    status: str
+    destination: str
+    size_bytes: int | None
+    failure_summary: str
+
+
+@dataclass(frozen=True)
 class SecretRecord:
     key: str
     configured: bool

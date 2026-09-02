@@ -4,8 +4,8 @@ import type { ScheduledJob } from "../api/types";
 import { StatusChip } from "../components/StatusChip";
 
 type StatusFilter = "all" | "active" | "paused";
-type TargetFilter = "all" | "workflow" | "playbook" | "graph_sync";
-type TargetKind = "workflow" | "playbook" | "graph_sync" | "other";
+type TargetFilter = "all" | "workflow" | "playbook" | "graph_sync" | "backup";
+type TargetKind = "workflow" | "playbook" | "graph_sync" | "backup" | "other";
 
 export function Schedules() {
   const [jobs, setJobs] = useState<ScheduledJob[]>([]);
@@ -92,6 +92,7 @@ export function Schedules() {
                 <option value="workflow">Workflows</option>
                 <option value="playbook">Playbooks</option>
                 <option value="graph_sync">Environment sync</option>
+                <option value="backup">Appliance backups</option>
               </select>
             </label>
           </div>
@@ -214,6 +215,9 @@ function DetailField({ label, value }: { label: string; value: unknown }) {
 }
 
 function targetKind(job: ScheduledJob): TargetKind {
+  if (job.job_kind === "backup") {
+    return "backup";
+  }
   if (job.job_kind === "graph_sync") {
     return "graph_sync";
   }
@@ -227,7 +231,7 @@ function targetKind(job: ScheduledJob): TargetKind {
 }
 
 function targetLabel(kind: TargetKind): string {
-  return kind === "playbook" ? "Playbook" : kind === "workflow" ? "Workflow" : kind === "graph_sync" ? "Environment sync" : "Other";
+  return kind === "playbook" ? "Playbook" : kind === "workflow" ? "Workflow" : kind === "graph_sync" ? "Environment sync" : kind === "backup" ? "Appliance backup" : "Other";
 }
 
 function targetId(job: ScheduledJob, kind: TargetKind): string {
@@ -239,6 +243,9 @@ function targetId(job: ScheduledJob, kind: TargetKind): string {
   }
   if (kind === "graph_sync") {
     return job.client_id ?? job.entity_id ?? "Not provided";
+  }
+  if (kind === "backup") {
+    return "Local encrypted state";
   }
   return job.agent_id ?? job.template_id ?? "Not provided";
 }

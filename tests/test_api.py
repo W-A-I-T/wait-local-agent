@@ -284,6 +284,65 @@ def test_baseline_routes_return_unknown_client_and_version_404s_and_emit_audits(
     assert {"baseline.created", "baseline.accepted", "baseline.listed", "baseline.drift.viewed"} <= event_types
 
 
+def test_health_falls_back_to_static_m365_credentials_when_profile_resolution_fails(settings, monkeypatch) -> None:
+    configured = replace(settings, m365_graph_base_url="https://graph.example.test", m365_access_token="token")
+
+    def fail_resolution(*_args, **_kwargs):
+        raise ValueError("ambiguous stored profile")
+
+    monkeypatch.setattr(app_module.M365ConnectionResolver, "resolve", fail_resolution)
+    application = create_app(configured)
+    health_route = next(route for route in application.routes if getattr(route, "path", None) == "/health")
+    assert isinstance(health_route, APIRoute)
+    health = health_route.endpoint
+    response = health(None, None)
+
+    assert response["m365_configured"] is True
+
+
+def test_commercial_activation_routes_sanitize_store_errors_and_missing_clients(settings, monkeypatch) -> None:
+    configured = replace(settings, demo_mode=False, admin_token="bootstrap-admin")
+    store = Store(configured.data_path)
+    ensure_test_client(store, "acme")
+    application = create_app(configured)
+    store = application.state.store
+    context = AuthContext(Role.ADMIN, "bootstrap-admin", is_msp_admin=True)
+    activate_route = next(
+        route
+        for route in application.routes
+        if getattr(route, "path", None) == "/clients/{client_id}/commercial-activation"
+        and getattr(route, "methods", set()) == {"POST"}
+    )
+    assert isinstance(activate_route, APIRoute)
+    activate = activate_route.endpoint
+    deactivate_route = next(
+        route
+        for route in application.routes
+        if getattr(route, "path", None) == "/clients/{client_id}/commercial-activation"
+        and getattr(route, "methods", set()) == {"DELETE"}
+    )
+    assert isinstance(deactivate_route, APIRoute)
+    deactivate = deactivate_route.endpoint
+
+    def reject_activation(*_args, **_kwargs):
+        raise ValueError("invalid activation state")
+
+    monkeypatch.setattr(store, "activate_commercial_client", reject_activation)
+    with pytest.raises(HTTPException) as bad:
+        activate("acme", context)
+    assert bad.value.status_code == 400
+    assert bad.value.detail == "invalid activation state"
+
+    monkeypatch.setattr(store, "activate_commercial_client", lambda *_args, **_kwargs: None)
+    with pytest.raises(HTTPException) as missing:
+        activate("acme", context)
+    assert missing.value.status_code == 404
+
+    with pytest.raises(HTTPException) as unknown:
+        deactivate("missing", context)
+    assert unknown.value.status_code == 404
+
+
 def test_provider_settings_and_tickets_list(settings) -> None:
     ingest_local(Store(settings.data_path), Path("examples/sample_tickets/tickets.json"))
     client = TestClient(create_app(settings))

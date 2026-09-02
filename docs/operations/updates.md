@@ -71,3 +71,26 @@ Outcomes:
 - Invalid signature, invalid pinned key, or malformed signed metadata: report `invalid_signature` and treat it as no update.
 
 The API caches the last computed status in-process for one hour so repeated admin reads do not hammer the channel. Startup never blocks on the update channel because checks happen only when explicitly requested.
+
+## Production appliance update procedure
+
+Updates are operator-managed. Before changing the appliance image:
+
+1. Create an encrypted backup from the appliance and confirm the latest backup
+   status in `GET /backups`. Creation success is not recovery evidence; run a
+   restore exercise when the recovery path must be verified.
+2. Run `wait-local-agent update check` and proceed only when the signed
+   metadata is trusted and the result identifies the intended release.
+3. Pin the new immutable image by digest (or an explicitly approved immutable
+   image tag), update `WAIT_IMAGE_TAG`, and run the production `docker compose pull`.
+4. Start the appliance and allow `MigrationRunner` to apply pending database
+   migrations on startup. Verify `GET /healthz` returns `{"status":"ok"}` and
+   review the application health and backup status before returning service.
+5. Retain the previous image tag or digest until the new version has been
+   accepted. For rollback, restore that image reference and restart the
+   appliance if the application image is the problem.
+
+Database migrations are not automatically reversible. If a rollback crosses a
+schema change, restore the database from a verified backup artifact rather
+than assuming the old image can open the newer schema. Keep the previous image
+reference and backup evidence together in the operator change record.

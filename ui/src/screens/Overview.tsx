@@ -1,6 +1,8 @@
 import { Activity, CheckCircle2, GitBranch, Sparkles, Workflow } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
+import { apiFetch } from "../api/client";
+import type { BackupStatusResponse } from "../api/types";
 import { useDashboard } from "../app/DashboardContext";
 import { SetupStatus } from "../components/SetupStatus";
 import { OnboardingWizard } from "../surfaces/onboarding/OnboardingWizard";
@@ -19,8 +21,11 @@ export function Overview() {
     canWrite,
     isConfigured,
     configurationLoading,
-    roleResolved
+    roleResolved,
+    isAdmin,
+    isMspAdmin
   } = useDashboard();
+  const [backupStatus, setBackupStatus] = useState<BackupStatusResponse | null>(null);
   const [searchParams, setSearchParams] = useSearchParams();
   const [onboardingDismissed, setOnboardingDismissed] = useState(
     () => window.localStorage.getItem(ONBOARDING_DISMISS_KEY) === "1"
@@ -32,6 +37,28 @@ export function Overview() {
   const showOnboarding = roleResolved && !configurationLoading && (
     explicitlyRequested || (!isConfigured && !onboardingDismissed)
   );
+
+  useEffect(() => {
+    if (!isAdmin || !isMspAdmin) {
+      setBackupStatus(null);
+      return;
+    }
+    let active = true;
+    void apiFetch<BackupStatusResponse>("/backups")
+      .then((response) => {
+        if (active && Array.isArray(response.items)) {
+          setBackupStatus(response);
+        }
+      })
+      .catch(() => {
+        if (active) setBackupStatus(null);
+      });
+    return () => {
+      active = false;
+    };
+  }, [isAdmin, isMspAdmin]);
+
+  const latestBackup = backupStatus?.items[0];
 
   function dismissOnboarding() {
     window.localStorage.setItem(ONBOARDING_DISMISS_KEY, "1");
@@ -70,6 +97,13 @@ export function Overview() {
                   : "demo-ready"}
           </span>
         </div>
+        {latestBackup ? (
+          <div className="event-row" aria-label="Last backup status">
+            <strong>Last backup</strong>
+            <span>{latestBackup.status}</span>
+            <em>{formatBackupAge(latestBackup.finished_at)}</em>
+          </div>
+        ) : null}
         <div className="overview-cards">
           <Link className="overview-card" to="/connectors">
             <GitBranch size={20} aria-hidden="true" />
@@ -185,4 +219,14 @@ export function Overview() {
       </p>
     </div>
   );
+}
+
+function formatBackupAge(value: string): string {
+  const timestamp = Date.parse(value);
+  if (!Number.isFinite(timestamp)) return value;
+  const elapsedSeconds = Math.max(0, Math.floor((Date.now() - timestamp) / 1000));
+  if (elapsedSeconds < 60) return "just now";
+  if (elapsedSeconds < 3600) return `${Math.floor(elapsedSeconds / 60)}m ago`;
+  if (elapsedSeconds < 86_400) return `${Math.floor(elapsedSeconds / 3600)}h ago`;
+  return `${Math.floor(elapsedSeconds / 86_400)}d ago`;
 }

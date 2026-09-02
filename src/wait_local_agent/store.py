@@ -34,6 +34,7 @@ from wait_local_agent.models import (
     ApprovalRequest,
     AssetObservation,
     AuditEvent,
+    BackupRun,
     CanonicalAsset,
     Client,
     ClientBaseline,
@@ -338,6 +339,7 @@ class Store:
             Migration(11, "client_baselines", self._apply_client_baselines_migration),
             Migration(12, "commercial_activations", self._apply_commercial_activations_migration),
             Migration(13, "document_authority", self._apply_document_authority_migration),
+            Migration(14, "backup_runs", self._apply_backup_runs_migration),
         )
 
     def _apply_principals_migration(self, connection: sqlite3.Connection) -> None:
@@ -872,6 +874,27 @@ class Store:
         )
 
     @staticmethod
+    def _apply_backup_runs_migration(connection: sqlite3.Connection) -> None:
+        """Record appliance-level backup outcomes without storing backup contents."""
+
+        connection.execute(
+            """
+            create table if not exists backup_runs (
+                backup_run_id integer primary key autoincrement,
+                started_at text not null,
+                finished_at text not null,
+                status text not null check (status in ('succeeded', 'failed')),
+                destination text not null,
+                size_bytes integer,
+                failure_summary text not null default ''
+            )
+            """
+        )
+        connection.execute(
+            "create index if not exists idx_backup_runs_finished_at on backup_runs (finished_at desc)"
+        )
+
+    @staticmethod
     def _apply_operational_graph_migration(connection: sqlite3.Connection) -> None:
         """Add the client-scoped operational graph tables without changing existing data."""
 
@@ -1261,6 +1284,71 @@ class Store:
                 """,
                 (normalized_key, config_value, utc_now(), updated_by),
             )
+
+    def add_backup_run(
+        self,
+        *,
+        started_at: str,
+        finished_at: str,
+        status: str,
+        destination: str,
+        size_bytes: int | None = None,
+        failure_summary: str = "",
+    ) -> BackupRun:
+        if status not in {"succeeded", "failed"}:
+            raise ValueError("backup status must be succeeded or failed")
+        if size_bytes is not None and (isinstance(size_bytes, bool) or size_bytes < 0):
+            raise ValueError("backup size_bytes must be non-negative")
+        if failure_summary not in {"", "backup creation failed", "retention pruning failed"}:
+            failure_summary = "backup operation failed"
+        with self._connect() as connection:
+            cursor = connection.execute(
+                """
+                insert into backup_runs
+                  (started_at, finished_at, status, destination, size_bytes, failure_summary)
+                values (?, ?, ?, ?, ?, ?)
+                """,
+                (started_at, finished_at, status, destination, size_bytes, failure_summary[:512]),
+            )
+            if cursor.lastrowid is None:
+                raise RuntimeError("backup run insert did not return an id")
+            run_id = int(cursor.lastrowid)
+        result = self.get_backup_run(run_id)
+        if result is None:
+            raise RuntimeError("backup run was not persisted")
+        return result
+
+    def get_backup_run(self, backup_run_id: int) -> BackupRun | None:
+        with self._connect() as connection:
+            row = connection.execute(
+                "select * from backup_runs where backup_run_id = ?",
+                (backup_run_id,),
+            ).fetchone()
+        return BackupRun(**dict(row)) if row else None
+
+    def count_backup_runs(self) -> int:
+        with self._connect() as connection:
+            return int(connection.execute("select count(*) from backup_runs").fetchone()[0])
+
+    def list_backup_runs(self, *, limit: int = 25, offset: int = 0) -> list[BackupRun]:
+        if isinstance(limit, bool) or not 1 <= limit <= 100:
+            raise ValueError("backup run limit must be between 1 and 100")
+        if isinstance(offset, bool) or offset < 0:
+            raise ValueError("backup run offset must be non-negative")
+        with self._connect() as connection:
+            rows = connection.execute(
+                """
+                select * from backup_runs
+                order by finished_at desc, backup_run_id desc
+                limit ? offset ?
+                """,
+                (limit, offset),
+            ).fetchall()
+        return [BackupRun(**dict(row)) for row in rows]
+
+    def latest_backup_run(self) -> BackupRun | None:
+        rows = self.list_backup_runs(limit=1)
+        return rows[0] if rows else None
 
     def upsert_client_candidate(
         self,
