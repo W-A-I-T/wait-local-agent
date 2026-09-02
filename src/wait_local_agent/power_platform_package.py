@@ -1,7 +1,7 @@
-"""Deterministic, local-only Power Platform YAML source packages.
+"""Deterministic, local-only Power Platform XML source packages.
 
 The package in this module is a source handoff, not a solution ZIP and not a
-provider operation.  It deliberately uses the YAML source-control layout that
+provider operation.  It deliberately uses the XML solution layout that
 the Power Platform CLI can pack, while keeping all source material in memory
 until the caller explicitly requests gated materialization.
 """
@@ -16,12 +16,16 @@ import uuid
 from collections.abc import Mapping, Sequence
 from pathlib import Path, PureWindowsPath
 from typing import Any, cast
+from xml.sax.saxutils import (
+    escape as _xml_escape,  # nosec B406 - escape only encodes emitted XML; it never parses input
+)
 
 from wait_local_agent.config import Settings
 
 PACKAGE_FORMAT = "wait-local-agent.power-platform.deployable-source"
 PACKAGE_VERSION = 1
 PAC_YAML_MINIMUM_VERSION = "2.4.1"
+PAC_XML_MINIMUM_VERSION = PAC_YAML_MINIMUM_VERSION
 MAX_PACKAGE_FILES = 96
 MAX_PACKAGE_FILE_BYTES = 64_000
 MAX_PACKAGE_BYTES = 512_000
@@ -30,6 +34,8 @@ MAX_FLOW_ACTIONS = 32
 MAX_INPUT_ARTIFACT_BYTES = 256_000
 MAX_PATH_LENGTH = 240
 MAX_TEXT_LENGTH = 240
+DEFAULT_STRING_MAX_LENGTH = 100
+MAX_STRING_MAX_LENGTH = 4_000
 _IDENTIFIER = re.compile(r"^[a-z][a-z0-9_]{0,63}$")
 _DIGEST = re.compile(r"^sha256:[0-9a-f]{64}$")
 _SECRET_KEY = re.compile(
@@ -60,7 +66,7 @@ def build_power_platform_package(
     connector_artifacts: Sequence[Mapping[str, object]] = (),
     review_artifacts: Sequence[Mapping[str, object]] | None = None,
 ) -> dict[str, Any]:
-    """Build a deterministic Power Platform YAML source package.
+    """Build a deterministic Power Platform XML source package.
 
     ``artifacts`` is the preferred input.  ``review_artifacts`` is accepted as
     an integration-friendly alias and ``connector_artifacts`` may be supplied
@@ -85,38 +91,13 @@ def build_power_platform_package(
 
     publisher_unique_name = _publisher_identifier(publisher)
     files: dict[str, tuple[str, str]] = {}
-    component_paths: set[str] = set()
     root_components: list[dict[str, object]] = []
+    entities: list[dict[str, object]] = []
     unsupported: list[dict[str, object]] = []
     design_only: list[dict[str, object]] = []
     emitted_component_classes = {"publisher", "solution_manifest"}
     import_complete_component_classes = {"publisher", "solution_manifest"}
     artifact_component_classes: set[str] = set()
-
-    _add_file(
-        files,
-        f"publishers/{publisher_unique_name}/publisher.yml",
-        _yaml(
-            {
-                "Publisher": {
-                    "UniqueName": publisher_unique_name,
-                    "LocalizedNames": {
-                        "LocalizedName": {
-                            "@description": publisher,
-                            "@languagecode": "1033",
-                        }
-                    },
-                    "Descriptions": None,
-                    "EMailAddress": None,
-                    "SupportingWebsiteUrl": None,
-                    "CustomizationPrefix": prefix,
-                    "CustomizationOptionValuePrefix": "10000",
-                    "Addresses": None,
-                }
-            },
-        ),
-    )
-    component_paths.add(f"publishers/{publisher_unique_name}")
 
     for artifact_index, artifact in enumerate(normalized_artifacts, start=1):
         artifact_format = str(artifact.get("format", ""))
@@ -124,20 +105,20 @@ def build_power_platform_package(
             _emit_power_apps_artifact(
                 artifact,
                 files,
-                component_paths,
                 root_components,
                 unsupported,
                 tenant,
+                entities,
                 emitted_component_classes,
                 import_complete_component_classes,
                 artifact_component_classes,
+                design_only,
+                prefix,
             )
         elif artifact_format == "wait-local-agent.power-automate-flow-plan":
             _emit_flow_artifact(
                 artifact,
                 files,
-                component_paths,
-                root_components,
                 tenant,
                 emitted_component_classes,
                 artifact_component_classes,
@@ -147,12 +128,10 @@ def build_power_platform_package(
             _emit_connector_artifact(
                 artifact,
                 files,
-                component_paths,
-                root_components,
                 tenant,
                 emitted_component_classes,
-                import_complete_component_classes,
                 artifact_component_classes,
+                design_only,
             )
         else:
             artifact_component_classes.add("unsupported")
@@ -160,37 +139,18 @@ def build_power_platform_package(
                 {
                     "id": str(_component_id(tenant, f"unsupported:{artifact_index}:{artifact_format}")),
                     "format": artifact_format or "unknown",
-                    "reason": "artifact format has no supported YAML source mapping",
+                    "reason": "artifact format has no supported XML source mapping",
                 }
             )
 
-    solution_path = f"solutions/{solution}"
-    component_list = sorted(component_paths)
     root_components = sorted(root_components, key=lambda item: (str(item.get("type")), str(item.get("schema_name"))))
     _add_file(
         files,
-        f"{solution_path}/solution.yml",
-        _yaml(
-            {
-                "Solution": {
-                    "UniqueName": solution,
-                    "LocalizedNames": {
-                        "LocalizedName": {
-                            "@description": solution,
-                            "@languagecode": "1033",
-                        }
-                    },
-                    "Descriptions": None,
-                    "Version": "1.0.0.0",
-                    "Managed": False,
-                    "Publisher": publisher_unique_name,
-                }
-            }
-        ),
+        "Other/Solution.xml",
+        _solution_xml(solution, publisher, publisher_unique_name, prefix, root_components),
     )
-    _add_file(files, f"{solution_path}/solutioncomponents.yml", _yaml([{"Path": path} for path in component_list]))
-    _add_file(files, f"{solution_path}/rootcomponents.yml", _yaml(root_components))
-    _add_file(files, f"{solution_path}/missingdependencies.yml", _yaml([]))
+    _add_file(files, "Other/Customizations.xml", _customizations_xml(entities))
+    _add_file(files, "Other/Relationships.xml", _relationships_xml())
 
     if unsupported:
         unsupported.sort(key=lambda item: str(item["id"]))
@@ -235,8 +195,8 @@ def build_power_platform_package(
         "unsupported_components": unsupported,
         "design_only_components": design_only,
         "pac": {
-            "minimum_cli_version": PAC_YAML_MINIMUM_VERSION,
-            "format": "yaml_source_control",
+            "minimum_cli_version": PAC_XML_MINIMUM_VERSION,
+            "format": "xml_solution",
             "commands": [
                 [
                     "pac",
@@ -246,6 +206,8 @@ def build_power_platform_package(
                     output,
                     "--zipfile",
                     _pack_zip_path(output, solution),
+                    "--packagetype",
+                    "Unmanaged",
                 ]
             ],
         },
@@ -334,7 +296,11 @@ def validate_power_platform_package(
         if total > MAX_PACKAGE_BYTES:
             raise PowerPlatformPackageError("package files exceed the bounded size limit")
         media_type = raw.get("media_type")
-        if not isinstance(media_type, str) or media_type not in {"text/yaml", "application/json", "text/markdown"}:
+        if not isinstance(media_type, str) or media_type not in {
+            "application/xml",
+            "application/json",
+            "text/markdown",
+        }:
             raise PowerPlatformPackageError(f"package file {path} has an unsupported media type")
         if _contains_secret_like_source(content):
             raise PowerPlatformPackageError(f"package file {path} contains secret-like material")
@@ -342,15 +308,9 @@ def validate_power_platform_package(
         if not isinstance(digest, str) or not _DIGEST.fullmatch(digest) or digest != _digest(encoded):
             raise PowerPlatformPackageError(f"package file digest mismatch: {path}")
         normalized_files.append({"path": path, "media_type": media_type, "digest": digest, "content": content})
-    required_paths = {
-        f"solutions/{cast(str, solution['unique_name'])}/solution.yml",
-        f"solutions/{cast(str, solution['unique_name'])}/solutioncomponents.yml",
-        f"solutions/{cast(str, solution['unique_name'])}/rootcomponents.yml",
-        f"solutions/{cast(str, solution['unique_name'])}/missingdependencies.yml",
-        f"publishers/{cast(str, solution['publisher_unique_name'])}/publisher.yml",
-    }
+    required_paths = {"Other/Solution.xml", "Other/Customizations.xml", "Other/Relationships.xml"}
     if not required_paths.issubset(seen):
-        raise PowerPlatformPackageError("package is missing an official YAML source manifest")
+        raise PowerPlatformPackageError("package is missing the official XML solution manifest")
     expected = dict(package)
     supplied_digest = expected.pop("package_digest", None)
     expected["output_directory"] = output
@@ -365,8 +325,8 @@ def validate_power_platform_package(
     pac = package.get("pac")
     if (
         not isinstance(pac, Mapping)
-        or pac.get("minimum_cli_version") != PAC_YAML_MINIMUM_VERSION
-        or pac.get("format") != "yaml_source_control"
+        or pac.get("minimum_cli_version") != PAC_XML_MINIMUM_VERSION
+        or pac.get("format") != "xml_solution"
     ):
         raise PowerPlatformPackageError("package PAC compatibility metadata is invalid")
     commands = pac.get("commands")
@@ -379,6 +339,8 @@ def validate_power_platform_package(
             output,
             "--zipfile",
             _pack_zip_path(output, cast(str, solution["unique_name"])),
+            "--packagetype",
+            "Unmanaged",
         ]
     ]:
         raise PowerPlatformPackageError("package PAC folder is not digest-bound to output_directory")
@@ -445,7 +407,7 @@ def materialize_power_platform_package(
         "format": "wait-local-agent.power-platform.materialization-result",
         "format_version": 1,
         "status": "succeeded",
-        "message": "Power Platform YAML source was materialized locally.",
+        "message": "Power Platform XML source was materialized locally.",
         "package_digest": digest,
         "materialization_directory": str(output),
         "files": sorted(written),
@@ -460,11 +422,13 @@ def materialize_power_platform_package(
                     str(output),
                     "--zipfile",
                     zipfile,
+                    "--packagetype",
+                    "Unmanaged",
                 ]
             ],
             "folder": str(output),
             "zipfile": zipfile,
-            "minimum_cli_version": PAC_YAML_MINIMUM_VERSION,
+            "minimum_cli_version": PAC_XML_MINIMUM_VERSION,
         },
         "materialization_started": True,
         "execution_started": False,
@@ -496,92 +460,448 @@ validate_deployable_blueprint_package = validate_power_platform_package
 materialize_deployable_blueprint_package = materialize_power_platform_package
 
 
+def _xml_attribute(value: object) -> str:
+    return _xml_escape(str(value), {'"': "&quot;", "'": "&apos;"})
+
+
+def _xml_text(value: object) -> str:
+    return _xml_escape(str(value))
+
+
+def _solution_xml(
+    solution: str,
+    publisher: str,
+    publisher_unique_name: str,
+    publisher_prefix: str,
+    root_components: list[dict[str, object]],
+) -> str:
+    lines = [
+        '<?xml version="1.0" encoding="utf-8"?>',
+        '<ImportExportXml version="9.1.0.643" SolutionPackageVersion="9.1" languagecode="1033" generatedBy="CrmLive" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">',
+        "  <SolutionManifest>",
+        "    <!-- Unique Name of Cds Solution-->",
+        f"    <UniqueName>{_xml_text(solution)}</UniqueName>",
+        "    <LocalizedNames>",
+        "      <!-- Localized Solution Name in language code -->",
+        f'      <LocalizedName description="{_xml_attribute(solution)}" languagecode="1033" />',
+        "    </LocalizedNames>",
+        "    <Descriptions />",
+        # Version and CustomizationOptionValuePrefix are copied from the proven
+        # ``wait`` reference and remain unverified for other publisher prefixes.
+        "    <Version>1.0</Version>",
+        "    <!-- Solution Package Type: Unmanaged(0)/Managed(1)/Both(2)-->",
+        "    <Managed>0</Managed>",
+        "    <Publisher>",
+        "      <!-- Unique Publisher Name of Cds Solution -->",
+        f"      <UniqueName>{_xml_text(publisher_unique_name)}</UniqueName>",
+        "      <LocalizedNames>",
+        "        <!-- Localized Cds Publisher Name in language code-->",
+        f'        <LocalizedName description="{_xml_attribute(publisher)}" languagecode="1033" />',
+        "      </LocalizedNames>",
+        "      <Descriptions>",
+        "        <!-- Description of Cds Publisher in language code -->",
+        f'        <Description description="{_xml_attribute(publisher)}" languagecode="1033" />',
+        "      </Descriptions>",
+        '      <EMailAddress xsi:nil="true"></EMailAddress>',
+        '      <SupportingWebsiteUrl xsi:nil="true"></SupportingWebsiteUrl>',
+        "      <!-- Customization Prefix for the Cds Publisher-->",
+        f"      <CustomizationPrefix>{_xml_text(publisher_prefix)}</CustomizationPrefix>",
+        "      <!-- Derived Option Value Prefix for the Customization Prefix of Cds Publisher -->",
+        "      <CustomizationOptionValuePrefix>89859</CustomizationOptionValuePrefix>",
+        "      <Addresses>",
+        "        <!-- Address of the Publisher-->",
+        "        <Address>",
+        "          <AddressNumber>1</AddressNumber>",
+        "          <AddressTypeCode>1</AddressTypeCode>",
+        '          <City xsi:nil="true"></City>',
+        '          <County xsi:nil="true"></County>',
+        '          <Country xsi:nil="true"></Country>',
+        '          <Fax xsi:nil="true"></Fax>',
+        '          <FreightTermsCode xsi:nil="true"></FreightTermsCode>',
+        '          <ImportSequenceNumber xsi:nil="true"></ImportSequenceNumber>',
+        '          <Latitude xsi:nil="true"></Latitude>',
+        '          <Line1 xsi:nil="true"></Line1>',
+        '          <Line2 xsi:nil="true"></Line2>',
+        '          <Line3 xsi:nil="true"></Line3>',
+        '          <Longitude xsi:nil="true"></Longitude>',
+        '          <Name xsi:nil="true"></Name>',
+        '          <PostalCode xsi:nil="true"></PostalCode>',
+        '          <PostOfficeBox xsi:nil="true"></PostOfficeBox>',
+        '          <PrimaryContactName xsi:nil="true"></PrimaryContactName>',
+        "          <ShippingMethodCode>1</ShippingMethodCode>",
+        '          <StateOrProvince xsi:nil="true"></StateOrProvince>',
+        '          <Telephone1 xsi:nil="true"></Telephone1>',
+        '          <Telephone2 xsi:nil="true"></Telephone2>',
+        '          <Telephone3 xsi:nil="true"></Telephone3>',
+        '          <TimeZoneRuleVersionNumber xsi:nil="true"></TimeZoneRuleVersionNumber>',
+        '          <UPSZone xsi:nil="true"></UPSZone>',
+        '          <UTCOffset xsi:nil="true"></UTCOffset>',
+        '          <UTCConversionTimeZoneCode xsi:nil="true"></UTCConversionTimeZoneCode>',
+        "        </Address>",
+        "        <Address>",
+        "          <AddressNumber>2</AddressNumber>",
+        "          <AddressTypeCode>1</AddressTypeCode>",
+        '          <City xsi:nil="true"></City>',
+        '          <County xsi:nil="true"></County>',
+        '          <Country xsi:nil="true"></Country>',
+        '          <Fax xsi:nil="true"></Fax>',
+        '          <FreightTermsCode xsi:nil="true"></FreightTermsCode>',
+        '          <ImportSequenceNumber xsi:nil="true"></ImportSequenceNumber>',
+        '          <Latitude xsi:nil="true"></Latitude>',
+        '          <Line1 xsi:nil="true"></Line1>',
+        '          <Line2 xsi:nil="true"></Line2>',
+        '          <Line3 xsi:nil="true"></Line3>',
+        '          <Longitude xsi:nil="true"></Longitude>',
+        '          <Name xsi:nil="true"></Name>',
+        '          <PostalCode xsi:nil="true"></PostalCode>',
+        '          <PostOfficeBox xsi:nil="true"></PostOfficeBox>',
+        '          <PrimaryContactName xsi:nil="true"></PrimaryContactName>',
+        "          <ShippingMethodCode>1</ShippingMethodCode>",
+        '          <StateOrProvince xsi:nil="true"></StateOrProvince>',
+        '          <Telephone1 xsi:nil="true"></Telephone1>',
+        '          <Telephone2 xsi:nil="true"></Telephone2>',
+        '          <Telephone3 xsi:nil="true"></Telephone3>',
+        '          <TimeZoneRuleVersionNumber xsi:nil="true"></TimeZoneRuleVersionNumber>',
+        '          <UPSZone xsi:nil="true"></UPSZone>',
+        '          <UTCOffset xsi:nil="true"></UTCOffset>',
+        '          <UTCConversionTimeZoneCode xsi:nil="true"></UTCConversionTimeZoneCode>',
+        "        </Address>",
+        "      </Addresses>",
+        "    </Publisher>",
+    ]
+    if root_components:
+        lines.append("    <RootComponents>")
+        for component in root_components:
+            lines.append(
+                f'      <RootComponent type="{_xml_attribute(component["type"])}" '
+                f'schemaName="{_xml_attribute(component["schema_name"])}" behavior="0" />'
+            )
+        lines.append("    </RootComponents>")
+    else:
+        lines.append("    <RootComponents />")
+    lines.extend(
+        [
+            "    <MissingDependencies />",
+            "  </SolutionManifest>",
+            "</ImportExportXml>",
+        ]
+    )
+    return "\n".join(lines) + "\n"
+
+
+def _customizations_xml(entities: list[dict[str, object]]) -> str:
+    lines = [
+        '\ufeff<?xml version="1.0" encoding="utf-8"?>',
+        '<ImportExportXml xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">',
+    ]
+    if entities:
+        lines.append("  <Entities>")
+        for entity in sorted(entities, key=lambda item: str(item["logical_name"])):
+            lines.extend(_xml_entity(entity))
+        lines.append("  </Entities>")
+    else:
+        lines.append("  <Entities />")
+    lines.extend(
+        [
+            "  <Roles />",
+            "  <Workflows />",
+            "  <FieldSecurityProfiles />",
+            "  <Templates />",
+            "  <EntityMaps />",
+            "  <EntityRelationships />",
+            "  <OrganizationSettings />",
+            "  <optionsets />",
+            "  <CustomControls />",
+            "  <SolutionPluginAssemblies />",
+            "  <EntityDataProviders />",
+            "  <Languages>",
+            "    <Language>1033</Language>",
+            "  </Languages>",
+            "</ImportExportXml>",
+        ]
+    )
+    return "\n".join(lines) + "\n"
+
+
+def _xml_entity(entity: dict[str, object]) -> list[str]:
+    logical = cast(str, entity["logical_name"])
+    display_name = cast(str, entity["display_name"])
+    attributes = sorted(
+        cast(list[dict[str, object]], entity["attributes"]),
+        key=lambda item: str(item["logical_name"]),
+    )
+    primary = cast(str, entity["primary_name_column"])
+    lines = [
+        "    <Entity>",
+        (
+            f'      <Name LocalizedName="{_xml_attribute(display_name)}" '
+            f'OriginalName="{_xml_attribute(display_name)}">{_xml_text(logical)}</Name>'
+        ),
+        "      <EntityInfo>",
+        f'        <entity Name="{_xml_attribute(logical)}">',
+        (
+            f'          <LocalizedNames><LocalizedName description="{_xml_attribute(display_name)}" '
+            'languagecode="1033" /></LocalizedNames>'
+        ),
+        (
+            f'          <LocalizedCollectionNames><LocalizedCollectionName '
+            f'description="{_xml_attribute(display_name + "s")}" languagecode="1033" />'
+            "</LocalizedCollectionNames>"
+        ),
+        (
+            f'          <Descriptions><Description description="{_xml_attribute(display_name + " record")}" '
+            'languagecode="1033" /></Descriptions>'
+        ),
+        "          <attributes>",
+    ]
+    for attribute in attributes:
+        lines.extend(_xml_attribute_block(attribute, str(attribute["logical_name"]) == primary))
+    lines.extend(
+        [
+            "          </attributes>",
+            f"          <EntitySetName>{_xml_text(logical + 's')}</EntitySetName>",
+            "          <IsCustomEntity>1</IsCustomEntity><OwnershipTypeMask>UserOwned</OwnershipTypeMask>",
+            f"          <PrimaryNameAttribute>{_xml_text(primary)}</PrimaryNameAttribute>",
+            "          <IntroducedVersion>1.0</IntroducedVersion>",
+            "        </entity>",
+            "      </EntityInfo>",
+            "    </Entity>",
+        ]
+    )
+    return lines
+
+
+def _xml_attribute_block(attribute: dict[str, object], primary: bool) -> list[str]:
+    logical = cast(str, attribute["logical_name"])
+    display_name = cast(str, attribute["display_name"])
+    display_mask = (
+        "PrimaryName|ValidForAdvancedFind|ValidForForm|ValidForGrid"
+        if primary
+        else "ValidForAdvancedFind|ValidForForm|ValidForGrid"
+    )
+    return [
+        f'            <attribute PhysicalName="{_xml_attribute(logical)}">',
+        "              <Type>nvarchar</Type>",
+        f"              <Name>{_xml_text(logical)}</Name><LogicalName>{_xml_text(logical)}</LogicalName>",
+        "              <RequiredLevel>none</RequiredLevel>",
+        f"              <DisplayMask>{display_mask}</DisplayMask>",
+        (
+            "              <ImeMode>auto</ImeMode><ValidForCreateApi>1</ValidForCreateApi>"
+            "<ValidForReadApi>1</ValidForReadApi>"
+        ),
+        (
+            "              <ValidForUpdateApi>1</ValidForUpdateApi><IsCustomField>1</IsCustomField>"
+            "<IsAuditEnabled>0</IsAuditEnabled>"
+        ),
+        (
+            "              <IsSecured>0</IsSecured><IntroducedVersion>1.0</IntroducedVersion>"
+            "<IsCustomizable>1</IsCustomizable>"
+        ),
+        (
+            f"              <IsRenameable>1</IsRenameable><MaxLength>{attribute['max_length']}</MaxLength>"
+            f"<Length>{attribute['max_length']}</Length><Format>text</Format>"
+        ),
+        (
+            f'              <displaynames><displayname description="{_xml_attribute(display_name)}" '
+            'languagecode="1033" /></displaynames>'
+        ),
+        "            </attribute>",
+    ]
+
+
+def _relationships_xml() -> str:
+    return (
+        '\ufeff<?xml version="1.0" encoding="utf-8"?>\n'
+        '<EntityRelationships xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" />\n'
+    )
+
+
 def _emit_power_apps_artifact(
     artifact: Mapping[str, object],
     files: dict[str, tuple[str, str]],
-    component_paths: set[str],
     root_components: list[dict[str, object]],
     unsupported: list[dict[str, object]],
     tenant: str,
+    entities: list[dict[str, object]],
     emitted_component_classes: set[str],
     import_complete_component_classes: set[str],
     artifact_component_classes: set[str],
+    design_only: list[dict[str, object]],
+    publisher_prefix: str,
 ) -> None:
     dataverse = artifact.get("dataverse")
     if not isinstance(dataverse, Mapping) or not isinstance(dataverse.get("tables"), list):
         raise PowerPlatformPackageError("Power Apps artifact dataverse.tables is required")
     canvas = artifact.get("canvas_app")
-    app_name = artifact.get("app_name", "canvas_app")
-    app_id = _component_id(tenant, f"canvas:{app_name}")
-    unsupported.append(
-        {
-            "id": str(app_id),
-            "format": "canvas_app",
-            "source": str(app_name),
-            "reason": "binary .msapp synthesis is unsupported; no canvas component is claimed packable",
-        }
-    )
+    if canvas is not None and not isinstance(canvas, Mapping):
+        raise PowerPlatformPackageError("Power Apps artifact canvas_app must be an object")
+    if canvas is not None:
+        app_name = artifact.get("app_name", "canvas_app")
+        app_id = _component_id(tenant, f"canvas:{app_name}")
+        unsupported.append(
+            {
+                "id": str(app_id),
+                "format": "canvas_app",
+                "source": str(app_name),
+                "reason": "binary .msapp synthesis is unsupported; no canvas component is claimed packable",
+            }
+        )
     for table in cast(list[object], dataverse["tables"]):
         if not isinstance(table, Mapping):
             raise PowerPlatformPackageError("Power Apps artifact tables must contain objects")
         logical = _identifier(table.get("logical_name"), "Dataverse table logical_name")
-        base = f"entities/{logical}"
         emitted_component_classes.add("entity")
-        import_complete_component_classes.add("entity")
-        artifact_component_classes.add("entity")
-        component_paths.add(base)
-        root_components.append({"type": "Entity", "schema_name": logical, "id": str(_component_id(tenant, base))})
-        attributes: list[object] = []
+        expected_prefix = f"{publisher_prefix}_"
+        if not logical.startswith(expected_prefix):
+            design_only.append(
+                {
+                    "id": str(_component_id(tenant, f"entities/{logical}")),
+                    "path": f"entities/{logical}",
+                    "format": str(artifact.get("format")),
+                    "reason": (
+                        f"entity logical_name {logical} does not use the expected publisher prefix "
+                        f"{expected_prefix}; the name was not rewritten"
+                    ),
+                }
+            )
+            continue
+        attributes: list[dict[str, object]] = []
+        unmapped_fields: list[str] = []
+        unmapped_types: dict[str, str] = {}
+        marked_primary: list[str] = []
+        column_names: set[str] = set()
+        table_primary = table.get("primary_name_column")
+        declared_primary = (
+            _identifier(table_primary, f"{logical}.primary_name_column")
+            if table_primary is not None
+            else None
+        )
         for field in cast(list[object], table.get("columns", [])):
             if not isinstance(field, Mapping):
                 raise PowerPlatformPackageError("Dataverse table columns must contain objects")
             field_name = _identifier(field.get("logical_name"), f"{logical}.column.logical_name")
-            emitted_component_classes.add("attribute")
-            import_complete_component_classes.add("attribute")
-            artifact_component_classes.add("attribute")
+            field_primary = field.get("primary")
+            if field_primary is not None and not isinstance(field_primary, bool):
+                raise PowerPlatformPackageError(f"{logical}.{field_name}.primary must be boolean")
+            if field_primary is True:
+                marked_primary.append(field_name)
+            column_names.add(field_name)
+            field_type = str(field.get("type", "String"))
+            if field_type.casefold() != "string":
+                unmapped_fields.append(field_name)
+                unmapped_types[field_name] = field_type
+                design_only.append(
+                    {
+                        "id": str(_component_id(tenant, f"entities/{logical}/attributes/{field_name}")),
+                        "path": f"entities/{logical}",
+                        "format": str(artifact.get("format")),
+                        "reason": (
+                            f"attribute {field_name} has unmapped WAIT type {field_type}; "
+                            "the field was omitted rather than guessing a Dataverse type"
+                        ),
+                    }
+                )
+                continue
+            max_length = field.get("max_length", DEFAULT_STRING_MAX_LENGTH)
+            if (
+                not isinstance(max_length, int)
+                or isinstance(max_length, bool)
+                or not 1 <= max_length <= MAX_STRING_MAX_LENGTH
+            ):
+                raise PowerPlatformPackageError(
+                    f"{logical}.{field_name}.max_length must be an integer from 1-{MAX_STRING_MAX_LENGTH}"
+                )
             attributes.append(
                 {
-                    "LogicalName": field_name,
-                    "DisplayName": field.get("display_name", field_name),
-                    "AttributeType": field.get("type", "String"),
-                    "RequiredLevel": "Required" if field.get("required") is True else "None",
+                    "logical_name": field_name,
+                    "display_name": _text(
+                        field.get("display_name", field_name),
+                        f"{logical}.{field_name}.display_name",
+                        MAX_TEXT_LENGTH,
+                    ),
+                    "required": field.get("required") is True,
+                    "max_length": max_length,
                 }
             )
-            _add_file(
-                files,
-                f"{base}/attributes/{field_name}.yml",
-                _yaml({"Attribute": attributes[-1]}),
-            )
-        _add_file(
-            files,
-            f"{base}/entity.yml",
-            _yaml(
-                {
-                    "Entity": {
-                        "SchemaName": logical,
-                        "LogicalName": logical,
-                        "DisplayName": table.get("display_name", logical),
-                        "Attributes": attributes,
+        if declared_primary is None:
+            if len(marked_primary) == 1:
+                declared_primary = marked_primary[0]
+            elif len(marked_primary) > 1:
+                design_only.append(
+                    {
+                        "id": str(_component_id(tenant, f"entities/{logical}")),
+                        "path": f"entities/{logical}",
+                        "format": str(artifact.get("format")),
+                        "reason": (
+                            "entity declares multiple primary columns; exactly one primary name "
+                            "column is required"
+                        ),
                     }
+                )
+                continue
+        if declared_primary is None:
+            design_only.append(
+                {
+                    "id": str(_component_id(tenant, f"entities/{logical}")),
+                    "path": f"entities/{logical}",
+                    "format": str(artifact.get("format")),
+                    "reason": "entity does not declare a primary name column",
                 }
-            ),
+            )
+            continue
+        if declared_primary in unmapped_types:
+            design_only.append(
+                {
+                    "id": str(_component_id(tenant, f"entities/{logical}")),
+                    "path": f"entities/{logical}",
+                    "format": str(artifact.get("format")),
+                    "reason": (
+                        f"entity was omitted because its primary name column {declared_primary} "
+                        f"could not be mapped: unmapped WAIT type {unmapped_types[declared_primary]}"
+                    ),
+                }
+            )
+            continue
+        if declared_primary not in column_names:
+            design_only.append(
+                {
+                    "id": str(_component_id(tenant, f"entities/{logical}")),
+                    "path": f"entities/{logical}",
+                    "format": str(artifact.get("format")),
+                    "reason": (
+                        f"entity was omitted because its primary name column {declared_primary} "
+                        "could not be mapped: column is absent from columns"
+                    ),
+                }
+            )
+            continue
+        display_name = _text(table.get("display_name", logical), f"{logical}.display_name", MAX_TEXT_LENGTH)
+        emitted_component_classes.add("entity")
+        import_complete_component_classes.add("entity")
+        artifact_component_classes.add("entity")
+        if unmapped_fields:
+            emitted_component_classes.add("partially_mapped_entity")
+        root_components.append({"type": "1", "schema_name": logical})
+        entities.append(
+            {
+                "logical_name": logical,
+                "display_name": display_name,
+                "attributes": attributes,
+                "primary_name_column": declared_primary,
+            }
         )
-    if canvas is not None and not isinstance(canvas, Mapping):
-        raise PowerPlatformPackageError("Power Apps artifact canvas_app must be an object")
 
 
 def _emit_flow_artifact(
     artifact: Mapping[str, object],
     files: dict[str, tuple[str, str]],
-    component_paths: set[str],
-    root_components: list[dict[str, object]],
     tenant: str,
     emitted_component_classes: set[str],
     artifact_component_classes: set[str],
     design_only: list[dict[str, object]],
 ) -> None:
     flow_id = _identifier(artifact.get("workflow_id"), "workflow_id")
-    name = _text(artifact.get("workflow_name", flow_id), "workflow_name", MAX_TEXT_LENGTH)
+    _text(artifact.get("workflow_name", flow_id), "workflow_name", MAX_TEXT_LENGTH)
     payload = artifact.get("power_automate")
     if payload is None and ("trigger" in artifact or "steps" in artifact):
         raise PowerPlatformPackageError(
@@ -593,19 +913,16 @@ def _emit_flow_artifact(
     trigger = payload.get("trigger")
     if not isinstance(trigger, Mapping):
         raise PowerPlatformPackageError("Power Automate flow artifact requires a power_automate.trigger object")
-    trigger_name = _text(trigger.get("name"), "power_automate.trigger.name", MAX_TEXT_LENGTH)
-    trigger_type = _identifier(trigger.get("type"), "power_automate.trigger.type")
-    steps = _flow_actions(payload.get("actions"))
+    _text(trigger.get("name"), "power_automate.trigger.name", MAX_TEXT_LENGTH)
+    _identifier(trigger.get("type"), "power_automate.trigger.type")
+    _flow_actions(payload.get("actions"))
     declared = artifact.get("requires_approval")
     if declared is not None and not isinstance(declared, bool):
         raise PowerPlatformPackageError("Power Automate flow artifact requires_approval must be boolean")
-    approval_required = bool(declared) or any(step["ApprovalRequired"] is True for step in steps)
     base = f"modernflows/{flow_id}"
     emitted_component_classes.add("modern_flow")
     artifact_component_classes.add("modern_flow")
-    component_paths.add(base)
     component_id = _component_id(tenant, base)
-    root_components.append({"type": "ModernFlow", "schema_name": flow_id, "id": str(component_id)})
     design_only.append(
         {
             "id": str(component_id),
@@ -617,17 +934,6 @@ def _emit_flow_artifact(
             ),
         }
     )
-    metadata = {
-        "ModernFlow": {
-            "Name": name,
-            "UniqueName": flow_id,
-            "ComponentId": str(component_id),
-            "Trigger": {"Type": trigger_type, "Name": trigger_name},
-            "Steps": steps,
-            "ApprovalRequired": approval_required,
-        }
-    }
-    _add_file(files, f"{base}/flow.yml", _yaml(metadata))
 
 
 def _flow_actions(value: object) -> list[dict[str, object]]:
@@ -670,33 +976,24 @@ def _flow_actions(value: object) -> list[dict[str, object]]:
 def _emit_connector_artifact(
     artifact: Mapping[str, object],
     files: dict[str, tuple[str, str]],
-    component_paths: set[str],
-    root_components: list[dict[str, object]],
     tenant: str,
     emitted_component_classes: set[str],
-    import_complete_component_classes: set[str],
     artifact_component_classes: set[str],
+    design_only: list[dict[str, object]],
 ) -> None:
     connector_id = _identifier(artifact.get("connector_id"), "connector_id")
     base = f"connectors/{connector_id}"
     emitted_component_classes.add("custom_connector")
-    import_complete_component_classes.add("custom_connector")
     artifact_component_classes.add("custom_connector")
-    component_paths.add(base)
     component_id = _component_id(tenant, base)
-    root_components.append({"type": "Connector", "schema_name": connector_id, "id": str(component_id)})
-    source = {
-        "Connector": {
-            "Id": connector_id,
-            "ComponentId": str(component_id),
-            "DisplayName": artifact.get("display_name", connector_id),
-            "Host": artifact.get("host", ""),
-            "BasePath": artifact.get("base_path", ""),
-            "Actions": artifact.get("actions", []),
-            "CredentialsIncluded": False,
+    design_only.append(
+        {
+            "id": str(component_id),
+            "path": base,
+            "format": str(artifact.get("format")),
+            "reason": "the emitted connector source is not a Power Platform custom connector definition",
         }
-    }
-    _add_file(files, f"{base}/connector.yml", _yaml(source))
+    )
 
 
 def _validate_input_artifacts(value: Sequence[Mapping[str, object]], tenant: str) -> list[dict[str, object]]:
@@ -761,87 +1058,16 @@ def _add_file(files: dict[str, tuple[str, str]], path: str, content: str, media_
         raise PowerPlatformPackageError(f"generated file {safe_path} exceeds the bounded size limit")
     if safe_path in files and files[safe_path][1] != content:
         raise PowerPlatformPackageError(f"generated file path collision: {safe_path}")
-    files[safe_path] = (media_type or ("application/json" if safe_path.endswith(".json") else "text/yaml"), content)
-
-
-def _yaml(value: object, indent: int = 0) -> str:
-    """Serialize the small JSON-shaped subset used by solution source files."""
-
-    lines: list[str] = []
-    prefix = " " * indent
-    if isinstance(value, Mapping):
-        if not value:
-            return f"{prefix}{{}}\n"
-        for key in sorted(value, key=str):
-            rendered_key = _yaml_scalar(str(key))
-            if value[key] is None:
-                lines.append(f"{prefix}{rendered_key}:")
-            elif isinstance(value[key], (Mapping, list)):
-                if not value[key]:
-                    empty = "{}" if isinstance(value[key], Mapping) else "[]"
-                    lines.append(f"{prefix}{rendered_key}: {empty}")
-                else:
-                    lines.append(f"{prefix}{rendered_key}:")
-                    lines.extend(_yaml(value[key], indent + 2).splitlines())
-            else:
-                lines.append(f"{prefix}{rendered_key}: {_yaml_scalar(value[key])}")
-    elif isinstance(value, list):
-        if not value:
-            return f"{prefix}[]\n"
-        for item in value:
-            if isinstance(item, Mapping):
-                if not item:
-                    lines.append(f"{prefix}- {{}}")
-                    continue
-                first = True
-                for key in sorted(item, key=str):
-                    rendered_key = _yaml_scalar(str(key))
-                    item_value = item[key]
-                    marker = f"{prefix}- " if first else f"{prefix}  "
-                    first = False
-                    if isinstance(item_value, (Mapping, list)):
-                        if not item_value:
-                            empty = "{}" if isinstance(item_value, Mapping) else "[]"
-                            lines.append(f"{marker}{rendered_key}: {empty}")
-                        else:
-                            lines.append(f"{marker}{rendered_key}:")
-                            lines.extend(_yaml(item_value, indent + 4).splitlines())
-                    elif item_value is None:
-                        lines.append(f"{marker}{rendered_key}:")
-                    else:
-                        lines.append(f"{marker}{rendered_key}: {_yaml_scalar(item_value)}")
-            elif isinstance(item, list):
-                lines.append(f"{prefix}-")
-                lines.extend(_yaml(item, indent + 2).splitlines())
-            else:
-                lines.append(f"{prefix}- {_yaml_scalar(item)}")
-    else:
-        lines.append(f"{prefix}{_yaml_scalar(value)}")
-    return "\n".join(lines) + "\n"
-
-
-def _yaml_scalar(value: object) -> str:
-    if value is None:
-        return ""
-    if value is True:
-        return "true"
-    if value is False:
-        return "false"
-    if isinstance(value, (int, float)):
-        return str(value)
-    text = str(value)
-    # ``@`` is a YAML indicator and cannot begin an unquoted plain scalar;
-    # publisher manifests use keys such as ``@description`` and
-    # ``@languagecode``. Keep ordinary protocol/path values readable while
-    # quoting indicator-leading values for valid YAML source.
-    numeric_string = re.fullmatch(r"[+-]?(?:0|[1-9][0-9]*)(?:\.[0-9]+)?", text) is not None
-    if (
-        re.fullmatch(r"[A-Za-z0-9_./:+-]+", text)
-        and text.casefold() not in {"null", "true", "false", "yes", "no", "on", "off", "y", "n", "~"}
-        and not numeric_string
-    ):
-        return text
-    return json.dumps(text, ensure_ascii=True)
+    if media_type is None:
+        if safe_path.endswith(".json"):
+            media_type = "application/json"
+        elif safe_path.endswith(".xml"):
+            media_type = "application/xml"
+        elif safe_path.endswith(".md"):
+            media_type = "text/markdown"
+        else:
+            raise PowerPlatformPackageError(f"generated file {safe_path} has no supported media type")
+    files[safe_path] = (media_type, content)
 
 
 def _canonical_json_bytes(value: object) -> bytes:
@@ -997,6 +1223,7 @@ __all__ = [
     "MAX_PACKAGE_BYTES",
     "MAX_PACKAGE_FILES",
     "PAC_YAML_MINIMUM_VERSION",
+    "PAC_XML_MINIMUM_VERSION",
     "PACKAGE_FORMAT",
     "PowerPlatformPackageError",
     "build_deployable_blueprint_package",

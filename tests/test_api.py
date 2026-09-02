@@ -1631,12 +1631,12 @@ def test_approval_execution_state_covers_governed_connector_branches(settings, m
             allow_write_actions=True,
             allow_power_platform_deployment=True,
             power_platform_workspace=tmp_path,
+            pac_path=tmp_path / "no-such-pac",
         ),
     )
-    assert workspace_blocked["block_reason"] in {
-        "The pac executable is not available on the local PATH.",
-        "WAIT_POWER_PLATFORM_WORKSPACE must already exist.",
-    }
+    assert workspace_blocked["block_reason"] == (
+        "WAIT_PAC_PATH is configured but is not an executable regular file."
+    )
 
 
 def test_api_exposes_expired_approval_and_rejects_late_approval(settings) -> None:
@@ -1992,7 +1992,11 @@ def test_scheduled_job_routes_cover_rbac_validation_and_live_scheduler_registrat
         assert created.json()["timezone"] == "America/Vancouver"
         assert app.state.scheduler._scheduler is not None
         job_ids = {job.id for job in app.state.scheduler._scheduler.get_jobs()}
-        assert job_ids == {"event-delivery-retry-worker", f"scheduled-job:{job_id}"}
+        assert job_ids == {
+            "event-delivery-retry-worker",
+            "founder-scan-poll-worker",
+            f"scheduled-job:{job_id}",
+        }
         assert listed.status_code == 200
         assert listed.json()[0]["id"] == job_id
 
@@ -2064,8 +2068,9 @@ def test_scheduled_job_routes_cover_rbac_validation_and_live_scheduler_registrat
         assert client.delete(
             f"/scheduled-jobs/{once.json()['id']}", headers=_auth("tech-token")
         ).status_code == 200
-        assert [job.id for job in app.state.scheduler._scheduler.get_jobs()] == [
-            "event-delivery-retry-worker"
+        assert sorted(job.id for job in app.state.scheduler._scheduler.get_jobs()) == [
+            "event-delivery-retry-worker",
+            "founder-scan-poll-worker",
         ]
         assert client.get("/scheduled-jobs", headers=_auth("viewer-token")).json() == []
 

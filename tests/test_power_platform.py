@@ -208,7 +208,10 @@ def test_solution_plan_is_reviewable_and_does_not_execute(monkeypatch, settings)
     plan = build_solution_command_plan("onboarding", "WAIT_Dev", "wait", "/tmp/onboarding")
     assert plan["execution_started"] is False
     assert plan["deployment_started"] is False
-    assert plan["commands"][-1][:3] == ["pac", "solution", "check"]
+    assert plan["commands"][0][:3] == ["pac", "solution", "pack"]
+    assert all(command[3] != "init" for command in plan["commands"])
+    assert "--packagetype" in plan["commands"][0]
+    assert all(command[:3] != ["pac", "solution", "check"] for command in plan["commands"])
 
 
 def test_power_platform_cli_status_reports_probe_execution(settings, monkeypatch) -> None:
@@ -269,6 +272,15 @@ def test_pac_resolver_rejects_invalid_configured_paths_without_path_fallback(
         assert resolve_pac_executable(replace(settings, pac_path=path)) is None
 
 
+def test_pac_resolver_fails_closed_when_path_resolution_raises(settings, monkeypatch) -> None:
+    def raise_os_error(_path: Path) -> Path:
+        raise OSError("path resolution failed")
+
+    monkeypatch.setattr(Path, "expanduser", raise_os_error)
+
+    assert resolve_pac_executable(replace(settings, pac_path=Path("/fake/pac"))) is None
+
+
 def test_pac_cli_version_parses_real_output_with_injected_runner() -> None:
     def runner(command, **kwargs):
         assert command == ["/fake/pac", "help"]
@@ -301,6 +313,11 @@ def test_pac_cli_version_fails_closed_for_bad_probe_results() -> None:
 
 def test_pac_versions_use_integer_tuple_comparison() -> None:
     assert compare_pac_versions("2.10.0", "2.9.0") > 0
+
+
+def test_pac_version_comparison_rejects_non_numeric_components() -> None:
+    with pytest.raises(ValueError, match="dotted numeric components"):
+        compare_pac_versions("2.invalid", "2.0")
 
 
 @pytest.mark.parametrize(

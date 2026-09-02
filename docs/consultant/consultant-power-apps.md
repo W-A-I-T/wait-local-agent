@@ -31,3 +31,7 @@ The artifact is a builder handoff, not an `.msapp` file or an imported
 Dataverse solution. It contains no credentials, does not call Microsoft
 services, does not invoke `pac`, and does not start writes or deployment.
 State-changing connector actions still require approval in the input contract.
+An entity may declare an optional `primary_name_column`; when present, it must
+name one of that entity's declared fields and is carried into the Dataverse
+table schema for downstream packaging. The field remains optional for callers
+that are producing a plan for review only.

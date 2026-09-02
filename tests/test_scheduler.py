@@ -24,6 +24,7 @@ from wait_local_agent.scheduler import (
     SCHEDULED_JOB_MISFIRE_GRACE_TIME_SECONDS,
     SchedulerManager,
     _backup_retention_count,
+    _founder_poll_due,
     _schedule_trigger,
     _validate_schedule_target,
     validate_cron_expression,
@@ -95,10 +96,57 @@ def test_scheduler_registers_bounded_event_retry_worker(tmp_path: Path, settings
         assert manager._scheduler is not None  # noqa: SLF001
         retry_job = manager._scheduler.get_job(manager._retry_job_identity())  # noqa: SLF001
         assert retry_job is not None
+        founder_job = manager._scheduler.get_job(manager._founder_poll_job_identity())  # noqa: SLF001
+        assert founder_job is not None
+        assert founder_job.max_instances == 1
+        assert founder_job.coalesce is True
         manager._retry_due_event_deliveries()  # noqa: SLF001
         manager.shutdown()
 
     asyncio.run(scenario())
+
+
+@pytest.mark.parametrize(
+    ("case", "mode_values"),
+    [
+        ("demo", {"demo_mode": True, "offline_mode": False}),
+        ("offline", {"demo_mode": False, "offline_mode": True}),
+        ("not_configured", {"demo_mode": False, "offline_mode": False}),
+    ],
+)
+def test_founder_polling_idle_ticks_do_not_write_audit_rows(
+    tmp_path: Path, settings, case: str, mode_values: dict[str, bool]
+) -> None:
+    runtime_settings = replace(settings, **mode_values)
+    store = Store(tmp_path / f"founder-{case}.db")
+    manager = SchedulerManager(store, enabled=True, settings=runtime_settings)
+
+    async def scenario() -> None:
+        manager.start()
+
+        assert manager._scheduler is not None  # noqa: SLF001
+        founder_job = manager._scheduler.get_job(manager._founder_poll_job_identity())  # noqa: SLF001
+        if case in {"demo", "offline"}:
+            assert founder_job is None
+        else:
+            assert founder_job is not None
+
+        for _ in range(10):
+            manager._run_founder_poll_iteration()  # noqa: SLF001
+
+        assert store.list_audit_events() == []
+        manager.shutdown()
+
+    asyncio.run(scenario())
+
+
+def test_founder_poll_due_handles_empty_invalid_naive_and_aware_values() -> None:
+    now = datetime(2026, 8, 16, 12, 0, tzinfo=UTC)
+    assert _founder_poll_due(None, now) is True
+    assert _founder_poll_due("", now) is True
+    assert _founder_poll_due("not-a-timestamp", now) is True
+    assert _founder_poll_due("2026-08-16T11:59:00", now) is True
+    assert _founder_poll_due("2026-08-16T12:01:00+00:00", now) is False
 
 
 def test_scheduler_job_callable_creates_same_approval_path_as_manual_run(tmp_path: Path, settings) -> None:
