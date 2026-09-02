@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -168,7 +169,7 @@ class Settings:
     mcp_allowed_origins: tuple[str, ...] = ()
     mcp_client_allowed_hosts: tuple[str, ...] = ()
     connector_instance_allowed_hosts: tuple[str, ...] = ()
-    trusted_hosts: tuple[str, ...] = ("127.0.0.1", "localhost", "api", "testserver")
+    trusted_hosts: tuple[str, ...] = ("127.0.0.1", "localhost", "api")
     halopsa_base_url: str = ""
     halopsa_client_id: str = ""
     halopsa_client_secret: str = ""
@@ -547,7 +548,7 @@ def load_settings() -> Settings:
         trusted_hosts=tuple(
             value.strip()
             for value in os.getenv(
-                "WAIT_TRUSTED_HOSTS", "127.0.0.1,localhost,api,testserver"
+                "WAIT_TRUSTED_HOSTS", "127.0.0.1,localhost,api"
             ).split(",")
             if value.strip()
         ),
@@ -779,3 +780,25 @@ def load_settings() -> Settings:
         license_secret=os.getenv("WAIT_LICENSE_SECRET", ""),
         pack_signing_secret=os.getenv("WAIT_PACK_SIGNING_SECRET", ""),
     )
+
+
+def validate_scheduler_worker_configuration(
+    settings: Settings,
+    environ: Mapping[str, str] | None = None,
+) -> None:
+    """Reject multi-worker startup while in-process scheduling is enabled."""
+
+    if not settings.scheduler_enabled:
+        return
+    environment = os.environ if environ is None else environ
+    for variable in ("WEB_CONCURRENCY", "UVICORN_WORKERS"):
+        value = environment.get(variable, "").strip()
+        try:
+            workers = int(value)
+        except ValueError:
+            continue
+        if workers > 1:
+            raise RuntimeError(
+                f"{variable}={workers} is incompatible with the enabled scheduler; "
+                "set WAIT_SCHEDULER_ENABLED=false before running multiple workers"
+            )

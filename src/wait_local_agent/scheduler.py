@@ -41,6 +41,11 @@ if TYPE_CHECKING:
 _ALL_CLIENTS = AllClients()
 LOGGER = logging.getLogger(__name__)
 
+# Persisted jobs may outlive a process restart. Keep a single invocation in
+# flight and allow a bounded restart delay without replaying a backlog.
+SCHEDULED_JOB_MAX_INSTANCES = 1
+SCHEDULED_JOB_MISFIRE_GRACE_TIME_SECONDS = 300
+
 
 class SchedulerManager:
     def __init__(
@@ -676,6 +681,8 @@ class SchedulerManager:
             id=self._job_identity(scheduled_job.id),
             replace_existing=True,
             coalesce=True,
+            max_instances=SCHEDULED_JOB_MAX_INSTANCES,
+            misfire_grace_time=SCHEDULED_JOB_MISFIRE_GRACE_TIME_SECONDS,
         )
         if scheduled_job.paused:
             self._scheduler.pause_job(self._job_identity(scheduled_job.id))
