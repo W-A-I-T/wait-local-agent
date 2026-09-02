@@ -33,6 +33,11 @@ without `WAIT_ADMIN_TOKEN`, `WAIT_API_TOKEN`, or an active persisted
 provide additional role-scoped access but do not replace the required admin
 credential.
 
+In non-demo mode, configured bootstrap tokens shorter than 16 characters emit
+a startup warning without including the token value; startup still succeeds.
+Use at least 32 random characters for `WAIT_ADMIN_TOKEN`, `WAIT_API_TOKEN`,
+`WAIT_TECH_TOKEN`, and `WAIT_VIEWER_TOKEN`.
+
 When `WAIT_DEMO_MODE=true` is explicitly selected, the runtime is bounded to a
 demo client rather than acting as an unrestricted administrator. Provider
 writes and deployments are disabled, and `/secrets` returns HTTP 403. The

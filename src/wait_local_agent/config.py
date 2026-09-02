@@ -1,11 +1,15 @@
 from __future__ import annotations
 
+import logging
 import os
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 
-from wait_local_agent.vault import SecretVault, SecretVaultError
+from wait_local_agent.vault import SecretVault
+
+LOGGER = logging.getLogger(__name__)
+SUPPORTED_SECRETS_BACKENDS = ("env", "fernet")
 
 
 def _bool_env(name: str, default: bool = False) -> bool:
@@ -49,17 +53,41 @@ def _int_env(name: str, default: int) -> int:
 
 
 def _secrets_backend() -> str:
-    backend = os.getenv("WAIT_SECRETS_BACKEND", "env").strip().lower()
-    return backend if backend in {"env", "fernet"} else "env"
+    return _validated_secrets_backend(os.getenv("WAIT_SECRETS_BACKEND", "env"))
+
+
+def _validated_secrets_backend(value: str) -> str:
+    backend = value.strip().lower()
+    if not backend:
+        return "env"
+    if backend not in SUPPORTED_SECRETS_BACKENDS:
+        accepted = " or ".join(SUPPORTED_SECRETS_BACKENDS)
+        raise ValueError(
+            f"WAIT_SECRETS_BACKEND={value!r} is invalid; accepted values are {accepted}"
+        )
+    return backend
+
+
+def _warn_weak_bootstrap_tokens(settings: Settings) -> None:
+    if settings.demo_mode:
+        return
+    for variable, token in (
+        ("WAIT_ADMIN_TOKEN", settings.admin_token),
+        ("WAIT_TECH_TOKEN", settings.tech_token),
+        ("WAIT_VIEWER_TOKEN", settings.viewer_token),
+        ("WAIT_API_TOKEN", settings.api_token),
+    ):
+        if token and len(token) < 16:
+            LOGGER.warning(
+                "%s is shorter than 16 characters; use at least 32 random characters",
+                variable,
+            )
 
 
 def _secret_value(name: str, env_value: str, *, backend: str, vault_path: Path) -> str:
     if backend != "fernet":
         return env_value
-    try:
-        vaulted = SecretVault(vault_path).get(name)
-    except SecretVaultError:
-        return env_value
+    vaulted = SecretVault(vault_path).get(name)
     return vaulted or env_value
 
 
@@ -241,7 +269,7 @@ class Settings:
 def load_settings() -> Settings:
     backend = _secrets_backend()
     vault_path = Path(os.getenv("WAIT_VAULT_PATH", ".wait-local-agent/vault"))
-    return Settings(
+    settings = Settings(
         data_path=Path(os.getenv("WAIT_DATA_PATH", ".wait-local-agent/state.db")),
         allowed_doc_root=Path(os.getenv("WAIT_ALLOWED_DOC_ROOT", "examples/sample_docs")),
         allow_write_actions=_bool_env("WAIT_ALLOW_WRITE_ACTIONS"),
@@ -773,6 +801,14 @@ def load_settings() -> Settings:
         license_secret=os.getenv("WAIT_LICENSE_SECRET", ""),
         pack_signing_secret=os.getenv("WAIT_PACK_SIGNING_SECRET", ""),
     )
+    _warn_weak_bootstrap_tokens(settings)
+    return settings
+
+
+def validate_secrets_backend_configuration(settings: Settings) -> None:
+    """Reject an invalid secrets backend on every application construction path."""
+
+    _validated_secrets_backend(settings.secrets_backend)
 
 
 def validate_scheduler_worker_configuration(

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import pytest
 from fastapi.testclient import TestClient
 from typer.testing import CliRunner
 
@@ -69,16 +70,15 @@ def test_vault_initialize_is_idempotent(tmp_path) -> None:
     assert second.key_path.read_bytes() == first_key
 
 
-def test_corrupt_fernet_backend_falls_back_to_env(monkeypatch, tmp_path) -> None:
+def test_corrupt_fernet_backend_fails_settings_load(monkeypatch, tmp_path) -> None:
     vault = SecretVault.initialize(tmp_path / "vault")
     vault.secrets_path.write_text("not encrypted", encoding="utf-8")
     monkeypatch.setenv("WAIT_SECRETS_BACKEND", "fernet")
     monkeypatch.setenv("WAIT_VAULT_PATH", str(vault.vault_path))
     monkeypatch.setenv("WAIT_HUDU_API_KEY", "env-value")
 
-    settings = load_settings()
-
-    assert settings.hudu_api_key == "env-value"
+    with pytest.raises(SecretVaultError, match="secret vault could not be decrypted"):
+        load_settings()
 
 
 def test_audit_export_cli_rejects_unsupported_format(monkeypatch, tmp_path) -> None:
