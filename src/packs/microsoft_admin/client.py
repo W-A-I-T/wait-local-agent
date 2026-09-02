@@ -17,6 +17,12 @@ from wait_local_agent.m365_auth import (
     M365ProfileResolutionError,
     env_connection,
 )
+from wait_local_agent.m365_graph import (
+    M365GraphReadError,
+    M365PaginationError,
+    _graph_http_error,
+    _retry_graph_response,
+)
 from wait_local_agent.models import ConnectorReadResult
 from wait_local_agent.net_security import NetSecurityError, build_pinned_client, validate_operator_url
 
@@ -294,15 +300,22 @@ class MicrosoftAdminGraphClient:
             payload = self._get(safe_endpoint, params)
             rows = _payload_rows(payload)[:MAX_RECORDS_PER_SURFACE]
             items = [item for row in rows if (item := normalizer(row)) is not None]
+            next_cursor = _next_cursor(payload)
+        except M365GraphReadError as exc:
+            return _failed_response(str(exc), error=exc if exc.code else None)
         except MicrosoftAdminError as exc:
             return _failed_response(str(exc))
         return MicrosoftAdminReadResponse(
             ConnectorReadResult("ready", success_message, len(items)),
             items,
-            _next_cursor(payload),
+            next_cursor,
         )
 
     def _get(self, endpoint: str, params: dict[str, str | int]) -> object:
+        if not self.settings.allow_http_probing:
+            raise MicrosoftAdminError(
+                "Microsoft administrator live reads are blocked until WAIT_ALLOW_HTTP_PROBING=true."
+            )
         try:
             connection = self._connection()
             base_url = _graph_base_url(
@@ -310,28 +323,31 @@ class MicrosoftAdminGraphClient:
                 allow_insecure_transport=self.settings.allow_insecure_provider_transport,
             )
             url = f"{base_url}/{endpoint}"
-            headers = {
-                "Authorization": f"Bearer {connection.token_provider.get_token()}",
-                "Accept": "application/json",
-            }
-            if self.transport is not None:
-                client = httpx.Client(
-                    timeout=self.settings.connector_timeout_seconds,
-                    transport=self.transport,
-                    trust_env=False,
-                    follow_redirects=False,
-                )
-            else:
-                host = urlsplit(base_url).hostname
-                if host is None:
-                    raise MicrosoftAdminError("Microsoft Graph base URL is invalid.")
-                client = build_pinned_client(
-                    allowed_hosts=(host,),
-                    timeout=self.settings.connector_timeout_seconds,
-                    allow_loopback=host.casefold() in {"localhost", "127.0.0.1", "::1"},
-                )
-            with client:
-                response = client.get(url, headers=headers, params=params)
+            def request() -> httpx.Response:
+                headers = {
+                    "Authorization": f"Bearer {connection.token_provider.get_token()}",
+                    "Accept": "application/json",
+                }
+                if self.transport is not None:
+                    client = httpx.Client(
+                        timeout=self.settings.connector_timeout_seconds,
+                        transport=self.transport,
+                        trust_env=False,
+                        follow_redirects=False,
+                    )
+                else:
+                    host = urlsplit(base_url).hostname
+                    if host is None:
+                        raise MicrosoftAdminError("Microsoft Graph base URL is invalid.")
+                    client = build_pinned_client(
+                        allowed_hosts=(host,),
+                        timeout=self.settings.connector_timeout_seconds,
+                        allow_loopback=host.casefold() in {"localhost", "127.0.0.1", "::1"},
+                    )
+                with client:
+                    return client.get(url, headers=headers, params=params)
+
+            response = _retry_graph_response(request, endpoint)
         except (MicrosoftAdminError, M365ProfileResolutionError):
             raise
         except M365AuthFailure as exc:
@@ -343,9 +359,7 @@ class MicrosoftAdminGraphClient:
         except (httpx.HTTPError, NetSecurityError) as exc:
             raise MicrosoftAdminError("Microsoft administrator Graph request failed safely.") from exc
         if response.status_code >= 400:
-            raise MicrosoftAdminError(
-                f"Microsoft Graph GET {endpoint} failed with HTTP {response.status_code}."
-            )
+            raise _graph_http_error(response.status_code, endpoint, response.headers)
         try:
             return response.json()
         except ValueError as exc:
@@ -472,7 +486,11 @@ def _next_cursor(payload: object) -> str:
     if not pairs:
         return ""
     cursor = urlencode(pairs, safe="$")
-    return cursor[:MAX_CURSOR_LENGTH]
+    if len(cursor) > MAX_CURSOR_LENGTH:
+        raise M365PaginationError(
+            "Microsoft administrator Graph returned a pagination cursor that exceeds the safety limit."
+        )
+    return cursor
 
 
 def _payload_rows(payload: object) -> list[Mapping[str, object]]:
@@ -503,5 +521,9 @@ def _odata_literal(value: str) -> str:
     return _bounded_identity(value).replace("'", "''")
 
 
-def _failed_response(message: str) -> MicrosoftAdminReadResponse:
-    return MicrosoftAdminReadResponse(ConnectorReadResult("failed", message), [])
+def _failed_response(
+    message: str,
+    *,
+    error: M365GraphReadError | None = None,
+) -> MicrosoftAdminReadResponse:
+    return MicrosoftAdminReadResponse(ConnectorReadResult("failed", message), [], error=error)

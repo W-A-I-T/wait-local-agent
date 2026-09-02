@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import math
 import time
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
@@ -51,6 +52,7 @@ class M365TokenProvider:
         *,
         now: Callable[[], float] = time.time,
         credential_factory: Callable[[Mapping[str, str]], Any] | None = None,
+        refresh_skew_seconds: float = 300.0,
     ) -> None:
         mode = credentials.get("mode", "")
         if mode not in {"client_credentials", "static_token"}:
@@ -59,6 +61,11 @@ class M365TokenProvider:
         self._mode = mode
         self._now = now
         self._credential_factory = credential_factory or self._default_credential
+        if not isinstance(refresh_skew_seconds, (int, float)) or isinstance(refresh_skew_seconds, bool):
+            raise M365AuthFailure("Microsoft 365 token refresh skew is invalid")
+        if not math.isfinite(float(refresh_skew_seconds)) or refresh_skew_seconds < 0:
+            raise M365AuthFailure("Microsoft 365 token refresh skew is invalid")
+        self._refresh_skew_seconds = float(refresh_skew_seconds)
         self._credential: Any | None = None
         self._cached_token: str | None = None
         self._expires_on: float | None = None
@@ -77,7 +84,11 @@ class M365TokenProvider:
             return token
 
         with self._lock:
-            if self._cached_token and self._expires_on is not None and self._expires_on > self._now():
+            if (
+                self._cached_token
+                and self._expires_on is not None
+                and self._expires_on - self._now() > self._refresh_skew_seconds
+            ):
                 return self._cached_token
             try:
                 if self._credential is None:

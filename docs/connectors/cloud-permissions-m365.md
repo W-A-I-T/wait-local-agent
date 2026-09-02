@@ -61,6 +61,19 @@ WAIT_ALLOW_HTTP_PROBING=true
 WAIT_ALLOW_WRITE_ACTIONS=true # required only for approved M365 writes
 ```
 
+Graph reads retry HTTP 429, 502, 503, and 504 responses at most three times.
+`Retry-After` is honored when supplied, with a 30-second per-wait and
+60-second total-wait cap; writes are never retried. Client-credential tokens
+are refreshed five minutes before expiry by default. An oversized pagination
+cursor fails the read instead of silently truncating the inventory.
+
+The API classifies provider failures consistently: throttling returns HTTP 429
+with `detail.code` `m365_throttled` and, when available,
+`retry_after_seconds`; authentication failures return HTTP 502 with
+`m365_auth_required`; missing Graph permission returns HTTP 403 with
+`m365_insufficient_permission`; and provider or pagination failures return
+HTTP 503 or 502 respectively. These responses contain sanitized messages only.
+
 User creation uses `POST /users` and requires the least-privileged
 `User.Create` application permission (or the equivalent delegated permission
 with a work or school account). The request requires account state, display

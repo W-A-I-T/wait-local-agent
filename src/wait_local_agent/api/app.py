@@ -180,6 +180,7 @@ from wait_local_agent.m365_graph import (
     M365GraphMailFolderReadResponse,
     M365GraphMailMessageReadResponse,
     M365GraphManagedDeviceReadResponse,
+    M365GraphReadError,
     M365GraphReadResponse,
 )
 from wait_local_agent.mcp import (
@@ -7879,10 +7880,26 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     def _audit_scalepad_read(read_type: str, status: str, count: int) -> None:
         store.add_audit_event("scalepad.read", read_type, f"{status} count={count}")
 
+    def _raise_m365_graph_http_error(error: M365GraphReadError | None) -> None:
+        if error is None or error.code is None:
+            return
+        status_code = {
+            "m365_throttled": 429,
+            "m365_auth_required": 502,
+            "m365_insufficient_permission": 403,
+            "m365_unavailable": 503,
+            "m365_pagination_failed": 502,
+        }.get(error.code, 502)
+        detail: dict[str, object] = {"code": error.code, "message": error.message}
+        if error.retry_after is not None:
+            detail["retry_after_seconds"] = max(0, round(error.retry_after))
+        raise HTTPException(status_code=status_code, detail=detail)
+
     def _m365_response(
         read_type: str,
         response: M365GraphReadResponse,
     ) -> dict[str, object]:
+        _raise_m365_graph_http_error(response.error)
         _audit_m365_read(read_type, response.result.status, response.result.count)
         return {
             "result": asdict(response.result),
@@ -7897,6 +7914,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         read_type: str,
         response: M365GraphGroupReadResponse,
     ) -> dict[str, object]:
+        _raise_m365_graph_http_error(response.error)
         _audit_m365_read(read_type, response.result.status, response.result.count)
         return {
             "result": asdict(response.result),
@@ -7908,6 +7926,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         read_type: str,
         response: M365GraphLicenseReadResponse,
     ) -> dict[str, object]:
+        _raise_m365_graph_http_error(response.error)
         _audit_m365_read(read_type, response.result.status, response.result.count)
         return {
             "result": asdict(response.result),
@@ -7919,6 +7938,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         read_type: str,
         response: M365GraphLicenseDetailReadResponse,
     ) -> dict[str, object]:
+        _raise_m365_graph_http_error(response.error)
         _audit_m365_read(read_type, response.result.status, response.result.count)
         return {
             "result": asdict(response.result),
@@ -7930,6 +7950,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         read_type: str,
         response: M365GraphMailFolderReadResponse,
     ) -> dict[str, object]:
+        _raise_m365_graph_http_error(response.error)
         _audit_m365_read(read_type, response.result.status, response.result.count)
         return {
             "result": asdict(response.result),
@@ -7941,6 +7962,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         read_type: str,
         response: M365GraphMailMessageReadResponse,
     ) -> dict[str, object]:
+        _raise_m365_graph_http_error(response.error)
         _audit_m365_read(read_type, response.result.status, response.result.count)
         return {
             "result": asdict(response.result),
@@ -7952,6 +7974,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         read_type: str,
         response: M365GraphManagedDeviceReadResponse,
     ) -> dict[str, object]:
+        _raise_m365_graph_http_error(response.error)
         _audit_m365_read(read_type, response.result.status, response.result.count)
         return {
             "result": asdict(response.result),

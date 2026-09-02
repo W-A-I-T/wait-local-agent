@@ -2,13 +2,17 @@ from __future__ import annotations
 
 import json
 from dataclasses import replace
+from datetime import UTC, datetime, timedelta
 from typing import Any, cast
 
 import httpx
 import pytest
 
+import wait_local_agent.m365_graph as graph_module
 from wait_local_agent.m365_auth import M365AuthFailure, M365Connection, M365ProfileResolutionError
 from wait_local_agent.m365_graph import (
+    M365AuthRequiredError,
+    M365ForbiddenError,
     M365GraphClient,
     M365GraphGroup,
     M365GraphGroupMembershipResult,
@@ -38,6 +42,9 @@ from wait_local_agent.m365_graph import (
     M365GraphUser,
     M365GraphUserCreateResult,
     M365GraphUserDisableResult,
+    M365PaginationError,
+    M365ThrottledError,
+    M365UnavailableError,
     _api_base_url,
     _bounded_page_size,
     _group_list_params,
@@ -1223,7 +1230,8 @@ def test_m365_graph_sanitizes_failures_and_edges(settings) -> None:
     assert _next_cursor(
         {"@odata.nextLink": "https://graph.microsoft.com/v1.0/users?$skiptoken=next"}
     ) == "next"
-    assert _next_cursor({"@odata.nextLink": "https://graph.microsoft.com/v1.0/users?$skiptoken=" + "x" * 5000}) == ""
+    with pytest.raises(M365PaginationError):
+        _next_cursor({"@odata.nextLink": "https://graph.microsoft.com/v1.0/users?$skiptoken=" + "x" * 5000})
     assert _payload_rows({"value": {"id": "user-1"}}) == [{"id": "user-1"}]
     assert _payload_rows({"id": "user-1"}) == [{"id": "user-1"}]
     assert _payload_rows([{"id": "user-1"}, "ignored"]) == [{"id": "user-1"}]
@@ -1867,3 +1875,107 @@ def test_m365_graph_patch_guards_transport_failures_and_missing_configuration(se
     ).disable_user(user_identity="user-1")
     assert http_error_result.status == "failed"
     assert http_error_result.message == "Microsoft Graph request failed."
+
+
+def test_graph_get_retries_throttling_and_logs_without_credentials(settings, monkeypatch, caplog) -> None:
+    calls = 0
+    delays: list[float] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            return httpx.Response(429, headers={"Retry-After": "1"})
+        return httpx.Response(200, json={"value": []})
+
+    monkeypatch.setattr(graph_module.time, "sleep", delays.append)
+    with caplog.at_level("INFO", logger=graph_module.LOGGER.name):
+        payload = M365GraphClient(
+            _configured(settings), transport=httpx.MockTransport(handler)
+        )._get("users")
+
+    assert payload == {"value": []}
+    assert calls == 2
+    assert delays and delays[0] >= 1
+    assert "m365_graph_retry" in caplog.text
+    assert "profile-value" not in caplog.text
+
+
+def test_graph_read_errors_are_typed_and_writes_do_not_retry(settings, monkeypatch) -> None:
+    monkeypatch.setattr(graph_module.time, "sleep", lambda _: None)
+
+    def sequence(statuses: list[int]) -> tuple[httpx.MockTransport, list[int]]:
+        remaining = list(statuses)
+        seen: list[int] = []
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            seen.append(1)
+            status = remaining.pop(0)
+            return httpx.Response(status, headers={"Retry-After": "1"}, json={"value": []})
+
+        return httpx.MockTransport(handler), seen
+
+    transport, seen = sequence([429, 429, 429])
+    with pytest.raises(M365ThrottledError) as throttled:
+        M365GraphClient(_configured(settings), transport=transport)._get("users")
+    assert throttled.value.retry_after == 1
+    assert len(seen) == 3
+
+    transport, seen = sequence([503, 200])
+    assert M365GraphClient(_configured(settings), transport=transport)._get("users") == {"value": []}
+    assert len(seen) == 2
+
+    transport, seen = sequence([500])
+    with pytest.raises(M365UnavailableError):
+        M365GraphClient(_configured(settings), transport=transport)._get("users")
+    assert len(seen) == 1
+
+    active = replace(_configured(settings), allow_write_actions=True)
+    for method, args in (
+        ("_post", ("users", {})),
+        ("_patch", ("users/user-1", {})),
+        ("_delete", ("users/user-1",)),
+    ):
+        transport, seen = sequence([429])
+        with pytest.raises(M365ThrottledError):
+            getattr(M365GraphClient(active, transport=transport), method)(*args)
+        assert len(seen) == 1
+
+
+@pytest.mark.parametrize(
+    ("status", "error_type"),
+    [(401, M365AuthRequiredError), (403, M365ForbiddenError)],
+)
+def test_graph_http_errors_preserve_read_error_base(settings, status, error_type) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(status)
+
+    with pytest.raises(error_type) as error:
+        M365GraphClient(_configured(settings), transport=httpx.MockTransport(handler))._get("users")
+    assert isinstance(error.value, M365GraphReadError)
+
+
+def test_graph_retry_after_http_date_and_wait_caps(settings, monkeypatch) -> None:
+    http_date = (datetime.now(UTC) + timedelta(seconds=5)).strftime("%a, %d %b %Y %H:%M:%S GMT")
+    parsed = graph_module._retry_after_seconds(http_date)
+    assert parsed is not None
+    assert 0 < parsed <= 5
+    assert graph_module._retry_after_seconds("inf") is None
+    assert graph_module._retry_after_seconds("nan") is None
+
+    delays: list[float] = []
+    monkeypatch.setattr(graph_module.time, "sleep", delays.append)
+    monkeypatch.setattr(graph_module, "_retry_after_seconds", lambda _value: 120.0)
+    calls = 0
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal calls
+        calls += 1
+        if calls < 3:
+            return httpx.Response(429, headers={"Retry-After": "120"})
+        return httpx.Response(200, json={})
+
+    assert M365GraphClient(_configured(settings), transport=httpx.MockTransport(handler))._get("users") == {}
+    assert calls == 3
+    assert delays == [30.0, 30.0]
+    assert sum(delays) <= 60.0

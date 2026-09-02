@@ -15,12 +15,42 @@ from typer.testing import CliRunner
 
 from packs.microsoft_admin.cli import app as microsoft_admin_cli
 from packs.microsoft_admin.core import MicrosoftAdminError
-from packs.microsoft_admin.router import RunbookPlanRequest, create_router
+from packs.microsoft_admin.models import MicrosoftAdminReadResponse
+from packs.microsoft_admin.router import RunbookPlanRequest, _admin_response, create_router
 from packs.microsoft_admin.runbooks import RunbookApprovalError, RunbookError
 from wait_local_agent.m365_auth import M365ConnectionResolver
+from wait_local_agent.m365_graph import M365ThrottledError
 from wait_local_agent.models import ConnectorReadResult
 from wait_local_agent.store import Store
 from wait_local_agent.vault import SecretVault
+
+
+def test_admin_response_preserves_pack_items_and_raises_typed_errors() -> None:
+    response = MicrosoftAdminReadResponse(
+        ConnectorReadResult("ready", "ready", 1),
+        [{"id": "service-1", "status": "serviceOperational"}],
+        next_cursor="next-page",
+    )
+
+    assert _admin_response(response) == {
+        "result": {"status": "ready", "message": "ready", "count": 1, "tier": None},
+        "items": [{"id": "service-1", "status": "serviceOperational"}],
+        "next_cursor": "next-page",
+    }
+
+    failed = MicrosoftAdminReadResponse(
+        ConnectorReadResult("failed", "rate limited"),
+        [],
+        error=M365ThrottledError("rate limited", retry_after=4),
+    )
+    with pytest.raises(HTTPException) as error:
+        _admin_response(failed)
+    assert error.value.status_code == 429
+    assert error.value.detail == {
+        "code": "m365_throttled",
+        "message": "rate limited",
+        "retry_after_seconds": 4,
+    }
 
 
 def _request_for_app(app: FastAPI, path: str) -> Request:

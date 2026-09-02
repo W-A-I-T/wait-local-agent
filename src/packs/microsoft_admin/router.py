@@ -34,7 +34,7 @@ from packs.microsoft_admin.runbooks import (
 from wait_local_agent.capabilities import MICROSOFT_ADMIN_CAPABILITY
 from wait_local_agent.config import Settings
 from wait_local_agent.m365_auth import M365ProfileResolutionError
-from wait_local_agent.m365_graph import M365GraphClient
+from wait_local_agent.m365_graph import M365GraphClient, M365GraphReadError
 from wait_local_agent.rbac import AuthContext, Role, require_capability_scope, require_role
 from wait_local_agent.store import Store
 
@@ -128,7 +128,7 @@ def create_router() -> APIRouter:
         cursor: Cursor = None,
     ) -> dict[str, object]:
         client, _ = _clients_for(request, client_id)
-        return client.list_service_health(page_size=page_size, cursor=cursor).to_dict()
+        return _admin_response(client.list_service_health(page_size=page_size, cursor=cursor))
 
     @router.get("/service-issues")
     def service_issues(
@@ -138,7 +138,7 @@ def create_router() -> APIRouter:
         cursor: Cursor = None,
     ) -> dict[str, object]:
         client, _ = _clients_for(request, client_id)
-        return client.list_service_issues(page_size=page_size, cursor=cursor).to_dict()
+        return _admin_response(client.list_service_issues(page_size=page_size, cursor=cursor))
 
     @router.get("/security/secure-score")
     def secure_score(
@@ -147,7 +147,7 @@ def create_router() -> APIRouter:
         cursor: Cursor = None,
     ) -> dict[str, object]:
         client, _ = _clients_for(request, client_id)
-        return client.list_secure_scores(page_size=1, cursor=cursor).to_dict()
+        return _admin_response(client.list_secure_scores(page_size=1, cursor=cursor))
 
     @router.get("/security/incidents")
     def security_incidents(
@@ -157,7 +157,7 @@ def create_router() -> APIRouter:
         cursor: Cursor = None,
     ) -> dict[str, object]:
         client, _ = _clients_for(request, client_id)
-        return client.list_defender_incidents(page_size=page_size, cursor=cursor).to_dict()
+        return _admin_response(client.list_defender_incidents(page_size=page_size, cursor=cursor))
 
     @router.get("/security/alerts")
     def security_alerts(
@@ -167,7 +167,7 @@ def create_router() -> APIRouter:
         cursor: Cursor = None,
     ) -> dict[str, object]:
         client, _ = _clients_for(request, client_id)
-        return client.list_defender_alerts(page_size=page_size, cursor=cursor).to_dict()
+        return _admin_response(client.list_defender_alerts(page_size=page_size, cursor=cursor))
 
     @router.get("/identity/sign-ins")
     def sign_ins(
@@ -178,7 +178,7 @@ def create_router() -> APIRouter:
         cursor: Cursor = None,
     ) -> dict[str, object]:
         client, _ = _clients_for(request, client_id)
-        return client.list_sign_ins(identity=identity, page_size=page_size, cursor=cursor).to_dict()
+        return _admin_response(client.list_sign_ins(identity=identity, page_size=page_size, cursor=cursor))
 
     @router.get("/identity/conditional-access")
     def conditional_access(
@@ -188,7 +188,7 @@ def create_router() -> APIRouter:
         cursor: Cursor = None,
     ) -> dict[str, object]:
         client, _ = _clients_for(request, client_id)
-        return client.list_conditional_access_policies(page_size=page_size, cursor=cursor).to_dict()
+        return _admin_response(client.list_conditional_access_policies(page_size=page_size, cursor=cursor))
 
     @router.get("/identity/risky-users")
     def risky_users(
@@ -198,7 +198,7 @@ def create_router() -> APIRouter:
         cursor: Cursor = None,
     ) -> dict[str, object]:
         client, _ = _clients_for(request, client_id)
-        return client.list_risky_users(page_size=page_size, cursor=cursor).to_dict()
+        return _admin_response(client.list_risky_users(page_size=page_size, cursor=cursor))
 
     @router.get("/endpoint/apps")
     def endpoint_apps(
@@ -208,7 +208,7 @@ def create_router() -> APIRouter:
         cursor: Cursor = None,
     ) -> dict[str, object]:
         client, _ = _clients_for(request, client_id)
-        return client.list_intune_apps(page_size=page_size, cursor=cursor).to_dict()
+        return _admin_response(client.list_intune_apps(page_size=page_size, cursor=cursor))
 
     @router.get("/endpoint/compliance-policies")
     def compliance_policies(
@@ -218,7 +218,7 @@ def create_router() -> APIRouter:
         cursor: Cursor = None,
     ) -> dict[str, object]:
         client, _ = _clients_for(request, client_id)
-        return client.list_compliance_policies(page_size=page_size, cursor=cursor).to_dict()
+        return _admin_response(client.list_compliance_policies(page_size=page_size, cursor=cursor))
 
     @router.get("/endpoint/autopilot")
     def autopilot_devices(
@@ -228,7 +228,7 @@ def create_router() -> APIRouter:
         cursor: Cursor = None,
     ) -> dict[str, object]:
         client, _ = _clients_for(request, client_id)
-        return client.list_autopilot_devices(page_size=page_size, cursor=cursor).to_dict()
+        return _admin_response(client.list_autopilot_devices(page_size=page_size, cursor=cursor))
 
     @router.post("/diagnostics/access")
     def access_diagnostic(
@@ -383,11 +383,33 @@ def _clients_for(
 
 
 def _core_response(response: Any) -> dict[str, object]:
+    _raise_m365_graph_http_error(getattr(response, "error", None))
     return {
         "result": asdict(response.result),
         "items": [asdict(item) for item in response.items],
         "next_cursor": response.next_cursor,
     }
+
+
+def _admin_response(response: Any) -> dict[str, object]:
+    _raise_m365_graph_http_error(getattr(response, "error", None))
+    return response.to_dict()
+
+
+def _raise_m365_graph_http_error(error: object) -> None:
+    if not isinstance(error, M365GraphReadError) or error.code is None:
+        return
+    status_code = {
+        "m365_throttled": 429,
+        "m365_auth_required": 502,
+        "m365_insufficient_permission": 403,
+        "m365_unavailable": 503,
+        "m365_pagination_failed": 502,
+    }.get(error.code, 502)
+    detail: dict[str, object] = {"code": error.code, "message": error.message}
+    if error.retry_after is not None:
+        detail["retry_after_seconds"] = max(0, round(error.retry_after))
+    raise HTTPException(status_code=status_code, detail=detail)
 
 
 def _store(request: Request) -> Store:

@@ -26,3 +26,13 @@ ab32db28ff5b1ff73cae06a53ac043bc71c2b4dc:tests/test_update_channel.py:generic-ap
 f85235d54fdd160bef17c917dc36a5e9704f8d22:tests/test_diagnostics.py:aws-access-token:148
 f85235d54fdd160bef17c917dc36a5e9704f8d22:tests/test_diagnostics.py:aws-access-token:234
 f5f4fc7f05dfea30775d62ccbc93cc76e66c940f:docs/getting-started/local-demo.md:curl-auth-header:107
+# 2026-09-02: gitleaks scans all fetched refs (CI uses fetch-depth: 0), so fake
+# secrets on any in-flight branch fail this gate on unrelated PRs. These are
+# deterministic fake GitHub PATs on branch commit 2812e020 ("Execute a real pac
+# process in the deployment tests"); the tests assert the deployment log scrubber
+# redacts them. The durable fix is to scan origin/main..HEAD instead of every ref.
+2812e0205b41f6f783ccfa5adbe7e300a2202fd5:tests/test_power_platform_deployment.py:github-pat:590
+2812e0205b41f6f783ccfa5adbe7e300a2202fd5:tests/test_power_platform_deployment.py:github-pat:593
+2812e0205b41f6f783ccfa5adbe7e300a2202fd5:tests/power_platform_support.py:github-pat:85
+2812e0205b41f6f783ccfa5adbe7e300a2202fd5:tests/power_platform_support.py:generic-api-key:85
+2812e0205b41f6f783ccfa5adbe7e300a2202fd5:tests/power_platform_support.py:github-pat:86
