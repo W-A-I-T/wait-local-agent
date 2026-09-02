@@ -8,6 +8,12 @@ from microsoft_admin_support import _configured
 
 from packs.microsoft_admin import PACK_MANIFEST
 from packs.microsoft_admin.core import MicrosoftAdminGraphClient, remediation_catalog
+from wait_local_agent.m365_auth import (
+    M365AuthFailure,
+    M365Connection,
+    M365ConnectionResolver,
+    M365ProfileResolutionError,
+)
 from wait_local_agent.smart_actions import default_registry
 
 
@@ -328,6 +334,90 @@ def test_client_health_and_error_paths_are_sanitized(settings) -> None:
     ).list_service_health()
     assert timeout.result.status == "failed"
     assert "before receiving a response" in timeout.result.message
+
+
+def test_client_health_and_profile_transport_failures_are_sanitized(settings) -> None:
+    class MissingProfileResolver:
+        def resolve(self, client_id, *, allow_msp_wide):
+            raise M365ProfileResolutionError("no client-scoped connector for client-a")
+
+    failed_health = MicrosoftAdminGraphClient(
+        _configured(settings),
+        connection_resolver=cast(M365ConnectionResolver, MissingProfileResolver()),
+        client_id="client-a",
+    ).health()
+    assert failed_health.status == "failed"
+    assert "client-scoped connector" in failed_health.message
+
+    failed_list = MicrosoftAdminGraphClient(
+        _configured(settings),
+        connection_resolver=cast(M365ConnectionResolver, MissingProfileResolver()),
+        client_id="client-a",
+    ).list_service_health()
+    assert failed_list.result.status == "failed"
+    assert "client-scoped connector" in failed_list.result.message
+
+    class FailingTokenProvider:
+        configured = True
+
+        def get_token(self) -> str:
+            raise M365AuthFailure("credential details must not escape")
+
+    token_failure = MicrosoftAdminGraphClient(
+        _configured(settings),
+        connection=M365Connection(
+            graph_base_url="https://graph.microsoft.com/v1.0",
+            token_provider=FailingTokenProvider(),
+        ),
+        transport=httpx.MockTransport(lambda request: httpx.Response(200, json={"value": []})),
+    ).list_service_health()
+    assert token_failure.result.status == "failed"
+    assert "token acquisition failed" in token_failure.result.message
+    assert "credential details" not in token_failure.result.message
+
+    http_failure = MicrosoftAdminGraphClient(
+        _configured(settings),
+        transport=httpx.MockTransport(lambda request: (_ for _ in ()).throw(httpx.ReadError("transport details"))),
+    ).list_service_health()
+    assert http_failure.result.status == "failed"
+    assert "failed safely" in http_failure.result.message
+
+
+def test_client_reports_unconfigured_profile_connection(settings) -> None:
+    class UnconfiguredTokenProvider:
+        configured = False
+
+        def get_token(self) -> str:
+            return "unused"
+
+    response = MicrosoftAdminGraphClient(
+        replace(_configured(settings), m365_graph_base_url="", m365_access_token=""),
+        connection=M365Connection(
+            graph_base_url="",
+            token_provider=UnconfiguredTokenProvider(),
+            tier="client-scoped",
+        ),
+    ).list_service_health()
+    assert response.result.status == "not_configured"
+    assert response.result.tier == "client-scoped"
+
+
+def test_client_accepts_a_connection_with_a_nonempty_legacy_token_setting(settings) -> None:
+    class LegacyTokenProvider:
+        configured = False
+
+        def get_token(self) -> str:
+            return "legacy-token"
+
+    client = MicrosoftAdminGraphClient(
+        replace(_configured(settings), m365_access_token="legacy-setting-token"),
+        connection=M365Connection(
+            graph_base_url="https://graph.microsoft.com/v1.0",
+            token_provider=LegacyTokenProvider(),
+        ),
+        transport=httpx.MockTransport(lambda request: httpx.Response(200, json={"value": []})),
+    )
+    assert client.list_service_health().result.status == "ready"
 
 
 def test_client_validation_fails_closed_without_broadening_graph_queries(settings) -> None:

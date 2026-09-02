@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from types import SimpleNamespace
 from typing import cast
 
 import httpx
@@ -14,7 +15,8 @@ from typer.testing import CliRunner
 
 from packs.microsoft_admin.cli import app as microsoft_admin_cli
 from packs.microsoft_admin.core import MicrosoftAdminError
-from packs.microsoft_admin.router import create_router
+from packs.microsoft_admin.router import RunbookPlanRequest, create_router
+from packs.microsoft_admin.runbooks import RunbookApprovalError, RunbookError
 from wait_local_agent.m365_auth import M365ConnectionResolver
 from wait_local_agent.models import ConnectorReadResult
 from wait_local_agent.store import Store
@@ -193,11 +195,20 @@ def test_pack_users_route_uses_the_authorized_client_connector(settings, tmp_pat
         page_size=25,
         cursor=None,
     )
+    licenses_result = routes["/licenses"].endpoint(request, client_id="client-a", cursor=None)
+    devices_result = routes["/devices"].endpoint(
+        request,
+        client_id="client-a",
+        page_size=25,
+        cursor=None,
+    )
     status_result = routes["/status"].endpoint(request, client_id="client-a")
 
     assert result["result"]["status"] == "ready"
     assert groups_result["result"]["status"] == "ready"
     assert sign_ins_result["result"]["status"] == "ready"
+    assert licenses_result["result"]["status"] == "ready"
+    assert devices_result["result"]["status"] == "ready"
     assert status_result["status"] == "ready"
     assert len(seen_tokens) >= 4
     assert set(seen_tokens) == {"Bearer client-a-token"}
@@ -237,6 +248,61 @@ def test_pack_client_scope_fails_before_graph_when_only_msp_connector_exists(set
     assert "client-a" in str(error.value.detail)
     assert "client-scoped" in str(error.value.detail)
     assert calls == []
+
+
+def test_router_maps_runbook_and_store_failures_without_leaking_details(settings, monkeypatch) -> None:
+    import packs.microsoft_admin.router as router_module
+
+    app = FastAPI()
+    app.state.settings = _configured(settings)
+    request = _request_for_app(app, "/runbooks/drafts")
+    routes = {
+        route.path: cast(APIRoute, route).endpoint
+        for route in create_router().routes
+        if isinstance(route, APIRoute)
+    }
+    draft_payload = RunbookPlanRequest(runbook_id="windows.service_restart")
+
+    with pytest.raises(HTTPException) as missing_store:
+        routes["/runbooks/drafts"](draft_payload, request, object())
+    assert missing_store.value.status_code == 503
+
+    monkeypatch.setattr(router_module, "_store", lambda _request: object())
+    monkeypatch.setattr(router_module, "_scoped_client_id", lambda *_args: "client-a")
+
+    def reject_draft(*_args, **_kwargs):
+        raise RunbookError("invalid runbook parameters")
+
+    monkeypatch.setattr(router_module, "create_runbook_approval", reject_draft)
+    with pytest.raises(HTTPException) as rejected_draft:
+        routes["/runbooks/drafts"](draft_payload, request, object())
+    assert rejected_draft.value.status_code == 422
+
+    class ApprovalStore:
+        def __init__(self, client_id: str | None) -> None:
+            self.approval = SimpleNamespace(client_id=client_id)
+
+        def get_approval_request(self, _request_id: int):
+            return self.approval
+
+    monkeypatch.setattr(router_module, "_store", lambda _request: ApprovalStore(None))
+    with pytest.raises(HTTPException) as missing_tenant:
+        routes["/runbooks/approvals/{request_id}/execute"](1, request, object())
+    assert missing_tenant.value.status_code == 409
+
+    monkeypatch.setattr(router_module, "_store", lambda _request: ApprovalStore("client-a"))
+    monkeypatch.setattr(router_module, "_runbook_dependencies", lambda _request: (None, None, None))
+    for failure, expected_status in (
+        (RunbookApprovalError("approval conflict"), 409),
+        (RunbookError("invalid stored plan"), 422),
+    ):
+        def reject_execution(*_args, error=failure, **_kwargs):
+            raise error
+
+        monkeypatch.setattr(router_module, "execute_approved_runbook", reject_execution)
+        with pytest.raises(HTTPException) as rejected_execution:
+            routes["/runbooks/approvals/{request_id}/execute"](1, request, object())
+        assert rejected_execution.value.status_code == expected_status
 
 
 def test_cli_lists_available_approval_gated_remediations() -> None:

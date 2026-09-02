@@ -897,6 +897,23 @@ def test_rmm_provider_instance_resolution_errors_fail_closed(settings, monkeypat
         )
 
 
+def test_rmm_provider_rejects_provider_without_tier_attribute(settings, monkeypatch) -> None:
+    import wait_local_agent.connector_factory as factory
+
+    class ImmutableProvider:
+        __slots__ = ()
+        adapter_id = "immutable-rmm"
+
+    monkeypatch.setattr(factory, "build_read_client_for", lambda *_args, **_kwargs: ImmutableProvider())
+
+    with pytest.raises(RmmProviderResolutionError, match="does not expose a resolution tier"):
+        rmm_provider_from_settings(
+            settings,
+            _InstanceStore([_rmm_instance("client-scoped", client_id="acme")]),
+            "acme",
+        )
+
+
 def test_rmm_provider_msp_ambiguity_fails_closed(settings) -> None:
     store = _InstanceStore([_rmm_instance("one"), _rmm_instance("two")])
 

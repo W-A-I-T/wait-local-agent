@@ -214,6 +214,18 @@ def test_resolver_redacts_store_failures_and_public_helper_resolves(settings) ->
     assert connection.graph_base_url == settings.m365_graph_base_url
 
 
+def test_profile_vault_read_failures_are_sanitized(settings) -> None:
+    profile = _instance(instance_id="vault-failure")
+
+    class BrokenVault:
+        def get(self, key: str) -> str:
+            raise RuntimeError(f"secret backend failure for {key}")
+
+    with pytest.raises(M365ProfileResolutionError, match="credentials could not be read") as error:
+        M365ConnectionResolver(settings, _Store([profile]), BrokenVault()).resolve()
+    assert "secret backend failure" not in str(error.value)
+
+
 @pytest.mark.parametrize(
     "value",
     [
