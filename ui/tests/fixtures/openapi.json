@@ -578,6 +578,9 @@
     "/consultant/power-apps/plan": {
       "post": {}
     },
+    "/consultant/power-platform/cli-status": {
+      "get": {}
+    },
     "/consultant/power-platform/package": {
       "post": {}
     },
