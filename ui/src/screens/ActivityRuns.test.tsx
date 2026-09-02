@@ -5,6 +5,9 @@ import { apiFetch } from "../api/client";
 import { ActivityRuns } from "./ActivityRuns";
 
 vi.mock("../api/client", () => ({ apiFetch: vi.fn() }));
+vi.mock("../app/DashboardContext", () => ({
+  useDashboard: () => ({ selectedClientId: "", clients: [] })
+}));
 
 const mockedApiFetch = vi.mocked(apiFetch);
 

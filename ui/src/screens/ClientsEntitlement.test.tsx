@@ -1,4 +1,5 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render as rtlRender, screen, waitFor } from "@testing-library/react";
+import { MemoryRouter } from "react-router-dom";
 import { describe, expect, it, vi } from "vitest";
 import { apiFetch } from "../api/client";
 import { Clients } from "./Clients";
@@ -17,6 +18,10 @@ vi.mock("../app/DashboardContext", () => ({
 }));
 
 const mockedApiFetch = vi.mocked(apiFetch);
+
+function render(ui: Parameters<typeof rtlRender>[0]) {
+  return rtlRender(<MemoryRouter>{ui}</MemoryRouter>);
+}
 
 describe("Clients commercial activation hook", () => {
   it("shows neutral activation controls only for a loaded commercial entitlement", async () => {

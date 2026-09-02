@@ -13,6 +13,13 @@ hardening, consultant/Microsoft preparation, MCP, reports, and pack/update
 surfaces. All route behavior remains subject to RBAC, tenant filters, safety
 flags, and approval requirements described in the concept and connector docs.
 
+For client-scoped routes that accept an optional `client_id`, the dashboard's
+`X-WAIT-Client-ID` header is used when that parameter is absent. An explicit
+parameter takes precedence when it matches the header; a disagreement is
+rejected with HTTP 400. The selected value is always validated against the
+authenticated principal's client scope, while appliance-wide routes ignore
+the header.
+
 ## Diagnostics and support
 
 These appliance-wide routes require an administrator with MSP or appliance

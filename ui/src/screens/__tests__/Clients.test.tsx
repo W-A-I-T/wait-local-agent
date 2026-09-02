@@ -1,4 +1,5 @@
-import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render as rtlRender, screen, waitFor } from "@testing-library/react";
+import { MemoryRouter } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { ApiRequestError, apiFetch } from "../../api/client";
 import type { ClientDirectoryEntry } from "../../api/types";
@@ -20,6 +21,10 @@ vi.mock("../../app/DashboardContext", () => ({
 }));
 
 const mockedApiFetch = vi.mocked(apiFetch);
+
+function render(ui: Parameters<typeof rtlRender>[0]) {
+  return rtlRender(<MemoryRouter>{ui}</MemoryRouter>);
+}
 
 type Deferred<T> = {
   promise: Promise<T>;

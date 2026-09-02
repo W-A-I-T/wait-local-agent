@@ -72,7 +72,13 @@ from wait_local_agent.client_discovery import (
     assert_bulk_accept_allowed,
     discover_instance,
 )
-from wait_local_agent.client_scope import AllClients, BoundClients, ClientScope, resolve_client_scope
+from wait_local_agent.client_scope import (
+    AllClients,
+    BoundClients,
+    ClientScope,
+    requested_client_from,
+    resolve_client_scope,
+)
 from wait_local_agent.collectors import (
     CollectorService,
     collector_run_collection_scope,
@@ -2823,8 +2829,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return definition
 
     @app.get("/agent-runs")
-    def agent_runs(context: ViewerAccess, client_id: str | None = None) -> list[dict[str, object]]:
-        scope = resolve_client_scope(context, client_id)
+    def agent_runs(
+        request: Request,
+        context: ViewerAccess,
+        client_id: str | None = None,
+    ) -> list[dict[str, object]]:
+        scope = resolve_client_scope(context, requested_client_from(request, client_id))
         return [_agent_run_view(run) for run in store.list_agent_runs(scope)]
 
     @app.get("/agent-runs/{run_id}")
@@ -2963,10 +2973,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.get("/automation/event-deliveries")
     def event_deliveries(
+        request: Request,
         context: ViewerAccess,
         client_id: str | None = None,
     ) -> list[dict[str, object]]:
-        scope = resolve_client_scope(context, client_id)
+        scope = resolve_client_scope(context, requested_client_from(request, client_id))
         return [_event_delivery_view(delivery) for delivery in store.list_event_deliveries(scope)]
 
     @app.get("/automation/event-deliveries/{delivery_id}")
@@ -3501,10 +3512,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.get("/approval-requests")
     def approval_requests(
+        request: Request,
         context: ViewerAccess,
         client_id: str | None = None,
     ) -> list[dict[str, object]]:
-        scope = resolve_client_scope(context, client_id)
+        scope = resolve_client_scope(context, requested_client_from(request, client_id))
         return [_approval_view(request) for request in store.list_approval_requests(client_id=scope)]
 
     @app.get("/approval-requests/{request_id}")
@@ -3883,19 +3895,24 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         )
 
     @app.get("/audit")
-    def audit(context: ViewerAccess, client_id: str | None = None) -> list[dict[str, object]]:
-        scope = resolve_client_scope(context, client_id)
+    def audit(
+        request: Request,
+        context: ViewerAccess,
+        client_id: str | None = None,
+    ) -> list[dict[str, object]]:
+        scope = resolve_client_scope(context, requested_client_from(request, client_id))
         return [asdict(event) for event in store.list_audit_events(client_id=scope)]
 
     @app.get("/audit-events/export")
     def audit_events_export(
+        request: Request,
         context: AdminAccess,
         format: Literal["json", "csv"] = "json",
         from_: Annotated[datetime | None, Query(alias="from")] = None,
         to_: Annotated[datetime | None, Query(alias="to")] = None,
         client_id: str | None = None,
     ) -> Response:
-        scope = resolve_client_scope(context, client_id)
+        scope = resolve_client_scope(context, requested_client_from(request, client_id))
         all_events = store.list_audit_events(client_id=scope)
         filtered = [
             e
@@ -3922,10 +3939,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.get("/event-history")
     def event_history(
+        request: Request,
         context: ViewerAccess,
         client_id: str | None = None,
     ) -> list[dict[str, object]]:
-        scope = resolve_client_scope(context, client_id)
+        scope = resolve_client_scope(context, requested_client_from(request, client_id))
         return [asdict(event) for event in store.list_event_history(client_id=scope)]
 
     @app.get("/connectors")
@@ -4240,12 +4258,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @limiter.limit(active_settings.rate_limit_connector)
     def halopsa_tickets(
         request: Request,
-        _: ViewerAccess,
+        context: ViewerAccess,
         page: int = 1,
         page_size: int = 50,
+        client_id: str | None = None,
     ) -> dict[str, object]:
+        scope = resolve_client_scope(context, requested_client_from(request, client_id))
         response = halopsa_client.list_tickets(page=page, page_size=page_size)
-        return _halopsa_response("tickets.list", response)
+        return _halopsa_response("tickets.list", response, scope=scope)
 
     @app.get("/connectors/halopsa/tickets/{ticket_id}")
     @limiter.limit(active_settings.rate_limit_connector)
@@ -7477,10 +7497,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.get("/workflow-runs")
     def workflow_runs(
+        request: Request,
         context: ViewerAccess,
         client_id: str | None = None,
     ) -> list[dict[str, object]]:
-        scope = resolve_client_scope(context, client_id)
+        scope = resolve_client_scope(context, requested_client_from(request, client_id))
         return [asdict(run) for run in store.list_workflow_runs(client_id=scope)]
 
     @app.get("/workflow-runs/{run_id}")
@@ -7524,6 +7545,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.get("/executions")
     def executions(
+        request: Request,
         context: ViewerAccess,
         kind: str | None = None,
         status: str | None = None,
@@ -7531,7 +7553,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         started_to: Annotated[str | None, Query(alias="to")] = None,
         client_id: str | None = None,
     ) -> list[dict[str, object]]:
-        scope = resolve_client_scope(context, client_id)
+        scope = resolve_client_scope(context, requested_client_from(request, client_id))
         if isinstance(scope, BoundClients) and scope.client_id is None:
             raise HTTPException(status_code=403, detail="execution lists require a single client or all-client scope")
         return [
@@ -7546,8 +7568,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         ]
 
     @app.get("/executions/{execution_id}")
-    def execution_detail(execution_id: int, context: ViewerAccess, client_id: str | None = None) -> dict[str, object]:
-        scope = _resolve_detail_scope(context, client_id)
+    def execution_detail(
+        execution_id: int,
+        request: Request,
+        context: ViewerAccess,
+        client_id: str | None = None,
+    ) -> dict[str, object]:
+        scope = _resolve_detail_scope(context, requested_client_from(request, client_id))
         if isinstance(scope, BoundClients) and scope.client_id is None:
             raise HTTPException(status_code=404, detail="execution not found")
         scoped_client_id = scope.client_id
@@ -7686,11 +7713,25 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 
-    def _halopsa_response(read_type: str, response: HaloReadResponse) -> dict[str, object]:
-        _audit_halopsa_read(read_type, response.result.status, response.result.count)
+    def _halopsa_response(
+        read_type: str,
+        response: HaloReadResponse,
+        *,
+        scope: ClientScope | None = None,
+    ) -> dict[str, object]:
+        items = response.items
+        if isinstance(scope, BoundClients):
+            items = [
+                item
+                for item in items
+                if _normalize_client_id(getattr(item, "client_id", None)) in scope.client_ids
+            ]
+        result = asdict(response.result)
+        result["count"] = len(items)
+        _audit_halopsa_read(read_type, response.result.status, len(items))
         return {
-            "result": asdict(response.result),
-            "items": [asdict(item) for item in response.items],
+            "result": result,
+            "items": [asdict(item) for item in items],
         }
 
     def _hudu_response(read_type: str, response: HuduReadResponse) -> dict[str, object]:

@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState, type FormEvent, type KeyboardEvent } 
 import { ApiRequestError, apiFetch } from "../api/client";
 import type { BaselineFinding, Client, ClientBaseline, ClientConnectorMapping, ClientDirectoryEntry, ClientDrift, ClientGraph, CommercialActivation, M365InventorySyncResult, MappingVerifyResult, RmmInventorySyncResult } from "../api/types";
 import { useDashboard } from "../app/DashboardContext";
+import { Link } from "react-router-dom";
 import { EmptyState } from "../components/EmptyState";
 import { LoadingState } from "../components/LoadingState";
 import { RoleGate } from "../components/RoleGate";
@@ -441,7 +442,7 @@ export function Clients() {
         </div>
         <div className="analytics-filter-actions">
           <a className="secondary-button" href="/?onboarding=1&step=0">Return to setup</a>
-          {deploymentMode !== "smb" ? <a className="secondary-button" href="/client-discovery">Discover clients</a> : null}
+          {deploymentMode !== "smb" ? <Link className="secondary-button" to="/client-discovery">Discover clients</Link> : null}
           <RoleGate role={role} resolved={roleResolved} allowed={["admin"]}>
             <button className="secondary-button" type="button" onClick={beginCreate}>New client</button>
           </RoleGate>

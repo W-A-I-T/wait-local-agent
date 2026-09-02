@@ -10,7 +10,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel, ConfigDict, Field
 
 from wait_local_agent.agents import AgentService
-from wait_local_agent.client_scope import resolve_client_scope
+from wait_local_agent.client_scope import requested_client_from, resolve_client_scope
 from wait_local_agent.rbac import AuthContext, Role, require_role
 from wait_local_agent.smart_actions import SmartActionService
 from wait_local_agent.store import Store
@@ -854,17 +854,7 @@ def _scope(
     context: AuthContext,
     requested_client_id: str | None,
 ) -> str:
-    header_client_id = request.headers.get("X-WAIT-Client-ID")
-    if (
-        requested_client_id is not None
-        and header_client_id is not None
-        and requested_client_id.strip() != header_client_id.strip()
-    ):
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="conflicting client scopes",
-        )
-    selected_client_id = requested_client_id or header_client_id or context.client_id
+    selected_client_id = requested_client_from(request, requested_client_id) or context.client_id
     scope = resolve_client_scope(context, selected_client_id)
     if scope.client_id is None:
         raise HTTPException(

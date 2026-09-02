@@ -5,7 +5,6 @@ import { useDashboard } from "../app/DashboardContext";
 import { apiFetch } from "../api/client";
 import { Agents } from "./Agents";
 import { Analytics } from "./Analytics";
-import { Audit } from "./Audit";
 import { Backfills } from "./Backfills";
 import { Collectors } from "./Collectors";
 import { Connectors } from "./Connectors";
@@ -119,7 +118,6 @@ describe("ClientIdSelect screen rollout", () => {
     ["TechnicianChat", <TechnicianChat />, "technician-client-id", true],
     ["Knowledge", <Knowledge />, "knowledge-search-client-id", false],
     ["Analytics", <Analytics />, "analytics-client-id", false],
-    ["Audit", <Audit />, "audit-client-id", false],
   ] as const)("renders real client options for %s", async (_name, screenElement, controlId, required) => {
     renderScreen(screenElement);
 

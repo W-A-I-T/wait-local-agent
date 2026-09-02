@@ -10,6 +10,10 @@ All notable changes to WAIT Local Agent will be documented in this file.
   selecting the environment backend; Fernet vault read failures are surfaced
   during settings load, and short non-demo bootstrap tokens emit value-free
   startup warnings.
+- Client-scoped dashboard collections now honor the top-bar client selection,
+  reject conflicting explicit scopes, and show the applied scope on approval,
+  execution, activity, and audit screens. Client Discovery is now reachable
+  from the Clients navigation group.
 
 ### Breaking
 

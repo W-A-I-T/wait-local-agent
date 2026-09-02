@@ -3,6 +3,10 @@ import { MemoryRouter } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { Executions } from "../src/screens/Executions";
 
+vi.mock("../src/app/DashboardContext", () => ({
+  useDashboard: () => ({ selectedClientId: "", clients: [] })
+}));
+
 describe("Executions", () => {
   let artifactResponse: Response;
 

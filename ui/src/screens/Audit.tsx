@@ -2,15 +2,14 @@ import { useCallback, useEffect, useState } from "react";
 import { apiFetch } from "../api/client";
 import { useDashboard } from "../app/DashboardContext";
 import type { AuditEvent } from "../api/types";
-import { ClientIdSelect } from "../components/ClientIdSelect";
 import { EmptyState } from "../components/EmptyState";
 import { LoadingState } from "../components/LoadingState";
+import { ScopeBadge } from "../components/ScopeBadge";
 
 export function Audit() {
-  const { clients = [] } = useDashboard();
+  const { clients = [], selectedClientId } = useDashboard();
   const [events, setEvents] = useState<AuditEvent[]>([]);
   const [loading, setLoading] = useState(true);
-  const [clientId, setClientId] = useState("");
   const [fromDate, setFromDate] = useState("");
   const [toDate, setToDate] = useState("");
   const [exportStatus, setExportStatus] = useState("");
@@ -19,18 +18,13 @@ export function Audit() {
   const refresh = useCallback(async () => {
     setLoading(true);
     try {
-      const query = new URLSearchParams();
-      if (clientId) {
-        query.set("client_id", clientId);
-      }
-      const path = query.toString() ? `/audit?${query.toString()}` : "/audit";
-      setEvents(await apiFetch<AuditEvent[]>(path));
+      setEvents(await apiFetch<AuditEvent[]>("/audit"));
     } catch (error) {
       setEventsStatus(error instanceof Error ? error.message : "Unable to load audit." );
     } finally {
       setLoading(false);
     }
-  }, [clientId]);
+  }, [selectedClientId]);
 
   useEffect(() => {
     void refresh();
@@ -38,7 +32,7 @@ export function Audit() {
 
   async function exportAuditCsv() {
     try {
-      const payload = await apiFetch<string>(exportPath("csv", clientId, fromDate, toDate));
+      const payload = await apiFetch<string>(exportPath("csv", fromDate, toDate));
       const text = typeof payload === "string" ? payload : JSON.stringify(payload, null, 2);
       setExportStatus(`Downloaded ${text.length} bytes`);
       const url = URL.createObjectURL(new Blob([text], { type: "text/csv" }));
@@ -54,7 +48,7 @@ export function Audit() {
 
   async function exportAuditEventsJson() {
     try {
-      const path = exportPath("json", clientId, fromDate, toDate);
+      const path = exportPath("json", fromDate, toDate);
       const payload = await apiFetch<{
         count: number;
         events: AuditEvent[];
@@ -77,7 +71,7 @@ export function Audit() {
       <section className="panel">
         <div className="panel-heading">
           <h2>Audit</h2>
-          <span>{events.length} events</span>
+          <div><ScopeBadge selectedClientId={selectedClientId} clients={clients} /> <span>{events.length} events</span></div>
         </div>
 
         <div className="notice" role="note">
@@ -86,7 +80,6 @@ export function Audit() {
         </div>
 
         <div className="grid">
-          <ClientIdSelect label="client_id" value={clientId} onChange={setClientId} clients={clients} id="audit-client-id" />
           <label>
             From date
             <input type="date" value={fromDate} onChange={(event) => setFromDate(event.target.value)} />
@@ -118,9 +111,8 @@ export function Audit() {
   );
 }
 
-function exportPath(format: "json" | "csv", clientId = "", fromDate = "", toDate = ""): string {
+function exportPath(format: "json" | "csv", fromDate = "", toDate = ""): string {
   const query = new URLSearchParams({ format });
-  if (clientId) query.set("client_id", clientId);
   if (fromDate) query.set("from", `${fromDate}T00:00:00Z`);
   if (toDate) query.set("to", `${toDate}T23:59:59Z`);
   return `/audit-events/export?${query.toString()}`;

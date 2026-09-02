@@ -47,7 +47,8 @@ const primaryNavigation: NavigationGroup[] = [
   {
     items: [
       { to: "/", label: "Overview", icon: LayoutDashboard },
-      { to: "/clients", label: "Clients", icon: Users }
+      { to: "/clients", label: "Clients", icon: Users },
+      { to: "/client-discovery", label: "Client discovery", icon: Compass }
     ]
   },
   {

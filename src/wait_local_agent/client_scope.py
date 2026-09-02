@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-from fastapi import HTTPException
+from fastapi import HTTPException, Request
 
 if TYPE_CHECKING:
     from wait_local_agent.rbac import AuthContext
@@ -38,6 +38,27 @@ class AllClients:
 
 
 ClientScope = BoundClients | AllClients
+
+
+def requested_client_from(
+    request: Request,
+    explicit_client_id: str | None = None,
+    *,
+    conflict_detail: str = "conflicting client scopes",
+) -> str | None:
+    """Resolve an explicit client parameter and the UI scope hint.
+
+    The returned value remains untrusted input. Callers must pass it to
+    ``resolve_client_scope`` before using it for any data access.
+    """
+
+    explicit = explicit_client_id.strip() if explicit_client_id else None
+    header = request.headers.get("X-WAIT-Client-ID", "").strip() or None
+    if explicit == "":
+        explicit = None
+    if explicit and header and explicit != header:
+        raise HTTPException(status_code=400, detail=conflict_detail)
+    return explicit or header
 
 
 def resolve_client_scope(

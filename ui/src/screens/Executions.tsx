@@ -2,13 +2,16 @@ import { useCallback, useEffect, useState } from "react";
 import { apiFetch, apiFetchBlob } from "../api/client";
 import { EmptyState } from "../components/EmptyState";
 import { LoadingState } from "../components/LoadingState";
+import { ScopeBadge } from "../components/ScopeBadge";
 import type { ExecutionDetail, ExecutionRun } from "../api/types";
+import { useDashboard } from "../app/DashboardContext";
 
 function displayValue(value: unknown): string {
   return typeof value === "string" ? value : JSON.stringify(value ?? {}, null, 2);
 }
 
 export function Executions() {
+  const { selectedClientId, clients } = useDashboard();
   const [executions, setExecutions] = useState<ExecutionRun[]>([]);
   const [selected, setSelected] = useState<ExecutionDetail | null>(null);
   const [loading, setLoading] = useState(true);
@@ -31,7 +34,7 @@ export function Executions() {
     } finally {
       setLoading(false);
     }
-  }, [kind, status]);
+  }, [kind, selectedClientId, status]);
 
   useEffect(() => {
     void refresh();
@@ -66,7 +69,7 @@ export function Executions() {
   return (
     <div className="screen-stack">
       <section className="panel">
-        <div className="panel-heading"><h2>Execution History</h2><span>{executions.length} runs</span></div>
+        <div className="panel-heading"><h2>Execution History</h2><div><ScopeBadge selectedClientId={selectedClientId} clients={clients} /> <span>{executions.length} runs</span></div></div>
         <p className="screen-note">Review persisted run status, trigger context, redacted steps, and generated artifact metadata.</p>
         <div className="grid">
           <label>Run kind<select value={kind} onChange={(event) => setKind(event.target.value)}><option value="">All kinds</option><option value="agent">Agent</option><option value="workflow">Workflow</option><option value="smart_action">Smart action</option></select></label>

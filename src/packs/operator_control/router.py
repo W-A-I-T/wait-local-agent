@@ -7,7 +7,7 @@ from typing import Annotated, Literal
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, ConfigDict, Field
 
-from wait_local_agent.client_scope import resolve_client_scope
+from wait_local_agent.client_scope import requested_client_from, resolve_client_scope
 from wait_local_agent.rbac import AuthContext, Role, require_role
 from wait_local_agent.store import Store
 
@@ -284,7 +284,7 @@ def create_router() -> APIRouter:
         status_filter: str | None = Query(default=None, alias="status", max_length=64),
         limit: int = Query(default=100, ge=1, le=500),
     ) -> list[dict[str, object]]:
-        scope = resolve_client_scope(context, client_id)
+        scope = resolve_client_scope(context, requested_client_from(request, client_id))
         kind_set = (
             frozenset(part.strip() for part in kinds.split(",") if part.strip())
             if kinds is not None
