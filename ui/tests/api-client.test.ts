@@ -128,6 +128,20 @@ describe("apiFetch", () => {
     vi.unstubAllGlobals();
   });
 
+  it.each([
+    ["m365_throttled", "Microsoft 365 is temporarily busy. Try again shortly."],
+    ["m365_auth_required", "Microsoft 365 access needs to be reconnected. Check the connection and try again."],
+    ["m365_insufficient_permission", "This Microsoft 365 connection does not have the required permission."],
+  ])("explains Microsoft 365 error %s", async (code, message) => {
+    const status = code === "m365_insufficient_permission" ? 403 : code === "m365_throttled" ? 429 : 502;
+    const detail = { code };
+    vi.stubGlobal("fetch", vi.fn(() => Promise.resolve(new Response(JSON.stringify({ detail }), { status }))));
+
+    await expect(apiFetch("/connectors/m365/users")).rejects.toMatchObject({ message, detail });
+
+    vi.unstubAllGlobals();
+  });
+
   it("returns binary report exports without parsing them as text", async () => {
     vi.stubGlobal("fetch", vi.fn(() => Promise.resolve(new Response(new Uint8Array([37, 80, 68, 70])))));
 

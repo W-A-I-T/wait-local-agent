@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import asdict, dataclass, field
 from typing import Protocol
 
+from wait_local_agent.m365_graph import M365GraphReadError
 from wait_local_agent.models import ConnectorReadResult
 
 DEFAULT_PAGE_SIZE = 25
@@ -41,6 +42,7 @@ class MicrosoftAdminReadResponse:
     result: ConnectorReadResult
     items: list[dict[str, object]]
     next_cursor: str = ""
+    error: M365GraphReadError | None = field(default=None, compare=False, repr=False)
 
     def to_dict(self) -> dict[str, object]:
         return {
@@ -153,4 +155,3 @@ class MicrosoftAdminProvider(Protocol):
 
 class MicrosoftAdminError(RuntimeError):
     """Sanitized Microsoft administration read failure."""
-

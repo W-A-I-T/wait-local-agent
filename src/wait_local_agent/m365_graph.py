@@ -8,8 +8,14 @@ operations only after the write-safety boundaries have passed.
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+import logging
+import random
+import time
+import uuid
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field, replace
+from datetime import UTC, datetime
+from email.utils import parsedate_to_datetime
 from typing import Protocol, cast
 from urllib.parse import parse_qs, quote, unquote, urlsplit
 
@@ -32,6 +38,11 @@ MAX_CURSOR_LENGTH = 4096
 MAX_IDENTITY_LENGTH = 320
 MAX_LICENSE_ITEMS = 200
 MAX_LICENSE_DETAIL_ITEMS = 200
+MAX_GRAPH_ATTEMPTS = 3
+MAX_GRAPH_RETRY_DELAY_SECONDS = 30.0
+MAX_GRAPH_TOTAL_RETRY_SECONDS = 60.0
+_RETRYABLE_GRAPH_STATUSES = frozenset({429, 502, 503, 504})
+LOGGER = logging.getLogger(__name__)
 _M365_AUTHENTICATION_METHOD_SEGMENTS = {
     "fido2": "fido2Methods",
     "microsoft_authenticator": "microsoftAuthenticatorMethods",
@@ -73,6 +84,7 @@ class M365GraphReadResponse:
     result: ConnectorReadResult
     items: list[M365GraphUser]
     next_cursor: str = ""
+    error: M365GraphReadError | None = field(default=None, compare=False, repr=False)
 
 
 @dataclass(frozen=True)
@@ -80,6 +92,7 @@ class M365GraphGroupReadResponse:
     result: ConnectorReadResult
     items: list[M365GraphGroup]
     next_cursor: str = ""
+    error: M365GraphReadError | None = field(default=None, compare=False, repr=False)
 
 
 @dataclass(frozen=True)
@@ -101,6 +114,7 @@ class M365GraphLicenseReadResponse:
     result: ConnectorReadResult
     items: list[M365GraphSubscribedSku]
     next_cursor: str = ""
+    error: M365GraphReadError | None = field(default=None, compare=False, repr=False)
 
 
 @dataclass(frozen=True)
@@ -124,6 +138,7 @@ class M365GraphLicenseDetailReadResponse:
     result: ConnectorReadResult
     items: list[M365GraphLicenseDetail]
     next_cursor: str = ""
+    error: M365GraphReadError | None = field(default=None, compare=False, repr=False)
 
 
 @dataclass(frozen=True)
@@ -142,6 +157,7 @@ class M365GraphMailFolderReadResponse:
     result: ConnectorReadResult
     items: list[M365GraphMailFolder]
     next_cursor: str = ""
+    error: M365GraphReadError | None = field(default=None, compare=False, repr=False)
 
 
 @dataclass(frozen=True)
@@ -161,6 +177,7 @@ class M365GraphMailMessageReadResponse:
     result: ConnectorReadResult
     items: list[M365GraphMailMessage]
     next_cursor: str = ""
+    error: M365GraphReadError | None = field(default=None, compare=False, repr=False)
 
 
 @dataclass(frozen=True)
@@ -189,6 +206,7 @@ class M365GraphManagedDeviceReadResponse:
     result: ConnectorReadResult
     items: list[M365GraphManagedDevice]
     next_cursor: str = ""
+    error: M365GraphReadError | None = field(default=None, compare=False, repr=False)
 
 
 @dataclass(frozen=True)
@@ -386,9 +404,48 @@ class M365GraphReadProvider(Protocol):
 class M365GraphReadError(Exception):
     """A sanitized live Graph failure."""
 
-    def __init__(self, message: str) -> None:
+    code: str | None = None
+    status_code: int | None = None
+    retry_after: float | None = None
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        code: str | None = None,
+        status_code: int | None = None,
+        retry_after: float | None = None,
+    ) -> None:
         super().__init__(message)
         self.message = message
+        self.code = code
+        self.status_code = status_code
+        self.retry_after = retry_after
+
+
+class M365ThrottledError(M365GraphReadError):
+    def __init__(self, message: str, *, retry_after: float | None = None) -> None:
+        super().__init__(message, code="m365_throttled", status_code=429, retry_after=retry_after)
+
+
+class M365AuthRequiredError(M365GraphReadError):
+    def __init__(self, message: str) -> None:
+        super().__init__(message, code="m365_auth_required", status_code=401)
+
+
+class M365ForbiddenError(M365GraphReadError):
+    def __init__(self, message: str) -> None:
+        super().__init__(message, code="m365_insufficient_permission", status_code=403)
+
+
+class M365UnavailableError(M365GraphReadError):
+    def __init__(self, message: str, *, status_code: int = 503) -> None:
+        super().__init__(message, code="m365_unavailable", status_code=status_code)
+
+
+class M365PaginationError(M365GraphReadError):
+    def __init__(self, message: str) -> None:
+        super().__init__(message, code="m365_pagination_failed", status_code=502)
 
 
 class M365GraphClient:
@@ -443,7 +500,9 @@ class M365GraphClient:
                 escaped = safe_identity.replace("'", "''")
                 params["$filter"] = f"id eq '{escaped}' or userPrincipalName eq '{escaped}'"
         except M365GraphReadError as exc:
-            return M365GraphReadResponse(ConnectorReadResult("failed", exc.message), [])
+            return M365GraphReadResponse(
+                ConnectorReadResult("failed", exc.message), [], error=exc if exc.code else None
+            )
         return self._request_users(params)
 
     def list_groups(
@@ -463,7 +522,9 @@ class M365GraphClient:
                     f"mailNickname eq '{escaped}' or displayName eq '{escaped}'"
                 )
         except M365GraphReadError as exc:
-            return M365GraphGroupReadResponse(ConnectorReadResult("failed", exc.message), [])
+            return M365GraphGroupReadResponse(
+                ConnectorReadResult("failed", exc.message), [], error=exc if exc.code else None
+            )
         return self._request_groups(params)
 
     def list_subscribed_skus(
@@ -474,7 +535,9 @@ class M365GraphClient:
         try:
             params = _license_list_params(cursor)
         except M365GraphReadError as exc:
-            return M365GraphLicenseReadResponse(ConnectorReadResult("failed", exc.message), [])
+            return M365GraphLicenseReadResponse(
+                ConnectorReadResult("failed", exc.message), [], error=exc if exc.code else None
+            )
         return self._request_subscribed_skus(params)
 
     def list_license_details(
@@ -488,7 +551,9 @@ class M365GraphClient:
             endpoint = _license_details_endpoint(identity)
             params = _license_detail_params(page_size, cursor)
         except M365GraphReadError as exc:
-            return M365GraphLicenseDetailReadResponse(ConnectorReadResult("failed", exc.message), [])
+            return M365GraphLicenseDetailReadResponse(
+                ConnectorReadResult("failed", exc.message), [], error=exc if exc.code else None
+            )
         return self._request_license_details(endpoint, params)
 
     def list_mail_folders(
@@ -504,7 +569,9 @@ class M365GraphClient:
             endpoint = _mail_folder_endpoint(identity)
             params = _mail_folder_params(page_size, cursor)
         except M365GraphReadError as exc:
-            return M365GraphMailFolderReadResponse(ConnectorReadResult("failed", exc.message), [])
+            return M365GraphMailFolderReadResponse(
+                ConnectorReadResult("failed", exc.message), [], error=exc if exc.code else None
+            )
         return self._request_mail_folders(endpoint, params)
 
     def list_mail_messages(
@@ -523,7 +590,9 @@ class M365GraphClient:
             endpoint = _mail_message_endpoint(identity, folder_id)
             params = _mail_message_params(page_size, cursor)
         except M365GraphReadError as exc:
-            return M365GraphMailMessageReadResponse(ConnectorReadResult("failed", exc.message), [])
+            return M365GraphMailMessageReadResponse(
+                ConnectorReadResult("failed", exc.message), [], error=exc if exc.code else None
+            )
         return self._request_mail_messages(endpoint, params)
 
     def list_managed_devices(
@@ -535,7 +604,9 @@ class M365GraphClient:
         try:
             params = _managed_device_params(page_size, cursor)
         except M365GraphReadError as exc:
-            return M365GraphManagedDeviceReadResponse(ConnectorReadResult("failed", exc.message), [])
+            return M365GraphManagedDeviceReadResponse(
+                ConnectorReadResult("failed", exc.message), [], error=exc if exc.code else None
+            )
         return self._request_managed_devices(params)
 
     def write_health(self) -> ConnectorReadResult:
@@ -984,7 +1055,9 @@ class M365GraphClient:
         try:
             payload = self._get("users", params=params)
         except M365GraphReadError as exc:
-            return M365GraphReadResponse(ConnectorReadResult("failed", exc.message), [])
+            return M365GraphReadResponse(
+                ConnectorReadResult("failed", exc.message), [], error=exc if exc.code else None
+            )
         items = [user for row in _payload_rows(payload) if (user := _normalize_user(row)) is not None]
         return M365GraphReadResponse(
             ConnectorReadResult("ready", "Microsoft Graph user identity read succeeded.", len(items)),
@@ -1002,7 +1075,9 @@ class M365GraphClient:
         try:
             payload = self._get("groups", params=params)
         except M365GraphReadError as exc:
-            return M365GraphGroupReadResponse(ConnectorReadResult("failed", exc.message), [])
+            return M365GraphGroupReadResponse(
+                ConnectorReadResult("failed", exc.message), [], error=exc if exc.code else None
+            )
         items = [group for row in _payload_rows(payload) if (group := _normalize_group(row)) is not None]
         return M365GraphGroupReadResponse(
             ConnectorReadResult("ready", "Microsoft Graph group read succeeded.", len(items)),
@@ -1023,7 +1098,9 @@ class M365GraphClient:
         try:
             payload = self._get("subscribedSkus", params=params)
         except M365GraphReadError as exc:
-            return M365GraphLicenseReadResponse(ConnectorReadResult("failed", exc.message), [])
+            return M365GraphLicenseReadResponse(
+                ConnectorReadResult("failed", exc.message), [], error=exc if exc.code else None
+            )
         rows = _payload_rows(payload)[:MAX_LICENSE_ITEMS]
         items = [sku for row in rows if (sku := _normalize_subscribed_sku(row)) is not None]
         return M365GraphLicenseReadResponse(
@@ -1046,7 +1123,9 @@ class M365GraphClient:
         try:
             payload = self._get(endpoint, params=params)
         except M365GraphReadError as exc:
-            return M365GraphLicenseDetailReadResponse(ConnectorReadResult("failed", exc.message), [])
+            return M365GraphLicenseDetailReadResponse(
+                ConnectorReadResult("failed", exc.message), [], error=exc if exc.code else None
+            )
         rows = _payload_rows(payload)[:MAX_LICENSE_DETAIL_ITEMS]
         items = [detail for row in rows if (detail := _normalize_license_detail(row)) is not None]
         return M365GraphLicenseDetailReadResponse(
@@ -1069,7 +1148,9 @@ class M365GraphClient:
         try:
             payload = self._get(endpoint, params=params)
         except M365GraphReadError as exc:
-            return M365GraphMailFolderReadResponse(ConnectorReadResult("failed", exc.message), [])
+            return M365GraphMailFolderReadResponse(
+                ConnectorReadResult("failed", exc.message), [], error=exc if exc.code else None
+            )
         items = [folder for row in _payload_rows(payload) if (folder := _normalize_mail_folder(row)) is not None]
         return M365GraphMailFolderReadResponse(
             ConnectorReadResult("ready", "Microsoft Graph mailbox folder read succeeded.", len(items)),
@@ -1091,7 +1172,9 @@ class M365GraphClient:
         try:
             payload = self._get(endpoint, params=params)
         except M365GraphReadError as exc:
-            return M365GraphMailMessageReadResponse(ConnectorReadResult("failed", exc.message), [])
+            return M365GraphMailMessageReadResponse(
+                ConnectorReadResult("failed", exc.message), [], error=exc if exc.code else None
+            )
         items = [message for row in _payload_rows(payload) if (message := _normalize_mail_message(row)) is not None]
         return M365GraphMailMessageReadResponse(
             ConnectorReadResult(
@@ -1116,7 +1199,9 @@ class M365GraphClient:
         try:
             payload = self._get("deviceManagement/managedDevices", params=params)
         except M365GraphReadError as exc:
-            return M365GraphManagedDeviceReadResponse(ConnectorReadResult("failed", exc.message), [])
+            return M365GraphManagedDeviceReadResponse(
+                ConnectorReadResult("failed", exc.message), [], error=exc if exc.code else None
+            )
         items = [device for row in _payload_rows(payload) if (device := _normalize_managed_device(row)) is not None]
         return M365GraphManagedDeviceReadResponse(
             ConnectorReadResult("ready", "Microsoft Graph Intune managed-device read succeeded.", len(items)),
@@ -1137,12 +1222,13 @@ class M365GraphClient:
                 connection.graph_base_url,
                 allow_insecure_transport=self.settings.allow_insecure_provider_transport,
             )
-            with httpx.Client(timeout=self.settings.connector_timeout_seconds, transport=self.transport) as client:
-                response = client.get(
-                    f"{base_url}/{safe_endpoint}",
-                    headers=self._headers(connection),
-                    params=params,
-                )
+            url = f"{base_url}/{safe_endpoint}"
+
+            def request() -> httpx.Response:
+                with httpx.Client(timeout=self.settings.connector_timeout_seconds, transport=self.transport) as client:
+                    return client.get(url, headers=self._headers(connection), params=params)
+
+            response = _retry_graph_response(request, safe_endpoint)
         except M365AuthFailure as exc:
             raise M365GraphReadError("Microsoft Graph token acquisition failed.") from exc
         except M365ProfileResolutionError as exc:
@@ -1152,7 +1238,7 @@ class M365GraphClient:
         except httpx.HTTPError as exc:
             raise M365GraphReadError("Microsoft Graph request failed.") from exc
         if response.status_code >= 400:
-            raise M365GraphReadError(_http_error_message(response.status_code, safe_endpoint))
+            raise _graph_http_error(response.status_code, safe_endpoint, response.headers)
         try:
             return response.json()
         except ValueError as exc:
@@ -1200,7 +1286,7 @@ class M365GraphClient:
         except httpx.HTTPError as exc:
             raise M365GraphReadError("Microsoft Graph request failed.") from exc
         if response.status_code >= 400:
-            raise M365GraphReadError(_http_error_message(response.status_code, safe_endpoint, method="POST"))
+            raise _graph_http_error(response.status_code, safe_endpoint, response.headers, method="POST")
         if not response.content:
             return {}, response.status_code
         try:
@@ -1238,7 +1324,7 @@ class M365GraphClient:
         except httpx.HTTPError as exc:
             raise M365GraphReadError("Microsoft Graph request failed.") from exc
         if response.status_code >= 400:
-            raise M365GraphReadError(_http_error_message(response.status_code, safe_endpoint, method="PATCH"))
+            raise _graph_http_error(response.status_code, safe_endpoint, response.headers, method="PATCH")
         if not response.content:
             return {}, response.status_code
         try:
@@ -1275,7 +1361,7 @@ class M365GraphClient:
         except httpx.HTTPError as exc:
             raise M365GraphReadError("Microsoft Graph request failed.") from exc
         if response.status_code >= 400:
-            raise M365GraphReadError(_http_error_message(response.status_code, safe_endpoint, method="DELETE"))
+            raise _graph_http_error(response.status_code, safe_endpoint, response.headers, method="DELETE")
         return {}, response.status_code
 
     def _blocked_result(self) -> ConnectorReadResult | None:
@@ -1987,7 +2073,85 @@ def _next_cursor(payload: object) -> str:
         return ""
     query = parse_qs(urlsplit(next_link).query)
     values = query.get("$skiptoken", [])
-    return values[0] if values and len(values[0]) <= MAX_CURSOR_LENGTH else ""
+    if values and len(values[0]) > MAX_CURSOR_LENGTH:
+        raise M365PaginationError("Microsoft Graph returned a pagination cursor that exceeds the safety limit.")
+    return values[0] if values else ""
+
+
+def _retry_graph_response(request: Callable[[], httpx.Response], endpoint: str) -> httpx.Response:
+    """Run a bounded, read-only Graph request retry policy."""
+    correlation_id = str(uuid.uuid4())
+    total_wait = 0.0
+    for attempt in range(1, MAX_GRAPH_ATTEMPTS + 1):
+        response = request()
+        if response.status_code not in _RETRYABLE_GRAPH_STATUSES or attempt == MAX_GRAPH_ATTEMPTS:
+            if response.status_code >= 400:
+                raise _graph_http_error(response.status_code, endpoint, response.headers)
+            return response
+
+        retry_after = _retry_after_seconds(response.headers.get("Retry-After"))
+        delay = _retry_delay(attempt, retry_after)
+        remaining = MAX_GRAPH_TOTAL_RETRY_SECONDS - total_wait
+        if remaining <= 0:
+            raise _graph_http_error(response.status_code, endpoint, response.headers)
+        delay = min(delay, remaining)
+        LOGGER.info(
+            "m365_graph_retry correlation_id=%s attempt=%s status=%s delay_seconds=%.3f",
+            correlation_id,
+            attempt,
+            response.status_code,
+            delay,
+            extra={
+                "correlation_id": correlation_id,
+                "attempt": attempt,
+                "status": response.status_code,
+                "delay_seconds": delay,
+            },
+        )
+        time.sleep(delay)
+        total_wait += delay
+    raise M365GraphReadError("Microsoft Graph request retry policy failed.")  # pragma: no cover
+
+
+def _retry_delay(attempt: int, retry_after: float | None) -> float:
+    backoff = (2.0 ** (attempt - 1)) * random.uniform(1.0, 1.25)  # nosec B311
+    return min(max(backoff, retry_after or 0.0), MAX_GRAPH_RETRY_DELAY_SECONDS)
+
+
+def _retry_after_seconds(value: str | None) -> float | None:
+    if not value:
+        return None
+    try:
+        return max(0.0, float(value))
+    except ValueError:
+        pass
+    try:
+        retry_at = parsedate_to_datetime(value)
+    except (TypeError, ValueError, OverflowError):
+        return None
+    if retry_at.tzinfo is None:
+        retry_at = retry_at.replace(tzinfo=UTC)
+    return max(0.0, (retry_at - datetime.now(UTC)).total_seconds())
+
+
+def _graph_http_error(
+    status_code: int,
+    endpoint: str,
+    headers: Mapping[str, str] | None = None,
+    *,
+    method: str = "GET",
+) -> M365GraphReadError:
+    message = _http_error_message(status_code, endpoint, method=method)
+    retry_after = _retry_after_seconds(headers.get("Retry-After") if headers is not None else None)
+    if status_code == 401:
+        return M365AuthRequiredError(message)
+    if status_code == 403:
+        return M365ForbiddenError(message)
+    if status_code == 429:
+        return M365ThrottledError(message, retry_after=retry_after)
+    if status_code >= 500:
+        return M365UnavailableError(message, status_code=status_code)
+    return M365GraphReadError(message, status_code=status_code)
 
 
 def _http_error_message(status_code: int, endpoint: str, *, method: str = "GET") -> str:
@@ -2022,7 +2186,12 @@ __all__ = [
     "M365GraphUserCreateResult",
     "M365GraphUserDisableResult",
     "M365GraphReadError",
+    "M365AuthRequiredError",
+    "M365ForbiddenError",
+    "M365PaginationError",
     "M365GraphReadResponse",
     "M365GraphSubscribedSku",
+    "M365ThrottledError",
+    "M365UnavailableError",
     "M365GraphUser",
 ]

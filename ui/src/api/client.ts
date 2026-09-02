@@ -165,6 +165,18 @@ export function apiErrorMessage(status: number, detail?: unknown): string {
   if (isClientScopeErrorDetail(detail)) {
     return CLIENT_SCOPE_ERROR_MESSAGE;
   }
+  if (detail && typeof detail === "object") {
+    const code = (detail as Record<string, unknown>).code;
+    if (code === "m365_throttled") {
+      return "Microsoft 365 is temporarily busy. Try again shortly.";
+    }
+    if (code === "m365_auth_required") {
+      return "Microsoft 365 access needs to be reconnected. Check the connection and try again.";
+    }
+    if (code === "m365_insufficient_permission") {
+      return "This Microsoft 365 connection does not have the required permission.";
+    }
+  }
   if (status === 401 || status === 403) {
     return "You do not have permission to do that. Check your access and try again.";
   }

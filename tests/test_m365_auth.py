@@ -83,6 +83,7 @@ def test_client_credentials_are_lazy_cached_and_refreshed_at_expiry() -> None:
         },
         now=lambda: clock[0],
         credential_factory=lambda _: Credential(),
+        refresh_skew_seconds=0,
     )
 
     assert provider.get_token() == "value-1"
@@ -90,6 +91,31 @@ def test_client_credentials_are_lazy_cached_and_refreshed_at_expiry() -> None:
     clock[0] = 200.0
     assert provider.get_token() == "value-2"
     assert calls == [("https://graph.microsoft.com/.default",)] * 2
+
+
+def test_client_credentials_refresh_before_expiry_with_configurable_skew() -> None:
+    clock = [1_000.0]
+    calls = 0
+
+    class Credential:
+        def get_token(self, *_scopes: str) -> SimpleNamespace:
+            nonlocal calls
+            calls += 1
+            return SimpleNamespace(token=f"value-{calls}", expires_on=clock[0] + (240 if calls == 1 else 600))
+
+    provider = M365TokenProvider(
+        {"mode": "client_credentials", "tenant_id": "t", "client_id": "c", "client_secret": "s"},
+        now=lambda: clock[0],
+        credential_factory=lambda _: Credential(),
+    )
+
+    assert provider.get_token() == "value-1"
+    assert calls == 1
+    assert provider.get_token() == "value-2"
+    assert calls == 2
+    clock[0] += 1
+    assert provider.get_token() == "value-2"
+    assert calls == 2
 
 
 def test_client_credentials_failure_is_sanitized() -> None:
