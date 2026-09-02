@@ -834,7 +834,14 @@ export function Consultant() {
 
   return (
     <div className="screen-stack">
-      <p className="screen-note consultant-page-intro">This page bundles six related but distinct tools for designing and reviewing automation solutions — read each section's heading before acting.</p>
+      <section className="panel">
+        <div className="panel-heading">
+          <div>
+            <h2>Solutions Architect</h2>
+            <p className="screen-note consultant-page-intro">This page bundles six related but distinct tools for designing and reviewing automation solutions — read each section's heading before acting.</p>
+          </div>
+        </div>
+      </section>
 
       <div className="consultant-group">
         <div className="consultant-group-heading">
