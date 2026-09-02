@@ -147,6 +147,7 @@ class Settings:
     secrets_backend: str = "env"
     vault_path: Path = Path(".wait-local-agent/vault")
     power_platform_workspace: Path = Path(".wait-local-agent/power-platform")
+    pac_path: Path | None = None
     power_platform_command_timeout_seconds: float = 600.0
     document_parser: str = "basic"
     allow_ocr: bool = False
@@ -495,6 +496,11 @@ def load_settings() -> Settings:
         vault_path=vault_path,
         power_platform_workspace=Path(
             os.getenv("WAIT_POWER_PLATFORM_WORKSPACE", ".wait-local-agent/power-platform")
+        ),
+        pac_path=(
+            Path(pac_path_value)
+            if (pac_path_value := os.getenv("WAIT_PAC_PATH", "").strip())
+            else None
         ),
         power_platform_command_timeout_seconds=_float_env(
             "WAIT_POWER_PLATFORM_COMMAND_TIMEOUT_SECONDS", 600.0

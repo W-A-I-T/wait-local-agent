@@ -11,7 +11,6 @@ from __future__ import annotations
 import hashlib
 import os
 import re
-import shutil
 import stat
 import subprocess  # nosec B404 - argv is fixed and shell execution is disabled below
 import zipfile
@@ -22,7 +21,14 @@ from urllib.parse import urlsplit
 
 from wait_local_agent import platform_support
 from wait_local_agent.config import Settings
-from wait_local_agent.power_platform import OpenApiDefinitionError, build_solution_command_plan
+from wait_local_agent.power_platform import (
+    PAC_VERSION_PROBE_COMMAND,
+    OpenApiDefinitionError,
+    build_solution_command_plan,
+    compare_pac_versions,
+    pac_cli_version,
+    resolve_pac_executable,
+)
 from wait_local_agent.power_platform_package import (
     PAC_YAML_MINIMUM_VERSION,
     PowerPlatformPackageError,
@@ -371,6 +377,26 @@ def _digest(value: object, field: str) -> str:
     return value.strip()
 
 
+def _pac_unavailable_message(settings: Settings) -> str:
+    if settings.pac_path is not None:
+        return "WAIT_PAC_PATH is configured but is not an executable regular file."
+    return "The pac executable is not available on the local PATH."
+
+
+def _pac_version_unknown_message() -> str:
+    return (
+        f"The Power Platform CLI version could not be determined from `{PAC_VERSION_PROBE_COMMAND}`; "
+        "execution is blocked."
+    )
+
+
+def _pac_version_too_old_message(version: str) -> str:
+    return (
+        f"The Power Platform CLI version {version} is below the required minimum "
+        f"{PAC_YAML_MINIMUM_VERSION}."
+    )
+
+
 def execute_power_platform_stage(
     plan: Mapping[str, object],
     stage_id: str,
@@ -395,11 +421,17 @@ def execute_power_platform_stage(
     try:
         stage = _stage(plan, stage_id)
         workspace, output_directory = _execution_paths(plan, settings)
-        pac = shutil.which("pac")
+        pac = resolve_pac_executable(settings)
         if not pac:
-            return _blocked(stage_id, "The pac executable is not available on the local PATH.")
+            return _blocked(stage_id, _pac_unavailable_message(settings))
     except PowerPlatformDeploymentError as exc:
         return _blocked(stage_id, str(exc))
+
+    version = pac_cli_version(pac)
+    if version is None:
+        return _blocked(stage_id, _pac_version_unknown_message())
+    if compare_pac_versions(version, PAC_YAML_MINIMUM_VERSION) < 0:
+        return _blocked(stage_id, _pac_version_too_old_message(version))
 
     run = runner or _run_command
     commands = cast(list[object], stage["commands"])
@@ -493,11 +525,17 @@ def execute_power_platform_rollback(
         actual_digest = validate_power_platform_solution_package(artifact, workspace)
         if actual_digest != expected_digest:
             return _rollback_failed(stage_id, "Power Platform rollback artifact digest does not match evidence.", [])
-        pac = shutil.which("pac")
+        pac = resolve_pac_executable(settings)
         if not pac:
-            return _rollback_blocked(stage_id, "The pac executable is not available on the local PATH.")
+            return _rollback_blocked(stage_id, _pac_unavailable_message(settings))
     except (PowerPlatformDeploymentError, StopIteration) as exc:
         return _rollback_blocked(stage_id, str(exc))
+
+    version = pac_cli_version(pac)
+    if version is None:
+        return _rollback_blocked(stage_id, _pac_version_unknown_message())
+    if compare_pac_versions(version, PAC_YAML_MINIMUM_VERSION) < 0:
+        return _rollback_blocked(stage_id, _pac_version_too_old_message(version))
 
     command = [
         pac,

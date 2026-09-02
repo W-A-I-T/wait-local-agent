@@ -6,7 +6,6 @@ import json
 import logging
 import os
 import re
-import shutil
 import sqlite3
 import time
 import uuid
@@ -233,7 +232,11 @@ from wait_local_agent.power_apps import (
     build_power_apps_plan,
 )
 from wait_local_agent.power_automate import PowerAutomatePlanError, build_power_automate_flow_plan
-from wait_local_agent.power_platform import OpenApiDefinitionError, generate_power_platform_connector
+from wait_local_agent.power_platform import (
+    OpenApiDefinitionError,
+    generate_power_platform_connector,
+    resolve_pac_executable,
+)
 from wait_local_agent.power_platform_deployment import (
     PowerPlatformDeploymentError,
     build_power_platform_deployment_plan,
@@ -7808,7 +7811,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 return False, "Power Platform execution is blocked until WAIT_ALLOW_WRITE_ACTIONS=true."
             if not active_settings.allow_power_platform_deployment:
                 return False, ("Power Platform deployment is blocked until WAIT_ALLOW_POWER_PLATFORM_DEPLOYMENT=true.")
-            if shutil.which("pac") is None:
+            if resolve_pac_executable(active_settings) is None:
+                if active_settings.pac_path is not None:
+                    return False, "WAIT_PAC_PATH is configured but is not an executable regular file."
                 return False, "The pac executable is not available on the local PATH."
             if not active_settings.power_platform_workspace.expanduser().is_dir():
                 return False, "WAIT_POWER_PLATFORM_WORKSPACE must already exist."
