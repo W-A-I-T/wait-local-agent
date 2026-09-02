@@ -63,7 +63,7 @@ export async function apiFetch<T>(path: string, init: RequestInit = {}): Promise
     );
   }
 
-  if (headers.get("Accept")?.includes("application/json") && response.headers.get("content-type")?.toLowerCase().includes("text/html")) {
+  if (headers.get("Accept")?.toLowerCase().includes("application/json") && response.headers.get("content-type")?.toLowerCase().includes("text/html")) {
     throw new ApiRequestError(
       "The appliance returned an unexpected response. Try again.",
       `${path} received HTML for an API request; check caching or proxy configuration`,
