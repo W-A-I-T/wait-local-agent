@@ -300,6 +300,7 @@ class MicrosoftAdminGraphClient:
             payload = self._get(safe_endpoint, params)
             rows = _payload_rows(payload)[:MAX_RECORDS_PER_SURFACE]
             items = [item for row in rows if (item := normalizer(row)) is not None]
+            next_cursor = _next_cursor(payload)
         except M365GraphReadError as exc:
             return _failed_response(str(exc), error=exc if exc.code else None)
         except MicrosoftAdminError as exc:
@@ -307,7 +308,7 @@ class MicrosoftAdminGraphClient:
         return MicrosoftAdminReadResponse(
             ConnectorReadResult("ready", success_message, len(items)),
             items,
-            _next_cursor(payload),
+            next_cursor,
         )
 
     def _get(self, endpoint: str, params: dict[str, str | int]) -> object:

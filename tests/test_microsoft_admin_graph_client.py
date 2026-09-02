@@ -14,6 +14,7 @@ from wait_local_agent.m365_auth import (
     M365ConnectionResolver,
     M365ProfileResolutionError,
 )
+from wait_local_agent.m365_graph import M365PaginationError
 from wait_local_agent.smart_actions import default_registry
 
 
@@ -439,3 +440,17 @@ def test_client_validation_fails_closed_without_broadening_graph_queries(setting
     ).list_service_health()
     assert invalid_base.result.status == "failed"
     assert "v1.0" in invalid_base.result.message
+
+
+def test_microsoft_admin_pagination_failure_is_carried_in_response(settings) -> None:
+    next_link = "https://graph.microsoft.com/v1.0/items?$skiptoken=" + "x" * 5000
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"value": [], "@odata.nextLink": next_link})
+
+    response = MicrosoftAdminGraphClient(
+        _configured(settings), transport=httpx.MockTransport(handler)
+    ).list_service_health()
+
+    assert response.result.status == "failed"
+    assert isinstance(response.error, M365PaginationError)

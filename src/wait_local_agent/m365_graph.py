@@ -9,6 +9,7 @@ operations only after the write-safety boundaries have passed.
 from __future__ import annotations
 
 import logging
+import math
 import random
 import time
 import uuid
@@ -1059,10 +1060,16 @@ class M365GraphClient:
                 ConnectorReadResult("failed", exc.message), [], error=exc if exc.code else None
             )
         items = [user for row in _payload_rows(payload) if (user := _normalize_user(row)) is not None]
+        try:
+            next_cursor = _next_cursor(payload)
+        except M365GraphReadError as exc:
+            return M365GraphReadResponse(
+                ConnectorReadResult("failed", exc.message, len(items)), items, error=exc
+            )
         return M365GraphReadResponse(
             ConnectorReadResult("ready", "Microsoft Graph user identity read succeeded.", len(items)),
             items,
-            _next_cursor(payload),
+            next_cursor,
         )
 
     def _request_groups(self, params: dict[str, str | int]) -> M365GraphGroupReadResponse:
@@ -1079,10 +1086,16 @@ class M365GraphClient:
                 ConnectorReadResult("failed", exc.message), [], error=exc if exc.code else None
             )
         items = [group for row in _payload_rows(payload) if (group := _normalize_group(row)) is not None]
+        try:
+            next_cursor = _next_cursor(payload)
+        except M365GraphReadError as exc:
+            return M365GraphGroupReadResponse(
+                ConnectorReadResult("failed", exc.message, len(items)), items, error=exc
+            )
         return M365GraphGroupReadResponse(
             ConnectorReadResult("ready", "Microsoft Graph group read succeeded.", len(items)),
             items,
-            _next_cursor(payload),
+            next_cursor,
         )
 
     def _request_subscribed_skus(
@@ -1103,10 +1116,16 @@ class M365GraphClient:
             )
         rows = _payload_rows(payload)[:MAX_LICENSE_ITEMS]
         items = [sku for row in rows if (sku := _normalize_subscribed_sku(row)) is not None]
+        try:
+            next_cursor = _next_cursor(payload)
+        except M365GraphReadError as exc:
+            return M365GraphLicenseReadResponse(
+                ConnectorReadResult("failed", exc.message, len(items)), items, error=exc
+            )
         return M365GraphLicenseReadResponse(
             ConnectorReadResult("ready", "Microsoft Graph subscribed license read succeeded.", len(items)),
             items,
-            _next_cursor(payload),
+            next_cursor,
         )
 
     def _request_license_details(
@@ -1128,10 +1147,16 @@ class M365GraphClient:
             )
         rows = _payload_rows(payload)[:MAX_LICENSE_DETAIL_ITEMS]
         items = [detail for row in rows if (detail := _normalize_license_detail(row)) is not None]
+        try:
+            next_cursor = _next_cursor(payload)
+        except M365GraphReadError as exc:
+            return M365GraphLicenseDetailReadResponse(
+                ConnectorReadResult("failed", exc.message, len(items)), items, error=exc
+            )
         return M365GraphLicenseDetailReadResponse(
             ConnectorReadResult("ready", "Microsoft Graph user license detail read succeeded.", len(items)),
             items,
-            _next_cursor(payload),
+            next_cursor,
         )
 
     def _request_mail_folders(
@@ -1152,10 +1177,16 @@ class M365GraphClient:
                 ConnectorReadResult("failed", exc.message), [], error=exc if exc.code else None
             )
         items = [folder for row in _payload_rows(payload) if (folder := _normalize_mail_folder(row)) is not None]
+        try:
+            next_cursor = _next_cursor(payload)
+        except M365GraphReadError as exc:
+            return M365GraphMailFolderReadResponse(
+                ConnectorReadResult("failed", exc.message, len(items)), items, error=exc
+            )
         return M365GraphMailFolderReadResponse(
             ConnectorReadResult("ready", "Microsoft Graph mailbox folder read succeeded.", len(items)),
             items,
-            _next_cursor(payload),
+            next_cursor,
         )
 
     def _request_mail_messages(
@@ -1176,6 +1207,12 @@ class M365GraphClient:
                 ConnectorReadResult("failed", exc.message), [], error=exc if exc.code else None
             )
         items = [message for row in _payload_rows(payload) if (message := _normalize_mail_message(row)) is not None]
+        try:
+            next_cursor = _next_cursor(payload)
+        except M365GraphReadError as exc:
+            return M365GraphMailMessageReadResponse(
+                ConnectorReadResult("failed", exc.message, len(items)), items, error=exc
+            )
         return M365GraphMailMessageReadResponse(
             ConnectorReadResult(
                 "ready",
@@ -1183,7 +1220,7 @@ class M365GraphClient:
                 len(items),
             ),
             items,
-            _next_cursor(payload),
+            next_cursor,
         )
 
     def _request_managed_devices(
@@ -1203,10 +1240,16 @@ class M365GraphClient:
                 ConnectorReadResult("failed", exc.message), [], error=exc if exc.code else None
             )
         items = [device for row in _payload_rows(payload) if (device := _normalize_managed_device(row)) is not None]
+        try:
+            next_cursor = _next_cursor(payload)
+        except M365GraphReadError as exc:
+            return M365GraphManagedDeviceReadResponse(
+                ConnectorReadResult("failed", exc.message, len(items)), items, error=exc
+            )
         return M365GraphManagedDeviceReadResponse(
             ConnectorReadResult("ready", "Microsoft Graph Intune managed-device read succeeded.", len(items)),
             items,
-            _next_cursor(payload),
+            next_cursor,
         )
 
     def _get(self, endpoint: str, *, params: dict[str, str | int] | None = None) -> object:
@@ -2122,7 +2165,8 @@ def _retry_after_seconds(value: str | None) -> float | None:
     if not value:
         return None
     try:
-        return max(0.0, float(value))
+        seconds = float(value)
+        return max(0.0, seconds) if math.isfinite(seconds) else None
     except ValueError:
         pass
     try:

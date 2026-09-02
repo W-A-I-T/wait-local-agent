@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import replace
+from datetime import UTC, datetime, timedelta
 from typing import Any, cast
 
 import httpx
@@ -1952,3 +1953,29 @@ def test_graph_http_errors_preserve_read_error_base(settings, status, error_type
     with pytest.raises(error_type) as error:
         M365GraphClient(_configured(settings), transport=httpx.MockTransport(handler))._get("users")
     assert isinstance(error.value, M365GraphReadError)
+
+
+def test_graph_retry_after_http_date_and_wait_caps(settings, monkeypatch) -> None:
+    http_date = (datetime.now(UTC) + timedelta(seconds=5)).strftime("%a, %d %b %Y %H:%M:%S GMT")
+    parsed = graph_module._retry_after_seconds(http_date)
+    assert parsed is not None
+    assert 0 < parsed <= 5
+    assert graph_module._retry_after_seconds("inf") is None
+    assert graph_module._retry_after_seconds("nan") is None
+
+    delays: list[float] = []
+    monkeypatch.setattr(graph_module.time, "sleep", delays.append)
+    monkeypatch.setattr(graph_module, "_retry_after_seconds", lambda _value: 120.0)
+    calls = 0
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal calls
+        calls += 1
+        if calls < 3:
+            return httpx.Response(429, headers={"Retry-After": "120"})
+        return httpx.Response(200, json={})
+
+    assert M365GraphClient(_configured(settings), transport=httpx.MockTransport(handler))._get("users") == {}
+    assert calls == 3
+    assert delays == [30.0, 30.0]
+    assert sum(delays) <= 60.0

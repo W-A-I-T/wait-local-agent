@@ -392,7 +392,8 @@ def _core_response(response: Any) -> dict[str, object]:
 
 
 def _admin_response(response: Any) -> dict[str, object]:
-    return _core_response(response)
+    _raise_m365_graph_http_error(getattr(response, "error", None))
+    return response.to_dict()
 
 
 def _raise_m365_graph_http_error(error: object) -> None:
