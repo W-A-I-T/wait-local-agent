@@ -52,3 +52,8 @@
 - 2026-09-01T21:35:58Z: Launching Codex gpt-5.6-luna implementation through the artifact runtime in /home/josephp/wait-local-agent-main.
 
 - 2026-09-01T22:01:02Z: Codex gpt-5.6-luna completed successfully; repository verification is next.
+
+- Coverage follow-up: added deterministic lifecycle tests for backup path
+  confinement, Fernet-key error handling, restore validation, restore-exercise
+  failure cleanup, and retention boundary/protected-file behavior. Pytest was
+  intentionally not run per the task request.

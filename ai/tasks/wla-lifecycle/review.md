@@ -62,3 +62,24 @@ dependency constraint.
   no-content/no-key API boundary.
 - Verify the Overview and Scheduled Jobs changes preserve existing flows and that
   `Settings.tsx` remains untouched.
+
+## Claude Final Gate — Review & Validation (2026-09-01/02)
+
+Verdict: APPROVED. Backend battery green first-try (97/97); the gate's coverage
+rounds surfaced and fixed a REAL restore-hygiene bug (rejected restores left a
+stray -wal sidecar beside the target DB — now cleaned, target untouched,
+test-enforced with a properly-constructed scenario). Migration collision with
+the parallel track's #518 resolved: backup_runs renumbered 13->14 per the
+migration-number reservation (roadmap block 14-19); both tracks' migrations and
+pin-list entries coexist; 137 cross-track tests green post-merge.
+
+Security review: backup contents and Fernet key never traverse the API or
+audit detail; retention cannot delete the just-created backup and pruning
+failures are recorded, never fatal; failure summaries sanitized (no provider
+text/paths); restore-exercise evidence surfaced as references — recoverability
+is never implied from creation alone; update docs state migration
+irreversibility explicitly and add no auto-apply code.
+
+Gates: full suite 95.03% (authoritative-line-map top-up); mypy clean (323
+files); ruff/bandit clean; UI green with its 75% gate (the recurring Sidebar
+instrumentation flake is the known item under deflake in a separate session).

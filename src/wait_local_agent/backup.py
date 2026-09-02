@@ -126,8 +126,13 @@ def restore_state(
         store.path.write_bytes(payload)
         Store(store.path)
         return store.path
+    try:
+        payload = _snapshot_bytes(source)
+    except (OSError, sqlite3.Error):
+        _remove_sqlite_sidecars(store.path)
+        raise
     _remove_sqlite_files(store.path)
-    _restore_sqlite(source, store.path)
+    store.path.write_bytes(payload)
     Store(store.path)
     return store.path
 
@@ -305,14 +310,12 @@ def _backup_sqlite(source_path: Path, destination_path: Path) -> None:
     destination_path.write_bytes(snapshot)
 
 
-def _restore_sqlite(source_path: Path, destination_path: Path) -> None:
-    """Restore a SQLite database without copying an incomplete WAL sidecar."""
-
-    destination_path.write_bytes(_snapshot_bytes(source_path))
-
-
 def _remove_sqlite_files(path: Path) -> None:
     path.unlink(missing_ok=True)
+    _remove_sqlite_sidecars(path)
+
+
+def _remove_sqlite_sidecars(path: Path) -> None:
     for suffix in ("-wal", "-shm"):
         Path(f"{path}{suffix}").unlink(missing_ok=True)
 
