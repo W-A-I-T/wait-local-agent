@@ -10,6 +10,37 @@ import {
 } from "../src/api/client";
 
 describe("apiFetch", () => {
+  it("requests JSON and rejects an HTML SPA response for an API request", async () => {
+    const fetchMock = vi.fn<(input: RequestInfo | URL, init?: RequestInit) => Promise<Response>>(() => Promise.resolve(new Response("<html>SPA</html>", {
+      status: 200,
+      headers: { "Content-Type": "text/html" }
+    })));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(apiFetch("/clients")).rejects.toMatchObject({
+      message: "The appliance returned an unexpected response. Try again.",
+      technicalDetail: "/clients received HTML for an API request; check caching or proxy configuration",
+      status: 200
+    } satisfies Partial<ApiRequestError>);
+    const jsonRequest = fetchMock.mock.calls[0]?.[1] ?? {};
+    expect(new Headers(jsonRequest.headers).get("Accept")).toBe("application/json");
+
+    vi.unstubAllGlobals();
+  });
+
+  it("keeps blob requests on a non-JSON Accept header", async () => {
+    const fetchMock = vi.fn<(input: RequestInfo | URL, init?: RequestInit) => Promise<Response>>(() => Promise.resolve(new Response(new Uint8Array([37, 80, 68, 70]), {
+      headers: { "Content-Type": "application/pdf" }
+    })));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await apiFetchBlob("/reports/report-1/export?export_format=pdf");
+
+    const blobRequest = fetchMock.mock.calls[0]?.[1] ?? {};
+    expect(new Headers(blobRequest.headers).get("Accept")).toBe("*/*");
+    vi.unstubAllGlobals();
+  });
+
   it("uses plain language for transport failures while retaining technical detail", async () => {
     vi.stubGlobal("fetch", vi.fn(() => Promise.resolve(new Response(JSON.stringify({ detail: "token rejected" }), { status: 403 }))));
 

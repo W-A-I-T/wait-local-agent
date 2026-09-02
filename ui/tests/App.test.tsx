@@ -97,7 +97,7 @@ describe("App", () => {
   });
 
   it("creates drafts, edits payload fields, and approves from controls", async () => {
-    renderApp();
+    renderApp("/tickets");
 
     await screen.findAllByText("HALO-1");
     fireEvent.click(screen.getByRole("button", { name: /Create Draft/i }));
@@ -234,9 +234,9 @@ describe("App", () => {
   });
 });
 
-function renderApp() {
+function renderApp(initialPath = "/") {
   return render(
-    <MemoryRouter initialEntries={["/"]}>
+    <MemoryRouter initialEntries={[initialPath]}>
       <App />
     </MemoryRouter>
   );

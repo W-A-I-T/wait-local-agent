@@ -199,6 +199,8 @@ describe("Settings loading", () => {
     expect(await screen.findByText("WAIT_API_KEY")).toBeInTheDocument();
     expect(screen.getByText("1 keys")).toBeInTheDocument();
     expect(screen.queryByText(/unavailable in demo mode/)).not.toBeInTheDocument();
+    expect(screen.getByText(/Launch Passport is not configured/)).toBeInTheDocument();
+    expect(document.body.textContent).not.toMatch(/\b(?:null|undefined)\b/);
   });
 });
 

@@ -63,6 +63,14 @@ export async function apiFetch<T>(path: string, init: RequestInit = {}): Promise
     );
   }
 
+  if (headers.get("Accept")?.includes("application/json") && response.headers.get("content-type")?.toLowerCase().includes("text/html")) {
+    throw new ApiRequestError(
+      "The appliance returned an unexpected response. Try again.",
+      `${path} received HTML for an API request; check caching or proxy configuration`,
+      response.status
+    );
+  }
+
   let payload: unknown;
   try {
     payload = await readResponsePayload(response);
@@ -83,6 +91,9 @@ export async function apiFetch<T>(path: string, init: RequestInit = {}): Promise
 
 export async function apiFetchBlob(path: string, init: RequestInit = {}): Promise<Blob> {
   const headers = new Headers(buildApiHeaders(Boolean(init.body)));
+  if (!new Headers(init.headers).has("Accept")) {
+    headers.set("Accept", "*/*");
+  }
   new Headers(init.headers).forEach((value, key) => headers.set(key, value));
   let response: Response;
   try {

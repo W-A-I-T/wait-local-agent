@@ -337,6 +337,22 @@ describe("write health posture mapping", () => {
   });
 });
 
+describe("dashboard connector request scope", () => {
+  it("does not request the Halo ticket list outside the Tickets screen", async () => {
+    mockedApiFetch.mockImplementation((path: string) => {
+      if (path === "/auth/role") {
+        return Promise.resolve({ role: "admin", api_auth_required: false, demo_mode: true }) as ReturnType<typeof apiFetch>;
+      }
+      return Promise.resolve(defaultResponse(path)) as ReturnType<typeof apiFetch>;
+    });
+
+    render(<DashboardProvider activePath="/clients"><DashboardHarness /></DashboardProvider>);
+
+    await waitFor(() => expect(screen.getByText("access resolved")).toBeInTheDocument());
+    expect(mockedApiFetch.mock.calls.some(([path]) => path === "/connectors/halopsa/tickets")).toBe(false);
+  });
+});
+
 function defaultResponse(path: string): unknown {
   if (path === "/connectors/halopsa/tickets") {
     return { result: { status: "blocked", message: "Tickets unavailable.", count: 0 }, items: [] };

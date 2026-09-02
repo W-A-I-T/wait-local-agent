@@ -171,7 +171,7 @@ export function executeEndpointFor(actionType: string): string | null {
 
 const DashboardContext = createContext<DashboardContextValue | undefined>(undefined);
 
-export function DashboardProvider({ children }: { children: ReactNode }) {
+export function DashboardProvider({ children, activePath = "" }: { children: ReactNode; activePath?: string }) {
   const [apiToken, setApiToken] = useState(() => loadStoredApiToken());
   const [role, setRole] = useState<AuthRoleResponse["role"]>("viewer");
   const [isMspAdmin, setIsMspAdmin] = useState(false);
@@ -204,11 +204,16 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
   const [busyId, setBusyId] = useState<number | "draft" | null>(null);
   const selectedTicketIdRef = useRef(selectedTicketId);
   const roleRequestIdRef = useRef(0);
+  const activePathRef = useRef(activePath);
   const configuration = useConfiguredState({ role });
 
   useEffect(() => {
     selectedTicketIdRef.current = selectedTicketId;
   }, [selectedTicketId]);
+
+  useEffect(() => {
+    activePathRef.current = activePath;
+  }, [activePath]);
 
   const setSelectedClientId = useCallback((nextClientId: string) => {
     const normalized = nextClientId.trim();
@@ -254,7 +259,12 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
       const results = await Promise.allSettled([
         apiFetch<ConnectorStatus[]>("/connectors"),
         apiFetch<HaloReadResult>("/connectors/halopsa/write-health"),
-        apiFetch<HaloTicketsResponse>("/connectors/halopsa/tickets"),
+        activePathRef.current === "/tickets"
+          ? apiFetch<HaloTicketsResponse>("/connectors/halopsa/tickets")
+          : Promise.resolve<HaloTicketsResponse>({
+            result: { status: "blocked", message: "Tickets are loaded on the Tickets screen.", count: 0 },
+            items: []
+          }),
         apiFetch<ApprovalRequest[]>("/approval-requests"),
         apiFetch<EventDelivery[]>("/automation/event-deliveries"),
         apiFetch<EventHistory[]>("/event-history"),

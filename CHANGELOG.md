@@ -62,6 +62,9 @@ All notable changes to WAIT Local Agent will be documented in this file.
 - Fixed Settings update checks and collector exports to use their backend POST
   contracts, routed desktop Microsoft sign-in through the configured API base,
   and added frontend route/method contract guards for the development proxy.
+- SPA HTML fallbacks now opt out of caching and vary on `Accept`, API requests
+  explicitly negotiate JSON, and the dashboard no longer repeatedly rate-limits
+  its local write-health check or Halo ticket bootstrap request.
 
 - Power Platform deployment and rollback execution now enforce the minimum CLI
   version and block when the installed version cannot be determined.

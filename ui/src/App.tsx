@@ -11,7 +11,7 @@ export function App() {
     return <EndUserSupport />;
   }
   return (
-    <DashboardProvider>
+    <DashboardProvider activePath={location.pathname}>
       <DashboardRouteRefresh />
     </DashboardProvider>
   );

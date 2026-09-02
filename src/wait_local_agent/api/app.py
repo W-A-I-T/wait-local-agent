@@ -1091,12 +1091,17 @@ class SPAStaticFiles(StaticFiles):
         )
 
         try:
-            return await super().get_response(path, scope)
+            response = await super().get_response(path, scope)
+            if path in {"", "index.html"}:
+                _set_spa_html_headers(response)
+            elif path.startswith("assets/"):
+                _set_hashed_asset_headers(response)
+            return response
         except StarletteHTTPException as exc:
             if exc.status_code != 404 or scope["method"] not in {"GET", "HEAD"} or reserved:
                 raise
 
-        return FileResponse(self.index_path, media_type="text/html")
+        return _spa_index_response(self.index_path)
 
 
 class SPAHtmlRoutesMiddleware:
@@ -1130,7 +1135,24 @@ class SPAHtmlRoutesMiddleware:
             await self.app(scope, receive, send)
             return
 
-        await FileResponse(self.index_path, media_type="text/html")(scope, receive, send)
+        await _spa_index_response(self.index_path)(scope, receive, send)
+
+
+def _set_spa_html_headers(response: Response) -> None:
+    response.headers["Cache-Control"] = "no-store"
+    response.headers["Vary"] = "Accept"
+
+
+def _set_hashed_asset_headers(response: Response) -> None:
+    response.headers["Cache-Control"] = "public, max-age=31536000, immutable"
+
+
+def _spa_index_response(index_path: Path) -> FileResponse:
+    return FileResponse(
+        index_path,
+        media_type="text/html",
+        headers={"Cache-Control": "no-store", "Vary": "Accept"},
+    )
 
 
 def _resolve_ui_dist() -> Path | None:
@@ -4205,7 +4227,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return asdict(result)
 
     @app.get("/connectors/halopsa/write-health")
-    @limiter.limit(active_settings.rate_limit_connector)
+    @limiter.limit(active_settings.rate_limit_general)
     def halopsa_write_health(request: Request, _: ViewerAccess) -> dict[str, object]:
         result = halopsa_client.write_health()
         store.add_audit_event("halopsa.write_health", "halopsa", result.status)
