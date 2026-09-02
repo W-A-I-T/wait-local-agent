@@ -3856,6 +3856,32 @@ def test_halopsa_write_health_api(settings) -> None:
     assert response.json()["status"] == "blocked"
 
 
+@pytest.mark.parametrize(
+    "write_health_path",
+    [
+        "/connectors/halopsa/write-health",
+        "/connectors/connectwise/write-health",
+        "/connectors/servicenow/write-health",
+        "/connectors/autotask/write-health",
+    ],
+)
+def test_write_health_routes_use_general_limit_but_provider_health_keeps_connector_limit(
+    settings, write_health_path: str
+) -> None:
+    rate_limited_settings = replace(settings, rate_limit_enabled=True)
+    write_health_client = TestClient(create_app(rate_limited_settings))
+
+    write_health_responses = [write_health_client.get(write_health_path) for _ in range(12)]
+
+    assert all(response.status_code == 200 for response in write_health_responses)
+
+    provider_health_client = TestClient(create_app(rate_limited_settings))
+    provider_health_responses = [provider_health_client.get("/connectors/halopsa/health") for _ in range(11)]
+
+    assert all(response.status_code == 200 for response in provider_health_responses[:10])
+    assert provider_health_responses[-1].status_code == 429
+
+
 def test_hudu_api_surfaces_blocked_and_mocked_reads(settings, monkeypatch) -> None:
     class FakeHuduClient:
         def __init__(self, _settings) -> None:
