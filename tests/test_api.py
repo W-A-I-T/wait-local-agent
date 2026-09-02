@@ -2068,8 +2068,9 @@ def test_scheduled_job_routes_cover_rbac_validation_and_live_scheduler_registrat
         assert client.delete(
             f"/scheduled-jobs/{once.json()['id']}", headers=_auth("tech-token")
         ).status_code == 200
-        assert [job.id for job in app.state.scheduler._scheduler.get_jobs()] == [
-            "event-delivery-retry-worker"
+        assert sorted(job.id for job in app.state.scheduler._scheduler.get_jobs()) == [
+            "event-delivery-retry-worker",
+            "founder-scan-poll-worker",
         ]
         assert client.get("/scheduled-jobs", headers=_auth("viewer-token")).json() == []
 
