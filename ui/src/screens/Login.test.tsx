@@ -11,13 +11,14 @@ vi.mock("../app/DashboardContext", () => ({ useDashboard: vi.fn() }));
 const mockedApiFetch = vi.mocked(apiFetch);
 const mockedUseDashboard = vi.mocked(useDashboard);
 
-function renderScreen() {
-  return render(<MemoryRouter><Login /></MemoryRouter>);
+function renderScreen(initialEntries = ["/"]) {
+  return render(<MemoryRouter initialEntries={initialEntries}><Login /></MemoryRouter>);
 }
 
 describe("Login", () => {
   beforeEach(() => {
     window.localStorage.clear();
+    delete window.__WAIT_API_BASE__;
     mockedApiFetch.mockReset();
     mockedUseDashboard.mockReturnValue({ refresh: vi.fn().mockResolvedValue({ role: "viewer" }) } as never);
   });
@@ -45,4 +46,43 @@ describe("Login", () => {
 
     await waitFor(() => expect(window.localStorage.getItem("wait-local-agent-api-token")).toBe("bootstrap-token"));
   });
+
+  it("uses the desktop API base for Microsoft sign-in and preserves the validated next path", async () => {
+    mockedApiFetch.mockResolvedValue({ enabled: true } as never);
+    window.__WAIT_API_BASE__ = "http://127.0.0.1:8788";
+    const { assign, restore } = mockLocationAssign();
+
+    renderScreen(["/settings?tab=providers"]);
+    fireEvent.click(await screen.findByRole("button", { name: "Sign in with Microsoft" }));
+
+    expect(assign).toHaveBeenCalledWith(
+      "http://127.0.0.1:8788/auth/oidc/login?next=%2Fsettings%3Ftab%3Dproviders"
+    );
+    restore();
+  });
+
+  it("keeps Microsoft sign-in relative when no API base is configured", async () => {
+    mockedApiFetch.mockResolvedValue({ enabled: true } as never);
+    delete window.__WAIT_API_BASE__;
+    const { assign, restore } = mockLocationAssign();
+
+    renderScreen();
+    fireEvent.click(await screen.findByRole("button", { name: "Sign in with Microsoft" }));
+
+    expect(assign).toHaveBeenCalledWith("/auth/oidc/login?next=%2F");
+    restore();
+  });
 });
+
+function mockLocationAssign() {
+  const originalLocation = window.location;
+  const assign = vi.fn();
+  Object.defineProperty(window, "location", {
+    configurable: true,
+    value: { ...originalLocation, assign }
+  });
+  return {
+    assign,
+    restore: () => Object.defineProperty(window, "location", { configurable: true, value: originalLocation })
+  };
+}

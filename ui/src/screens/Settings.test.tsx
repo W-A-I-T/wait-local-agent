@@ -1,4 +1,4 @@
-import { render, screen, within } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { Settings } from "./Settings";
@@ -24,7 +24,7 @@ afterEach(() => {
 });
 
 function installSettingsResponses(demoMode: boolean) {
-  const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+  const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const path = String(input);
     if (path === "/settings/providers") {
       return jsonResponse({ local_model_provider: "demo", vector_backend: "local" });
@@ -44,6 +44,9 @@ function installSettingsResponses(demoMode: boolean) {
     }
     if (path === "/update-status") {
       return jsonResponse({ status: "current", detail: "No update available." });
+    }
+    if (path === "/update-check" && init?.method === "POST") {
+      return jsonResponse({ status: "update_available", detail: "A newer build is ready." });
     }
     if (path === "/founder/lp-status") {
       return jsonResponse({ error: "launch passport not configured" }, 409);
@@ -89,6 +92,21 @@ describe("Settings demo mode explanation", () => {
 });
 
 describe("Settings loading", () => {
+  it("checks for updates with the backend POST contract and renders the returned status", async () => {
+    const fetchMock = installSettingsResponses(false);
+    render(<MemoryRouter><Settings /></MemoryRouter>);
+
+    await screen.findByText("Settings loaded.");
+    fireEvent.click(screen.getByRole("button", { name: "Check for updates" }));
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
+      "/update-check",
+      expect.objectContaining({ method: "POST" })
+    ));
+    expect(await screen.findByText("Update check complete.")).toBeInTheDocument();
+    expect(screen.getByText("Update check").parentElement).toHaveTextContent("update_available");
+  });
+
   it("keeps successful settings visible when demo mode forbids the secrets listing", async () => {
     const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
       const path = String(input);

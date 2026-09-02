@@ -3,6 +3,7 @@ import { useLocation } from "react-router-dom";
 import { apiFetch } from "../api/client";
 import { persistApiToken } from "../api/headers";
 import { useDashboard } from "../app/DashboardContext";
+import { apiUrl } from "../lib/config";
 
 type LocalLoginResponse = {
   session_created: boolean;
@@ -33,7 +34,7 @@ export function Login() {
 
   function signInWithMicrosoft() {
     const currentPath = `${location.pathname}${location.search}` || "/";
-    window.location.assign(`/auth/oidc/login?next=${encodeURIComponent(currentPath)}`);
+    window.location.assign(apiUrl(`/auth/oidc/login?next=${encodeURIComponent(currentPath)}`));
   }
 
   async function submit(event: FormEvent<HTMLFormElement>) {

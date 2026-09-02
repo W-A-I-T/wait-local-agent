@@ -59,6 +59,10 @@ All notable changes to WAIT Local Agent will be documented in this file.
 
 ### Fixed
 
+- Fixed Settings update checks and collector exports to use their backend POST
+  contracts, routed desktop Microsoft sign-in through the configured API base,
+  and added frontend route/method contract guards for the development proxy.
+
 - Power Platform deployment and rollback execution now enforce the minimum CLI
   version and block when the installed version cannot be determined.
 

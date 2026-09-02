@@ -182,7 +182,7 @@ export function Collectors() {
 
   async function exportRun(runId: number) {
     try {
-      const response = await apiFetch<unknown>(`/collectors/runs/${runId}/export`);
+      const response = await apiFetch<unknown>(`/collectors/runs/${runId}/export`, { method: "POST" });
       const text = typeof response === "string" ? response : JSON.stringify(response, null, 2);
       setExportText(text);
     } catch (error) {

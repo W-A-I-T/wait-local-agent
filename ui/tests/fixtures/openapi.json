@@ -1,0 +1,1160 @@
+{
+  "paths": {
+    "/agent-backfills": {
+      "get": {},
+      "post": {}
+    },
+    "/agent-backfills/preview": {
+      "post": {}
+    },
+    "/agent-backfills/{backfill_id}": {
+      "get": {}
+    },
+    "/agent-backfills/{backfill_id}/cancel": {
+      "post": {}
+    },
+    "/agent-backfills/{backfill_id}/pause": {
+      "post": {}
+    },
+    "/agent-backfills/{backfill_id}/rerun-failed": {
+      "post": {}
+    },
+    "/agent-backfills/{backfill_id}/run": {
+      "post": {}
+    },
+    "/agent-runs": {
+      "get": {}
+    },
+    "/agent-runs/{run_id}": {
+      "get": {}
+    },
+    "/agent-runs/{run_id}/cancel": {
+      "post": {}
+    },
+    "/agent-runs/{run_id}/resume": {
+      "post": {}
+    },
+    "/agent-runs/{run_id}/retry": {
+      "post": {}
+    },
+    "/agents": {
+      "get": {},
+      "post": {}
+    },
+    "/agents/plan": {
+      "post": {}
+    },
+    "/agents/{agent_id}": {
+      "get": {},
+      "put": {}
+    },
+    "/agents/{agent_id}/revisions": {
+      "get": {}
+    },
+    "/agents/{agent_id}/revisions/{version}/diff/{other_version}": {
+      "get": {}
+    },
+    "/agents/{agent_id}/revisions/{version}/restore": {
+      "post": {}
+    },
+    "/agents/{agent_id}/run": {
+      "post": {}
+    },
+    "/analytics/summary": {
+      "get": {}
+    },
+    "/approval-requests": {
+      "get": {}
+    },
+    "/approval-requests/{request_id}": {
+      "get": {},
+      "post": {}
+    },
+    "/approval-requests/{request_id}/payload": {
+      "patch": {}
+    },
+    "/audit": {
+      "get": {}
+    },
+    "/audit-events/export": {
+      "get": {}
+    },
+    "/audit/export": {
+      "get": {}
+    },
+    "/auth/login/local": {
+      "post": {}
+    },
+    "/auth/logout": {
+      "post": {}
+    },
+    "/auth/oidc/callback": {
+      "get": {}
+    },
+    "/auth/oidc/config": {
+      "get": {},
+      "put": {}
+    },
+    "/auth/oidc/login": {
+      "get": {}
+    },
+    "/auth/oidc/status": {
+      "get": {}
+    },
+    "/auth/principals": {
+      "get": {},
+      "post": {}
+    },
+    "/auth/principals/{principal_id}": {
+      "patch": {}
+    },
+    "/auth/principals/{principal_id}/client-roles": {
+      "delete": {},
+      "post": {}
+    },
+    "/auth/principals/{principal_id}/credentials": {
+      "post": {}
+    },
+    "/auth/principals/{principal_id}/credentials/revoke": {
+      "post": {}
+    },
+    "/auth/principals/{principal_id}/global-roles": {
+      "delete": {},
+      "post": {}
+    },
+    "/auth/principals/{principal_id}/identities": {
+      "delete": {},
+      "post": {}
+    },
+    "/auth/role": {
+      "get": {}
+    },
+    "/auth/session": {
+      "get": {}
+    },
+    "/automation/event-deliveries": {
+      "get": {}
+    },
+    "/automation/event-deliveries/{delivery_id}": {
+      "get": {}
+    },
+    "/automation/event-deliveries/{delivery_id}/retry": {
+      "post": {}
+    },
+    "/automation/events": {
+      "post": {}
+    },
+    "/backup/restore-exercises": {
+      "get": {},
+      "post": {}
+    },
+    "/backups": {
+      "get": {},
+      "post": {}
+    },
+    "/backups/restore": {
+      "post": {}
+    },
+    "/backups/run": {
+      "post": {}
+    },
+    "/client-connector-mappings": {
+      "get": {},
+      "post": {}
+    },
+    "/client-connector-mappings/{mapping_id}/verify": {
+      "post": {}
+    },
+    "/clients": {
+      "get": {},
+      "post": {}
+    },
+    "/clients/commercial-activations": {
+      "get": {}
+    },
+    "/clients/{client_id}": {
+      "get": {},
+      "patch": {}
+    },
+    "/clients/{client_id}/baselines": {
+      "get": {},
+      "post": {}
+    },
+    "/clients/{client_id}/baselines/{version}/accept": {
+      "post": {}
+    },
+    "/clients/{client_id}/commercial-activation": {
+      "delete": {},
+      "post": {}
+    },
+    "/clients/{client_id}/drift": {
+      "get": {}
+    },
+    "/clients/{client_id}/graph": {
+      "get": {}
+    },
+    "/clients/{client_id}/graph/sync-m365": {
+      "post": {}
+    },
+    "/clients/{client_id}/graph/sync-rmm": {
+      "post": {}
+    },
+    "/collectors/modules": {
+      "get": {}
+    },
+    "/collectors/modules/{module_id}/preview": {
+      "post": {}
+    },
+    "/collectors/modules/{module_id}/run": {
+      "post": {}
+    },
+    "/collectors/modules/{module_id}/validate": {
+      "post": {}
+    },
+    "/collectors/runs": {
+      "get": {}
+    },
+    "/collectors/runs/{run_id}": {
+      "get": {}
+    },
+    "/collectors/runs/{run_id}/export": {
+      "post": {}
+    },
+    "/connector-instances": {
+      "get": {},
+      "post": {}
+    },
+    "/connector-instances/{connector_instance_id}": {
+      "get": {},
+      "patch": {}
+    },
+    "/connectors": {
+      "get": {}
+    },
+    "/connectors/autotask/companies": {
+      "get": {}
+    },
+    "/connectors/autotask/companies/{company_id}": {
+      "get": {}
+    },
+    "/connectors/autotask/health": {
+      "get": {}
+    },
+    "/connectors/autotask/tickets": {
+      "get": {}
+    },
+    "/connectors/autotask/tickets/{ticket_id}": {
+      "get": {}
+    },
+    "/connectors/autotask/write-health": {
+      "get": {}
+    },
+    "/connectors/confluence/health": {
+      "get": {}
+    },
+    "/connectors/confluence/pages": {
+      "get": {}
+    },
+    "/connectors/confluence/pages/{page_id}": {
+      "get": {}
+    },
+    "/connectors/connectwise/approval-requests/{request_id}/execute": {
+      "post": {}
+    },
+    "/connectors/connectwise/companies": {
+      "get": {}
+    },
+    "/connectors/connectwise/health": {
+      "get": {}
+    },
+    "/connectors/connectwise/tickets": {
+      "get": {}
+    },
+    "/connectors/connectwise/tickets/{ticket_id}": {
+      "get": {}
+    },
+    "/connectors/connectwise/tickets/{ticket_id}/drafts": {
+      "post": {}
+    },
+    "/connectors/connectwise/write-health": {
+      "get": {}
+    },
+    "/connectors/halopsa/approval-requests/{request_id}/execute": {
+      "post": {}
+    },
+    "/connectors/halopsa/categories": {
+      "get": {}
+    },
+    "/connectors/halopsa/clients": {
+      "get": {}
+    },
+    "/connectors/halopsa/clients/{client_id}/assets": {
+      "get": {}
+    },
+    "/connectors/halopsa/health": {
+      "get": {}
+    },
+    "/connectors/halopsa/tickets": {
+      "get": {}
+    },
+    "/connectors/halopsa/tickets/{ticket_id}": {
+      "get": {}
+    },
+    "/connectors/halopsa/tickets/{ticket_id}/drafts": {
+      "post": {}
+    },
+    "/connectors/halopsa/tickets/{ticket_id}/notes": {
+      "get": {}
+    },
+    "/connectors/halopsa/write-health": {
+      "get": {}
+    },
+    "/connectors/hudu/articles": {
+      "get": {}
+    },
+    "/connectors/hudu/articles/{article_id}": {
+      "get": {}
+    },
+    "/connectors/hudu/companies": {
+      "get": {}
+    },
+    "/connectors/hudu/folders": {
+      "get": {}
+    },
+    "/connectors/hudu/health": {
+      "get": {}
+    },
+    "/connectors/instances/{connector_instance_id}/sync": {
+      "post": {}
+    },
+    "/connectors/itglue/documents/{document_id}": {
+      "get": {}
+    },
+    "/connectors/itglue/health": {
+      "get": {}
+    },
+    "/connectors/itglue/organizations": {
+      "get": {}
+    },
+    "/connectors/itglue/organizations/{organization_id}/documents": {
+      "get": {}
+    },
+    "/connectors/itglue/organizations/{organization_id}/folders": {
+      "get": {}
+    },
+    "/connectors/m365/approval-requests/{request_id}/execute": {
+      "post": {}
+    },
+    "/connectors/m365/groups": {
+      "get": {}
+    },
+    "/connectors/m365/groups/membership-drafts": {
+      "post": {}
+    },
+    "/connectors/m365/health": {
+      "get": {}
+    },
+    "/connectors/m365/licenses": {
+      "get": {}
+    },
+    "/connectors/m365/mail-folders": {
+      "get": {}
+    },
+    "/connectors/m365/mail-messages": {
+      "get": {}
+    },
+    "/connectors/m365/mail-messages/delete-drafts": {
+      "post": {}
+    },
+    "/connectors/m365/mail-messages/move-drafts": {
+      "post": {}
+    },
+    "/connectors/m365/mail-messages/read-state-drafts": {
+      "post": {}
+    },
+    "/connectors/m365/managed-devices": {
+      "get": {}
+    },
+    "/connectors/m365/managed-devices/reboot-drafts": {
+      "post": {}
+    },
+    "/connectors/m365/managed-devices/remote-lock-drafts": {
+      "post": {}
+    },
+    "/connectors/m365/managed-devices/retire-drafts": {
+      "post": {}
+    },
+    "/connectors/m365/managed-devices/sync-drafts": {
+      "post": {}
+    },
+    "/connectors/m365/teams": {
+      "get": {}
+    },
+    "/connectors/m365/teams/approval-requests/{request_id}/execute": {
+      "post": {}
+    },
+    "/connectors/m365/teams/message-drafts": {
+      "post": {}
+    },
+    "/connectors/m365/teams/{team_id}/channels": {
+      "get": {}
+    },
+    "/connectors/m365/teams/{team_id}/channels/{channel_id}/messages": {
+      "get": {}
+    },
+    "/connectors/m365/users": {
+      "get": {}
+    },
+    "/connectors/m365/users/authentication-method-drafts": {
+      "post": {}
+    },
+    "/connectors/m365/users/disable-drafts": {
+      "post": {}
+    },
+    "/connectors/m365/users/drafts": {
+      "post": {}
+    },
+    "/connectors/m365/users/license-details": {
+      "get": {}
+    },
+    "/connectors/m365/users/license-drafts": {
+      "post": {}
+    },
+    "/connectors/m365/users/mailbox-settings-drafts": {
+      "post": {}
+    },
+    "/connectors/m365/users/password-reset-drafts": {
+      "post": {}
+    },
+    "/connectors/m365/users/session-revocation-drafts": {
+      "post": {}
+    },
+    "/connectors/notion/data-sources/{data_source_id}": {
+      "get": {}
+    },
+    "/connectors/notion/data-sources/{data_source_id}/pages": {
+      "get": {}
+    },
+    "/connectors/notion/health": {
+      "get": {}
+    },
+    "/connectors/notion/pages": {
+      "get": {}
+    },
+    "/connectors/notion/pages/{page_id}": {
+      "get": {}
+    },
+    "/connectors/scalepad/assessments": {
+      "get": {}
+    },
+    "/connectors/scalepad/clients": {
+      "get": {}
+    },
+    "/connectors/scalepad/compliance-health": {
+      "get": {}
+    },
+    "/connectors/scalepad/goals": {
+      "get": {}
+    },
+    "/connectors/scalepad/health": {
+      "get": {}
+    },
+    "/connectors/scalepad/risk-summaries": {
+      "get": {}
+    },
+    "/connectors/servicenow/companies": {
+      "get": {}
+    },
+    "/connectors/servicenow/companies/{sys_id}": {
+      "get": {}
+    },
+    "/connectors/servicenow/health": {
+      "get": {}
+    },
+    "/connectors/servicenow/incidents": {
+      "get": {}
+    },
+    "/connectors/servicenow/incidents/{sys_id}": {
+      "get": {}
+    },
+    "/connectors/servicenow/write-health": {
+      "get": {}
+    },
+    "/connectors/sharepoint/health": {
+      "get": {}
+    },
+    "/connectors/sharepoint/sites": {
+      "get": {}
+    },
+    "/connectors/sharepoint/sites/{site_id}": {
+      "get": {}
+    },
+    "/connectors/sharepoint/sites/{site_id}/documents": {
+      "get": {}
+    },
+    "/connectors/sharepoint/sites/{site_id}/documents/{item_id}": {
+      "get": {}
+    },
+    "/connectors/sharepoint/sites/{site_id}/documents/{item_id}/content": {
+      "get": {}
+    },
+    "/connectors/syncro/customers": {
+      "get": {}
+    },
+    "/connectors/syncro/customers/{customer_id}": {
+      "get": {}
+    },
+    "/connectors/syncro/health": {
+      "get": {}
+    },
+    "/connectors/syncro/tickets": {
+      "get": {}
+    },
+    "/connectors/syncro/tickets/{ticket_id}": {
+      "get": {}
+    },
+    "/connectors/syncro/tickets/{ticket_id}/comments": {
+      "get": {}
+    },
+    "/consultant/blueprints": {
+      "get": {},
+      "post": {}
+    },
+    "/consultant/blueprints/{blueprint_id}": {
+      "get": {}
+    },
+    "/consultant/blueprints/{blueprint_id}/architecture": {
+      "get": {}
+    },
+    "/consultant/blueprints/{blueprint_id}/generate-playbook": {
+      "post": {}
+    },
+    "/consultant/connectors/openapi/generate": {
+      "post": {}
+    },
+    "/consultant/connectors/openapi/validate": {
+      "post": {}
+    },
+    "/consultant/copilot-studio/plan": {
+      "post": {}
+    },
+    "/consultant/delivery-plan": {
+      "post": {}
+    },
+    "/consultant/demos/employee-onboarding": {
+      "post": {}
+    },
+    "/consultant/discovery": {
+      "post": {}
+    },
+    "/consultant/discovery/promote": {
+      "post": {}
+    },
+    "/consultant/discovery/sessions": {
+      "get": {},
+      "post": {}
+    },
+    "/consultant/discovery/sessions/{session_id}": {
+      "get": {}
+    },
+    "/consultant/discovery/sessions/{session_id}/turn": {
+      "post": {}
+    },
+    "/consultant/environment-discovery": {
+      "post": {}
+    },
+    "/consultant/evaluations": {
+      "post": {}
+    },
+    "/consultant/governance/evaluate": {
+      "post": {}
+    },
+    "/consultant/monitoring/agents": {
+      "get": {}
+    },
+    "/consultant/power-apps/build": {
+      "post": {}
+    },
+    "/consultant/power-apps/plan": {
+      "post": {}
+    },
+    "/consultant/power-platform/package": {
+      "post": {}
+    },
+    "/consultant/power-platform/package/materialize": {
+      "post": {}
+    },
+    "/consultant/power-platform/package/validate": {
+      "post": {}
+    },
+    "/consultant/solutions/deployment-approvals": {
+      "post": {}
+    },
+    "/consultant/solutions/deployment-approvals/{request_id}/execute": {
+      "post": {}
+    },
+    "/consultant/solutions/rollback-approvals": {
+      "post": {}
+    },
+    "/consultant/solutions/rollback-approvals/{request_id}/execute": {
+      "post": {}
+    },
+    "/consultant/supervisor/plan": {
+      "post": {}
+    },
+    "/consultant/supervisor/run": {
+      "post": {}
+    },
+    "/consultant/use-cases": {
+      "get": {}
+    },
+    "/consultant/workflows/power-automate/plan": {
+      "post": {}
+    },
+    "/diagnostics/bundle": {
+      "post": {}
+    },
+    "/diagnostics/bundle/preview": {
+      "post": {}
+    },
+    "/diagnostics/bundle/upload": {
+      "post": {}
+    },
+    "/diagnostics/summary": {
+      "get": {}
+    },
+    "/discovery/clients": {
+      "get": {}
+    },
+    "/discovery/clients/accept-proposed": {
+      "post": {}
+    },
+    "/discovery/clients/run": {
+      "post": {}
+    },
+    "/discovery/clients/{candidate_id}/accept": {
+      "post": {}
+    },
+    "/discovery/clients/{candidate_id}/create-client": {
+      "post": {}
+    },
+    "/discovery/clients/{candidate_id}/dismiss": {
+      "post": {}
+    },
+    "/end-user/config": {
+      "get": {}
+    },
+    "/end-user/tickets": {
+      "post": {}
+    },
+    "/end-user/tickets/{ticket_id}": {
+      "get": {}
+    },
+    "/end-user/tickets/{ticket_id}/escalate": {
+      "post": {}
+    },
+    "/end-user/tickets/{ticket_id}/messages": {
+      "get": {},
+      "post": {}
+    },
+    "/entitlement": {
+      "get": {}
+    },
+    "/event-history": {
+      "get": {}
+    },
+    "/executions": {
+      "get": {}
+    },
+    "/executions/{execution_id}": {
+      "get": {}
+    },
+    "/executions/{execution_id}/artifacts/{artifact_id}": {
+      "get": {}
+    },
+    "/founder/launch-scan": {
+      "post": {}
+    },
+    "/founder/lp-status": {
+      "get": {}
+    },
+    "/founder/preflight/latest": {
+      "get": {}
+    },
+    "/founder/results": {
+      "get": {}
+    },
+    "/founder/scan": {
+      "post": {}
+    },
+    "/founder/upload-preview/{artifact_id}": {
+      "get": {}
+    },
+    "/founder/upload/{artifact_id}": {
+      "post": {}
+    },
+    "/founder/vault": {
+      "get": {}
+    },
+    "/hardening/runs": {
+      "get": {},
+      "post": {}
+    },
+    "/health": {
+      "get": {}
+    },
+    "/ingestion/quarantined": {
+      "get": {}
+    },
+    "/ingestion/quarantined/{ticket_id}/reclassify": {
+      "post": {}
+    },
+    "/ingestion/sync-cursors": {
+      "get": {}
+    },
+    "/ingestion/unmapped": {
+      "get": {}
+    },
+    "/ingestion/unmapped/{record_id}/resolve": {
+      "post": {}
+    },
+    "/knowledge/documents": {
+      "get": {}
+    },
+    "/knowledge/documents/{document_id}/authority": {
+      "patch": {}
+    },
+    "/knowledge/ingest": {
+      "post": {}
+    },
+    "/knowledge/search": {
+      "get": {}
+    },
+    "/mcp": {
+      "get": {},
+      "post": {}
+    },
+    "/msp/playbook-entries": {
+      "get": {},
+      "post": {}
+    },
+    "/msp/playbook-entries/{entry_id}": {
+      "get": {},
+      "patch": {}
+    },
+    "/msp/playbook-entries/{entry_id}/disable": {
+      "post": {}
+    },
+    "/msp/playbook-entries/{entry_id}/enable": {
+      "post": {}
+    },
+    "/msp/playbook-entries/{entry_id}/revisions": {
+      "get": {}
+    },
+    "/msp/playbook-entries/{entry_id}/revisions/diff": {
+      "get": {}
+    },
+    "/msp/playbook-entries/{entry_id}/revisions/{version}/restore": {
+      "post": {}
+    },
+    "/msp/playbook-subscriptions": {
+      "get": {},
+      "post": {}
+    },
+    "/msp/playbook-subscriptions/{subscription_id}": {
+      "get": {},
+      "patch": {}
+    },
+    "/msp/playbook-subscriptions/{subscription_id}/disable": {
+      "post": {}
+    },
+    "/msp/playbook-subscriptions/{subscription_id}/enable": {
+      "post": {}
+    },
+    "/msp/playbooks": {
+      "get": {}
+    },
+    "/msp/playbooks/{playbook_id}/preview": {
+      "post": {}
+    },
+    "/msp/playbooks/{playbook_id}/runs": {
+      "post": {}
+    },
+    "/packs": {
+      "get": {}
+    },
+    "/packs/agent-platform/context": {
+      "get": {}
+    },
+    "/packs/agent-platform/iterations": {
+      "get": {},
+      "post": {}
+    },
+    "/packs/agent-platform/iterations/{session_id}": {
+      "get": {}
+    },
+    "/packs/agent-platform/iterations/{session_id}/continue": {
+      "post": {}
+    },
+    "/packs/agent-platform/iterations/{session_id}/finish": {
+      "post": {}
+    },
+    "/packs/agent-platform/iterations/{session_id}/restart": {
+      "post": {}
+    },
+    "/packs/agent-platform/iterations/{session_id}/steps/{step_index}": {
+      "patch": {}
+    },
+    "/packs/agent-platform/memories": {
+      "get": {},
+      "post": {}
+    },
+    "/packs/agent-platform/memories/{memory_id}": {
+      "delete": {},
+      "get": {}
+    },
+    "/packs/agent-platform/memories/{memory_id}/pin": {
+      "post": {}
+    },
+    "/packs/agent-platform/memories/{memory_id}/restore": {
+      "post": {}
+    },
+    "/packs/agent-platform/skills": {
+      "get": {},
+      "post": {}
+    },
+    "/packs/agent-platform/skills/{skill_id}": {
+      "get": {},
+      "put": {}
+    },
+    "/packs/agent-platform/skills/{skill_id}/archive": {
+      "post": {}
+    },
+    "/packs/agent-platform/skills/{skill_id}/revisions": {
+      "get": {}
+    },
+    "/packs/agent-platform/skills/{skill_id}/tests": {
+      "get": {},
+      "post": {}
+    },
+    "/packs/agent-platform/status": {
+      "get": {}
+    },
+    "/packs/agent-platform/technicians": {
+      "get": {}
+    },
+    "/packs/agent-platform/technicians/recommend": {
+      "post": {}
+    },
+    "/packs/agent-platform/technicians/{technician_id}": {
+      "put": {}
+    },
+    "/packs/agent-platform/technicians/{technician_id}/workloads": {
+      "post": {}
+    },
+    "/packs/agent-platform/tickets/{ticket_id}/attachments": {
+      "get": {},
+      "post": {}
+    },
+    "/packs/agent-platform/tickets/{ticket_id}/attachments/analyses": {
+      "get": {}
+    },
+    "/packs/agent-platform/tickets/{ticket_id}/attachments/{attachment_id}/analyze": {
+      "post": {}
+    },
+    "/packs/agent-platform/tickets/{ticket_id}/context": {
+      "get": {}
+    },
+    "/packs/automation-discovery/categories": {
+      "get": {}
+    },
+    "/packs/automation-discovery/historical": {
+      "get": {}
+    },
+    "/packs/automation-discovery/mapping-readiness": {
+      "get": {}
+    },
+    "/packs/automation-discovery/status": {
+      "get": {}
+    },
+    "/packs/automation-discovery/time-entries/import": {
+      "post": {}
+    },
+    "/packs/install": {
+      "post": {}
+    },
+    "/packs/microsoft-admin/access/effective": {
+      "get": {}
+    },
+    "/packs/microsoft-admin/access/grants": {
+      "get": {},
+      "post": {}
+    },
+    "/packs/microsoft-admin/access/grants/revoke": {
+      "post": {}
+    },
+    "/packs/microsoft-admin/access/principals": {
+      "get": {}
+    },
+    "/packs/microsoft-admin/azure-lighthouse/discover": {
+      "post": {}
+    },
+    "/packs/microsoft-admin/azure-lighthouse/inventory": {
+      "post": {}
+    },
+    "/packs/microsoft-admin/azure-lighthouse/onboarding/plan": {
+      "post": {}
+    },
+    "/packs/microsoft-admin/azure-lighthouse/status": {
+      "get": {}
+    },
+    "/packs/microsoft-admin/dashboard": {
+      "get": {}
+    },
+    "/packs/microsoft-admin/diagnostics/access": {
+      "post": {}
+    },
+    "/packs/microsoft-admin/endpoint/apps": {
+      "get": {}
+    },
+    "/packs/microsoft-admin/endpoint/autopilot": {
+      "get": {}
+    },
+    "/packs/microsoft-admin/endpoint/compliance-policies": {
+      "get": {}
+    },
+    "/packs/microsoft-admin/identity/conditional-access": {
+      "get": {}
+    },
+    "/packs/microsoft-admin/identity/risky-users": {
+      "get": {}
+    },
+    "/packs/microsoft-admin/identity/sign-ins": {
+      "get": {}
+    },
+    "/packs/microsoft-admin/remediations": {
+      "get": {}
+    },
+    "/packs/microsoft-admin/runbooks": {
+      "get": {}
+    },
+    "/packs/microsoft-admin/runbooks/approvals/{request_id}/execute": {
+      "post": {}
+    },
+    "/packs/microsoft-admin/runbooks/drafts": {
+      "post": {}
+    },
+    "/packs/microsoft-admin/runbooks/plan": {
+      "post": {}
+    },
+    "/packs/microsoft-admin/runbooks/status": {
+      "get": {}
+    },
+    "/packs/microsoft-admin/security/alerts": {
+      "get": {}
+    },
+    "/packs/microsoft-admin/security/incidents": {
+      "get": {}
+    },
+    "/packs/microsoft-admin/security/secure-score": {
+      "get": {}
+    },
+    "/packs/microsoft-admin/service-health": {
+      "get": {}
+    },
+    "/packs/microsoft-admin/service-issues": {
+      "get": {}
+    },
+    "/packs/microsoft-admin/status": {
+      "get": {}
+    },
+    "/packs/operator-control/activity/runs": {
+      "get": {}
+    },
+    "/packs/operator-control/principals": {
+      "get": {},
+      "post": {}
+    },
+    "/packs/operator-control/principals/{principal_id}": {
+      "delete": {},
+      "get": {},
+      "patch": {}
+    },
+    "/packs/operator-control/principals/{principal_id}/client-roles/{client_id}": {
+      "delete": {},
+      "put": {}
+    },
+    "/packs/operator-control/principals/{principal_id}/credentials/revoke-all": {
+      "post": {}
+    },
+    "/packs/operator-control/principals/{principal_id}/credentials/rotate": {
+      "post": {}
+    },
+    "/packs/operator-control/principals/{principal_id}/msp-admin": {
+      "put": {}
+    },
+    "/packs/operator-control/status": {
+      "get": {}
+    },
+    "/packs/status": {
+      "get": {}
+    },
+    "/reports": {
+      "get": {}
+    },
+    "/reports/automation-opportunity": {
+      "post": {}
+    },
+    "/reports/qbr": {
+      "post": {}
+    },
+    "/reports/recurring-service-review": {
+      "post": {}
+    },
+    "/reports/{report_id}": {
+      "get": {}
+    },
+    "/reports/{report_id}/export": {
+      "get": {}
+    },
+    "/scheduled-jobs": {
+      "get": {},
+      "post": {}
+    },
+    "/scheduled-jobs/{job_id}": {
+      "delete": {}
+    },
+    "/scheduled-jobs/{job_id}/pause": {
+      "post": {}
+    },
+    "/scheduled-jobs/{job_id}/reschedule": {
+      "post": {}
+    },
+    "/scheduled-jobs/{job_id}/resume": {
+      "post": {}
+    },
+    "/secrets": {
+      "get": {},
+      "post": {}
+    },
+    "/settings/providers": {
+      "get": {}
+    },
+    "/settings/providers/health": {
+      "get": {}
+    },
+    "/settings/security": {
+      "get": {}
+    },
+    "/setup/mode": {
+      "get": {},
+      "put": {}
+    },
+    "/smart-actions": {
+      "get": {}
+    },
+    "/smart-actions/runs": {
+      "get": {}
+    },
+    "/smart-actions/runs/{run_id}": {
+      "get": {}
+    },
+    "/smart-actions/{action_id}": {
+      "get": {}
+    },
+    "/smart-actions/{action_id}/invoke": {
+      "post": {}
+    },
+    "/technician/chat": {
+      "post": {}
+    },
+    "/technician/chat/sessions": {
+      "get": {},
+      "post": {}
+    },
+    "/technician/chat/sessions/{session_id}": {
+      "get": {}
+    },
+    "/technician/chat/sessions/{session_id}/close": {
+      "post": {}
+    },
+    "/technician/chat/sessions/{session_id}/messages": {
+      "post": {}
+    },
+    "/tickets": {
+      "get": {}
+    },
+    "/tickets/{ticket_id}/approvals": {
+      "post": {}
+    },
+    "/tickets/{ticket_id}/context": {
+      "get": {}
+    },
+    "/tickets/{ticket_id}/end-user-messages": {
+      "get": {},
+      "post": {}
+    },
+    "/tickets/{ticket_id}/end-user-messages/{message_id}/halopsa-drafts": {
+      "post": {}
+    },
+    "/tickets/{ticket_id}/notes": {
+      "get": {}
+    },
+    "/tickets/{ticket_id}/status-history": {
+      "get": {}
+    },
+    "/tickets/{ticket_id}/summary": {
+      "get": {}
+    },
+    "/tools": {
+      "get": {}
+    },
+    "/update-check": {
+      "post": {}
+    },
+    "/update-status": {
+      "get": {}
+    },
+    "/workflow-runs": {
+      "get": {}
+    },
+    "/workflow-runs/{run_id}": {
+      "get": {}
+    },
+    "/workflow-runs/{run_id}/compare/{other_run_id}": {
+      "get": {}
+    },
+    "/workflow-templates/gallery": {
+      "get": {},
+      "post": {}
+    },
+    "/workflow-templates/gallery/import": {
+      "post": {}
+    },
+    "/workflow-templates/gallery/{entry_id}": {
+      "get": {},
+      "patch": {}
+    },
+    "/workflow-templates/gallery/{entry_id}/export": {
+      "get": {}
+    },
+    "/workflow-templates/gallery/{entry_id}/revisions": {
+      "get": {}
+    },
+    "/workflow-templates/gallery/{entry_id}/revisions/{version}/diff/{other_version}": {
+      "get": {}
+    },
+    "/workflow-templates/gallery/{entry_id}/revisions/{version}/restore": {
+      "post": {}
+    },
+    "/workflow-templates/gallery/{entry_id}/runs": {
+      "post": {}
+    },
+    "/workflows/templates": {
+      "get": {}
+    },
+    "/workflows/templates/{template_id}/runs": {
+      "post": {}
+    }
+  }
+}
