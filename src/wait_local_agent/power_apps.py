@@ -13,7 +13,7 @@ MAX_APP_SCREENS = 16
 MAX_APP_ACTIONS = 32
 MAX_ARTIFACT_BYTES = 256_000
 _IDENTIFIER = re.compile(r"^[a-z][a-z0-9_]{0,63}$")
-_FIELD_TYPES = {"string", "integer", "boolean", "date", "datetime", "choice"}
+_FIELD_TYPES = {"string", "integer", "boolean", "date", "datetime", "choice", "lookup"}
 _SCREEN_MODES = {"browse", "display", "edit"}
 _SECRET_TOKENS = ("key", "token", "secret", "password", "credential")
 
@@ -78,18 +78,21 @@ def build_power_apps_artifact(
     canvas_actions = cast(list[dict[str, object]], canvas["actions"])
     schema_tables: list[dict[str, object]] = []
     for table in tables:
+        columns: list[dict[str, object]] = []
+        for field in cast(list[dict[str, object]], table["fields"]):
+            column: dict[str, object] = {
+                "logical_name": field["name"],
+                "display_name": field["display_name"],
+                "type": _dataverse_type(field["type"]),
+                "required": field["required"],
+            }
+            if field.get("type") == "lookup":
+                column["target_entity"] = field["target_entity"]
+            columns.append(column)
         schema_table: dict[str, object] = {
             "logical_name": table["logical_name"],
             "display_name": table["display_name"],
-            "columns": [
-                {
-                    "logical_name": field["name"],
-                    "display_name": field["name"],
-                    "type": _dataverse_type(field["type"]),
-                    "required": field["required"],
-                }
-                for field in cast(list[dict[str, object]], table["fields"])
-            ],
+            "columns": columns,
         }
         if "primary_name_column" in table:
             schema_table["primary_name_column"] = table["primary_name_column"]
@@ -174,6 +177,7 @@ def _dataverse_type(value: object) -> str:
         "date": "DateOnly",
         "datetime": "DateTime",
         "choice": "Choice",
+        "lookup": "Lookup",
     }.get(str(value), "String")
 
 
@@ -221,9 +225,19 @@ def _entities(value: object) -> list[dict[str, object]]:
                 {
                     "name": field_name,
                     "type": field_type,
+                    "display_name": _text(
+                        field.get("display_name", field_name),
+                        f"{logical_name}.{field_name}.display_name",
+                        120,
+                    ),
                     "required": bool(field.get("required", False)),
                 }
             )
+            if field_type == "lookup":
+                field_views[-1]["target_entity"] = _identifier(
+                    field.get("target_entity"),
+                    f"{logical_name}.{field_name}.target_entity",
+                )
         if primary_name_column is not None and primary_name_column not in field_names:
             raise PowerAppsPlanError(
                 f"{logical_name}.primary_name_column must name a declared field: {primary_name_column}"
@@ -236,6 +250,15 @@ def _entities(value: object) -> list[dict[str, object]]:
         if primary_name_column is not None:
             entity_view["primary_name_column"] = primary_name_column
         result.append(entity_view)
+    entity_names = {cast(str, entity["logical_name"]) for entity in result}
+    for entity in result:
+        logical_name = cast(str, entity["logical_name"])
+        for field in cast(list[dict[str, object]], entity["fields"]):
+            if field.get("type") == "lookup" and field["target_entity"] not in entity_names:
+                raise PowerAppsPlanError(
+                    f"{logical_name}.{field['name']}.target_entity references unknown entity: "
+                    f"{field['target_entity']}"
+                )
     return result
 
 

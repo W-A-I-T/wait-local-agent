@@ -93,6 +93,7 @@ def build_power_platform_package(
     files: dict[str, tuple[str, str]] = {}
     root_components: list[dict[str, object]] = []
     entities: list[dict[str, object]] = []
+    relationships: list[dict[str, object]] = []
     unsupported: list[dict[str, object]] = []
     design_only: list[dict[str, object]] = []
     emitted_component_classes = {"publisher", "solution_manifest"}
@@ -109,6 +110,7 @@ def build_power_platform_package(
                 unsupported,
                 tenant,
                 entities,
+                relationships,
                 emitted_component_classes,
                 import_complete_component_classes,
                 artifact_component_classes,
@@ -149,7 +151,7 @@ def build_power_platform_package(
         "Other/Solution.xml",
         _solution_xml(solution, publisher, publisher_unique_name, prefix, root_components),
     )
-    _add_file(files, "Other/Customizations.xml", _customizations_xml(entities))
+    _add_file(files, "Other/Customizations.xml", _customizations_xml(entities, relationships))
     _add_file(files, "Other/Relationships.xml", _relationships_xml())
 
     if unsupported:
@@ -589,7 +591,7 @@ def _solution_xml(
     return "\n".join(lines) + "\n"
 
 
-def _customizations_xml(entities: list[dict[str, object]]) -> str:
+def _customizations_xml(entities: list[dict[str, object]], relationships: list[dict[str, object]]) -> str:
     lines = [
         '\ufeff<?xml version="1.0" encoding="utf-8"?>',
         '<ImportExportXml xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">',
@@ -608,7 +610,7 @@ def _customizations_xml(entities: list[dict[str, object]]) -> str:
             "  <FieldSecurityProfiles />",
             "  <Templates />",
             "  <EntityMaps />",
-            "  <EntityRelationships />",
+            *_xml_relationships(relationships),
             "  <OrganizationSettings />",
             "  <optionsets />",
             "  <CustomControls />",
@@ -675,6 +677,32 @@ def _xml_attribute_block(attribute: dict[str, object], primary: bool) -> list[st
     logical = cast(str, attribute["logical_name"])
     display_name = cast(str, attribute["display_name"])
     field_type = cast(str, attribute["type"])
+    if field_type == "lookup":
+        return [
+            f'            <attribute PhysicalName="{_xml_attribute(logical)}">',
+            "              <Type>lookup</Type>",
+            f"              <Name>{_xml_text(logical)}</Name><LogicalName>{_xml_text(logical)}</LogicalName>",
+            "              <RequiredLevel>none</RequiredLevel>",
+            "              <DisplayMask>ValidForAdvancedFind|ValidForForm|ValidForGrid</DisplayMask>",
+            (
+                "              <ImeMode>auto</ImeMode><ValidForCreateApi>1</ValidForCreateApi>"
+                "<ValidForReadApi>1</ValidForReadApi>"
+            ),
+            (
+                "              <ValidForUpdateApi>1</ValidForUpdateApi><IsCustomField>1</IsCustomField>"
+                "<IsAuditEnabled>0</IsAuditEnabled>"
+            ),
+            (
+                "              <IsSecured>0</IsSecured><IntroducedVersion>1.0</IntroducedVersion>"
+                "<IsCustomizable>1</IsCustomizable>"
+            ),
+            "              <IsRenameable>1</IsRenameable><LookupStyle>single</LookupStyle><LookupTypes />",
+            (
+                f'              <displaynames><displayname description="{_xml_attribute(display_name)}" '
+                'languagecode="1033" /></displaynames>'
+            ),
+            "            </attribute>",
+        ]
     display_mask = (
         "PrimaryName|ValidForAdvancedFind|ValidForForm|ValidForGrid"
         if primary
@@ -719,11 +747,64 @@ def _xml_attribute_block(attribute: dict[str, object], primary: bool) -> list[st
     ]
 
 
+def _xml_relationships(relationships: list[dict[str, object]]) -> list[str]:
+    if not relationships:
+        return ["  <EntityRelationships />"]
+    lines = ["  <EntityRelationships>"]
+    for relationship in sorted(relationships, key=lambda item: str(item["name"])):
+        name = cast(str, relationship["name"])
+        referencing = cast(str, relationship["referencing_entity"])
+        referenced = cast(str, relationship["referenced_entity"])
+        lookup = cast(str, relationship["referencing_attribute"])
+        description = cast(str, relationship["description"])
+        lines.extend(
+            [
+                f'    <EntityRelationship Name="{_xml_attribute(name)}">',
+                "      <EntityRelationshipType>OneToMany</EntityRelationshipType>",
+                "      <IsCustomizable>1</IsCustomizable>",
+                f"      <ReferencingEntityName>{_xml_text(referencing)}</ReferencingEntityName>",
+                f"      <ReferencedEntityName>{_xml_text(referenced)}</ReferencedEntityName>",
+                "      <CascadeAssign>NoCascade</CascadeAssign><CascadeDelete>RemoveLink</CascadeDelete>",
+                "      <CascadeReparent>NoCascade</CascadeReparent><CascadeShare>NoCascade</CascadeShare>",
+                "      <CascadeUnshare>NoCascade</CascadeUnshare>",
+                "      <IsValidForAdvancedFind>1</IsValidForAdvancedFind>",
+                f"      <ReferencingAttributeName>{_xml_text(lookup)}</ReferencingAttributeName>",
+                "      <EntityRelationshipRoles>",
+                "        <EntityRelationshipRole>",
+                "          <NavPaneDisplayOption>UseCollectionName</NavPaneDisplayOption>",
+                "          <NavPaneAreaDisplayOption>Details</NavPaneAreaDisplayOption>",
+                "          <NavPaneAreaOrder>10000</NavPaneAreaOrder>",
+                f"          <NavigationPropertyName>{_xml_text(name)}</NavigationPropertyName>",
+                "          <RelationshipRoleType>1</RelationshipRoleType>",
+                "        </EntityRelationshipRole>",
+                "      </EntityRelationshipRoles>",
+                (
+                    f"      <RelationshipDescription><Descriptions><Description "
+                    f'description="{_xml_attribute(description)}" languagecode="1033" /></Descriptions>'
+                    "</RelationshipDescription>"
+                ),
+                "    </EntityRelationship>",
+            ]
+        )
+    lines.append("  </EntityRelationships>")
+    return lines
+
+
 def _relationships_xml() -> str:
     return (
         '\ufeff<?xml version="1.0" encoding="utf-8"?>\n'
         '<EntityRelationships xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" />\n'
     )
+
+
+def _remove_lookup_attribute(entities: list[dict[str, object]], entity_name: str, attribute_name: str) -> None:
+    for entity in entities:
+        if entity["logical_name"] == entity_name:
+            entity["attributes"] = [
+                field
+                for field in cast(list[dict[str, object]], entity["attributes"])
+                if field["logical_name"] != attribute_name
+            ]
 
 
 def _emit_power_apps_artifact(
@@ -733,6 +814,7 @@ def _emit_power_apps_artifact(
     unsupported: list[dict[str, object]],
     tenant: str,
     entities: list[dict[str, object]],
+    relationships: list[dict[str, object]],
     emitted_component_classes: set[str],
     import_complete_component_classes: set[str],
     artifact_component_classes: set[str],
@@ -756,7 +838,23 @@ def _emit_power_apps_artifact(
                 "reason": "binary .msapp synthesis is unsupported; no canvas component is claimed packable",
             }
         )
-    for table in cast(list[object], dataverse["tables"]):
+    tables = cast(list[object], dataverse["tables"])
+    table_names: set[str] = set()
+    table_display_names: dict[str, str] = {}
+    for raw_table in tables:
+        if not isinstance(raw_table, Mapping):
+            raise PowerPlatformPackageError("Power Apps artifact tables must contain objects")
+        table_name = _identifier(raw_table.get("logical_name"), "Dataverse table logical_name")
+        table_names.add(table_name)
+        table_display_names[table_name] = str(raw_table.get("display_name", table_name))
+    raw_relationships = dataverse.get("relationships", artifact.get("relationships"))
+    if raw_relationships is not None and not isinstance(raw_relationships, list):
+        raise PowerPlatformPackageError("Power Apps artifact relationships must contain objects")
+    explicit_relationships = raw_relationships is not None
+    relationship_candidates: list[dict[str, object]] = []
+    lookup_columns: dict[tuple[str, str], dict[str, object]] = {}
+    emitted_artifact_entity_names: set[str] = set()
+    for table in tables:
         if not isinstance(table, Mapping):
             raise PowerPlatformPackageError("Power Apps artifact tables must contain objects")
         logical = _identifier(table.get("logical_name"), "Dataverse table logical_name")
@@ -798,6 +896,63 @@ def _emit_power_apps_artifact(
             column_names.add(field_name)
             field_type = str(field.get("type", "String"))
             normalized_field_type = field_type.casefold()
+            if normalized_field_type == "lookup":
+                target_value = field.get("target_entity")
+                if target_value is None:
+                    design_only.append(
+                        {
+                            "id": str(_component_id(tenant, f"entities/{logical}/relationships/{field_name}")),
+                            "path": f"entities/{logical}",
+                            "format": str(artifact.get("format")),
+                            "reason": (
+                                f"relationship for lookup column {field_name} was omitted because "
+                                "target_entity is missing"
+                            ),
+                        }
+                    )
+                    continue
+                target = _identifier(target_value, f"{logical}.{field_name}.target_entity")
+                lookup_columns[(logical, field_name)] = {"target_entity": target}
+                if target not in table_names:
+                    design_only.append(
+                        {
+                            "id": str(_component_id(tenant, f"entities/{logical}/relationships/{field_name}")),
+                            "path": f"entities/{logical}",
+                            "format": str(artifact.get("format")),
+                            "reason": (
+                                f"relationship for lookup column {field_name} was omitted because "
+                                f"target entity {target} is absent from the package"
+                            ),
+                        }
+                    )
+                    continue
+                lookup_display_name = _text(
+                    field.get("display_name", field_name),
+                    f"{logical}.{field_name}.display_name",
+                    MAX_TEXT_LENGTH,
+                )
+                attributes.append(
+                    {
+                        "logical_name": field_name,
+                        "display_name": lookup_display_name,
+                        "required": field.get("required") is True,
+                        "type": "lookup",
+                        "target_entity": target,
+                    }
+                )
+                if not explicit_relationships:
+                    relationship_candidates.append(
+                        {
+                            "referencing_entity": logical,
+                            "referenced_entity": target,
+                            "referencing_attribute": field_name,
+                            "description": (
+                                f"{table_display_names.get(target, target)} to "
+                                f"{logical.removeprefix(f'{publisher_prefix}_')}"
+                            ),
+                        }
+                    )
+                continue
             if normalized_field_type not in {"string", "dateonly"}:
                 unmapped_fields.append(field_name)
                 unmapped_types[field_name] = field_type
@@ -902,6 +1057,141 @@ def _emit_power_apps_artifact(
                 "primary_name_column": declared_primary,
             }
         )
+        emitted_artifact_entity_names.add(logical)
+    if explicit_relationships:
+        for relationship_index, raw_relationship in enumerate(cast(list[object], raw_relationships), start=1):
+            if not isinstance(raw_relationship, Mapping):
+                raise PowerPlatformPackageError("Power Apps artifact relationships must contain objects")
+            relationship_id = f"relationships/{relationship_index}"
+            raw_referencing = raw_relationship.get("referencing_entity")
+            raw_referenced = raw_relationship.get("referenced_entity")
+            if raw_referencing is None or raw_referenced is None:
+                design_only.append(
+                    {
+                        "id": str(_component_id(tenant, relationship_id)),
+                        "path": "relationships",
+                        "format": str(artifact.get("format")),
+                        "reason": "relationship was omitted because both entities are required",
+                    }
+                )
+                continue
+            referencing = _identifier(raw_referencing, "relationship.referencing_entity")
+            referenced = _identifier(raw_referenced, "relationship.referenced_entity")
+            raw_name = raw_relationship.get("name")
+            name = _identifier(
+                raw_name
+                if raw_name is not None
+                else (
+                    f"{publisher_prefix}_{referenced.removeprefix(f'{publisher_prefix}_')}_"
+                    f"{referencing.removeprefix(f'{publisher_prefix}_')}"
+                ),
+                "relationship.name",
+            )
+            raw_attribute = raw_relationship.get(
+                "lookup_column",
+                raw_relationship.get("referencing_attribute", raw_relationship.get("referencing_attribute_name")),
+            )
+            if raw_attribute is None:
+                design_only.append(
+                    {
+                        "id": str(_component_id(tenant, f"{relationship_id}/{name}")),
+                        "path": f"entities/{referencing}",
+                        "format": str(artifact.get("format")),
+                        "reason": (
+                            f"relationship {name} was omitted because its referencing lookup column "
+                            "is missing"
+                        ),
+                    }
+                )
+                continue
+            attribute = _identifier(raw_attribute, "relationship.lookup_column")
+            lookup = lookup_columns.get((referencing, attribute))
+            if lookup is None:
+                design_only.append(
+                    {
+                        "id": str(_component_id(tenant, f"{relationship_id}/{name}")),
+                        "path": f"entities/{referencing}",
+                        "format": str(artifact.get("format")),
+                        "reason": (
+                            f"relationship {name} was omitted because referencing lookup column "
+                            f"{attribute} is not declared"
+                        ),
+                    }
+                )
+                continue
+            if lookup["target_entity"] != referenced:
+                design_only.append(
+                    {
+                        "id": str(_component_id(tenant, f"{relationship_id}/{name}")),
+                        "path": f"entities/{referencing}",
+                        "format": str(artifact.get("format")),
+                        "reason": (
+                            f"relationship {name} was omitted because lookup column {attribute} "
+                            f"targets {lookup['target_entity']}, not {referenced}"
+                        ),
+                    }
+                )
+                continue
+            if referencing not in emitted_artifact_entity_names or referenced not in emitted_artifact_entity_names:
+                _remove_lookup_attribute(entities, referencing, attribute)
+                design_only.append(
+                    {
+                        "id": str(_component_id(tenant, f"{relationship_id}/{name}")),
+                        "path": f"entities/{referencing}",
+                        "format": str(artifact.get("format")),
+                        "reason": (
+                            f"relationship {name} was omitted because referencing or referenced entity "
+                            f"is not importable in this package ({referencing} -> {referenced})"
+                        ),
+                    }
+                )
+                continue
+            relationships.append(
+                {
+                    "name": name,
+                    "referencing_entity": referencing,
+                    "referenced_entity": referenced,
+                    "referencing_attribute": attribute,
+                    "description": (
+                        f"{table_display_names.get(referenced, referenced)} to "
+                        f"{referencing.removeprefix(f'{publisher_prefix}_')}"
+                    ),
+                }
+            )
+            root_components.append({"type": "10", "schema_name": name})
+    for candidate in relationship_candidates:
+        referencing = cast(str, candidate["referencing_entity"])
+        referenced = cast(str, candidate["referenced_entity"])
+        attribute = cast(str, candidate["referencing_attribute"])
+        if referencing not in emitted_artifact_entity_names or referenced not in emitted_artifact_entity_names:
+            _remove_lookup_attribute(entities, referencing, attribute)
+            design_only.append(
+                {
+                    "id": str(_component_id(tenant, f"entities/{referencing}/relationships/{attribute}")),
+                    "path": f"entities/{referencing}",
+                    "format": str(artifact.get("format")),
+                    "reason": (
+                        f"relationship for lookup column {attribute} was omitted because "
+                        f"referencing or referenced entity is not importable in this package "
+                        f"({referencing} -> {referenced})"
+                    ),
+                }
+            )
+            continue
+        name = (
+            f"{publisher_prefix}_{referenced.removeprefix(f'{publisher_prefix}_')}_"
+            f"{referencing.removeprefix(f'{publisher_prefix}_')}"
+        )
+        relationships.append(
+            {
+                "name": name,
+                "referencing_entity": referencing,
+                "referenced_entity": referenced,
+                "referencing_attribute": attribute,
+                "description": candidate["description"],
+            }
+        )
+        root_components.append({"type": "10", "schema_name": name})
 
 
 def _emit_flow_artifact(

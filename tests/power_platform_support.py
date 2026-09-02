@@ -26,6 +26,18 @@ CANONICAL_INPUT_ARTIFACT: dict[str, object] = {
         "schema_version": 1,
         "tables": [
             {
+                "logical_name": "wait_dept",
+                "display_name": "Dept",
+                "primary_name_column": "wait_deptname",
+                "columns": [
+                    {
+                        "logical_name": "wait_deptname",
+                        "display_name": "Dept name",
+                        "type": "String",
+                    }
+                ],
+            },
+            {
                 "logical_name": "wait_employee",
                 "display_name": "Employee",
                 "primary_name_column": "wait_display_name",
@@ -40,6 +52,12 @@ CANONICAL_INPUT_ARTIFACT: dict[str, object] = {
                         "logical_name": "wait_start_date",
                         "display_name": "Start date",
                         "type": "DateOnly",
+                    },
+                    {
+                        "logical_name": "wait_deptid",
+                        "display_name": "Dept",
+                        "type": "Lookup",
+                        "target_entity": "wait_dept",
                     },
                 ],
             }

@@ -128,6 +128,42 @@ def _entity_artifact(client_id: str = "acme") -> dict[str, object]:
     }
 
 
+def _relationship_artifact() -> dict[str, object]:
+    return {
+        "format": "wait-local-agent.power-apps-artifact",
+        "format_version": 1,
+        "client_id": "acme",
+        "app_name": "Relationships",
+        "dataverse": {
+            "tables": [
+                {
+                    "logical_name": "wait_dept",
+                    "display_name": "Dept",
+                    "primary_name_column": "wait_name",
+                    "columns": [{"logical_name": "wait_name", "display_name": "Name", "type": "String"}],
+                },
+                {
+                    "logical_name": "wait_employee",
+                    "display_name": "Employee",
+                    "primary_name_column": "wait_name",
+                    "columns": [
+                        {"logical_name": "wait_name", "display_name": "Name", "type": "String"},
+                        {
+                            "logical_name": "wait_deptid",
+                            "display_name": "Dept",
+                            "type": "Lookup",
+                            "target_entity": "wait_dept",
+                        },
+                    ],
+                },
+            ]
+        },
+        "credentials_included": False,
+        "execution_started": False,
+        "deployment_started": False,
+    }
+
+
 def _flow_plan() -> dict[str, object]:
     return build_power_automate_flow_plan(
         client_id="acme",
@@ -263,6 +299,80 @@ def test_real_power_apps_artifact_is_import_complete_when_packaged(tmp_path: Pat
     assert string_only_package["deployable"] is True
     assert string_only_package["package_status"] == "deployable_source"
     assert string_only_package["design_only_components"] == []
+
+
+def test_lookup_emits_complete_relationship_and_collection_names_for_every_entity(tmp_path: Path) -> None:
+    package = _package(tmp_path, [_relationship_artifact()])
+    files = cast(list[dict[str, object]], package["files"])
+    customizations_xml = cast(
+        str,
+        next(item["content"] for item in files if item["path"] == "Other/Customizations.xml"),
+    )
+    solution_xml = cast(str, next(item["content"] for item in files if item["path"] == "Other/Solution.xml"))
+    root = ET.fromstring(customizations_xml)
+
+    entities = root.findall("./Entities/Entity/EntityInfo/entity")
+    assert len(entities) == 2
+    assert all(entity.find("LocalizedCollectionNames/LocalizedCollectionName") is not None for entity in entities)
+    assert '<Type>lookup</Type>' in customizations_xml
+    assert 'PhysicalName="wait_deptid"' in customizations_xml
+    assert 'description="Dept" languagecode="1033"' in customizations_xml
+    assert '<EntityRelationship Name="wait_dept_employee">' in customizations_xml
+    assert "<EntityRelationshipRoles>" in customizations_xml
+    assert "<ReferencingAttributeName>wait_deptid</ReferencingAttributeName>" in customizations_xml
+    assert '<RootComponent type="10" schemaName="wait_dept_employee" behavior="0" />' in solution_xml
+    assert package["design_only_components"] == []
+
+
+def test_lookup_to_absent_entity_is_withheld_and_reported(tmp_path: Path) -> None:
+    artifact = _entity_artifact()
+    table = cast(list[dict[str, object]], cast(dict[str, object], artifact["dataverse"])["tables"])[0]
+    table["columns"] = [
+        {"logical_name": "wait_display_name", "display_name": "Display name", "type": "String"},
+        {
+            "logical_name": "wait_deptid",
+            "display_name": "Dept",
+            "type": "Lookup",
+            "target_entity": "wait_missing",
+        },
+    ]
+    package = _package(tmp_path, [artifact])
+    files = cast(list[dict[str, object]], package["files"])
+    customizations_xml = cast(
+        str,
+        next(item["content"] for item in files if item["path"] == "Other/Customizations.xml"),
+    )
+    design_only = cast(list[dict[str, object]], package["design_only_components"])
+
+    assert "<EntityRelationships>" not in customizations_xml
+    assert 'PhysicalName="wait_deptid"' not in customizations_xml
+    assert any(
+        item["path"] == "entities/wait_employee" and "wait_missing" in str(item["reason"])
+        for item in design_only
+    )
+
+
+def test_relationship_without_declared_lookup_column_is_withheld_and_reported(tmp_path: Path) -> None:
+    artifact = _relationship_artifact()
+    dataverse = cast(dict[str, object], artifact["dataverse"])
+    dataverse["relationships"] = [
+        {
+            "name": "wait_dept_employee",
+            "referencing_entity": "wait_employee",
+            "referenced_entity": "wait_dept",
+            "lookup_column": "wait_missingid",
+        }
+    ]
+    package = _package(tmp_path, [artifact])
+    files = cast(list[dict[str, object]], package["files"])
+    customizations_xml = cast(
+        str,
+        next(item["content"] for item in files if item["path"] == "Other/Customizations.xml"),
+    )
+    design_only = cast(list[dict[str, object]], package["design_only_components"])
+
+    assert "<EntityRelationships>" not in customizations_xml
+    assert any("wait_missingid is not declared" in str(item["reason"]) for item in design_only)
 
 
 def test_employee_onboarding_demo_artifacts_yield_deployable_entity(tmp_path: Path) -> None:
