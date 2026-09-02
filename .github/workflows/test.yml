@@ -28,6 +28,7 @@ jobs:
       - run: bash -n scripts/demo_consultant_mode.sh
       - run: WAIT_DEMO_MODE=true WAIT_DATA_PATH="${RUNNER_TEMP}/wait-consultant-demo.db" bash scripts/demo_consultant_mode.sh
       - run: bash -n scripts/validate_local_first.sh
+      - run: bash -n scripts/verify_power_platform_live.sh
       - run: scripts/validate_local_first.sh
       - run: python scripts/public_surface_audit.py
 

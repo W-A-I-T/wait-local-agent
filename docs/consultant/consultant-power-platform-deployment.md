@@ -114,3 +114,55 @@ It does not automatically roll back a failed stage or bypass the existing
 write/deployment flags. A successful local `pac` return code is still only
 provider-command evidence; live tenant rollback verification remains an
 external boundary.
+
+## Release-time live verification
+
+CI cannot verify a real Power Platform tenant: it has no PAC installation,
+operator credentials, or tenant environment. At release time, an operator
+must run the repeatable live procedure from the repository root:
+
+```bash
+scripts/verify_power_platform_live.sh path/to/package-input.json
+```
+
+The package input is the JSON object accepted by `microsoft package build`.
+The procedure stages a copy with a fresh output directory below the
+pre-existing `WAIT_POWER_PLATFORM_WORKSPACE`, so a previous run or PAC
+scaffolding cannot silently become part of the evidence. It runs WAIT's
+`microsoft package build`, `validate`, and `materialize` commands, prints the
+declared `package_status` and every `design_only_components` reason, checks
+that the materialized files exactly match the package's `files[]`, executes
+the materialization result's `pac_plan.commands` argv, imports the resulting
+ZIP into the explicit target, and verifies the solution in `pac solution list`.
+The PAC pack argv is never re-created in the script; the materialization
+result is its source of truth. A `partial_source` package is reported and is
+not rejected for that status.
+
+Required operator configuration:
+
+- `WAIT_POWER_PLATFORM_WORKSPACE` — an existing, non-symlink directory used
+  for the temporary local materialization.
+- `WAIT_ALLOW_WRITE_ACTIONS=true` — permits local source materialization.
+- `WAIT_ALLOW_POWER_PLATFORM_DEPLOYMENT=true` — permits the live PAC boundary.
+- `WAIT_LIVE_ENVIRONMENT_URL` — the exact credential-free HTTPS URL of the
+  target; the script never guesses it from an auth profile.
+- An admin-capable WAIT CLI credential. Set `WAIT_CLI_TOKEN` to an admin
+  token, or configure the repository's `WAIT_API_TOKEN`/`WAIT_ADMIN_TOKEN`
+  settings before running the script. Credentials are consumed by the CLI
+  and are not printed by the procedure.
+
+`pac` must be installed at version `2.4.1` or newer, which the package
+declares. By default the script resolves it from `PATH`; set `WAIT_PAC_PATH`
+to a regular executable file when it is installed elsewhere. The script also
+requires `pac auth list` to show an authenticated profile with an environment
+URL. PAC import and list commands receive `WAIT_LIVE_ENVIRONMENT_URL`
+explicitly, even when the profile resolves a different URL.
+
+The script removes only its local temporary directory on exit. It never
+executes tenant cleanup or `pac solution delete`; any cleanup is printed as
+operator guidance. The final output states the boundaries that remain
+unproven: flows and connectors are design-only, no canvas app exists, unmapped
+attribute types were omitted rather than guessed, and a zero exit code is not
+provider confirmation of runtime health. This script is the release-time
+verification procedure and its output should be appended to
+`docs/consultant/live-verification-log.md` as a dated receipt.
