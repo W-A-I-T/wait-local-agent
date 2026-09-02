@@ -9135,7 +9135,11 @@ class SmartActionService:
         self.collector_service = collector_service
         self.halopsa_client = halopsa_client
         self.hudu_client = hudu_client
-        self.rmm_provider = rmm_provider or rmm_provider_from_settings(settings, store)
+        self.rmm_provider = rmm_provider or rmm_provider_from_settings(
+            settings,
+            store,
+            allow_msp_wide=True,
+        )
         self.connectwise_client = connectwise_client
         self.syncro_client = syncro_client
         self.servicenow_client = servicenow_client

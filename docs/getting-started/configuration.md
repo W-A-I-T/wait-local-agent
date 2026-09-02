@@ -64,7 +64,9 @@ Microsoft 365 profiles store either an app-registration credential set
 in the vault. Profile Graph and token origins are fixed to Microsoft’s
 `graph.microsoft.com` and `login.microsoftonline.com`; they cannot be supplied
 through `config_json`. Client-scoped profiles take precedence over MSP-wide
-profiles, with the existing environment token as fallback. Instance reads remain
+profiles, and an explicitly client-scoped request fails closed when that client
+has no active connector instead of using an MSP-wide or environment credential.
+Instance reads remain
 gated by `WAIT_ALLOW_HTTP_PROBING`, and every instance
 origin must be listed in `WAIT_CONNECTOR_INSTANCE_ALLOWED_HOSTS`. RMM graph
 sync resolves an active client-scoped instance first, then an active MSP-wide

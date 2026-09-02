@@ -280,6 +280,13 @@ def require_capability(capability_key: str, minimum: Role = Role.VIEWER):
             client_id = resolve_client_scope(context, requested_client_id).client_id
         if not context.has_capability(capability_key, client_id):
             raise _capability_required(capability_key, _capability_failure_reason(context, capability_key))
+        request.state.capability_client_id = (
+            requested_client_id.strip()
+            if requested_client_id and requested_client_id.strip()
+            else None
+            if context.demo_mode or context.is_msp_admin
+            else context.client_id
+        )
         return context
 
     return dependency

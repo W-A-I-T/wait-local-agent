@@ -9,7 +9,7 @@ operations only after the write-safety boundaries have passed.
 from __future__ import annotations
 
 from collections.abc import Mapping
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Protocol, cast
 from urllib.parse import parse_qs, quote, unquote, urlsplit
 
@@ -413,7 +413,11 @@ class M365GraphClient:
         blocked = self._blocked_result()
         if blocked is not None:
             return blocked
-        missing = self._not_configured_result()
+        try:
+            connection = self._connection()
+        except M365ProfileResolutionError as exc:
+            return ConnectorReadResult("failed", str(exc))
+        missing = self._not_configured_result(connection=connection)
         if missing is not None:
             return missing
         response = self.list_users(page_size=1)
@@ -421,8 +425,9 @@ class M365GraphClient:
             return ConnectorReadResult(
                 "ready",
                 "Microsoft Graph identity, group, license, mailbox, and Intune read prerequisites are ready.",
+                tier=connection.tier,
             )
-        return response.result
+        return replace(response.result, tier=connection.tier)
 
     def list_users(
         self,
@@ -1281,11 +1286,16 @@ class M365GraphClient:
             "Microsoft Graph live reads are blocked until WAIT_ALLOW_HTTP_PROBING=true.",
         )
 
-    def _not_configured_result(self) -> ConnectorReadResult | None:
-        try:
-            connection = self._connection()
-        except M365ProfileResolutionError as exc:
-            return ConnectorReadResult("failed", str(exc))
+    def _not_configured_result(
+        self,
+        *,
+        connection: M365Connection | None = None,
+    ) -> ConnectorReadResult | None:
+        if connection is None:
+            try:
+                connection = self._connection()
+            except M365ProfileResolutionError as exc:
+                return ConnectorReadResult("failed", str(exc))
         if connection.token_provider.configured and connection.graph_base_url:
             return None
         missing = [
@@ -1301,11 +1311,15 @@ class M365GraphClient:
         return ConnectorReadResult(
             "not_configured",
             f"Microsoft Graph live read credentials are incomplete: {', '.join(missing)}.",
+            tier=connection.tier,
         )
 
     def _connection(self) -> M365Connection:
         if self.connection_resolver is not None:
-            return self.connection_resolver.resolve(self.client_id)
+            return self.connection_resolver.resolve(
+                self.client_id,
+                allow_msp_wide=self.client_id is None,
+            )
         return self.connection or env_connection(self.settings)
 
     @staticmethod

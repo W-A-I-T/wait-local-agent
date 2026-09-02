@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import replace
-from typing import cast
+from typing import Any, cast
 
 import pytest
 
@@ -848,10 +848,21 @@ def test_rmm_provider_instance_precedence_and_env_fallback(settings, monkeypatch
     configured = replace(settings, ninjaone_base_url="https://ninjaone.example.test")
     assert rmm_provider_from_settings(configured, store, "acme").adapter_id == "client-scoped"
     msp_provider = rmm_provider_from_settings(
-        configured, _InstanceStore([_rmm_instance("msp-wide")]), "acme"
+        configured,
+        _InstanceStore([_rmm_instance("msp-wide")]),
+        "acme",
+        allow_msp_wide=True,
     )
     assert msp_provider.adapter_id == "msp-wide"
-    assert rmm_provider_from_settings(configured, _InstanceStore([]), "acme").adapter_id == "ninjaone"
+    assert cast(Any, msp_provider).tier == "MSP-wide"
+    environment_provider = rmm_provider_from_settings(
+        configured,
+        _InstanceStore([]),
+        "acme",
+        allow_msp_wide=True,
+    )
+    assert environment_provider.adapter_id == "ninjaone"
+    assert cast(Any, environment_provider).tier == "environment"
     assert built == ["client-scoped", "msp-wide"]
 
 
@@ -886,11 +897,28 @@ def test_rmm_provider_instance_resolution_errors_fail_closed(settings, monkeypat
         )
 
 
+def test_rmm_provider_rejects_provider_without_tier_attribute(settings, monkeypatch) -> None:
+    import wait_local_agent.connector_factory as factory
+
+    class ImmutableProvider:
+        __slots__ = ()
+        adapter_id = "immutable-rmm"
+
+    monkeypatch.setattr(factory, "build_read_client_for", lambda *_args, **_kwargs: ImmutableProvider())
+
+    with pytest.raises(RmmProviderResolutionError, match="does not expose a resolution tier"):
+        rmm_provider_from_settings(
+            settings,
+            _InstanceStore([_rmm_instance("client-scoped", client_id="acme")]),
+            "acme",
+        )
+
+
 def test_rmm_provider_msp_ambiguity_fails_closed(settings) -> None:
     store = _InstanceStore([_rmm_instance("one"), _rmm_instance("two")])
 
     with pytest.raises(RmmProviderResolutionError, match="at the MSP-wide tier"):
-        rmm_provider_from_settings(settings, store, "acme")
+        rmm_provider_from_settings(settings, store, "acme", allow_msp_wide=True)
 
 
 @pytest.mark.parametrize(
@@ -916,4 +944,5 @@ def test_rmm_provider_ignores_inactive_and_non_rmm_instances(settings) -> None:
             _rmm_instance("psa", client_id="acme", connector_type="halopsa"),
         ]
     )
-    assert rmm_provider_from_settings(settings, store, "acme").adapter_id == "local-collector"
+    with pytest.raises(RmmProviderResolutionError, match="client-scoped.*acme"):
+        rmm_provider_from_settings(settings, store, "acme")

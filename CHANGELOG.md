@@ -32,6 +32,9 @@ All notable changes to WAIT Local Agent will be documented in this file.
 
 ### Changed
 
+- Microsoft 365 and RMM connector resolution now reports its selected tier and
+  keeps explicit client-scoped requests from falling back to MSP-wide or
+  environment credentials.
 - Founder browser scans now advance through the appliance scheduler, with
   bounded persisted polling progress and truthful status timestamps.
 - Diagnostics now state that support upload is unavailable in this edition;
@@ -96,6 +99,8 @@ All notable changes to WAIT Local Agent will be documented in this file.
 - Fixed Settings update checks and collector exports to use their backend POST
   contracts, routed desktop Microsoft sign-in through the configured API base,
   and added frontend route/method contract guards for the development proxy.
+- Microsoft Admin Graph routes now use the client scope authorized for the
+  request, and fail closed when that client has no active connector.
 - Founder Launch Passport polling no longer remains queued after a browser
   launch, and terminal scan states are not polled again.
 - The diagnostics API and screen no longer advertise a support upload action

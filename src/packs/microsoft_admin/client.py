@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping
+from dataclasses import replace
 from typing import cast
 from urllib.parse import parse_qsl, urlencode, urlsplit
 
@@ -67,7 +68,11 @@ class MicrosoftAdminGraphClient:
         blocked = self._blocked_result()
         if blocked is not None:
             return blocked
-        missing = self._not_configured_result()
+        try:
+            connection = self._connection()
+        except MicrosoftAdminError as exc:
+            return ConnectorReadResult("failed", str(exc))
+        missing = self._not_configured_result(connection=connection)
         if missing is not None:
             return missing
         response = self.list_service_health(page_size=1)
@@ -76,8 +81,9 @@ class MicrosoftAdminGraphClient:
                 "ready",
                 "Microsoft administrator Graph read prerequisites are ready.",
                 response.result.count,
+                connection.tier,
             )
-        return response.result
+        return replace(response.result, tier=connection.tier)
 
     def list_service_health(
         self, *, cursor: str | None = None, page_size: int = DEFAULT_PAGE_SIZE
@@ -353,11 +359,16 @@ class MicrosoftAdminGraphClient:
             "Microsoft administrator live reads are blocked until WAIT_ALLOW_HTTP_PROBING=true.",
         )
 
-    def _not_configured_result(self) -> ConnectorReadResult | None:
-        try:
-            connection = self._connection()
-        except (M365ProfileResolutionError, MicrosoftAdminError) as exc:
-            return ConnectorReadResult("failed", str(exc))
+    def _not_configured_result(
+        self,
+        *,
+        connection: M365Connection | None = None,
+    ) -> ConnectorReadResult | None:
+        if connection is None:
+            try:
+                connection = self._connection()
+            except (M365ProfileResolutionError, MicrosoftAdminError) as exc:
+                return ConnectorReadResult("failed", str(exc))
         if connection.token_provider.configured and connection.graph_base_url:
             return None
         missing = [
@@ -373,12 +384,16 @@ class MicrosoftAdminGraphClient:
         return ConnectorReadResult(
             "not_configured",
             f"Microsoft administrator Graph credentials are missing: {', '.join(missing)}.",
+            tier=connection.tier,
         )
 
     def _connection(self) -> M365Connection:
         if self.connection_resolver is not None:
             try:
-                return self.connection_resolver.resolve(self.client_id)
+                return self.connection_resolver.resolve(
+                    self.client_id,
+                    allow_msp_wide=self.client_id is None,
+                )
             except M365ProfileResolutionError as exc:
                 raise MicrosoftAdminError(str(exc)) from exc
         return self.connection or env_connection(self.settings)

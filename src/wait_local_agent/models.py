@@ -323,6 +323,7 @@ class HaloReadResult:
     status: ConnectorStatusValue
     message: str
     count: int = 0
+    tier: str | None = None
 
 
 ConnectorReadResult = HaloReadResult

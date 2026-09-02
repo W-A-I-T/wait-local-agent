@@ -604,6 +604,7 @@ def build_read_client(
                     graph_base_url=per_instance_settings.m365_graph_base_url,
                     token_provider=M365TokenProvider(credentials),
                     profile_id=instance.connector_instance_id,
+                    tier="client-scoped",
                 ),
             )
         return builder(per_instance_settings, pinned)

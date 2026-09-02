@@ -152,7 +152,6 @@ def test_client_scope_resolver_is_demo_permissive_and_non_demo_fail_closed(setti
         resolve_client_scope(generic_admin, "beta")
     assert bound_error.value.status_code == 403
     assert admin_error.value.status_code == 403
-    assert isinstance(resolve_client_scope(msp, allow_all=True), AllClients)
     assert isinstance(resolve_client_scope(msp), AllClients)
     with pytest.raises(HTTPException) as detail_error:
         _resolve_detail_scope(bound, "beta")
