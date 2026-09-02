@@ -44,12 +44,23 @@ test("completes the safe local setup journey and exercises primary UI surfaces",
     ["/knowledge", "Knowledge"],
     ["/playbooks", "MSP Playbooks"],
     ["/integrations/mcp", "MCP server"],
+    ["/consultant", "Solutions Architect"],
+    ["/consultant/solution-delivery", "Solution delivery"],
     ["/settings", "Admin Settings"]
   ] as const;
 
   for (const [path, heading] of routes) {
     await page.goto(path);
     await expect(page.getByRole("heading", { name: heading, exact: true })).toBeVisible();
+  }
+
+  for (const label of [
+    "WAIT_ALLOW_POWER_PLATFORM_DEPLOYMENT",
+    "WAIT_ALLOW_WRITE_ACTIONS",
+    "pac version",
+    "WAIT_POWER_PLATFORM_WORKSPACE",
+  ]) {
+    await expect(page.getByText(label, { exact: true })).toBeVisible();
   }
 
   await page.goto("/clients");

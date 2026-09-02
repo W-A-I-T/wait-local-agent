@@ -278,6 +278,12 @@ def test_employee_onboarding_demo_artifacts_yield_deployable_entity(tmp_path: Pa
 
     assert package["deployable"] is True
     assert package["package_status"] == "partial_source"
+    unsupported = cast(list[dict[str, object]], package["unsupported_components"])
+    assert len(unsupported) == 1
+    assert unsupported[0]["format"] == "canvas_app"
+    assert unsupported[0]["reason"] == (
+        "binary .msapp synthesis is unsupported; no canvas component is claimed packable"
+    )
     files = cast(list[dict[str, object]], package["files"])
     solution_xml = cast(str, next(item["content"] for item in files if item["path"] == "Other/Solution.xml"))
     customizations_xml = cast(

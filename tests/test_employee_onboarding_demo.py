@@ -7,6 +7,7 @@ from typing import cast
 import pytest
 
 from tests.support import ingest_local
+from wait_local_agent.copilot_studio import build_copilot_studio_plan
 from wait_local_agent.employee_onboarding_demo import (
     CANONICAL_EMPLOYEE_ONBOARDING_REQUEST,
     EmployeeOnboardingDemoError,
@@ -92,7 +93,17 @@ def test_employee_onboarding_demo_composes_local_fixture_stages(settings) -> Non
     assert stages["governance"]["status"] == "needs_review"
     assert stages["delivery"]["production_readiness"] == "needs_review"
     assert stages["artifacts"]["status"] == "review_only"
-    assert len(stages["artifacts"]["items"]) == 3
+    assert len(stages["artifacts"]["items"]) == 2
+    assert len(result["design_handoffs"]) == 1
+    handoff = cast(dict[str, object], result["design_handoffs"][0])
+    assert handoff["format"] == build_copilot_studio_plan(
+        client_id="acme",
+        copilot_name="Test copilot",
+        business_goal="Test business goal",
+        topics=[],
+        knowledge_sources=[],
+        actions=[],
+    )["format"]
     assert stages["artifacts"]["package"]["package_status"] == "review_only"
     assert stages["artifacts"]["package_digest"].startswith("sha256:")
     assert stages["artifacts"]["delivery_bundle"]["manifest"]["deployable"] is False

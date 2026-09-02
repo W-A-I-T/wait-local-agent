@@ -37,6 +37,7 @@ from wait_local_agent.api.app import (
     create_app,
 )
 from wait_local_agent.consultant import generate_playbook_from_blueprint
+from wait_local_agent.discovery import _QUESTION_DEFS
 from wait_local_agent.models import BlueprintAgent, BlueprintWorkflow, SolutionBlueprint
 from wait_local_agent.rbac import AuthContext, Role
 from wait_local_agent.smart_actions import SmartActionService
@@ -895,6 +896,84 @@ def test_guided_discovery_sessions_can_be_listed_and_resumed_with_scope(settings
     assert foreign.value.status_code == 404
 
 
+def test_guided_discovery_session_turns_to_completion_promotes_blueprint_and_enforces_cap(settings) -> None:
+    question_defs = {cast(str, question["id"]): question for question in _QUESTION_DEFS}
+    result = _endpoint(settings, "/consultant/discovery/sessions")(
+        DiscoverySessionStartRequest(
+            client_id="acme",
+            opening_message="Reduce manual employee onboarding effort",
+            answers={"solution_name": "Employee onboarding"},
+        ),
+        _technician(),
+    )
+
+    turn_limit = (len(_QUESTION_DEFS) * 2) + 5
+    for _ in range(turn_limit):
+        if result["status"] == "complete":
+            break
+        next_question = result["next_question"]
+        assert isinstance(next_question, dict), f"active session did not return next_question: {result}"
+        field = cast(str, next_question["id"])
+        question = question_defs.get(field)
+        assert question is not None, f"API returned unknown discovery question: {field}"
+        if question["kind"] == "boolean":
+            answer: object = False
+        elif question["kind"] == "list":
+            answer = ["Evidence"]
+        else:
+            answer = "Evidence"
+        result = _endpoint(settings, "/consultant/discovery/sessions/{session_id}/turn")(
+            result["session_id"],
+            DiscoveryTurnRequest(client_id="acme", field=field, answer=answer),
+            _technician(),
+        )
+    else:
+        pytest.fail(f"guided discovery did not complete within {turn_limit} turns: {result}")
+
+    assert result["status"] == "complete"
+    assert result["session_status"] == "completed"
+    assert isinstance(result["blueprint_id"], str)
+    session_id = cast(str, result["session_id"])
+    store = Store(settings.data_path)
+    session = store.get_consultant_discovery_session(
+        session_id,
+        client_id="acme",
+        principal_id=_technician().approver_id or "api",
+    )
+    assert session is not None
+    assert session.status == "completed"
+    read_back = _get_endpoint(settings, "/consultant/discovery/sessions/{session_id}")(
+        session_id,
+        _technician(),
+    )
+    assert read_back["status"] == "complete"
+    assert read_back["session_status"] == "completed"
+    listed = _get_endpoint(settings, "/consultant/discovery/sessions")(_technician())
+    listed_session = next(item for item in listed if item["session_id"] == session_id)
+    assert listed_session["status"] == "complete"
+    assert listed_session["session_status"] == "completed"
+    blueprint = store.get_solution_blueprint(result["blueprint_id"], client_id="acme")
+    assert blueprint is not None
+    assert blueprint.solution_name == "Employee onboarding"
+
+    capped = _endpoint(settings, "/consultant/discovery/sessions")(
+        DiscoverySessionStartRequest(client_id="acme", opening_message="Check turn cap"),
+        _technician(),
+    )
+    for _ in range(31):
+        _endpoint(settings, "/consultant/discovery/sessions/{session_id}/turn")(
+            capped["session_id"],
+            DiscoveryTurnRequest(client_id="acme", field="users", answer=["HR"]),
+            _technician(),
+        )
+    with pytest.raises(HTTPException, match="turn limit"):
+        _endpoint(settings, "/consultant/discovery/sessions/{session_id}/turn")(
+            capped["session_id"],
+            DiscoveryTurnRequest(client_id="acme", field="users", answer=["HR"]),
+            _technician(),
+        )
+
+
 def test_guided_discovery_store_rejects_unscoped_and_invalid_updates(settings) -> None:
     store = Store(settings.data_path)
     with pytest.raises(ValueError, match="client scope"):
@@ -938,6 +1017,35 @@ def test_guided_discovery_store_rejects_unscoped_and_invalid_updates(settings) -
             answers={},
             transcript=[],
         )
+
+
+def test_guided_discovery_store_persists_completed_status_without_raising(settings) -> None:
+    store = Store(settings.data_path)
+    session = store.create_consultant_discovery_session(
+        client_id="acme",
+        principal_id="technician",
+        answers={"business_goal": "Review onboarding"},
+        transcript=[],
+    )
+
+    updated = store.update_consultant_discovery_session(
+        session.id,
+        client_id="acme",
+        principal_id="technician",
+        status="completed",
+        answers={"business_goal": "Review onboarding", "users": ["HR"]},
+        transcript=[{"role": "user", "field": "users", "content": ["HR"]}],
+    )
+
+    assert updated is not None
+    assert updated.status == "completed"
+    reloaded = store.get_consultant_discovery_session(
+        session.id,
+        client_id="acme",
+        principal_id="technician",
+    )
+    assert reloaded is not None
+    assert reloaded.status == "completed"
 
 
 def test_completed_guided_discovery_promotes_a_tenant_scoped_blueprint(settings) -> None:
@@ -1630,6 +1738,33 @@ def test_environment_discovery_route_returns_explicit_local_evidence(settings) -
     assert systems["Custom API"]["status"] == "detected"
 
 
+def test_power_platform_cli_status_route_surfaces_server_owned_prerequisites(monkeypatch, settings) -> None:
+    monkeypatch.setattr(
+        app_module,
+        "power_platform_cli_status",
+        lambda active_settings: {
+            "available": True,
+            "path": "/usr/bin/pac",
+            "version": "2.4.1",
+            "commands_executed": True,
+        },
+    )
+
+    result = _get_endpoint(settings, "/consultant/power-platform/cli-status")(_technician())
+
+    assert result == {
+        "available": True,
+        "path": "/usr/bin/pac",
+        "version": "2.4.1",
+        "commands_executed": True,
+        "minimum_version": "2.4.1",
+        "version_compatible": True,
+        "allow_write_actions": False,
+        "allow_power_platform_deployment": False,
+        "workspace_exists": False,
+    }
+
+
 def test_environment_discovery_route_records_probe_request_without_claiming_success(settings) -> None:
     result = _endpoint(settings, "/consultant/environment-discovery")(
         EnvironmentDiscoveryRequest(client_id="acme", systems=["Microsoft 365"], probe=True),
@@ -1639,6 +1774,33 @@ def test_environment_discovery_route_records_probe_request_without_claiming_succ
     assert result["probe_requested"] is True
     assert result["probe_performed"] is False
     assert result["systems"][0]["status"] == "not_configured"
+
+
+def test_environment_discovery_does_not_construct_probe_clients_when_http_probing_is_disabled(
+    monkeypatch, settings
+) -> None:
+    active = settings.__class__(
+        **{
+            **settings.__dict__,
+            "m365_graph_base_url": "https://graph.example",
+            "m365_access_token": "fixture-token",
+            "allow_http_probing": False,
+        }
+    )
+    calls: list[object] = []
+
+    def unexpected_probe(*args, **kwargs):
+        calls.append((args, kwargs))
+        raise AssertionError("probe clients must not be constructed when HTTP probing is disabled")
+
+    monkeypatch.setattr(app_module, "probe_connector_health", unexpected_probe)
+    result = _endpoint(active, "/consultant/environment-discovery")(
+        EnvironmentDiscoveryRequest(client_id="acme", systems=["Microsoft 365"], probe=True),
+        _technician(),
+    )
+
+    assert result["probe_performed"] is False
+    assert calls == []
 
 
 def test_environment_discovery_route_projects_positive_health_evidence_and_audits(monkeypatch, settings) -> None:
