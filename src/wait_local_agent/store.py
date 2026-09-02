@@ -909,6 +909,8 @@ class Store:
             ("polling_claimed_at", "text not null default ''"),
         ):
             Store._ensure_column(connection, "founder_artifacts", column_name, definition)
+
+    @staticmethod
     def _apply_capability_grants_migration(connection: sqlite3.Connection) -> None:
         """Create capability grants as a canonical startup migration."""
 
