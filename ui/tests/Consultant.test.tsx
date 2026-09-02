@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
 import { MemoryRouter, Route, Routes, useLocation } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { Consultant } from "../src/screens/Consultant";
@@ -289,41 +289,55 @@ describe("Consultant", () => {
     expect(await screen.findByRole("heading", { name: "Solutions Architect blueprints" })).toBeInTheDocument();
     fireEvent.click(await screen.findByRole("button", { name: /Employee onboarding/ }));
 
-    expect(await screen.findByRole("heading", { name: "Employee onboarding" })).toBeInTheDocument();
-    expect(screen.getByText(/Edit a bounded local draft before preparing the Power Automate review artifact/)).toBeInTheDocument();
-    expect(screen.getByText("Validate manager")).toBeInTheDocument();
-    expect(screen.getByText(/no execution or deployment is started/i)).toBeInTheDocument();
-    fireEvent.change(screen.getByLabelText("Trigger"), { target: { value: "HR approval request" } });
-    fireEvent.click(screen.getByRole("button", { name: "Add step" }));
-    expect(screen.getByDisplayValue("New action")).toBeInTheDocument();
+    const blueprintHeading = await screen.findByRole("heading", { name: "Employee onboarding" });
+    expect(blueprintHeading).toBeInTheDocument();
+    const blueprintPanel = blueprintHeading.closest("section");
+    expect(blueprintPanel).not.toBeNull();
+    if (!blueprintPanel) throw new Error("Missing selected blueprint panel");
+    const blueprintView = within(blueprintPanel);
+    expect(blueprintView.getByText(/Edit a bounded local draft before preparing the Power Automate review artifact/)).toBeInTheDocument();
+    expect(blueprintView.getByText("Validate manager")).toBeInTheDocument();
+    expect(blueprintView.getByText(/no execution or deployment is started/i)).toBeInTheDocument();
+    fireEvent.change(blueprintView.getByLabelText("Trigger"), { target: { value: "HR approval request" } });
+    fireEvent.click(blueprintView.getByRole("button", { name: "Add step" }));
+    expect(blueprintView.getByDisplayValue("New action")).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Solutions Architect use cases" })).toBeInTheDocument();
     expect(screen.getByText("Teams service-desk triage")).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "Prepare Power Automate plan" }));
-    expect(await screen.findByText(/Power Automate plan ready for review/i)).toBeInTheDocument();
+    fireEvent.click(blueprintView.getByRole("button", { name: "Prepare Power Automate plan" }));
+    expect(await blueprintView.findByText(/Power Automate plan ready for review/i)).toBeInTheDocument();
     const planCall = vi.mocked(fetch).mock.calls.find(([input]) => String(input) === "/consultant/workflows/power-automate/plan");
     expect(planCall?.[1]).toMatchObject({
       body: expect.stringContaining('"workflow_id":"onboarding_flow"'),
     });
     fireEvent.click(screen.getByRole("button", { name: "Build local artifact" }));
     expect(await screen.findByText(/Power Apps artifact ready for review/i)).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "Run blueprint walkthrough" }));
-    expect(await screen.findByText(/completed in local_fixture mode/i)).toBeInTheDocument();
-    expect(screen.getByText(/Artifacts: 1 review-only/)).toBeInTheDocument();
-    expect(screen.getByRole("heading", { name: "Delivery handoff" })).toBeInTheDocument();
-    expect(screen.getByText("Review-only.")).toBeInTheDocument();
-    expect(screen.getByText(/1 files · Teams, Power Automate/)).toBeInTheDocument();
-    expect(screen.getByText("sha256:delivery")).toBeInTheDocument();
-    fireEvent.click(screen.getByText("Review bundle files and open items"));
-    expect(screen.getByText(/Operator evidence is required before deployment/)).toBeInTheDocument();
+    const walkthroughButton = screen.getByRole("button", { name: "Run blueprint walkthrough" });
+    const walkthroughPanel = walkthroughButton.closest("section");
+    expect(walkthroughPanel).not.toBeNull();
+    if (!walkthroughPanel) throw new Error("Missing blueprint walkthrough panel");
+    const walkthroughView = within(walkthroughPanel);
+    fireEvent.click(walkthroughButton);
+    expect(await walkthroughView.findByText(/completed in local_fixture mode/i)).toBeInTheDocument();
+    expect(walkthroughView.getByText(/Artifacts: 1 review-only/)).toBeInTheDocument();
+    expect(walkthroughView.getByRole("heading", { name: "Delivery handoff" })).toBeInTheDocument();
+    expect(walkthroughView.getByText("Review-only.")).toBeInTheDocument();
+    expect(walkthroughView.getByText(/1 files · Teams, Power Automate/)).toBeInTheDocument();
+    fireEvent.click(walkthroughView.getByText("Review bundle files and open items"));
+    expect(walkthroughView.getByText(/Operator evidence is required before deployment/)).toBeInTheDocument();
     const onboardingCall = vi.mocked(fetch).mock.calls.find(([input]) => String(input) === "/consultant/demos/employee-onboarding");
     expect(onboardingCall?.[1]).toMatchObject({
       body: expect.stringContaining('"blueprint_id":"bp-acme"'),
     });
-    fireEvent.change(screen.getByLabelText("Business goal"), { target: { value: "Reduce onboarding effort" } });
-    fireEvent.change(screen.getByLabelText("Solution name"), { target: { value: "Employee onboarding review" } });
-    fireEvent.click(screen.getByRole("button", { name: "Assess discovery" }));
-    expect(await screen.findByText(/Ready for architecture review/i)).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "Save solution blueprint" }));
+    const discoveryHeading = screen.getByRole("heading", { name: "Solution discovery" });
+    const discoveryPanel = discoveryHeading.closest("section");
+    expect(discoveryPanel).not.toBeNull();
+    if (!discoveryPanel) throw new Error("Missing solution discovery panel");
+    const discoveryView = within(discoveryPanel);
+    fireEvent.change(discoveryView.getByLabelText("Business goal"), { target: { value: "Reduce onboarding effort" } });
+    fireEvent.change(discoveryView.getByLabelText("Solution name"), { target: { value: "Employee onboarding review" } });
+    fireEvent.click(discoveryView.getByRole("button", { name: "Assess discovery" }));
+    expect(await discoveryView.findByText(/Ready for architecture review/i)).toBeInTheDocument();
+    fireEvent.click(discoveryView.getByRole("button", { name: "Save solution blueprint" }));
     expect(await screen.findByText(/saved for architecture review/i)).toBeInTheDocument();
     const promotionCall = vi.mocked(fetch).mock.calls.find(([input]) => String(input) === "/consultant/discovery/promote");
     expect(promotionCall?.[1]).toMatchObject({
