@@ -39,13 +39,18 @@ Status: implemented; static validation rerun; awaiting review.
   `completed` in `session_status`.
 - Added the negative no-probe assertion for disabled HTTP probing.
 - Added `/consultant` and `/consultant/solution-delivery` to the production
-  browser smoke route list and asserted the delivery gate labels.
+  browser smoke route list; both use the existing authenticated, exact-heading
+  smoke check. The smoke test does not assert delivery gate state from the
+  final page in the route loop, because that loop ends on `/settings` and gate
+  state is environment-dependent on the live compose stack.
 
 ## Constraints and validation
 
 - `pytest` was not run: the task contract says this repository's FastAPI
   `TestClient` fixtures hang in the sandbox.
-- UI tests were not run: `ui/node_modules` is absent.
+- The full UI suite was not run during the initial implementation because
+  `ui/node_modules` was absent; the focused correction test was run after the
+  dependencies became available.
 - The follow-up test corrections keep the Copilot Studio format assertion tied
   to the public builder, disclose the real unsupported canvas-app component,
   and distinguish the discovery result status `complete` from the persisted
@@ -65,4 +70,7 @@ Status: implemented; static validation rerun; awaiting review.
 - Manifest JSON parsing and the zero-Copilot-marker check for
   `ui/src/screens/Consultant.tsx`: passed
 - `pytest`: deliberately not run per the task contract.
-- UI tests: deliberately not run because `ui/node_modules` is absent.
+- `npx vitest run src/screens/SolutionDelivery.test.tsx`: passed (1 file, 4
+  tests) after scoping the gate assertion.
+- The browser spec was not run locally because no compose stack is available
+  here.

@@ -54,15 +54,6 @@ test("completes the safe local setup journey and exercises primary UI surfaces",
     await expect(page.getByRole("heading", { name: heading, exact: true })).toBeVisible();
   }
 
-  for (const label of [
-    "WAIT_ALLOW_POWER_PLATFORM_DEPLOYMENT",
-    "WAIT_ALLOW_WRITE_ACTIONS",
-    "pac version",
-    "WAIT_POWER_PLATFORM_WORKSPACE",
-  ]) {
-    await expect(page.getByText(label, { exact: true })).toBeVisible();
-  }
-
   await page.goto("/clients");
   await page.getByRole("button", { name: "New client" }).click();
   await page.getByLabel("Client ID").fill(clientId);

@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { SolutionDelivery } from "./SolutionDelivery";
@@ -96,7 +96,9 @@ describe("SolutionDelivery", () => {
     fireEvent.click(screen.getByRole("button", { name: "Materialize source" }));
     await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(4));
     expect(JSON.parse(fetchMock.mock.calls[3][1].body)).toEqual({ client_id: "acme", package: packageArtifact });
-    expect(screen.getByText("Unmet")).toBeInTheDocument();
+    const writeGate = screen.getByText("WAIT_ALLOW_WRITE_ACTIONS", { exact: true }).closest(".solution-gate");
+    expect(writeGate).not.toBeNull();
+    expect(within(writeGate as HTMLElement).getByText("Unmet")).toBeInTheDocument();
     expect(screen.getAllByText(/WAIT_ALLOW_WRITE_ACTIONS=true/).length).toBeGreaterThan(0);
   });
 
