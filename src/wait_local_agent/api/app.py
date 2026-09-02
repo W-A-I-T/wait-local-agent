@@ -293,6 +293,7 @@ from wait_local_agent.servicenow import ServiceNowClient, ServiceNowReadResponse
 from wait_local_agent.services import TicketIntelligenceService
 from wait_local_agent.sharepoint import SharePointClient, SharePointReadResponse
 from wait_local_agent.smart_actions import SmartActionService
+from wait_local_agent.spa_routes import SPA_ROUTE_PATHS
 from wait_local_agent.store import (
     _QUARANTINE_CLIENT_ID,
     ClientConnectorMappingConflictError,
@@ -1095,6 +1096,50 @@ class SPAStaticFiles(StaticFiles):
         return FileResponse(self.index_path, media_type="text/html")
 
 
+class SPAHtmlRoutesMiddleware:
+    """Serve the SPA entrypoint for browser requests to known UI routes."""
+
+    def __init__(self, app: ASGIApp, *, index_path: Path, route_paths: frozenset[str]) -> None:
+        self.app = app
+        self.index_path = index_path
+        self.route_paths = route_paths
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+        if scope["method"] not in {"GET", "HEAD"}:
+            await self.app(scope, receive, send)
+            return
+
+        path = scope["path"]
+        if path != "/" and path.endswith("/"):
+            path = path[:-1]
+        if path not in self.route_paths:
+            await self.app(scope, receive, send)
+            return
+
+        accept = next(
+            (value for name, value in scope["headers"] if name == b"accept"),
+            b"",
+        ).decode("latin-1").lower()
+        if "text/html" not in accept:
+            await self.app(scope, receive, send)
+            return
+
+        await FileResponse(self.index_path, media_type="text/html")(scope, receive, send)
+
+
+def _resolve_ui_dist() -> Path | None:
+    ui_dist_value = os.getenv("WAIT_UI_DIST", "").strip()
+    if not ui_dist_value:
+        return None
+    ui_dist = Path(ui_dist_value)
+    if not ui_dist.is_dir() or not (ui_dist / "index.html").is_file():
+        return None
+    return ui_dist
+
+
 def create_app(settings: Settings | None = None) -> FastAPI:
     active_settings = settings or load_settings()
     if active_settings.demo_mode:
@@ -1258,6 +1303,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.add_exception_handler(LaunchPassportForbidden, launch_passport_error_handler)
     app.add_exception_handler(LaunchPassportPayloadTooLarge, launch_passport_error_handler)
     app.add_exception_handler(LaunchPassportRequestError, launch_passport_error_handler)
+    ui_dist = _resolve_ui_dist()
+    if ui_dist is not None:
+        app.add_middleware(
+            SPAHtmlRoutesMiddleware,
+            index_path=ui_dist / "index.html",
+            route_paths=SPA_ROUTE_PATHS,
+        )
     app.add_middleware(
         TrustedHostMiddleware,
         allowed_hosts=list(active_settings.trusted_hosts),
@@ -7952,11 +8004,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             "params": _safe_json_object(job.params_json),
         }
 
-    ui_dist_value = os.getenv("WAIT_UI_DIST", "").strip()
-    if ui_dist_value:
-        ui_dist = Path(ui_dist_value)
-        if ui_dist.is_dir() and (ui_dist / "index.html").is_file():
-            app.mount("/", SPAStaticFiles(directory=ui_dist), name="ui")
+    ui_dist = _resolve_ui_dist()
+    if ui_dist is not None:
+        app.mount("/", SPAStaticFiles(directory=ui_dist), name="ui")
 
     return app
 
