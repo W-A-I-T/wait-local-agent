@@ -314,6 +314,9 @@ export function FounderJourney() {
             reset();
             setStatusMessage("Choose a project folder to begin.");
           }}
+          onStepSelect={(index) => {
+            if (index <= step) setStep(index);
+          }}
           onClose={() => {
             setStep(0);
             reset();

@@ -24,6 +24,7 @@ PINNED_SCHEMA_MIGRATIONS: list[tuple[int, str]] = [
     (13, "document_authority"),
     (14, "backup_runs"),
     (15, "founder_polling_state"),
+    (1000, "principal_capability_grants"),
 ]
 
 

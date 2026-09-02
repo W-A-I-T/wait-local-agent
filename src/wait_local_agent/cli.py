@@ -56,7 +56,7 @@ from wait_local_agent.collectors import (
     collector_run_collection_scope,
     collector_run_result_status,
 )
-from wait_local_agent.config import load_settings
+from wait_local_agent.config import load_settings, validate_scheduler_worker_configuration
 from wait_local_agent.confluence import ConfluenceClient, ConfluenceReadResponse
 from wait_local_agent.connectors import (
     draft_connectwise_ticket_action,
@@ -5935,6 +5935,7 @@ def _format_update_status(status: UpdateStatus) -> str:
 @app.command()
 def serve(host: str = "127.0.0.1", port: int = 8788) -> None:
     settings = load_settings()
+    validate_scheduler_worker_configuration(settings)
     configure_structured_logging(settings)
     uvicorn.run(create_app(settings), host=host, port=port)
 

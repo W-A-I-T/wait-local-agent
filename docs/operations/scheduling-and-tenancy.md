@@ -5,6 +5,18 @@ with UTC cron, interval, or future one-time triggers. The scheduler persists
 jobs in SQLite and supports pause, resume, tenant-scoped reschedule, delete,
 and auditable history.
 
+The scheduler is an in-process service and must run in exactly one server
+process for a given SQLite store. The default `wait-local-agent serve` command
+and the container command satisfy this requirement. Do not run multiple web
+workers while scheduling is enabled: set `WAIT_SCHEDULER_ENABLED=false` before
+using `WEB_CONCURRENCY` or `UVICORN_WORKERS` greater than one. This disables
+scheduled execution while leaving the API available; connector polling is the
+only scheduled job with a cross-process lease today.
+
+Persisted jobs use one in-flight instance, `coalesce=True`, and a 300-second
+misfire grace period. A restart can therefore accept a bounded delayed run
+without replaying a backlog or overlapping the same job.
+
 ```bash
 wait-local-agent workflows templates
 wait-local-agent reports schedule qbr --cron "0 9 * * *" --client-id acme --period-days 90

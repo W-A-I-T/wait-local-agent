@@ -5,7 +5,7 @@ import os
 import uvicorn
 
 from wait_local_agent.api.app import create_app
-from wait_local_agent.config import load_settings
+from wait_local_agent.config import load_settings, validate_scheduler_worker_configuration
 from wait_local_agent.structured_logging import configure_structured_logging
 
 DEFAULT_HOST = "127.0.0.1"
@@ -17,6 +17,7 @@ def main() -> None:
     host = os.getenv("WAIT_HOST", DEFAULT_HOST).strip() or DEFAULT_HOST
     port = _port_from_env(os.getenv("WAIT_PORT"))
     settings = load_settings()
+    validate_scheduler_worker_configuration(settings)
     configure_structured_logging(settings)
     uvicorn.run(create_app(settings), host=host, port=port)
 

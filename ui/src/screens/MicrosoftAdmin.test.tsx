@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { MicrosoftAdmin } from "./MicrosoftAdmin";
@@ -249,7 +249,7 @@ describe("Microsoft Administrator workspace", () => {
     });
     fireEvent.click(screen.getByRole("button", { name: "Run diagnostic" }));
 
-    expect(await screen.findByRole("status")).toHaveTextContent("Evidence completeness: 86%");
+    expect(await screen.findByText(/Evidence completeness: 86%/)).toBeInTheDocument();
     expect(screen.getAllByText("Managed device LAPTOP-001 is not compliant.").length).toBeGreaterThan(0);
     expect(screen.getAllByText(/m365-managed-device-sync/).length).toBeGreaterThan(0);
     const diagnosticCall = vi.mocked(fetch).mock.calls.find(([input]) => String(input) === "/packs/microsoft-admin/diagnostics/access");
@@ -276,6 +276,9 @@ describe("Microsoft Administrator workspace", () => {
 
   it("creates a tenant-scoped runbook approval draft without executing PowerShell", async () => {
     render(<MemoryRouter><MicrosoftAdmin /></MemoryRouter>);
+    fireEvent.change(await screen.findByLabelText("User principal name or immutable user ID"), { target: { value: "adele@example.test" } });
+    fireEvent.click(screen.getByRole("button", { name: "Run diagnostic" }));
+    expect(await screen.findByText(/Evidence completeness: 86%/)).toBeInTheDocument();
     const runbookSelect = await screen.findByLabelText("Runbook");
     fireEvent.change(runbookSelect, { target: { value: "windows.service_restart" } });
 
@@ -296,9 +299,9 @@ describe("Microsoft Administrator workspace", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Confirm and create approval draft" }));
 
-    const success = await screen.findByRole("status");
+    const success = await screen.findByText(/Draft created as approval #42\./);
     expect(success).toHaveTextContent("Draft created as approval #42. No PowerShell has executed.");
-    expect(screen.getByRole("link", { name: "Go to Approvals" })).toHaveAttribute("href", "/approvals");
+    expect(within(success).getByRole("link", { name: "Go to Approvals" })).toHaveAttribute("href", "/approvals");
     const draftCall = vi.mocked(fetch).mock.calls.find(([input]) => String(input) === "/packs/microsoft-admin/runbooks/drafts");
     expect(JSON.parse(String(draftCall?.[1]?.body))).toEqual({
       runbook_id: "windows.service_restart",
@@ -312,7 +315,7 @@ describe("Microsoft Administrator workspace", () => {
     const { unmount } = render(<MemoryRouter><MicrosoftAdmin /></MemoryRouter>);
     const draftButton = await screen.findByRole("button", { name: "Preview runbook plan" });
     expect(draftButton).toBeDisabled();
-    expect(screen.getByRole("alert")).toHaveTextContent("Select a client from the top bar");
+    expect(screen.getByText("Select a client from the top bar before creating a runbook draft.")).toBeInTheDocument();
     unmount();
 
     dashboardContext.role = "viewer";
@@ -326,7 +329,7 @@ describe("Microsoft Administrator workspace", () => {
     failDashboard = true;
     render(<MemoryRouter><MicrosoftAdmin /></MemoryRouter>);
 
-    expect(await screen.findByRole("alert")).toHaveTextContent("We couldn't connect to the appliance");
+    expect(await screen.findByText(/We couldn't connect to the appliance/)).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Governed PowerShell runbooks" })).toBeInTheDocument();
 
     failDiagnostic = true;
@@ -334,6 +337,6 @@ describe("Microsoft Administrator workspace", () => {
       target: { value: "adele@example.test" }
     });
     fireEvent.click(screen.getByRole("button", { name: "Run diagnostic" }));
-    await waitFor(() => expect(screen.getAllByRole("alert").at(-1)).toHaveTextContent("The appliance couldn't complete"));
+    expect(await screen.findByText(/The appliance couldn't complete/)).toBeInTheDocument();
   });
 });

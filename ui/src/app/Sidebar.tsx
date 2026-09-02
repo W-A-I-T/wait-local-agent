@@ -98,7 +98,7 @@ const advancedNavigation: NavItem[] = [
   { to: "/system/identity-access", label: "Identity & Access", icon: UserRoundCog, adminOnly: true },
   { to: "/microsoft-admin/access", label: "Microsoft Admin Access", icon: ShieldCheck, adminOnly: true },
   { to: "/settings/access", label: "People & Access", icon: Users, mspAdminOnly: true },
-  { to: "/settings", label: "Settings", icon: Activity },
+  { to: "/settings", label: "Settings", icon: Activity, adminOnly: true },
   { to: "/operations/reconciliation", label: "Sync / Reconciliation", icon: Database, adminOnly: true },
   { to: "/system/appliance-health", label: "Appliance Health", icon: ShieldCheck, adminOnly: true },
   { to: "/system/diagnostics", label: "Diagnostics & Support", icon: Stethoscope, adminOnly: true },
@@ -112,10 +112,13 @@ function SidebarLink({ item }: { item: NavItem }) {
     <NavLink
       end={to === "/"}
       to={to}
+      target={item.endUserSupport ? "_blank" : undefined}
+      rel={item.endUserSupport ? "noopener" : undefined}
       className={({ isActive }) => isActive ? "active" : undefined}
     >
       <Icon size={18} aria-hidden="true" />
       {label}
+      {item.endUserSupport ? <small aria-hidden="true">Customer portal — separate sign-in</small> : null}
     </NavLink>
   );
 }

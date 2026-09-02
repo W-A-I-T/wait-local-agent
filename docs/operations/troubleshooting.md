@@ -21,6 +21,15 @@ and requests without that browser preference continue to receive the API
 response, including its normal authentication status. This mirrors the local
 development proxy behavior.
 
+## Customer portal routing
+
+The customer-facing support portal is served at `/end-user` and its nested
+paths. It uses a separate sign-in token from the operator dashboard; returning
+to the dashboard opens a separate operator session boundary and does not pass
+the operator token to customer-support API requests. The `/end-user/*` prefix
+is also the API namespace for customer-support routes, so new dashboard SPA
+routes must not be added under that prefix.
+
 ## Local API reference
 
 When the local API is running, its interactive documentation is available at

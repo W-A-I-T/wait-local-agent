@@ -15,6 +15,9 @@ wait-local-agent microsoft power-apps build examples/consultant/power-apps-plan.
   --output power-apps-artifact.json
 ```
 
+The Power Apps planner and builder are API/CLI only — not available in the
+dashboard. Use the commands above for the reviewable plan and local artifact.
+
 `build` validates the same tenant-scoped tables, fields, screens, and
 connector references as the plan surface, then produces a deterministic local
 artifact manifest containing:

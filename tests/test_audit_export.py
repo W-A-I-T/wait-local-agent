@@ -11,15 +11,16 @@ from wait_local_agent.cli import app
 from wait_local_agent.store import Store
 
 
-def test_audit_export_api_json_and_csv(settings) -> None:
+def test_audit_events_export_api_json_and_csv(settings) -> None:
     ingest_local(Store(settings.data_path), Path("examples/sample_tickets/tickets.json"))
     client = TestClient(create_app(settings))
 
-    json_export = client.get("/audit/export")
-    csv_export = client.get("/audit/export", params={"export_format": "csv"})
+    json_export = client.get("/audit-events/export")
+    csv_export = client.get("/audit-events/export", params={"format": "csv"})
 
     assert json_export.status_code == 200
     assert json_export.headers["content-type"].startswith("application/json")
+    assert '"events"' in json_export.text
     assert "ticket.ingested" in json_export.text
     assert csv_export.status_code == 200
     assert csv_export.headers["content-type"].startswith("text/csv")

@@ -418,8 +418,8 @@ The event history table is append-only through application code. It records even
 API export:
 
 ```bash
-curl http://127.0.0.1:8788/audit/export
-curl 'http://127.0.0.1:8788/audit/export?export_format=csv'
+curl http://127.0.0.1:8788/audit-events/export
+curl 'http://127.0.0.1:8788/audit-events/export?format=csv'
 ```
 
 CLI export:

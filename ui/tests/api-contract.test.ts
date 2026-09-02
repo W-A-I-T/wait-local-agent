@@ -27,6 +27,7 @@ const unmatchedAllowlist = new Map([
   ["/packs/agent-platform/iterations/{param}/{param}", "the UI action is selected from the iteration controls"],
   ["/reports/{param}", "the UI report type selects one of the backend report-generation routes"],
   ["/scheduled-jobs/{param}/{param}", "the UI action is selected from the scheduled-job controls"],
+  ["/connectors/{param}/write-health", "the configured PSA connector selects the existing write-health route"],
 ]);
 
 describe("frontend API contract", () => {

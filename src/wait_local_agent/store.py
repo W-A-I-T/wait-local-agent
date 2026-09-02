@@ -341,6 +341,7 @@ class Store:
             Migration(13, "document_authority", self._apply_document_authority_migration),
             Migration(14, "backup_runs", self._apply_backup_runs_migration),
             Migration(15, "founder_polling_state", self._apply_founder_polling_state_migration),
+            Migration(1000, "principal_capability_grants", self._apply_capability_grants_migration),
         )
 
     def _apply_principals_migration(self, connection: sqlite3.Connection) -> None:
@@ -908,6 +909,30 @@ class Store:
             ("polling_claimed_at", "text not null default ''"),
         ):
             Store._ensure_column(connection, "founder_artifacts", column_name, definition)
+    def _apply_capability_grants_migration(connection: sqlite3.Connection) -> None:
+        """Create capability grants as a canonical startup migration."""
+
+        connection.execute(
+            """
+            create table if not exists principal_capability_grants (
+                principal_id text not null references principals(principal_id) on delete cascade,
+                capability_key text not null,
+                client_scope text not null default '',
+                active integer not null default 1 check (active in (0, 1)),
+                granted_by text not null,
+                updated_by text not null,
+                created_at text not null,
+                updated_at text not null,
+                primary key (principal_id, capability_key, client_scope)
+            )
+            """
+        )
+        connection.execute(
+            """
+            create index if not exists idx_principal_capability_grants_active
+            on principal_capability_grants (principal_id, capability_key, active, client_scope)
+            """
+        )
 
     @staticmethod
     def _apply_operational_graph_migration(connection: sqlite3.Connection) -> None:

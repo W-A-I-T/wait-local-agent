@@ -112,6 +112,9 @@ export function OnboardingWizard({ onDone, onDismiss, initialStep = 0 }: Onboard
       onNext={() => void handleNext()}
       canSubmit={!isBusy}
       onSubmit={() => void handleSubmit()}
+      onStepSelect={(index) => {
+        if (index <= step) setStep(index);
+      }}
       onClose={() => {
         onDismiss();
       }}
