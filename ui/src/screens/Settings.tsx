@@ -304,7 +304,7 @@ export function Settings() {
           {launchPassportState === "not_configured" ? (
             <div className="connection-state">
               <StatusChip status="not_configured" hint="The appliance continues to work without this optional connection." />
-              <p>This appliance is ready to use on its own. Connect a Launch Passport project later when the connection service is available.</p>
+              <p>Launch Passport is not configured. This appliance is ready to use on its own; connect a project later when the connection service is available.</p>
               <details className="technical-details">
                 <summary>Technical details</summary>
                 <p>The current service exposes connection status but not an in-app configuration action. It needs a configuration route before this screen can safely submit project details.</p>

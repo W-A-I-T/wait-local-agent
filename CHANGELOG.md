@@ -92,6 +92,9 @@ All notable changes to WAIT Local Agent will be documented in this file.
   launch, and terminal scan states are not polled again.
 - The diagnostics API and screen no longer advertise a support upload action
   that always fails; upload refusal is consistently reported as `501`.
+- SPA HTML fallbacks now opt out of caching and vary on `Accept`, API requests
+  explicitly negotiate JSON, and the dashboard no longer repeatedly rate-limits
+  its local write-health check or Halo ticket bootstrap request.
 
 - Production trusted-host defaults no longer include the test-only `testserver`
   host, and refused demo-mode backup requests no longer create audit events.

@@ -56,6 +56,7 @@ def test_compiled_ui_has_assets_and_spa_fallback(settings, monkeypatch, tmp_path
     assert 'id="root"' in root.text
     assert asset.status_code == 200
     assert "console.log('wait');" in asset.text
+    assert asset.headers["cache-control"] == "public, max-age=31536000, immutable"
     assert browser_route.status_code == 200
     assert 'id="root"' in browser_route.text
     assert api_namespace.status_code == 404
@@ -109,6 +110,8 @@ def test_known_browser_routes_are_served_before_api_matching(settings, monkeypat
 
     assert browser_route.status_code == 200
     assert "spa-sentinel" in browser_route.text
+    assert browser_route.headers["cache-control"] == "no-store"
+    assert browser_route.headers["vary"] == "Accept"
     assert json_request.status_code == 401
     assert json_request.json()["detail"]
     assert "spa-sentinel" not in json_request.text
@@ -119,6 +122,8 @@ def test_known_browser_routes_are_served_before_api_matching(settings, monkeypat
     assert "spa-sentinel" not in authenticated_api.text
     assert authenticated_browser.status_code == 200
     assert "spa-sentinel" in authenticated_browser.text
+    assert authenticated_browser.headers["cache-control"] == "no-store"
+    assert authenticated_browser.headers["vary"] == "Accept"
     assert known_api_404.status_code == 404
     assert known_api_404.json() == {"detail": "client not found"}
     assert write_request.status_code == 401
@@ -129,9 +134,13 @@ def test_known_browser_routes_are_served_before_api_matching(settings, monkeypat
     assert "spa-sentinel" in nested_route_two.text
     assert trailing_slash.status_code == 200
     assert "spa-sentinel" in trailing_slash.text
+    assert trailing_slash.headers["cache-control"] == "no-store"
+    assert trailing_slash.headers["vary"] == "Accept"
     assert head_route.status_code == 200
     assert head_route.headers["content-type"].startswith("text/html")
     assert head_route.content == b""
+    assert head_route.headers["cache-control"] == "no-store"
+    assert head_route.headers["vary"] == "Accept"
     assert docs.status_code == 200
     assert "spa-sentinel" not in docs.text
     assert openapi.status_code == 200
