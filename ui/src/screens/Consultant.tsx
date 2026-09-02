@@ -9,6 +9,7 @@ import {
   apiFetch,
   isCapabilityRequiredDetail,
   isClientScopeErrorDetail,
+  shouldSuppressClientScopeError,
 } from "../api/client";
 import { StatusChip } from "../components/StatusChip";
 import { humanizeName } from "../lib/fields";
@@ -106,7 +107,10 @@ const INITIAL_SECTION_STATES: SectionLoadStates = {
   monitoring: { status: "loading" },
 };
 
-function sectionStateForError(error: unknown): SectionLoadState {
+function sectionStateForError(error: unknown, clientScopeIds?: string[] | null, isMspAdmin?: boolean): SectionLoadState {
+  if (shouldSuppressClientScopeError(error, clientScopeIds, isMspAdmin)) {
+    return { status: "empty" };
+  }
   if (error instanceof ApiRequestError && error.status === 403) {
     const detail = error.detail ?? apiRequestReason(error);
     if (isCapabilityRequiredDetail(detail)) {
@@ -171,6 +175,8 @@ export function Consultant() {
     selectedClientId,
     authState,
     writeHealth,
+    clientScopeIds,
+    isMspAdmin,
   } = useDashboard();
   const navigate = useNavigate();
   const [blueprints, setBlueprints] = useState<ConsultantBlueprint[]>([]);
@@ -253,9 +259,9 @@ export function Consultant() {
       ));
       setSectionState("blueprints", { status: rows.length ? "ready" : "empty" });
     } catch (error) {
-      setSectionState("blueprints", sectionStateForError(error));
+      setSectionState("blueprints", sectionStateForError(error, clientScopeIds, isMspAdmin));
     }
-  }, [setSectionState]);
+  }, [clientScopeIds, isMspAdmin, setSectionState]);
 
   const loadUseCases = useCallback(async () => {
     setSectionState("useCases", { status: "loading" });
@@ -265,9 +271,9 @@ export function Consultant() {
       setUseCases(rows);
       setSectionState("useCases", { status: rows.length ? "ready" : "empty" });
     } catch (error) {
-      setSectionState("useCases", sectionStateForError(error));
+      setSectionState("useCases", sectionStateForError(error, clientScopeIds, isMspAdmin));
     }
-  }, [setSectionState]);
+  }, [clientScopeIds, isMspAdmin, setSectionState]);
 
   const loadMonitoring = useCallback(async () => {
     setSectionState("monitoring", { status: "loading" });
@@ -276,9 +282,9 @@ export function Consultant() {
       setMonitoring(result);
       setSectionState("monitoring", { status: "ready" });
     } catch (error) {
-      setSectionState("monitoring", sectionStateForError(error));
+      setSectionState("monitoring", sectionStateForError(error, clientScopeIds, isMspAdmin));
     }
-  }, [setSectionState]);
+  }, [clientScopeIds, isMspAdmin, setSectionState]);
 
   const loadDiscoverySessions = useCallback(async () => {
     setSectionState("discoverySessions", { status: "loading" });
@@ -288,9 +294,9 @@ export function Consultant() {
       setDiscoverySessions(rows);
       setSectionState("discoverySessions", { status: rows.length ? "ready" : "empty" });
     } catch (error) {
-      setSectionState("discoverySessions", sectionStateForError(error));
+      setSectionState("discoverySessions", sectionStateForError(error, clientScopeIds, isMspAdmin));
     }
-  }, [setSectionState]);
+  }, [clientScopeIds, isMspAdmin, setSectionState]);
 
   const refresh = useCallback(async () => {
     setLoading(true);
@@ -327,7 +333,7 @@ export function Consultant() {
       setBlueprintDetail(result);
       setSectionState("blueprintDetail", { status: "ready" });
     }).catch((error: unknown) => {
-      setSectionState("blueprintDetail", sectionStateForError(error));
+      setSectionState("blueprintDetail", sectionStateForError(error, clientScopeIds, isMspAdmin));
     });
     try {
       const result = await apiFetch<ConsultantArchitecture>(
@@ -365,7 +371,7 @@ export function Consultant() {
       setEnvironmentResult(result);
       setSectionState("environment", { status: result.systems.length ? "ready" : "empty" });
     } catch (error) {
-      setSectionState("environment", sectionStateForError(error));
+      setSectionState("environment", sectionStateForError(error, clientScopeIds, isMspAdmin));
     }
   }
 
@@ -394,7 +400,7 @@ export function Consultant() {
       setGovernanceResult(result);
       setSectionState("governance", { status: "ready" });
     } catch (error) {
-      setSectionState("governance", sectionStateForError(error));
+      setSectionState("governance", sectionStateForError(error, clientScopeIds, isMspAdmin));
     }
   }
 
@@ -450,7 +456,7 @@ export function Consultant() {
       setEvaluationResult(result);
       setSectionState("evaluations", { status: "ready" });
     } catch (error) {
-      setSectionState("evaluations", sectionStateForError(error));
+      setSectionState("evaluations", sectionStateForError(error, clientScopeIds, isMspAdmin));
     }
   }
 
@@ -493,7 +499,7 @@ export function Consultant() {
       setDeliveryResult(result);
       setSectionState("deliveryPlan", { status: "ready" });
     } catch (error) {
-      setSectionState("deliveryPlan", sectionStateForError(error));
+      setSectionState("deliveryPlan", sectionStateForError(error, clientScopeIds, isMspAdmin));
     }
   }
 

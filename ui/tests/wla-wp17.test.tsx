@@ -4,7 +4,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { Settings } from "../src/screens/Settings";
 import { FounderJourney, uploadProgressLabel } from "../src/surfaces/founder/FounderJourney";
 
-const dashboardState = vi.hoisted(() => ({ loading: false, role: "admin" as "admin" | "viewer", authState: "local-open" as "local-open" | "authenticated" | null }));
+const dashboardState = vi.hoisted(() => ({ loading: false, role: "admin" as "admin" | "viewer", authState: "authenticated" as "authenticated" | null }));
 const founderProjectorState = vi.hoisted(() => ({ returnNullLaunchPassport: false }));
 
 vi.mock("../src/api/founder", async (importOriginal) => {
@@ -28,7 +28,7 @@ vi.mock("../src/app/DashboardContext", () => ({
 afterEach(() => {
   dashboardState.loading = false;
   dashboardState.role = "admin";
-  dashboardState.authState = "local-open";
+  dashboardState.authState = "authenticated";
   founderProjectorState.returnNullLaunchPassport = false;
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
@@ -69,8 +69,8 @@ describe("wla-wp17 Launch Passport UI", () => {
     expect(screen.getByLabelText("Secret name")).toHaveAttribute("list", "connector-secret-names");
     expect(document.querySelector('#connector-secret-names option[value="WAIT_HALOPSA_BASE_URL"]')).toBeInTheDocument();
     expect(screen.getByText(/ready to use on its own/i)).toBeInTheDocument();
-    expect(screen.getByText("local mode · full access")).toBeInTheDocument();
-    expect(screen.getByText("Not required in local mode")).toBeInTheDocument();
+    expect(screen.getByText("admin mode")).toBeInTheDocument();
+    expect(screen.getByText("No API token configured")).toBeInTheDocument();
     expect(screen.queryByText(/temporarily unavailable/i)).not.toBeInTheDocument();
   });
 

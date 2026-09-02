@@ -41,6 +41,7 @@ def settings(tmp_path: Path) -> Settings:
         qdrant_collection="wait_knowledge_chunks",
         connector_timeout_seconds=20.0,
         scheduler_enabled=False,
+        trusted_hosts=("127.0.0.1", "localhost", "api", "testserver"),
         rate_limit_enabled=False,
         rate_limit_general="100/minute",
         rate_limit_connector="10/minute",

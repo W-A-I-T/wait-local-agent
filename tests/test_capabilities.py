@@ -4,6 +4,7 @@ import sqlite3
 
 import pytest
 
+from wait_local_agent import migrations
 from wait_local_agent.capabilities import (
     CAPABILITY_MIGRATION_VERSION,
     MICROSOFT_ADMIN_CAPABILITY,
@@ -73,6 +74,44 @@ def test_client_capability_grant_lifecycle_and_migration(settings) -> None:
     assert regranted.active is True
     assert regranted.granted_by == "admin-one"
     assert regranted.updated_by == "admin-three"
+
+
+def test_capability_migration_is_canonical_and_idempotent(tmp_path) -> None:
+    path = tmp_path / "state.db"
+    store = Store(path)
+
+    declared = store._declared_migrations()  # noqa: SLF001
+    assert any(migration.version == CAPABILITY_MIGRATION_VERSION for migration in declared)
+
+    with sqlite3.connect(path) as connection:
+        before = connection.execute(
+            "select version, name from schema_migrations where version = ?",
+            (CAPABILITY_MIGRATION_VERSION,),
+        ).fetchone()
+    assert before == (CAPABILITY_MIGRATION_VERSION, "principal_capability_grants")
+
+    Store(path)
+    with sqlite3.connect(path) as connection:
+        assert connection.execute(
+            "select count(*) from schema_migrations where version = ?",
+            (CAPABILITY_MIGRATION_VERSION,),
+        ).fetchone() == (1,)
+
+
+def test_capability_reads_do_not_run_migrations_after_startup(tmp_path, monkeypatch) -> None:
+    store = Store(tmp_path / "state.db")
+    calls = 0
+    original_run = migrations.MigrationRunner.run
+
+    def counted_run(runner, migration_list):
+        nonlocal calls
+        calls += 1
+        return original_run(runner, migration_list)
+
+    monkeypatch.setattr(migrations.MigrationRunner, "run", counted_run)
+    for _ in range(5):
+        assert active_capability_grants(store, "missing-principal") == frozenset()
+    assert calls == 0
 
 
 def test_capability_grants_fail_closed_for_invalid_targets(settings) -> None:

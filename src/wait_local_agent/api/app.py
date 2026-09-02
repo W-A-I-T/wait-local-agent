@@ -3856,31 +3856,6 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         scope = resolve_client_scope(context, client_id)
         return [asdict(event) for event in store.list_audit_events(client_id=scope)]
 
-    @app.get("/audit/export")
-    def audit_export(
-        context: AdminAccess,
-        export_format: Literal["json", "csv"] = "json",
-        client_id: str | None = None,
-    ) -> Response:
-        scope = resolve_client_scope(context, client_id)
-        events = [asdict(event) for event in store.list_audit_events(client_id=scope)]
-        if export_format == "csv":
-            output = io.StringIO()
-            fieldnames = ["id", "event_type", "subject_id", "detail", "created_at", "client_id", "approver_id"]
-            writer = csv.DictWriter(output, fieldnames=fieldnames)
-            writer.writeheader()
-            writer.writerows(events)
-            return Response(
-                output.getvalue(),
-                media_type="text/csv",
-                headers={"Content-Disposition": 'attachment; filename="wait-audit-events.csv"'},
-            )
-        return Response(
-            json.dumps(events, sort_keys=True, indent=2) + "\n",
-            media_type="application/json",
-            headers={"Content-Disposition": 'attachment; filename="wait-audit-events.json"'},
-        )
-
     @app.get("/audit-events/export")
     def audit_events_export(
         context: AdminAccess,
@@ -3982,14 +3957,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @app.post("/backups/run")
     def run_backup(context: AdminAccess) -> dict[str, object]:
         _require_msp_operator(context)
+        if active_settings.demo_mode:
+            raise HTTPException(status_code=403, detail="backup runs are unavailable in demo mode")
         store.add_audit_event(
             "backup.run_requested",
             "manual",
             "admin requested backup run",
             approver_id=context.approver_id,
         )
-        if active_settings.demo_mode:
-            raise HTTPException(status_code=403, detail="backup runs are unavailable in demo mode")
         return asdict(scheduler.run_backup())
 
     @app.post("/backups")
