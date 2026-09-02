@@ -3856,11 +3856,22 @@ def test_halopsa_write_health_api(settings) -> None:
     assert response.json()["status"] == "blocked"
 
 
-def test_halopsa_write_health_uses_general_limit_but_provider_health_keeps_connector_limit(settings) -> None:
+@pytest.mark.parametrize(
+    "write_health_path",
+    [
+        "/connectors/halopsa/write-health",
+        "/connectors/connectwise/write-health",
+        "/connectors/servicenow/write-health",
+        "/connectors/autotask/write-health",
+    ],
+)
+def test_write_health_routes_use_general_limit_but_provider_health_keeps_connector_limit(
+    settings, write_health_path: str
+) -> None:
     rate_limited_settings = replace(settings, rate_limit_enabled=True)
     write_health_client = TestClient(create_app(rate_limited_settings))
 
-    write_health_responses = [write_health_client.get("/connectors/halopsa/write-health") for _ in range(12)]
+    write_health_responses = [write_health_client.get(write_health_path) for _ in range(12)]
 
     assert all(response.status_code == 200 for response in write_health_responses)
 

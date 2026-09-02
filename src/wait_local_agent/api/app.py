@@ -4367,7 +4367,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return asdict(result)
 
     @app.get("/connectors/connectwise/write-health")
-    @limiter.limit(active_settings.rate_limit_connector)
+    @limiter.limit(active_settings.rate_limit_general)
     def connectwise_write_health(request: Request, _: ViewerAccess) -> dict[str, object]:
         result = connectwise_client.write_health()
         store.add_audit_event("connectwise.write_health", "connectwise", result.status)
@@ -4519,7 +4519,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return asdict(result)
 
     @app.get("/connectors/servicenow/write-health")
-    @limiter.limit(active_settings.rate_limit_connector)
+    @limiter.limit(active_settings.rate_limit_general)
     def servicenow_write_health(request: Request, _: ViewerAccess) -> dict[str, object]:
         result = servicenow_client.write_health()
         store.add_audit_event("servicenow.write_health", "servicenow", result.status)
@@ -4585,7 +4585,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return asdict(result)
 
     @app.get("/connectors/autotask/write-health")
-    @limiter.limit(active_settings.rate_limit_connector)
+    @limiter.limit(active_settings.rate_limit_general)
     def autotask_write_health(request: Request, _: ViewerAccess) -> dict[str, object]:
         result = autotask_client.write_health()
         store.add_audit_event("autotask.write_health", "autotask", result.status)
