@@ -1,10 +1,8 @@
 import { useCallback, useEffect, useState } from "react";
-import { apiFetch } from "../api/client";
-import { buildApiHeaders } from "../api/headers";
+import { apiFetch, apiFetchBlob } from "../api/client";
 import { EmptyState } from "../components/EmptyState";
 import { LoadingState } from "../components/LoadingState";
 import type { ExecutionDetail, ExecutionRun } from "../api/types";
-import { apiUrl } from "../lib/config";
 
 function displayValue(value: unknown): string {
   return typeof value === "string" ? value : JSON.stringify(value ?? {}, null, 2);
@@ -53,11 +51,8 @@ export function Executions() {
   async function downloadArtifact(artifact: ExecutionDetail["artifacts"][number]) {
     if (!selected) return;
     try {
-      const response = await fetch(apiUrl(`/executions/${selected.id}/artifacts/${artifact.id}`), {
-        headers: buildApiHeaders()
-      });
-      if (!response.ok) throw new Error("The artifact could not be downloaded.");
-      const url = URL.createObjectURL(await response.blob());
+      const blob = await apiFetchBlob(`/executions/${selected.id}/artifacts/${artifact.id}`);
+      const url = URL.createObjectURL(blob);
       const anchor = document.createElement("a");
       anchor.href = url;
       anchor.download = artifact.name;

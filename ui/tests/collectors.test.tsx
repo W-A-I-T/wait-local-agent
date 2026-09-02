@@ -100,6 +100,9 @@ describe("Collectors screen", () => {
       if (path === "/collectors/runs/7") {
         return json(runDetail);
       }
+      if (path === "/collectors/runs/7/export" && init?.method === "POST") {
+        return json({ report_type: "collector_bundle", title: "Collector bundle", sections: [] });
+      }
       throw new Error(`Unexpected request: ${path}`);
     }));
   });
@@ -191,6 +194,22 @@ describe("Collectors screen", () => {
     expect(screen.getByText("Missing network sockets")).toBeInTheDocument();
     const details = screen.getByText("collector configuration is invalid");
     expect(details.closest("details")).toBeInTheDocument();
+  });
+
+  it("exports a run with the backend's POST contract and renders the report", async () => {
+    runsAvailable = true;
+    render(<Collectors />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Export" }));
+    await waitFor(() => {
+      expect(fetch).toHaveBeenCalledWith(
+        "/collectors/runs/7/export",
+        expect.objectContaining({ method: "POST" })
+      );
+    });
+    const exportCall = vi.mocked(fetch).mock.calls.find(([input]) => String(input) === "/collectors/runs/7/export");
+    expect(exportCall?.[1]?.body).toBeUndefined();
+    expect(await screen.findByText(/Collector bundle/)).toBeInTheDocument();
   });
 });
 

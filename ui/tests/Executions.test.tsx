@@ -4,7 +4,10 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { Executions } from "../src/screens/Executions";
 
 describe("Executions", () => {
+  let artifactResponse: Response;
+
   beforeEach(() => {
+    artifactResponse = new Response('{"ok":true}', { status: 200 });
     vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL) => {
       const path = String(input);
       if (path === "/executions" || path.startsWith("/executions?")) return Promise.resolve(new Response(JSON.stringify([{
@@ -32,7 +35,7 @@ describe("Executions", () => {
         steps: [{ id: 8, ordinal: 0, kind: "tool.invoke", name: "Ticket triage", status: "success", started_at: "", finished_at: "", output: { classification: "network" }, error_detail: "" }],
         artifacts: [{ id: 2, step_ordinal: 0, name: "summary.json", media_type: "application/json", byte_size: 42, sha256: "abc123" }]
       }), { status: 200 }));
-      if (path === "/executions/4/artifacts/2") return Promise.resolve(new Response('{"ok":true}', { status: 200 }));
+      if (path === "/executions/4/artifacts/2") return Promise.resolve(artifactResponse);
       throw new Error(`Unexpected request: ${path}`);
     }));
   });
@@ -64,5 +67,20 @@ describe("Executions", () => {
     await waitFor(() => expect((vi.mocked(fetch) as unknown as { mock: { calls: Array<[RequestInfo | URL]> } }).mock.calls.some(([input]) => String(input) === "/executions/4/artifacts/2")).toBe(true));
     expect(createObjectURL).toHaveBeenCalled();
     expect(revokeObjectURL).toHaveBeenCalledWith("blob:artifact");
+  });
+
+  it("surfaces the friendly API error when artifact download is forbidden", async () => {
+    artifactResponse = new Response(JSON.stringify({ detail: "technician access required" }), {
+      status: 403,
+      headers: { "Content-Type": "application/json" }
+    });
+    render(<MemoryRouter><Executions /></MemoryRouter>);
+
+    fireEvent.click(await screen.findByRole("button", { name: /Run #4/ }));
+    fireEvent.click(await screen.findByRole("button", { name: "Download" }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "You do not have permission to do that. Check your access and try again."
+    );
   });
 });

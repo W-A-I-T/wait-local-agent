@@ -181,7 +181,7 @@ export function Settings() {
 
   async function checkForUpdates() {
     try {
-      const value = await apiFetch<UpdateStatus>("/update-check");
+      const value = await apiFetch<UpdateStatus>("/update-check", { method: "POST" });
       setStatus(value);
       setStatusMessage("Update check complete.");
     } catch (error) {
