@@ -87,7 +87,18 @@ describe("useConfiguredState", () => {
 
     expect(result.current.steps.find((step) => step.id === "admin")?.status).toBe("done");
     expect(result.current.isConfigured).toBe(true);
-    expect(mockedApiFetch).toHaveBeenCalledTimes(4);
+    await waitFor(() => expect(mockedApiFetch).toHaveBeenCalledTimes(4));
+  });
+
+  it("does not call admin-only connector bootstrap endpoints for a technician", async () => {
+    mockResponses();
+
+    const { result } = renderHook(() => useConfiguredState({ role: "technician" }));
+
+    await waitFor(() => expect(result.current.loading).toBe(false));
+    expect(mockedApiFetch.mock.calls.map(([path]) => path)).toEqual(["/clients", "/health"]);
+    expect(mockedApiFetch).not.toHaveBeenCalledWith("/connector-instances");
+    expect(mockedApiFetch).not.toHaveBeenCalledWith("/client-connector-mappings");
   });
 });
 

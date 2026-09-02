@@ -118,7 +118,11 @@ describe("Sidebar navigation IA", () => {
   it("shows the end-user support entry only when the surface is enabled", () => {
     renderSidebar("admin", true, true, true);
 
-    expect(screen.getByRole("link", { name: "End-user support" })).toHaveAttribute("href", "/end-user");
+    const portalLink = screen.getByRole("link", { name: "End-user support" });
+    expect(portalLink).toHaveAttribute("href", "/end-user");
+    expect(portalLink).toHaveAttribute("target", "_blank");
+    expect(portalLink).toHaveAttribute("rel", "noopener");
+    expect(screen.getByText("Customer portal — separate sign-in")).toBeInTheDocument();
   });
 
   it("hides the end-user support entry when the surface is disabled", () => {
@@ -173,7 +177,7 @@ describe("Sidebar navigation IA", () => {
     renderSidebar("viewer");
     fireEvent.click(screen.getByText("System / Advanced"));
 
-    for (const label of ["Connector Instances", "Identity & Access", "Microsoft Admin Access", "Sync / Reconciliation", "Appliance Health", "Diagnostics & Support", "Extensions / Packs", "MCP"]) {
+    for (const label of ["Connector Instances", "Identity & Access", "Microsoft Admin Access", "Settings", "Sync / Reconciliation", "Appliance Health", "Diagnostics & Support", "Extensions / Packs", "MCP"]) {
       expect(screen.queryByRole("link", { name: label })).not.toBeInTheDocument();
     }
 

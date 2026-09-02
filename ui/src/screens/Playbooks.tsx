@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useDashboard } from "../app/DashboardContext";
-import { ApiRequestError, apiFetch } from "../api/client";
+import { ApiRequestError, apiFetch, shouldSuppressClientScopeError } from "../api/client";
 import { Link } from "react-router-dom";
 import { SchemaForm, validateRequiredFields, type SchemaFormValue } from "../components/SchemaForm";
 import { StatusChip } from "../components/StatusChip";
@@ -45,6 +45,16 @@ type SubscriptionDraft = {
   playbookId: string;
 };
 
+function scopeAwareErrorMessage(
+  error: unknown,
+  fallback: string,
+  clientScopeIds: string[] | null | undefined,
+  isMspAdmin: boolean | undefined
+): string {
+  if (shouldSuppressClientScopeError(error, clientScopeIds, isMspAdmin)) return "";
+  return error instanceof Error ? error.message : fallback;
+}
+
 function uniqueValues(values: string[]): string[] {
   return [...new Set(values.filter(Boolean))];
 }
@@ -79,7 +89,7 @@ function renderDiffValue(value: unknown): string {
 }
 
 export function Playbooks() {
-  const { canWrite, selectedClientId, selectedTicketId } = useDashboard();
+  const { canWrite, selectedClientId, selectedTicketId, clientScopeIds, isMspAdmin } = useDashboard();
   const [playbooks, setPlaybooks] = useState<MspPlaybook[]>([]);
   const [entries, setEntries] = useState<MspPlaybookEntry[]>([]);
   const [subscriptions, setSubscriptions] = useState<MspPlaybookSubscription[]>([]);
@@ -122,15 +132,15 @@ export function Playbooks() {
     const errors: string[] = [];
     const [playbookResult, entryResult, subscriptionResult] = results;
     if (playbookResult.status === "fulfilled") setPlaybooks(playbookResult.value);
-    else errors.push("The playbook library is unavailable.");
+    else if (!shouldSuppressClientScopeError(playbookResult.reason, clientScopeIds, isMspAdmin)) errors.push("The playbook library is unavailable.");
     if (entryResult.status === "fulfilled") setEntries(entryResult.value);
-    else errors.push("Published playbook status is unavailable.");
+    else if (!shouldSuppressClientScopeError(entryResult.reason, clientScopeIds, isMspAdmin)) errors.push("Published playbook status is unavailable.");
     if (subscriptionResult.status === "fulfilled") setSubscriptions(subscriptionResult.value);
-    else errors.push("Playbook event subscriptions are unavailable.");
+    else if (!shouldSuppressClientScopeError(subscriptionResult.reason, clientScopeIds, isMspAdmin)) errors.push("Playbook event subscriptions are unavailable.");
     if (errors.length) {
       setMessage(errors.join(" "));
     }
-  }, []);
+  }, [clientScopeIds, isMspAdmin]);
 
   useEffect(() => {
     void refresh();
@@ -181,7 +191,7 @@ export function Playbooks() {
       setPreviews((current) => ({ ...current, [playbook.id]: result }));
       setMessage(`Preview ready for ${playbook.name}.`);
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : "Unable to preview this playbook.");
+      setMessage(scopeAwareErrorMessage(error, "Unable to preview this playbook.", clientScopeIds, isMspAdmin));
     }
   }
 
@@ -198,7 +208,7 @@ export function Playbooks() {
       setRuns((current) => ({ ...current, [playbook.id]: result }));
       setMessage(`Started ${playbook.name}.`);
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : "Unable to run this playbook.");
+      setMessage(scopeAwareErrorMessage(error, "Unable to run this playbook.", clientScopeIds, isMspAdmin));
     }
   }
 
@@ -218,7 +228,7 @@ export function Playbooks() {
       setMessage(`Published ${playbook.name}.`);
       await refresh();
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : "Unable to publish this playbook.");
+      setMessage(scopeAwareErrorMessage(error, "Unable to publish this playbook.", clientScopeIds, isMspAdmin));
     }
   }
 
@@ -233,7 +243,7 @@ export function Playbooks() {
       setEntries((current) => current.map((item) => item.id === updated.id ? updated : item));
       setMessage(`${updated.definition.name} is now ${updated.enabled ? "enabled" : "disabled"}.`);
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : "Unable to change playbook availability.");
+      setMessage(scopeAwareErrorMessage(error, "Unable to change playbook availability.", clientScopeIds, isMspAdmin));
     }
   }
 
@@ -330,7 +340,7 @@ export function Playbooks() {
         return next;
       });
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : "Unable to load playbook history.");
+      setMessage(scopeAwareErrorMessage(error, "Unable to load playbook history.", clientScopeIds, isMspAdmin));
     }
   }
 
@@ -345,7 +355,7 @@ export function Playbooks() {
       );
       setDiffs((current) => ({ ...current, [entry.id]: diff }));
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : "Unable to compare playbook history.");
+      setMessage(scopeAwareErrorMessage(error, "Unable to compare playbook history.", clientScopeIds, isMspAdmin));
     }
   }
 
@@ -367,7 +377,7 @@ export function Playbooks() {
       setDrafts((current) => ({ ...current, [restored.id]: draftFromEntry(restored) }));
       await showRevisions(restored);
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : "Unable to restore playbook history.");
+      setMessage(scopeAwareErrorMessage(error, "Unable to restore playbook history.", clientScopeIds, isMspAdmin));
     }
   }
 
@@ -382,7 +392,7 @@ export function Playbooks() {
       setSubscriptions((current) => current.map((item) => item.id === updated.id ? updated : item));
       setMessage(`Event subscription is now ${updated.enabled ? "enabled" : "disabled"}.`);
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : "Unable to change the event subscription.");
+      setMessage(scopeAwareErrorMessage(error, "Unable to change the event subscription.", clientScopeIds, isMspAdmin));
     }
   }
 
@@ -402,7 +412,7 @@ export function Playbooks() {
       setSubscriptionEditErrors((errors) => ({ ...errors, [subscription.id]: "" }));
       setEditingSubscriptionId(subscription.id);
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : "Unable to load the event subscription.");
+      setMessage(scopeAwareErrorMessage(error, "Unable to load the event subscription.", clientScopeIds, isMspAdmin));
     }
   }
 
@@ -433,7 +443,7 @@ export function Playbooks() {
       setEditingSubscriptionId(null);
       setMessage("Event subscription saved.");
     } catch (error) {
-      setSubscriptionEditErrors((errors) => ({ ...errors, [subscription.id]: error instanceof Error ? error.message : "Unable to save the event subscription." }));
+      setSubscriptionEditErrors((errors) => ({ ...errors, [subscription.id]: scopeAwareErrorMessage(error, "Unable to save the event subscription.", clientScopeIds, isMspAdmin) }));
     } finally {
       setSavingSubscriptionId(null);
     }

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { apiFetch } from "../api/client";
 import type { ReadinessStep } from "../api/types";
 
@@ -29,12 +29,13 @@ const initialReadiness: FetchedReadiness = {
 
 export function useConfiguredState({ role }: { role?: string | null }): ConfigurationState {
   const [readiness, setReadiness] = useState<FetchedReadiness>(initialReadiness);
+  const roleRef = useRef(role);
 
   const refresh = useCallback(async () => {
     const [clients, connectors, mappings, health] = await Promise.allSettled([
       apiFetch<unknown>("/clients"),
-      apiFetch<unknown>("/connector-instances"),
-      apiFetch<unknown>("/client-connector-mappings"),
+      roleRef.current === "admin" ? apiFetch<unknown>("/connector-instances") : Promise.resolve(null),
+      roleRef.current === "admin" ? apiFetch<unknown>("/client-connector-mappings") : Promise.resolve(null),
       apiFetch<unknown>("/health")
     ]);
     setReadiness({
@@ -50,6 +51,12 @@ export function useConfiguredState({ role }: { role?: string | null }): Configur
   useEffect(() => {
     void refresh();
   }, [refresh]);
+
+  useEffect(() => {
+    if (roleRef.current === role) return;
+    roleRef.current = role;
+    void refresh();
+  }, [refresh, role]);
 
   const steps = useMemo<ReadinessStep[]>(() => [
     {

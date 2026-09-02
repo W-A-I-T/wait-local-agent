@@ -4,7 +4,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { Settings } from "./Settings";
 
 const dashboardState = vi.hoisted(() => ({
-  authState: "demo" as "demo" | "authenticated" | "local-open",
+  authState: "demo" as "demo" | "authenticated",
   isAdmin: true,
   loading: false,
   role: "admin" as "admin" | "viewer"
@@ -59,7 +59,7 @@ function installSettingsResponses(demoMode: boolean) {
 
 describe("Settings demo mode explanation", () => {
   it("explains the active restrictions and restart-only change mechanism", async () => {
-    dashboardState.authState = "local-open";
+    dashboardState.authState = "authenticated";
     installSettingsResponses(true);
 
     render(
@@ -76,7 +76,7 @@ describe("Settings demo mode explanation", () => {
   });
 
   it("omits the active restriction explanation when demo mode is off", async () => {
-    dashboardState.authState = "local-open";
+    dashboardState.authState = "authenticated";
     installSettingsResponses(false);
 
     render(

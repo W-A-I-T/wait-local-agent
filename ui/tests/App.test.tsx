@@ -66,12 +66,11 @@ describe("App", () => {
     renderApp();
 
     expect(await screen.findByRole("heading", { name: "WAIT AI Solutions Architect" })).toBeInTheDocument();
-    expect(await screen.findByText("Local mode · full access")).toBeInTheDocument();
+    expect(await screen.findByText("Role: admin")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Sign out" })).toBeInTheDocument();
     expect(screen.getByLabelText("Signed-in account")).toHaveTextContent("Local appliance");
-    fireEvent.click(screen.getByRole("button", { name: "Explain local mode" }));
-    expect(screen.getByText(/access controls are off/i)).toBeInTheDocument();
-    expect(screen.getByText(/configure an administrator or team access credential/i)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Explain authenticated access" }));
+    expect(screen.getByText("Your access level comes from your signed-in account.")).toBeInTheDocument();
     expect(screen.getByText("Local-first solution design, governed execution, and MSP operations.")).toBeInTheDocument();
     expect((await screen.findAllByText("HALO-1")).length).toBeGreaterThan(0);
     expect(screen.getByRole("heading", { name: "Approval Queue" })).toBeInTheDocument();
@@ -249,7 +248,7 @@ async function mockFetch(
 ): Promise<Response> {
   const path = String(input);
   if (path === "/auth/role") {
-    return json({ role, api_auth_required: role !== "admin", demo_mode: false });
+    return json({ role, api_auth_required: true, demo_mode: false, auth_method: "local" });
   }
   if (path === "/connectors") {
     return json([
