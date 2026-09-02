@@ -3,10 +3,14 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 import shutil
+import subprocess  # nosec B404 - probe argv is fixed, shell=False, and timeout is bounded below
 from collections.abc import Mapping
 from typing import Any, cast
+
+from wait_local_agent.config import Settings, load_settings
 
 MAX_CONNECTOR_DEFINITION_BYTES = 1_000_000
 MAX_CONNECTOR_ACTIONS = 64
@@ -193,14 +197,86 @@ def definition_size_bytes(definition: Mapping[str, object]) -> int:
     return len(json.dumps(definition, sort_keys=True, separators=(",", ":")).encode("utf-8"))
 
 
-def power_platform_cli_status() -> dict[str, Any]:
-    """Report local ``pac`` availability without starting a process."""
+PAC_VERSION_PROBE_TIMEOUT_SECONDS = 5.0
+PAC_VERSION_PROBE_COMMAND = "pac help"
+PAC_VERSION_PROBE_ARGS = ("help",)
+_PAC_VERSION_PATTERN = re.compile(r"(?im)^\s*Version:\s*(\d+(?:\.\d+)+)")
 
-    path = shutil.which("pac")
+
+def resolve_pac_executable(settings: Settings) -> str | None:
+    """Resolve the configured or PATH-provided ``pac`` executable."""
+
+    if settings.pac_path is not None:
+        try:
+            configured_path = settings.pac_path.expanduser()
+            if configured_path.is_symlink():
+                return None
+            resolved_path = configured_path.resolve()
+            if not resolved_path.is_file() or not os.access(resolved_path, os.X_OK):
+                return None
+        except (OSError, RuntimeError):
+            return None
+        return str(resolved_path)
+    return shutil.which("pac")
+
+
+def parse_pac_version(output: str) -> str | None:
+    """Extract the dotted numeric CLI version from ``pac help`` output."""
+
+    match = _PAC_VERSION_PATTERN.search(output)
+    return match.group(1) if match else None
+
+
+def _version_tuple(version: str) -> tuple[int, ...]:
+    if not re.fullmatch(r"\d+(?:\.\d+)+", version):
+        raise ValueError("version must contain dotted numeric components")
+    return tuple(int(component) for component in version.split("."))
+
+
+def compare_pac_versions(left: str, right: str) -> int:
+    """Compare dotted numeric versions using integer tuples."""
+
+    left_tuple = _version_tuple(left)
+    right_tuple = _version_tuple(right)
+    return (left_tuple > right_tuple) - (left_tuple < right_tuple)
+
+
+def pac_cli_version(
+    executable: str,
+    *,
+    run=subprocess.run,
+) -> str | None:
+    """Return the CLI version from a bounded, shell-free ``pac`` probe."""
+
+    try:
+        completed = run(
+            [executable, *PAC_VERSION_PROBE_ARGS],
+            capture_output=True,
+            text=True,
+            check=False,
+            shell=False,
+            timeout=PAC_VERSION_PROBE_TIMEOUT_SECONDS,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    if completed.returncode != 0:
+        return None
+    output = "\n".join(
+        value for value in (completed.stdout, completed.stderr) if isinstance(value, str)
+    )
+    return parse_pac_version(output)
+
+
+def power_platform_cli_status(settings: Settings | None = None) -> dict[str, Any]:
+    """Resolve ``pac`` and run a bounded ``pac help`` probe."""
+
+    active_settings = settings or load_settings()
+    path = resolve_pac_executable(active_settings)
     return {
         "available": path is not None,
         "path": path,
-        "commands_executed": False,
+        "version": pac_cli_version(path) if path is not None else None,
+        "commands_executed": path is not None,
     }
 
 

@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 import copy
+import subprocess
+from dataclasses import replace
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -8,9 +11,12 @@ import pytest
 from wait_local_agent.power_platform import (
     OpenApiDefinitionError,
     build_solution_command_plan,
+    compare_pac_versions,
     definition_size_bytes,
     generate_power_platform_connector,
+    pac_cli_version,
     power_platform_cli_status,
+    resolve_pac_executable,
 )
 
 
@@ -190,17 +196,111 @@ def test_connector_generation_rejects_large_documents() -> None:
         generate_power_platform_connector("halo", value)
 
 
-def test_solution_plan_is_reviewable_and_does_not_execute(monkeypatch) -> None:
+def test_solution_plan_is_reviewable_and_does_not_execute(monkeypatch, settings) -> None:
     monkeypatch.setattr("wait_local_agent.power_platform.shutil.which", lambda _: "/usr/bin/pac")
-    assert power_platform_cli_status() == {
+    monkeypatch.setattr("wait_local_agent.power_platform.pac_cli_version", lambda _: "2.4.1")
+    assert power_platform_cli_status(settings) == {
         "available": True,
         "path": "/usr/bin/pac",
-        "commands_executed": False,
+        "version": "2.4.1",
+        "commands_executed": True,
     }
     plan = build_solution_command_plan("onboarding", "WAIT_Dev", "wait", "/tmp/onboarding")
     assert plan["execution_started"] is False
     assert plan["deployment_started"] is False
     assert plan["commands"][-1][:3] == ["pac", "solution", "check"]
+
+
+def test_power_platform_cli_status_reports_probe_execution(settings, monkeypatch) -> None:
+    probe_calls: list[str] = []
+
+    def probe(executable: str) -> str:
+        probe_calls.append(executable)
+        return "2.4.1"
+
+    monkeypatch.setattr("wait_local_agent.power_platform.pac_cli_version", probe)
+    monkeypatch.setattr("wait_local_agent.power_platform.shutil.which", lambda _: None)
+    unavailable = power_platform_cli_status(settings)
+
+    assert unavailable["commands_executed"] is False
+    assert probe_calls == []
+
+    monkeypatch.setattr("wait_local_agent.power_platform.shutil.which", lambda _: "/usr/bin/pac")
+    available = power_platform_cli_status(settings)
+
+    assert available["commands_executed"] is True
+    assert probe_calls == ["/usr/bin/pac"]
+
+
+def test_pac_resolver_uses_configured_executable_without_path_fallback(settings, tmp_path: Path, monkeypatch) -> None:
+    executable = tmp_path / "pac"
+    executable.write_text("fake pac", encoding="utf-8")
+    executable.chmod(0o755)
+    monkeypatch.setattr(
+        "wait_local_agent.power_platform.shutil.which",
+        lambda _: pytest.fail("PATH lookup must not run for an explicit path"),
+    )
+
+    assert resolve_pac_executable(replace(settings, pac_path=executable)) == str(executable.resolve())
+
+
+def test_pac_resolver_falls_back_to_path_when_unconfigured(settings, monkeypatch) -> None:
+    monkeypatch.setattr("wait_local_agent.power_platform.shutil.which", lambda _: "/usr/bin/pac")
+
+    assert resolve_pac_executable(settings) == "/usr/bin/pac"
+
+
+def test_pac_resolver_rejects_invalid_configured_paths_without_path_fallback(
+    settings, tmp_path: Path, monkeypatch
+) -> None:
+    executable = tmp_path / "pac"
+    executable.write_text("fake pac", encoding="utf-8")
+    executable.chmod(0o755)
+    non_executable = tmp_path / "not-executable"
+    non_executable.write_text("fake pac", encoding="utf-8")
+    symlink = tmp_path / "pac-link"
+    symlink.symlink_to(executable)
+    monkeypatch.setattr(
+        "wait_local_agent.power_platform.shutil.which",
+        lambda _: pytest.fail("PATH lookup must not run for an invalid explicit path"),
+    )
+
+    for path in (tmp_path / "missing", non_executable, symlink):
+        assert resolve_pac_executable(replace(settings, pac_path=path)) is None
+
+
+def test_pac_cli_version_parses_real_output_with_injected_runner() -> None:
+    def runner(command, **kwargs):
+        assert command == ["/fake/pac", "help"]
+        assert kwargs["shell"] is False
+        return subprocess.CompletedProcess(
+            command,
+            0,
+            "Microsoft PowerPlatform CLI\nVersion: 2.4.1+g3799f3e (.NET 10.0.11)\n",
+            "",
+        )
+
+    assert pac_cli_version("/fake/pac", run=runner) == "2.4.1"
+
+
+def test_pac_cli_version_fails_closed_for_bad_probe_results() -> None:
+    assert pac_cli_version(
+        "/fake/pac",
+        run=lambda *_args, **_kwargs: subprocess.CompletedProcess([], 0, "not a version", ""),
+    ) is None
+    assert pac_cli_version(
+        "/fake/pac",
+        run=lambda *_args, **_kwargs: subprocess.CompletedProcess([], 1, "Version: 2.4.1", ""),
+    ) is None
+
+    def timeout_runner(*_args, **_kwargs):
+        raise subprocess.TimeoutExpired(["/fake/pac", "help"], 5)
+
+    assert pac_cli_version("/fake/pac", run=timeout_runner) is None
+
+
+def test_pac_versions_use_integer_tuple_comparison() -> None:
+    assert compare_pac_versions("2.10.0", "2.9.0") > 0
 
 
 @pytest.mark.parametrize(

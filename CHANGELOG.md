@@ -59,6 +59,9 @@ All notable changes to WAIT Local Agent will be documented in this file.
 
 ### Fixed
 
+- Power Platform deployment and rollback execution now enforce the minimum CLI
+  version and block when the installed version cannot be determined.
+
 - Power Platform package deployability is now computed from emitted component
   readiness instead of being asserted by a hardcoded value.
 
@@ -90,6 +93,9 @@ All notable changes to WAIT Local Agent will be documented in this file.
   of echoing the plan's planning-time flag.
 
 ### Added
+
+- Added `WAIT_PAC_PATH` support for Power Platform CLI installations that are
+  not available on `PATH`.
 
 - Added administrator-only appliance diagnostics, deterministic redacted
   support bundles, local preview/download flows, bounded private rotating logs,

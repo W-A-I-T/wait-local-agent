@@ -61,10 +61,15 @@ wait-local-agent microsoft solution execute-stage <approval-id>
 Planning never invokes `pac`. Execution requires an approved stage request,
 admin authority for the execute route/command, `WAIT_ALLOW_WRITE_ACTIONS=true`,
 `WAIT_ALLOW_POWER_PLATFORM_DEPLOYMENT=true`, an authenticated `pac` executable
-on `PATH`, and a pre-existing `WAIT_POWER_PLATFORM_WORKSPACE`. The output
-directory must be inside that workspace. Commands use `shell=False`, fixed
-argument positions, bounded timeouts, and redacted output. Credentials are
-never accepted in the plan or approval payload.
+and a pre-existing `WAIT_POWER_PLATFORM_WORKSPACE`. By default WAIT resolves
+`pac` from `PATH`. Set `WAIT_PAC_PATH` to an explicit executable file when the
+CLI is installed elsewhere; `pac` commonly installs at `~/.dotnet/tools/pac`,
+which may not be on `PATH`. A configured path must be a regular executable file
+and must not be a symlink. The output directory must be inside that workspace.
+Commands use `shell=False`, fixed argument positions, bounded timeouts, and
+redacted output. Credentials are never accepted in the plan or approval
+payload. Execution is blocked when the CLI is older than the required minimum
+version (`2.4.1`) or when its version cannot be determined.
 
 After PAC completes, WAIT validates the expected solution archive before
 recording success: it must be a readable, bounded ZIP inside the configured

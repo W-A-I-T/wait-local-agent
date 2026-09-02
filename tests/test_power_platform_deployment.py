@@ -22,6 +22,11 @@ from wait_local_agent.power_platform_deployment import (
 )
 
 
+@pytest.fixture(autouse=True)
+def fake_pac_version(monkeypatch) -> None:
+    monkeypatch.setattr(deployment, "pac_cli_version", lambda _: "2.4.1")
+
+
 def _targets() -> list[dict[str, object]]:
     return [
         {"name": "dev", "environment_url": "https://dev.crm.dynamics.com"},
@@ -335,6 +340,92 @@ def test_execution_requires_both_explicit_gates_and_approval(settings, tmp_path:
     assert blocked["execution_started"] is False
 
 
+def test_stage_blocks_below_minimum_pac_version_before_runner(
+    settings, tmp_path: Path, monkeypatch
+) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    configured = replace(
+        settings,
+        allow_write_actions=True,
+        allow_power_platform_deployment=True,
+        power_platform_workspace=workspace,
+    )
+    monkeypatch.setattr(deployment, "resolve_pac_executable", lambda _: "/fake/pac")
+    monkeypatch.setattr(deployment, "pac_cli_version", lambda _: "2.4.0")
+    calls: list[list[str]] = []
+
+    def runner(command, cwd, timeout):
+        calls.append(command)
+        return subprocess.CompletedProcess(command, 0, "", "")
+
+    result = execute_power_platform_stage(
+        _plan(str(workspace / "solution")), "build", configured, approved=True, runner=runner
+    )
+
+    assert result["status"] == "blocked"
+    assert "2.4.0" in str(result["message"])
+    assert "2.4.1" in str(result["message"])
+    assert calls == []
+
+
+def test_stage_blocks_when_pac_version_cannot_be_determined_before_runner(
+    settings, tmp_path: Path, monkeypatch
+) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    configured = replace(
+        settings,
+        allow_write_actions=True,
+        allow_power_platform_deployment=True,
+        power_platform_workspace=workspace,
+    )
+    monkeypatch.setattr(deployment, "resolve_pac_executable", lambda _: "/fake/pac")
+    monkeypatch.setattr(deployment, "pac_cli_version", lambda _: None)
+    calls: list[list[str]] = []
+
+    def runner(command, cwd, timeout):
+        calls.append(command)
+        return subprocess.CompletedProcess(command, 0, "", "")
+
+    result = execute_power_platform_stage(
+        _plan(str(workspace / "solution")), "build", configured, approved=True, runner=runner
+    )
+
+    assert result["status"] == "blocked"
+    assert "could not be determined" in str(result["message"])
+    assert "pac help" in str(result["message"])
+    assert "2.4.0" not in str(result["message"])
+    assert calls == []
+
+
+@pytest.mark.parametrize("version", ["2.4.1", "2.10.0"])
+def test_stage_proceeds_at_or_above_minimum_pac_version(settings, tmp_path: Path, monkeypatch, version: str) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    configured = replace(
+        settings,
+        allow_write_actions=True,
+        allow_power_platform_deployment=True,
+        power_platform_workspace=workspace,
+    )
+    monkeypatch.setattr(deployment, "resolve_pac_executable", lambda _: "/fake/pac")
+    monkeypatch.setattr(deployment, "pac_cli_version", lambda _: version)
+
+    def runner(command, cwd, timeout):
+        artifact = cwd / "solution" / "onboarding_review.zip"
+        artifact.parent.mkdir(parents=True, exist_ok=True)
+        with zipfile.ZipFile(artifact, "w") as archive:
+            archive.writestr("solution.xml", "<ImportExportXml />")
+        return subprocess.CompletedProcess(command, 0, "", "")
+
+    result = execute_power_platform_stage(
+        _plan(str(workspace / "solution")), "build", configured, approved=True, runner=runner
+    )
+
+    assert result["status"] == "succeeded"
+
+
 def test_launch_argv_handles_windows_batch_shims_and_shell_metacharacters(monkeypatch) -> None:
     monkeypatch.setattr(deployment.platform_support, "is_windows", lambda: False)
     assert deployment._launch_argv("pac", ["solution", "list"]) == ["pac", "solution", "list"]
@@ -367,7 +458,7 @@ def test_batch_shim_metacharacters_fail_closed_for_stage_and_rollback(
         power_platform_workspace=workspace,
     )
     monkeypatch.setattr(deployment.platform_support, "is_windows", lambda: True)
-    monkeypatch.setattr(deployment.shutil, "which", lambda _: r"C:\Tools\pac.CMD")
+    monkeypatch.setattr(deployment, "resolve_pac_executable", lambda _: r"C:\Tools\pac.CMD")
     plan = _plan(str(workspace / "solution"))
     invalid_stage = dict(plan, stages=[{"id": "build", "commands": [["pac", "bad&arg"]]}])
 
@@ -409,7 +500,7 @@ def test_execution_is_shell_free_bounded_and_stops_on_failure(settings, tmp_path
         allow_power_platform_deployment=True,
         power_platform_workspace=workspace,
     )
-    monkeypatch.setattr(deployment.shutil, "which", lambda _: "/usr/local/bin/pac")
+    monkeypatch.setattr(deployment, "resolve_pac_executable", lambda _: "/usr/local/bin/pac")
     calls: list[tuple[list[str], Path, float]] = []
 
     def runner(command: list[str], cwd: Path, timeout: float) -> subprocess.CompletedProcess[str]:
@@ -502,9 +593,9 @@ def test_execution_covers_gates_path_confinement_and_command_failures(settings, 
         dict(plan, credentials_included=True), "build", configured, approved=True
     )["status"] == "blocked"
 
-    monkeypatch.setattr(deployment.shutil, "which", lambda _: None)
+    monkeypatch.setattr(deployment, "resolve_pac_executable", lambda _: None)
     assert execute_power_platform_stage(plan, "build", configured, approved=True)["status"] == "blocked"
-    monkeypatch.setattr(deployment.shutil, "which", lambda _: "/usr/local/bin/pac")
+    monkeypatch.setattr(deployment, "resolve_pac_executable", lambda _: "/usr/local/bin/pac")
     assert execute_power_platform_stage(plan, "unknown", configured, approved=True)["status"] == "blocked"
     assert execute_power_platform_stage(
         dict(plan, stages=[{"id": "other"}]), "build", configured, approved=True
@@ -582,7 +673,7 @@ def test_execution_requires_verifiable_artifact_and_uses_shell_free_runner(
         power_platform_workspace=workspace,
     )
     plan = _plan(str(workspace / "solution"))
-    monkeypatch.setattr(deployment.shutil, "which", lambda _: "/usr/local/bin/pac")
+    monkeypatch.setattr(deployment, "resolve_pac_executable", lambda _: "/usr/local/bin/pac")
     result = execute_power_platform_stage(
         plan,
         "build",
@@ -608,7 +699,7 @@ def test_rollback_reimports_only_a_verified_prior_package(settings, tmp_path: Pa
         power_platform_workspace=workspace,
     )
     plan = _plan(str(workspace / "solution"))
-    monkeypatch.setattr(deployment.shutil, "which", lambda _: "/usr/local/bin/pac")
+    monkeypatch.setattr(deployment, "resolve_pac_executable", lambda _: "/usr/local/bin/pac")
     calls: list[tuple[list[str], Path, float]] = []
 
     def runner(command: list[str], cwd: Path, timeout: float) -> subprocess.CompletedProcess[str]:
@@ -648,6 +739,45 @@ def test_rollback_reimports_only_a_verified_prior_package(settings, tmp_path: Pa
         "--environment",
         "https://test.crm.dynamics.com",
     ]
+
+
+def test_rollback_blocks_below_minimum_pac_version_before_runner(
+    settings, tmp_path: Path, monkeypatch
+) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    previous = workspace / "previous.zip"
+    with zipfile.ZipFile(previous, "w") as archive:
+        archive.writestr("solution.xml", "<ImportExportXml />")
+    digest = validate_power_platform_solution_package(previous, workspace)
+    configured = replace(
+        settings,
+        allow_write_actions=True,
+        allow_power_platform_deployment=True,
+        power_platform_workspace=workspace,
+    )
+    monkeypatch.setattr(deployment, "resolve_pac_executable", lambda _: "/fake/pac")
+    monkeypatch.setattr(deployment, "pac_cli_version", lambda _: "2.4.0")
+    calls: list[list[str]] = []
+
+    def runner(command, cwd, timeout):
+        calls.append(command)
+        return subprocess.CompletedProcess(command, 0, "", "")
+
+    result = execute_power_platform_rollback(
+        _plan(str(workspace / "solution")),
+        "dev",
+        configured,
+        rollback_artifact_path=previous,
+        rollback_evidence=_rollback_evidence(digest),
+        approved=True,
+        runner=runner,
+    )
+
+    assert result["status"] == "blocked"
+    assert "2.4.0" in str(result["message"])
+    assert "2.4.1" in str(result["message"])
+    assert calls == []
 
 
 @pytest.mark.parametrize(
@@ -701,7 +831,7 @@ def test_rollback_rejects_digest_mismatch_and_reports_pac_failure(settings, tmp_
         power_platform_workspace=workspace,
     )
     plan = _plan(str(workspace / "solution"))
-    monkeypatch.setattr(deployment.shutil, "which", lambda _: "/usr/local/bin/pac")
+    monkeypatch.setattr(deployment, "resolve_pac_executable", lambda _: "/usr/local/bin/pac")
     mismatch = execute_power_platform_rollback(
         plan,
         "dev",
@@ -793,7 +923,7 @@ def test_rollback_reports_missing_pac_timeout_and_start_failure(settings, tmp_pa
     )
     plan = _plan(str(workspace / "solution"))
     evidence = _rollback_evidence(digest)
-    monkeypatch.setattr(deployment.shutil, "which", lambda _: None)
+    monkeypatch.setattr(deployment, "resolve_pac_executable", lambda _: None)
     missing = execute_power_platform_rollback(
         plan,
         "dev",
@@ -805,7 +935,7 @@ def test_rollback_reports_missing_pac_timeout_and_start_failure(settings, tmp_pa
     assert missing["status"] == "blocked"
     assert "not available" in str(missing["message"])
 
-    monkeypatch.setattr(deployment.shutil, "which", lambda _: "/usr/local/bin/pac")
+    monkeypatch.setattr(deployment, "resolve_pac_executable", lambda _: "/usr/local/bin/pac")
 
     def timeout_runner(command, cwd, timeout):
         raise subprocess.TimeoutExpired(command, timeout)
