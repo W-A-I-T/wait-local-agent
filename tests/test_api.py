@@ -6121,8 +6121,18 @@ def test_executions_api_hides_all_runs_from_tenantless_principal(settings) -> No
         if isinstance(route, APIRoute) and route.path == "/analytics/summary"
     )
 
+    request = Request(
+        {
+            "type": "http",
+            "method": "GET",
+            "path": "/executions",
+            "headers": [],
+            "query_string": b"",
+        }
+    )
+
     with pytest.raises(HTTPException, match="has no tenant"):
-        executions_endpoint(tenantless)
+        executions_endpoint(request=request, context=tenantless)
     with pytest.raises(HTTPException, match="has no tenant"):
         analytics_endpoint(tenantless)
 

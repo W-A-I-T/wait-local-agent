@@ -296,15 +296,13 @@ def test_capability_dependency_and_scope_enforce_selected_client(settings) -> No
             "type": "http",
             "method": "GET",
             "path": "/",
-            "headers": [],
+            "headers": [(b"x-wait-client-id", b"acme")],
             "query_string": b"",
             "app": app,
         }
     )
 
-    context = require_capability(MICROSOFT_ADMIN_CAPABILITY)(
-        request, authorization="Bearer operator-secret", selected_client_id="acme"
-    )
+    context = require_capability(MICROSOFT_ADMIN_CAPABILITY)(request, authorization="Bearer operator-secret")
 
     assert context.principal_id == "operator"
     assert require_capability_scope(context, MICROSOFT_ADMIN_CAPABILITY, "acme") == "acme"
