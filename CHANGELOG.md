@@ -88,6 +88,9 @@ All notable changes to WAIT Local Agent will be documented in this file.
   and added frontend route/method contract guards for the development proxy.
 - Microsoft Admin Graph routes now use the client scope authorized for the
   request, and fail closed when that client has no active connector.
+- SPA HTML fallbacks now opt out of caching and vary on `Accept`, API requests
+  explicitly negotiate JSON, and the dashboard no longer repeatedly rate-limits
+  its local write-health check or Halo ticket bootstrap request.
 
 - Production trusted-host defaults no longer include the test-only `testserver`
   host, and refused demo-mode backup requests no longer create audit events.

@@ -75,6 +75,12 @@ Caddy obtains and renews the public certificate. Set
 dashboard with the administrator, technician, or viewer credentials appropriate
 for each operator.
 
+Reverse proxies must forward the browser's `Accept` header unchanged. They must
+not cache HTML responses from the appliance: SPA navigation responses are marked
+`Cache-Control: no-store` and `Vary: Accept`, while JSON API requests explicitly
+request `application/json`. Preserve those headers when configuring proxy
+caching so a cached dashboard document cannot be returned to an API request.
+
 ## Backups
 
 The SQLite state and vault live under `/data` in the named volume. Use the
