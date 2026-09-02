@@ -3,7 +3,9 @@
 
 import { FormEvent, type CSSProperties, useState } from "react";
 import { AlertTriangle, CheckCircle2, KeyRound, LifeBuoy, Search, ShieldCheck } from "lucide-react";
+import { Link } from "react-router-dom";
 import { apiFetch, ApiRequestError } from "../api/client";
+import { loadStoredApiToken } from "../api/headers";
 import type { EndUserBranding, EndUserMessage, EndUserTicket } from "../api/types";
 import { EmptyState } from "../components/EmptyState";
 import { LoadingState } from "../components/LoadingState";
@@ -50,6 +52,7 @@ export function EndUserSupport() {
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState<"create" | "lookup" | "message" | "escalate" | null>(null);
+  const hasOperatorSession = loadStoredApiToken().trim().length > 0;
 
   async function saveToken(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -179,7 +182,7 @@ export function EndUserSupport() {
     <main className="end-user-shell" style={{ "--end-user-accent": branding.brand_accent_color, "--end-user-surface": branding.brand_surface_color } as CSSProperties}>
       <div className="end-user-header">
         <div className="end-user-brand">{branding.brand_logo_data_uri ? <img className="end-user-logo" src={branding.brand_logo_data_uri} alt="" /> : <ShieldCheck size={30} aria-hidden="true" />}<div><strong>{branding.brand_name}</strong><span>{branding.brand_tagline}</span></div></div>
-        <div className="end-user-secure"><KeyRound size={16} aria-hidden="true" /> Access is limited to your support account</div>
+        <div className="end-user-secure"><KeyRound size={16} aria-hidden="true" /> Access is limited to your support account {hasOperatorSession ? <Link to="/">Back to WAIT dashboard</Link> : null}</div>
       </div>
       <section className="end-user-intro">
         <p className="eyebrow">CLIENT SUPPORT</p>

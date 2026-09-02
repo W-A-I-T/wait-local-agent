@@ -1,4 +1,5 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { MemoryRouter } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { EndUserSupport } from "../src/screens/EndUserSupport";
 
@@ -18,7 +19,7 @@ describe("EndUserSupport", () => {
       .mockResolvedValueOnce(json({ id: 1, ticket_id: "EUS-1", body: "More details", created_at: "2026-08-09T00:00:00Z" }))
       .mockResolvedValueOnce(json({ ticket_id: "EUS-1", subject: "Cannot sign in", status: "escalated", priority: "normal" }));
 
-    render(<EndUserSupport />);
+    render(<MemoryRouter><EndUserSupport /></MemoryRouter>);
     fireEvent.change(screen.getByLabelText("Support access token"), { target: { value: "scoped-token" } });
     fireEvent.click(screen.getByRole("button", { name: "Save access" }));
     expect(await screen.findByText("Acme Support")).toBeInTheDocument();
@@ -51,7 +52,7 @@ describe("EndUserSupport", () => {
     const fetchMock = vi.mocked(fetch);
     fetchMock.mockImplementation(() => Promise.resolve(new Response(JSON.stringify({ detail: "end-user access required" }), { status: 403 })));
 
-    render(<EndUserSupport />);
+    render(<MemoryRouter><EndUserSupport /></MemoryRouter>);
     fireEvent.change(screen.getByLabelText("Request number"), { target: { value: "EUS-404" } });
     expect(screen.getByRole("button", { name: "Check status" })).toBeDisabled();
     expect(fetchMock).not.toHaveBeenCalled();
@@ -62,6 +63,24 @@ describe("EndUserSupport", () => {
     await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(3));
     expect(await screen.findByRole("alert")).toHaveTextContent("You do not have permission to do that.");
     expect(screen.getByText("Your request details will appear here after a successful lookup.")).toBeInTheDocument();
+  });
+
+  it("offers an operator return link without sending the operator token to the portal", async () => {
+    window.localStorage.setItem("wait-local-agent-api-token", "operator-token");
+    const fetchMock = vi.mocked(fetch);
+    fetchMock.mockResolvedValue(json({ brand_name: "WAIT Support", brand_tagline: "Private help desk" }));
+
+    render(<MemoryRouter><EndUserSupport /></MemoryRouter>);
+
+    expect(screen.getByRole("link", { name: "Back to WAIT dashboard" })).toHaveAttribute("href", "/");
+    fireEvent.change(screen.getByLabelText("Support access token"), { target: { value: "scoped-token" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save access" }));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
+      "/end-user/config",
+      expect.objectContaining({ headers: expect.any(Headers) })
+    ));
+    const request = fetchMock.mock.calls[0]?.[1];
+    expect(new Headers(request?.headers).get("Authorization")).toBe("Bearer scoped-token");
   });
 });
 
