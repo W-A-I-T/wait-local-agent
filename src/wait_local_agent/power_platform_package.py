@@ -875,29 +875,6 @@ def _emit_power_apps_artifact(
                 }
             )
             continue
-        if not attributes:
-            design_only.append(
-                {
-                    "id": str(_component_id(tenant, f"entities/{logical}")),
-                    "path": f"entities/{logical}",
-                    "format": str(artifact.get("format")),
-                    "reason": "entity has no confidently mappable string attribute for its primary name",
-                }
-            )
-            continue
-        if not any(str(attribute["logical_name"]) == declared_primary for attribute in attributes):
-            design_only.append(
-                {
-                    "id": str(_component_id(tenant, f"entities/{logical}")),
-                    "path": f"entities/{logical}",
-                    "format": str(artifact.get("format")),
-                    "reason": (
-                        f"entity was omitted because its primary name column {declared_primary} "
-                        "could not be mapped"
-                    ),
-                }
-            )
-            continue
         display_name = _text(table.get("display_name", logical), f"{logical}.display_name", MAX_TEXT_LENGTH)
         emitted_component_classes.add("entity")
         import_complete_component_classes.add("entity")

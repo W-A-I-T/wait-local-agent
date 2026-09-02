@@ -107,3 +107,22 @@ Full `mypy src tests` was run and remains blocked by six pre-existing missing
 `slowapi` stubs in `src/wait_local_agent/api/auth_routes.py` and
 `src/wait_local_agent/api/app.py`; the four changed Python/test files pass
 targeted mypy with no issues.
+
+## Coverage follow-up
+
+Behavior tests now cover multiple inferred primary columns, entities with no
+declared columns, invalid primary metadata, invalid string lengths, all
+generated XML/JSON/Markdown media-type inference paths, malformed normalized
+artifact handling, PAC path-resolution failures, and invalid PAC versions.
+The XML assertions verify both that withheld entities are absent from
+`Other/Customizations.xml` and that their numeric root components are absent
+from `Other/Solution.xml`.
+
+The guards that rejected an empty `attributes` list or a missing declared
+primary within `attributes` were removed as unreachable. During table processing
+every column is added to `column_names`; a non-`String` column is also added to
+`unmapped_types` and skipped, while every `String` column is appended to
+`attributes`. Therefore, after the existing guards confirm that
+`declared_primary` is in `column_names` and absent from `unmapped_types`, its
+column was necessarily appended to `attributes`, so both later guards could
+never be reached.

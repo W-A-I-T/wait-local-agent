@@ -272,6 +272,15 @@ def test_pac_resolver_rejects_invalid_configured_paths_without_path_fallback(
         assert resolve_pac_executable(replace(settings, pac_path=path)) is None
 
 
+def test_pac_resolver_fails_closed_when_path_resolution_raises(settings, monkeypatch) -> None:
+    def raise_os_error(_path: Path) -> Path:
+        raise OSError("path resolution failed")
+
+    monkeypatch.setattr(Path, "expanduser", raise_os_error)
+
+    assert resolve_pac_executable(replace(settings, pac_path=Path("/fake/pac"))) is None
+
+
 def test_pac_cli_version_parses_real_output_with_injected_runner() -> None:
     def runner(command, **kwargs):
         assert command == ["/fake/pac", "help"]
@@ -304,6 +313,11 @@ def test_pac_cli_version_fails_closed_for_bad_probe_results() -> None:
 
 def test_pac_versions_use_integer_tuple_comparison() -> None:
     assert compare_pac_versions("2.10.0", "2.9.0") > 0
+
+
+def test_pac_version_comparison_rejects_non_numeric_components() -> None:
+    with pytest.raises(ValueError, match="dotted numeric components"):
+        compare_pac_versions("2.invalid", "2.0")
 
 
 @pytest.mark.parametrize(

@@ -411,6 +411,79 @@ def test_column_marked_primary_is_honoured_and_missing_primary_is_design_only(tm
     )
 
 
+def test_entity_with_multiple_marked_primary_columns_is_withheld_from_both_xml_sources(
+    tmp_path: Path,
+) -> None:
+    artifact = _entity_artifact()
+    table = cast(list[dict[str, object]], cast(dict[str, object], artifact["dataverse"])["tables"])[0]
+    table.pop("primary_name_column")
+    table["columns"] = [
+        {
+            "logical_name": "wait_display_name",
+            "display_name": "Display name",
+            "primary": True,
+        },
+        {"logical_name": "wait_legal_name", "display_name": "Legal name", "primary": True},
+    ]
+
+    package = _package(tmp_path, [artifact])
+    files = cast(list[dict[str, object]], package["files"])
+    solution_xml = cast(str, next(item["content"] for item in files if item["path"] == "Other/Solution.xml"))
+    customizations_xml = cast(
+        str,
+        next(item["content"] for item in files if item["path"] == "Other/Customizations.xml"),
+    )
+    design_only = cast(list[dict[str, object]], package["design_only_components"])
+
+    assert "schemaName=\"wait_employee\"" not in solution_xml
+    assert "<RootComponents />" in solution_xml
+    assert "<Entities />" in customizations_xml
+    assert any(
+        item["path"] == "entities/wait_employee"
+        and "entity declares multiple primary columns" in str(item["reason"])
+        for item in design_only
+    )
+
+
+def test_entity_without_any_declared_columns_has_no_xml_source_or_root_component(tmp_path: Path) -> None:
+    artifact = _entity_artifact()
+    table = cast(list[dict[str, object]], cast(dict[str, object], artifact["dataverse"])["tables"])[0]
+    table["columns"] = []
+
+    package = _package(tmp_path, [artifact])
+    files = cast(list[dict[str, object]], package["files"])
+    solution_xml = cast(str, next(item["content"] for item in files if item["path"] == "Other/Solution.xml"))
+    customizations_xml = cast(
+        str,
+        next(item["content"] for item in files if item["path"] == "Other/Customizations.xml"),
+    )
+    design_only = cast(list[dict[str, object]], package["design_only_components"])
+
+    assert "schemaName=\"wait_employee\"" not in solution_xml
+    assert "<RootComponents />" in solution_xml
+    assert "<Entities />" in customizations_xml
+    assert any(
+        item["path"] == "entities/wait_employee"
+        and "primary name column wait_display_name" in str(item["reason"])
+        for item in design_only
+    )
+
+
+def test_entity_rejects_non_boolean_primary_markers_and_invalid_string_lengths(tmp_path: Path) -> None:
+    artifact = _entity_artifact()
+    table = cast(list[dict[str, object]], cast(dict[str, object], artifact["dataverse"])["tables"])[0]
+    column = cast(list[dict[str, object]], table["columns"])[0]
+
+    column["primary"] = "yes"
+    with pytest.raises(PowerPlatformPackageError, match="primary must be boolean"):
+        _package(tmp_path, [artifact])
+
+    column.pop("primary")
+    column["max_length"] = 0
+    with pytest.raises(PowerPlatformPackageError, match="max_length must be an integer"):
+        _package(tmp_path, [artifact])
+
+
 def test_entity_prefix_mismatch_is_design_only_without_rewriting(tmp_path: Path) -> None:
     artifact = _entity_artifact()
     tables = cast(list[dict[str, object]], cast(dict[str, object], artifact["dataverse"])["tables"])
@@ -1102,7 +1175,7 @@ def test_materialization_failure_branches(settings, tmp_path: Path, monkeypatch:
     assert "digest verification" in str(result["message"])
 
 
-def test_low_level_defensive_branches() -> None:
+def test_low_level_defensive_branches(monkeypatch: pytest.MonkeyPatch) -> None:
     assert package_module._pack_zip_path(r"C:\source", "solution") == r"C:\source\solution.zip"
 
     with pytest.raises(PowerPlatformPackageError, match="JSON-compatible"):
@@ -1111,6 +1184,16 @@ def test_low_level_defensive_branches() -> None:
         package_module._add_file({"a.json": ("application/json", "one")}, "a.json", "two")
     with pytest.raises(PowerPlatformPackageError, match="exceeds"):
         package_module._add_file({}, "large.json", "x" * (package_module.MAX_PACKAGE_FILE_BYTES + 1))
+    files: dict[str, tuple[str, str]] = {}
+    for path, media_type in (
+        ("metadata.json", "application/json"),
+        ("source.xml", "application/xml"),
+        ("notes.md", "text/markdown"),
+    ):
+        package_module._add_file(files, path, "content")
+        assert files[path][0] == media_type
+    with pytest.raises(PowerPlatformPackageError, match="no supported media type"):
+        package_module._add_file(files, "source.txt", "content")
     assert package_module._contains_secret_like_source("password: leaked") is True
     assert package_module._contains_secret_like_source('{"nested": {"token": "leaked"}}') is True
     assert package_module._contains_secret_like_source("not json") is False
@@ -1123,6 +1206,10 @@ def test_low_level_defensive_branches() -> None:
         package_module._text("\x01", "value", 10)
     with pytest.raises(PowerPlatformPackageError, match="safe relative"):
         package_module._safe_relative_path("../escape", "path")
+
+    monkeypatch.setattr(package_module, "_validate_value", lambda *_args: [])
+    with pytest.raises(PowerPlatformPackageError, match="must be a JSON object"):
+        package_module._validate_input_artifacts([{"format": "unknown"}], "acme")
 
 
 def test_delivery_keeps_review_bundle_non_deployable_and_links_source_digest(tmp_path: Path) -> None:
