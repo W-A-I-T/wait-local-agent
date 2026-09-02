@@ -39,6 +39,19 @@ export function isClientScopeErrorDetail(detail: unknown): detail is string {
   return typeof detail === "string" && CLIENT_SCOPE_ERROR_SUBSTRINGS.some((substring) => detail.includes(substring));
 }
 
+export function shouldSuppressClientScopeError(
+  error: unknown,
+  clientScopeIds: string[] | null | undefined,
+  isMspAdmin: boolean | undefined
+): boolean {
+  if (isMspAdmin || !Array.isArray(clientScopeIds) || clientScopeIds.length > 0) {
+    return false;
+  }
+  return error instanceof ApiRequestError
+    ? isClientScopeErrorDetail(error.detail) || error.message === CLIENT_SCOPE_ERROR_MESSAGE
+    : error instanceof Error && isClientScopeErrorDetail(error.message);
+}
+
 export type CapabilityRequiredDetail = {
   code: "capability_required";
   capability?: unknown;

@@ -10,6 +10,7 @@ import type {
   ApprovalRequest,
   AuthRoleResponse,
   ClientDirectoryEntry,
+  ConnectorHealth,
   ConnectorStatus,
   EntitlementResponse,
   EventDelivery,
@@ -32,14 +33,10 @@ const actionTypes = [
 ];
 
 const defaultFieldText = "note=Reviewed by WAIT Local Agent";
+const PSA_CONNECTOR_IDS = ["halopsa", "connectwise", "servicenow", "autotask"] as const;
 const defaultWriteHealth: HaloReadResult = {
   status: "blocked",
-  message: "Loading HaloPSA write health.",
-  count: 0
-};
-const failedWriteHealth: HaloReadResult = {
-  status: "failed",
-  message: "Unable to verify HaloPSA write health.",
+  message: "Loading PSA write health.",
   count: 0
 };
 
@@ -76,7 +73,7 @@ export type CapabilityGrantView = {
   client_id: string | null;
 };
 
-export type AuthState = "local-open" | "demo" | "authenticated" | "invalid-token";
+export type AuthState = "demo" | "authenticated" | "invalid-token";
 
 type AuthRefreshResult = {
   authState: AuthState | null;
@@ -110,6 +107,7 @@ type DashboardContextValue = {
   haloConnector?: ConnectorStatus;
   huduConnector?: ConnectorStatus;
   writeHealth: HaloReadResult;
+  writeHealthByConnector: Record<string, ConnectorHealth>;
   writeHealthResolved: boolean;
   liveWritesReady: boolean;
   haloTickets: HaloTicket[];
@@ -124,6 +122,8 @@ type DashboardContextValue = {
   loading: boolean;
   refreshNonce: number;
   roleResolved: boolean;
+  clientScopeIds: string[] | null;
+  hasClientScope: boolean;
   busyId: number | "draft" | null;
   selectedTicketId: string;
   canWrite: boolean;
@@ -190,7 +190,9 @@ export function DashboardProvider({ children, activePath = "" }: { children: Rea
   const [capabilityError, setCapabilityError] = useState("");
   const [connectors, setConnectors] = useState<ConnectorStatus[]>([]);
   const [writeHealth, setWriteHealth] = useState<HaloReadResult>(defaultWriteHealth);
+  const [writeHealthByConnector, setWriteHealthByConnector] = useState<Record<string, ConnectorHealth>>({});
   const [writeHealthResolved, setWriteHealthResolved] = useState(false);
+  const [clientScopeIds, setClientScopeIds] = useState<string[] | null>(null);
   const [haloTickets, setHaloTickets] = useState<HaloTicket[]>([]);
   const [approvalRequests, setApprovalRequests] = useState<ApprovalRequest[]>([]);
   const [eventDeliveries, setEventDeliveries] = useState<EventDelivery[]>([]);
@@ -237,6 +239,8 @@ export function DashboardProvider({ children, activePath = "" }: { children: Rea
     setCapabilityResolved(false);
     setCapabilityError("");
     setCommercialEntitlement(null);
+    setClientScopeIds(null);
+    setWriteHealthByConnector({});
     setWriteHealthResolved(false);
     try {
       let auth: AuthRoleResponse;
@@ -258,7 +262,6 @@ export function DashboardProvider({ children, activePath = "" }: { children: Rea
       }
       const results = await Promise.allSettled([
         apiFetch<ConnectorStatus[]>("/connectors"),
-        apiFetch<HaloReadResult>("/connectors/halopsa/write-health"),
         activePathRef.current === "/tickets"
           ? apiFetch<HaloTicketsResponse>("/connectors/halopsa/tickets")
           : Promise.resolve<HaloTicketsResponse>({
@@ -274,18 +277,42 @@ export function DashboardProvider({ children, activePath = "" }: { children: Rea
         apiFetch<EntitlementResponse>("/entitlement")
       ]);
       const errors = results
-        .slice(0, 8)
+        .slice(0, 7)
         .filter((result): result is PromiseRejectedResult => result.status === "rejected")
         .map((result) => result.reason instanceof Error ? result.reason.message : "Dashboard data unavailable.");
       const connectorRows = settledValue(results[0] as PromiseSettledResult<ConnectorStatus[]>, []);
-      const writeState = settledValue(results[1] as PromiseSettledResult<HaloReadResult>, failedWriteHealth);
-      const ticketResponse = settledValue(results[2] as PromiseSettledResult<HaloTicketsResponse>, {
+      const configuredPsaConnectors = connectorRows.filter((connector) =>
+        PSA_CONNECTOR_IDS.includes(connector.id as typeof PSA_CONNECTOR_IDS[number])
+        && connector.status !== "not_configured"
+      );
+      const writeHealthResults = await Promise.allSettled(
+        configuredPsaConnectors.map((connector) =>
+          apiFetch<ConnectorHealth>(`/connectors/${encodeURIComponent(connector.id)}/write-health`)
+        )
+      );
+      const nextWriteHealthByConnector = Object.fromEntries(
+        configuredPsaConnectors.map((connector, index) => {
+          const result = writeHealthResults[index];
+          return [connector.id, result.status === "fulfilled" ? result.value : {
+            status: "failed",
+            message: "Unable to verify this PSA write path.",
+            count: 0
+          }];
+        })
+      );
+      const firstWriteHealth = nextWriteHealthByConnector[configuredPsaConnectors[0]?.id ?? ""];
+      const writeState: HaloReadResult = {
+        status: firstWriteHealth?.status ?? "not_configured",
+        message: firstWriteHealth?.message ?? "No PSA connector is configured.",
+        count: firstWriteHealth?.count ?? 0
+      };
+      const ticketResponse = settledValue(results[1] as PromiseSettledResult<HaloTicketsResponse>, {
         result: { status: "blocked", message: "Tickets unavailable.", count: 0 },
         items: []
       });
-      const clientRows = settledValue(results[7] as PromiseSettledResult<ClientDirectoryEntry[]>, []);
-      const capabilityResult = results[8] as PromiseSettledResult<EffectiveCapabilityResponse>;
-      const entitlementResult = results[9] as PromiseSettledResult<EntitlementResponse>;
+      const clientRows = settledValue(results[6] as PromiseSettledResult<ClientDirectoryEntry[]>, []);
+      const capabilityResult = results[7] as PromiseSettledResult<EffectiveCapabilityResponse>;
+      const entitlementResult = results[8] as PromiseSettledResult<EntitlementResponse>;
 
       if (roleRequestId !== roleRequestIdRef.current) {
         return null;
@@ -293,6 +320,11 @@ export function DashboardProvider({ children, activePath = "" }: { children: Rea
       const nextAuthState = deriveAuthState(auth, loadStoredApiToken());
       setRole(auth.role);
       setIsMspAdmin(auth.is_msp_admin === true);
+      setClientScopeIds(Array.isArray(auth.client_ids)
+        ? auth.client_ids.filter((clientId): clientId is string => typeof clientId === "string" && clientId.trim().length > 0)
+        : typeof auth.client_id === "string" && auth.client_id.trim()
+          ? [auth.client_id.trim()]
+          : null);
       setEndUserSupportEnabled(auth.end_user_support_enabled === true);
       setAuthState(nextAuthState);
       setPrincipalId(auth.principal_id ?? null);
@@ -324,13 +356,14 @@ export function DashboardProvider({ children, activePath = "" }: { children: Rea
         setCommercialEntitlement(null);
       }
       setConnectors(asArray(connectorRows));
+      setWriteHealthByConnector(nextWriteHealthByConnector);
       setWriteHealth(writeState);
       setWriteHealthResolved(true);
       setHaloTickets(asArray(ticketResponse.items));
-      setApprovalRequests(asArray(settledValue(results[3] as PromiseSettledResult<ApprovalRequest[]>, [])));
-      setEventDeliveries(asArray(settledValue(results[4] as PromiseSettledResult<EventDelivery[]>, [])));
-      setEventHistory(asArray(settledValue(results[5] as PromiseSettledResult<EventHistory[]>, [])));
-      setWorkflowRuns(asArray(settledValue(results[6] as PromiseSettledResult<WorkflowRun[]>, [])));
+      setApprovalRequests(asArray(settledValue(results[2] as PromiseSettledResult<ApprovalRequest[]>, [])));
+      setEventDeliveries(asArray(settledValue(results[3] as PromiseSettledResult<EventDelivery[]>, [])));
+      setEventHistory(asArray(settledValue(results[4] as PromiseSettledResult<EventHistory[]>, [])));
+      setWorkflowRuns(asArray(settledValue(results[5] as PromiseSettledResult<WorkflowRun[]>, [])));
       setClients(asArray<ClientDirectoryEntry>(clientRows).filter((client) => client.client_id !== "__quarantine__"));
       setRefreshErrors(errors);
       await configuration.refresh();
@@ -355,6 +388,8 @@ export function DashboardProvider({ children, activePath = "" }: { children: Rea
       setCapabilityResolved(false);
       setCapabilityError("");
       setCommercialEntitlement(null);
+      setClientScopeIds(null);
+      setWriteHealthByConnector({});
       setStatusMessage(error instanceof Error ? error.message : "Unable to refresh dashboard.");
       return { authState: nextAuthState, role: null };
     } finally {
@@ -528,8 +563,17 @@ export function DashboardProvider({ children, activePath = "" }: { children: Rea
       haloConnector,
       huduConnector,
       writeHealth,
+      writeHealthByConnector,
       writeHealthResolved,
-      liveWritesReady: writeHealth.status === "ready",
+      liveWritesReady: connectors.some((connector) =>
+        PSA_CONNECTOR_IDS.includes(connector.id as typeof PSA_CONNECTOR_IDS[number])
+        && connector.status !== "not_configured"
+      ) && connectors
+        .filter((connector) =>
+          PSA_CONNECTOR_IDS.includes(connector.id as typeof PSA_CONNECTOR_IDS[number])
+          && connector.status !== "not_configured"
+        )
+        .every((connector) => writeHealthByConnector[connector.id]?.status === "ready"),
       haloTickets,
       approvalRequests,
       pendingApprovals: approvalRequests.filter((request) => request.status === "pending"),
@@ -542,10 +586,12 @@ export function DashboardProvider({ children, activePath = "" }: { children: Rea
       loading,
       refreshNonce,
       roleResolved,
+      clientScopeIds,
+      hasClientScope: clientScopeIds !== null && clientScopeIds.length > 0,
       busyId,
       selectedTicketId,
-      canWrite: roleResolved && (authState === "local-open" || role !== "viewer"),
-      isAdmin: roleResolved && (authState === "local-open" || role === "admin"),
+      canWrite: roleResolved && role !== "viewer",
+      isAdmin: roleResolved && role === "admin",
       isConfigured: configuration.isConfigured,
       configurationLoading: configuration.loading,
       configurationSteps: configuration.steps,
@@ -613,6 +659,7 @@ export function DashboardProvider({ children, activePath = "" }: { children: Rea
     updateApproval,
     workflowRuns,
     writeHealth,
+    writeHealthByConnector,
     writeHealthResolved
   ]);
 
@@ -652,9 +699,6 @@ function deriveAuthState(auth: AuthRoleResponse, storedToken: string): AuthState
   }
   if (auth.auth_method && auth.auth_method !== "bearer") {
     return "authenticated";
-  }
-  if (auth.api_auth_required === false) {
-    return "local-open";
   }
   return storedToken.trim() ? "authenticated" : null;
 }

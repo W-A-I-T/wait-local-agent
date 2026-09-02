@@ -22,6 +22,7 @@ type WizardProps = {
   title?: string;
   nextLabel?: string;
   submitLabel?: string;
+  onStepSelect?: (index: number) => void;
 };
 
 export function Wizard({
@@ -38,7 +39,8 @@ export function Wizard({
   progressLabel,
   title = "Set up your MSP operations",
   nextLabel = "Next",
-  submitLabel = "Complete"
+  submitLabel = "Complete",
+  onStepSelect
 }: WizardProps) {
   const isLast = activeStep === steps.length - 1;
   const label = isLast ? submitLabel : nextLabel;
@@ -62,19 +64,26 @@ export function Wizard({
         {steps.map((step, index) => {
           const isActive = index === activeStep;
           const isDone = index < activeStep;
-          return (
+          const content = <><span>{isDone ? <CheckCircle2 size={16} aria-hidden="true" /> : index + 1}</span><div><strong>{step.title}</strong>{step.description ? <p>{step.description}</p> : null}</div></>;
+          return onStepSelect ? (
             <button
               className={`wizard-step ${isActive ? "active" : ""} ${isDone ? "done" : ""}`}
               type="button"
               aria-label={step.title}
+              disabled={index > activeStep || isBusy}
+              onClick={() => onStepSelect(index)}
               key={step.id}
             >
-              <span>{isDone ? <CheckCircle2 size={16} aria-hidden="true" /> : index + 1}</span>
-              <div>
-                <strong>{step.title}</strong>
-                {step.description ? <p>{step.description}</p> : null}
-              </div>
+              {content}
             </button>
+          ) : (
+            <li
+              className={`wizard-step ${isActive ? "active" : ""} ${isDone ? "done" : ""}`}
+              aria-current={isActive ? "step" : undefined}
+              key={step.id}
+            >
+              {content}
+            </li>
           );
         })}
       </div>

@@ -21,8 +21,26 @@ All notable changes to WAIT Local Agent will be documented in this file.
   `WAIT_ALLOW_INSECURE_PROVIDER_TRANSPORT=true` only when plain HTTP is
   deliberately required for all provider origins on a trusted network.
 
+### Removed
+
+- Removed the duplicate `GET /audit/export` route; use
+  `GET /audit-events/export` with the `format` query parameter.
+
 ### Changed
 
+- Scheduled jobs now declare single-instance execution and a bounded 300-second
+  misfire grace period; startup rejects multi-worker configurations while the
+  in-process scheduler is enabled.
+- Capability grants are now part of the canonical startup migration sequence,
+  so authenticated requests no longer run migration checks on the hot path.
+- The operator shell now reports the aggregate write gate across configured PSA
+  connectors, keeps administrator-only surfaces behind role checks, and makes
+  the separate customer portal boundary explicit in navigation.
+- Appliance Health now lets administrators confirm and run an on-demand
+  backup, then review its persisted ID, status, size, and timestamp. The
+  Automation Discovery panel now exposes pack status, categories, mapping
+  readiness, and credential-free time-entry evidence import with role-aware
+  loading and error states.
 - The Solutions Architect screen (renamed from Consultant) now surfaces the
   architecture decision engine, including per-component chosen targets,
   rationale, alternatives, requirements, and a decision-engine summary.
@@ -59,6 +77,9 @@ All notable changes to WAIT Local Agent will be documented in this file.
 
 ### Fixed
 
+- Removed the unreachable local-open auth presentation, made wizard progress
+  controls match their available handlers, and replaced misleading empty
+  ticket/demo states with actionable connector guidance.
 - Fixed Settings update checks and collector exports to use their backend POST
   contracts, routed desktop Microsoft sign-in through the configured API base,
   and added frontend route/method contract guards for the development proxy.
@@ -66,8 +87,12 @@ All notable changes to WAIT Local Agent will be documented in this file.
   explicitly negotiate JSON, and the dashboard no longer repeatedly rate-limits
   its local write-health check or Halo ticket bootstrap request.
 
+- Production trusted-host defaults no longer include the test-only `testserver`
+  host, and refused demo-mode backup requests no longer create audit events.
 - Power Platform deployment and rollback execution now enforce the minimum CLI
   version and block when the installed version cannot be determined.
+
+- Flaky diagnostics, Sidebar navigation, Solutions Architect, and Microsoft Administrator tests now isolate legitimate timing changes and avoid repeated full-tree queries under coverage.
 
 - Power Platform package deployability is now computed from emitted component
   readiness instead of being asserted by a hardcoded value.

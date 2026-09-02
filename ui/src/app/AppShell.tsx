@@ -21,7 +21,10 @@ export function AppShell() {
     selectedClientId,
     setSelectedClientId,
     clients,
-    writeHealth,
+    clientScopeIds,
+    isMspAdmin,
+    writeHealthByConnector,
+    connectors,
     writeHealthResolved,
     statusMessage,
     refreshErrors
@@ -62,11 +65,20 @@ export function AppShell() {
               Sign out
             </button>
             <AuthStatus authState={authState} role={role} roleResolved={roleResolved} />
-            <WriteGateStatus writeHealth={writeHealth} resolved={writeHealthResolved} />
+            <WriteGateStatus
+              connectors={connectors}
+              writeHealthByConnector={writeHealthByConnector}
+              resolved={writeHealthResolved}
+            />
           </div>
         </header>
 
         {statusMessage ? <div className="notice" role="status" aria-live="polite">{statusMessage}</div> : null}
+        {roleResolved && !isMspAdmin && clientScopeIds?.length === 0 ? (
+          <div className="notice" role="status">
+            Your access has no client scope yet. Ask an administrator to assign you to a client.
+          </div>
+        ) : null}
         {refreshErrors.length > 0 ? (
           <div className="notice danger" role="alert">
             <AlertTriangle size={17} aria-hidden="true" />
@@ -95,22 +107,30 @@ function authMethodLabel(authMethod: string, authState: AuthState | null): strin
 }
 
 export function WriteGateStatus({
-  writeHealth,
+  connectors,
+  writeHealthByConnector,
   resolved
 }: {
-  writeHealth: { status: string; message: string };
+  connectors: Array<{ id: string; name: string; status: string }>;
+  writeHealthByConnector: Record<string, { status: string; message: string }>;
   resolved: boolean;
 }) {
   const [open, setOpen] = useState(false);
-  const posture = getWriteHealthPosture(writeHealth.status, resolved);
+  const psaConnectors = connectors.filter((connector) =>
+    ["halopsa", "connectwise", "servicenow", "autotask"].includes(connector.id)
+    && connector.status !== "not_configured"
+  );
+  const posture = getAggregateWriteHealthPosture(psaConnectors, writeHealthByConnector, resolved);
   const Icon = posture.icon === "success"
     ? CheckCircle2
     : posture.icon === "warning"
       ? AlertTriangle
       : Info;
-  const explanation = writeHealth.status === "ready"
+  const explanation = posture.label === "Live writes ready"
     ? "Live writes are available because you explicitly enabled the safety gates."
-    : "Writes stay disabled until you explicitly enable them.";
+    : posture.label === "No PSA connected"
+      ? "Connect a PSA to enable governed live writes."
+      : "Writes stay disabled until you explicitly enable them.";
 
   return (
     <div className="write-gate-status">
@@ -125,8 +145,20 @@ export function WriteGateStatus({
       </button>
       {open ? (
         <div className="auth-help-popover write-gate-popover" role="note">
-          <strong>PSA write gate (HaloPSA)</strong>
-          <p>{writeHealth.message}</p>
+          <strong>{psaConnectors.length === 1 ? `PSA write gate (${psaConnectors[0].name})` : "PSA write gates"}</strong>
+          {psaConnectors.length > 0 ? (
+            <ul>
+              {psaConnectors.map((connector) => {
+                const health = writeHealthByConnector[connector.id] ?? { status: "failed", message: "Unable to verify this PSA write path." };
+                return (
+                  <li key={connector.id}>
+                    <strong>{connector.name}</strong>: {getWriteHealthPosture(health.status, resolved).label}
+                    <p>{health.message}</p>
+                  </li>
+                );
+              })}
+            </ul>
+          ) : <p>No PSA connector is configured.</p>}
           <p>{explanation}</p>
           <Link to="/connectors">View connector details</Link>
         </div>
@@ -144,9 +176,7 @@ function AuthStatus({
   role: "admin" | "technician" | "viewer";
   roleResolved: boolean;
 }) {
-  const label = authState === "local-open"
-    ? "Local mode · full access"
-    : authState === "demo"
+  const label = authState === "demo"
       ? "Demo mode"
       : authState === "invalid-token"
         ? "Token rejected"
@@ -167,9 +197,7 @@ function AuthStatus({
 
 function AuthHelp({ authState }: { authState: AuthState }) {
   const [open, setOpen] = useState(false);
-  const title = authState === "local-open"
-    ? "Explain local mode"
-    : authState === "authenticated"
+  const title = authState === "authenticated"
       ? "Explain authenticated access"
       : authState === "invalid-token"
         ? "Explain rejected token"
@@ -187,16 +215,34 @@ function AuthHelp({ authState }: { authState: AuthState }) {
         <Info size={16} aria-hidden="true" />
       </button>
       {open ? <div className="auth-help-popover" role="note">
-        {authState === "local-open" ? (
-          <>
-            <p>Access controls are off, so this local appliance is running with administrator access.</p>
-            <p>To protect it, configure an administrator or team access credential in the server environment.</p>
-          </>
-        ) : null}
         {authState === "authenticated" ? <p>Your access level comes from your signed-in account.</p> : null}
         {authState === "invalid-token" ? <p>Your saved access credential was not accepted. Sign in again.</p> : null}
         {authState === "demo" ? <p>Demo mode is enabled for this appliance. Some write actions are intentionally unavailable.</p> : null}
       </div> : null}
     </div>
   );
+}
+
+function getAggregateWriteHealthPosture(
+  connectors: Array<{ id: string; name: string; status: string }>,
+  healthByConnector: Record<string, { status: string; message: string }>,
+  resolved: boolean
+) {
+  if (!resolved) {
+    return getWriteHealthPosture(null, false);
+  }
+  if (connectors.length === 0) {
+    return { label: "No PSA connected", tone: "neutral" as const, icon: "info" as const };
+  }
+  const statuses = connectors.map((connector) => healthByConnector[connector.id]?.status ?? "failed");
+  if (statuses.includes("failed")) {
+    return getWriteHealthPosture("failed", true);
+  }
+  if (statuses.includes("blocked")) {
+    return getWriteHealthPosture("blocked", true);
+  }
+  if (statuses.every((status) => status === "ready")) {
+    return getWriteHealthPosture("ready", true);
+  }
+  return getWriteHealthPosture("failed", true);
 }

@@ -32,10 +32,14 @@ function DashboardHarness() {
     endUserSupportEnabled,
     authState,
     isAdmin,
+    isMspAdmin,
+    liveWritesReady,
     refresh,
     roleResolved,
     selectedClientId,
-    setSelectedClientId
+    setSelectedClientId,
+    clientScopeIds,
+    writeHealthByConnector
   } = useDashboard();
   return (
     <>
@@ -50,6 +54,10 @@ function DashboardHarness() {
       <output data-testid="capability-resolved">{capabilityResolved ? "capabilities resolved" : "capabilities unresolved"}</output>
       <output data-testid="capability-grants">{capabilityGrants.map((grant) => `${grant.capability_key}:${grant.client_id ?? "global"}`).join(",")}</output>
       <output data-testid="capability-error">{capabilityError}</output>
+      <output data-testid="client-scope">{clientScopeIds === null ? "unknown" : clientScopeIds.join(",") || "empty"}</output>
+      <output data-testid="msp-admin">{isMspAdmin ? "yes" : "no"}</output>
+      <output data-testid="live-writes-ready">{liveWritesReady ? "yes" : "no"}</output>
+      <output data-testid="write-health-map">{Object.entries(writeHealthByConnector).map(([id, health]) => `${id}:${health.status}`).join(",")}</output>
       {isAdmin ? <button type="button">Admin controls</button> : null}
     </>
   );
@@ -68,7 +76,6 @@ describe("DashboardContext role refresh", () => {
   });
 
   it.each([
-    ["local-open", { role: "admin", api_auth_required: false, demo_mode: false }, ""],
     ["demo", { role: "admin", api_auth_required: false, demo_mode: true }, ""],
     ["authenticated", { role: "viewer", api_auth_required: true, demo_mode: false }, "saved-token"]
   ] as const)("derives the %s auth state from the role response", async (expectedState, response, token) => {
@@ -249,6 +256,40 @@ describe("DashboardContext role refresh", () => {
     render(<DashboardProvider><DashboardHarness /></DashboardProvider>);
 
     await waitFor(() => expect(screen.getByTestId("end-user-support-enabled")).toHaveTextContent("enabled"));
+  });
+
+  it("exposes an explicit empty client scope and aggregates every configured PSA health result", async () => {
+    mockedApiFetch.mockImplementation((path: string) => {
+      if (path === "/auth/role") {
+        return Promise.resolve({
+          role: "technician",
+          client_ids: [],
+          api_auth_required: true,
+          demo_mode: false,
+          auth_method: "local"
+        }) as ReturnType<typeof apiFetch>;
+      }
+      if (path === "/connectors") {
+        return Promise.resolve([
+          { id: "halopsa", name: "HaloPSA", status: "configured", message: "configured" },
+          { id: "connectwise", name: "ConnectWise", status: "configured", message: "configured" }
+        ]) as ReturnType<typeof apiFetch>;
+      }
+      if (path === "/connectors/halopsa/write-health") {
+        return Promise.resolve({ status: "ready", message: "ready", count: 0 }) as ReturnType<typeof apiFetch>;
+      }
+      if (path === "/connectors/connectwise/write-health") {
+        return Promise.resolve({ status: "blocked", message: "blocked", count: 0 }) as ReturnType<typeof apiFetch>;
+      }
+      return Promise.resolve(defaultResponse(path)) as ReturnType<typeof apiFetch>;
+    });
+
+    render(<DashboardProvider><DashboardHarness /></DashboardProvider>);
+
+    await waitFor(() => expect(screen.getByTestId("client-scope")).toHaveTextContent("empty"));
+    expect(screen.getByTestId("msp-admin")).toHaveTextContent("no");
+    expect(screen.getByTestId("live-writes-ready")).toHaveTextContent("no");
+    expect(screen.getByTestId("write-health-map")).toHaveTextContent("halopsa:ready,connectwise:blocked");
   });
 
   it("fails the capability state closed without failing the overall authenticated dashboard refresh", async () => {

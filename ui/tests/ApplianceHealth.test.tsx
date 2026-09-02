@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ApplianceHealth } from "../src/screens/ApplianceHealth";
@@ -124,6 +124,71 @@ describe("Appliance Health wiring", () => {
     expect(await screen.findByText("Administrator role required to view appliance health.")).toBeInTheDocument();
     expect(screen.queryByRole("link", { name: "Appliance Health" })).not.toBeInTheDocument();
     expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("confirms one backup request and renders the persisted run details", async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const path = String(input);
+      if (path === "/health") return jsonResponse(health);
+      if (path === "/update-status") return jsonResponse({ status: "current", detail: "Current" });
+      if (path === "/hardening/runs") return jsonResponse([]);
+      if (path === "/backups/run") {
+        expect(init?.method).toBe("POST");
+        return jsonResponse({ backup_run_id: 27, started_at: "2026-09-01T10:00:00Z", finished_at: "2026-09-01T10:00:02Z", status: "succeeded", destination: "backups/state.db.enc", size_bytes: 2048, failure_summary: "" });
+      }
+      if (path === "/backups") return jsonResponse({ items: [{ backup_run_id: 27, started_at: "2026-09-01T10:00:00Z", finished_at: "2026-09-01T10:00:02Z", status: "succeeded", destination: "backups/state.db.enc", size_bytes: 2048, failure_summary: "" }], page: 1, page_size: 25, total: 1, schedule_configured: false, schedule: null, last_restore_exercise: null });
+      throw new Error(`Unexpected request: ${path}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(<MemoryRouter><ApplianceHealth /></MemoryRouter>);
+    await screen.findByText("Appliance health refreshed.");
+    fireEvent.click(screen.getByRole("button", { name: "Run backup now" }));
+    expect(screen.getByRole("alertdialog", { name: "Confirm backup run" })).toBeInTheDocument();
+    const confirmButton = screen.getByRole("button", { name: "Confirm backup run" });
+    fireEvent.click(confirmButton);
+    fireEvent.click(confirmButton);
+
+    expect(await screen.findByText("Backup run 27 recorded with status succeeded.")).toBeInTheDocument();
+    expect(screen.getByLabelText("Latest backup run")).toHaveTextContent("Run 27");
+    expect(screen.getByLabelText("Latest backup run")).toHaveTextContent("Size: 2.0 KB");
+    expect(fetchMock.mock.calls.filter(([input]) => String(input) === "/backups/run")).toHaveLength(1);
+  });
+
+  it("maps a backup permission failure to the standard request error", async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const path = String(input);
+      if (path === "/health") return jsonResponse(health);
+      if (path === "/update-status") return jsonResponse({ status: "current", detail: "Current" });
+      if (path === "/hardening/runs") return jsonResponse([]);
+      if (path === "/backups/run") return new Response(JSON.stringify({ detail: "not allowed" }), { status: 403 });
+      throw new Error(`Unexpected request: ${path}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(<MemoryRouter><ApplianceHealth /></MemoryRouter>);
+    await screen.findByText("Appliance health refreshed.");
+    fireEvent.click(screen.getByRole("button", { name: "Run backup now" }));
+    fireEvent.click(screen.getByRole("button", { name: "Confirm backup run" }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("You do not have permission to do that.");
+  });
+
+  it("disables backup runs and explains the demo restriction", async () => {
+    const demoHealth = { ...health, demo_mode: true };
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const path = String(input);
+      if (path === "/health") return jsonResponse(demoHealth);
+      if (path === "/update-status") return jsonResponse({ status: "current", detail: "Current" });
+      if (path === "/hardening/runs") return jsonResponse([]);
+      throw new Error(`Unexpected request: ${path}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(<MemoryRouter><ApplianceHealth /></MemoryRouter>);
+    expect(await screen.findByText("Backup runs are unavailable in demo mode.")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Run backup now" })).toBeDisabled();
+    expect(fetchMock.mock.calls.some(([input]) => String(input) === "/backups/run")).toBe(false);
   });
 });
 

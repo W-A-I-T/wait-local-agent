@@ -10,7 +10,7 @@ import { connectorSetupEnvVarNames } from "../lib/connectorSetup";
 
 export function Settings() {
   const { authState, isAdmin, loading, role } = useDashboard();
-  const accessRole = authState === "local-open" ? "admin" : role ?? (isAdmin ? "admin" : "viewer");
+  const accessRole = role ?? (isAdmin ? "admin" : "viewer");
   const canViewLaunchPassport = !loading && accessRole === "admin";
   const [providers, setProviders] = useState<ProviderSettings | null>(null);
   const [providerHealth, setProviderHealth] = useState<ProviderHealth | null>(null);
@@ -194,7 +194,7 @@ export function Settings() {
       <section className="panel settings-panel">
         <div className="panel-heading">
           <h2>Admin Settings</h2>
-          <span>{authState === "local-open" ? "local mode · full access" : isAdmin ? "admin mode" : "viewer mode"}</span>
+          <span>{isAdmin ? "admin mode" : "viewer mode"}</span>
         </div>
         <div className="row-actions">
           <Link className="icon-button" to="/?onboarding=1">Launch onboarding</Link>
@@ -216,9 +216,7 @@ export function Settings() {
             <dd>
               {security?.api_token_configured
                 ? "API token saved"
-                : authState === "local-open"
-                  ? "Not required in local mode"
-                  : "No API token configured"}
+                : "No API token configured"}
             </dd>
           </div>
           <div>

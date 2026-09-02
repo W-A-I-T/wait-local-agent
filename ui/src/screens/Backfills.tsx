@@ -1,6 +1,6 @@
 import { FormEvent, useCallback, useEffect, useRef, useState } from "react";
 import { useDashboard } from "../app/DashboardContext";
-import { apiFetch } from "../api/client";
+import { apiFetch, shouldSuppressClientScopeError } from "../api/client";
 import { EmptyState } from "../components/EmptyState";
 import { LoadingState } from "../components/LoadingState";
 import { ClientIdSelect } from "../components/ClientIdSelect";
@@ -10,8 +10,18 @@ function parseEntityIds(value: string): string[] {
   return [...new Set(value.split(/[\n,]/).map((item) => item.trim()).filter(Boolean))];
 }
 
+function scopeAwareErrorMessage(
+  error: unknown,
+  fallback: string,
+  clientScopeIds: string[] | null | undefined,
+  isMspAdmin: boolean | undefined
+): string {
+  if (shouldSuppressClientScopeError(error, clientScopeIds, isMspAdmin)) return "";
+  return error instanceof Error ? error.message : fallback;
+}
+
 export function Backfills() {
-  const { canWrite, clients = [] } = useDashboard();
+  const { canWrite, clients = [], clientScopeIds, isMspAdmin } = useDashboard();
   const [agents, setAgents] = useState<AgentDefinition[]>([]);
   const [backfills, setBackfills] = useState<AgentBackfill[]>([]);
   const [loading, setLoading] = useState(true);
@@ -35,12 +45,12 @@ export function Backfills() {
       setBackfills(backfillRows);
       if (!agentId && agentRows[0]) setAgentId(agentRows[0].id);
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : "Unable to load backfills.");
+      setMessage(scopeAwareErrorMessage(error, "Unable to load backfills.", clientScopeIds, isMspAdmin));
     } finally {
       hasLoadedRef.current = true;
       setLoading(false);
     }
-  }, [agentId]);
+  }, [agentId, clientScopeIds, isMspAdmin]);
 
   useEffect(() => {
     void refresh();
@@ -79,7 +89,7 @@ export function Backfills() {
       setPreview(result);
       setMessage("Dry run complete. Nothing was persisted or executed.");
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : "Unable to preview backfill.");
+      setMessage(scopeAwareErrorMessage(error, "Unable to preview backfill.", clientScopeIds, isMspAdmin));
     }
   }
 
@@ -95,7 +105,7 @@ export function Backfills() {
       setPreview(null);
       await refresh();
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : "Unable to create backfill.");
+      setMessage(scopeAwareErrorMessage(error, "Unable to create backfill.", clientScopeIds, isMspAdmin));
     }
   }
 
@@ -105,7 +115,7 @@ export function Backfills() {
       setMessage(`Backfill ${action === "rerun-failed" ? "failed items rerun" : `${action} requested`}.`);
       await refresh();
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : "Unable to update backfill.");
+      setMessage(scopeAwareErrorMessage(error, "Unable to update backfill.", clientScopeIds, isMspAdmin));
     }
   }
 

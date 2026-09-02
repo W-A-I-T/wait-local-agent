@@ -161,8 +161,19 @@ def test_scrubber_removes_sensitive_literals(value: str, literal: str) -> None:
     assert literal not in scrub_text(value)
 
 
-def test_bundle_manifest_hashes_entries_and_is_deterministic(settings: Settings) -> None:
+def test_bundle_manifest_hashes_entries_and_is_deterministic(
+    settings: Settings, monkeypatch: pytest.MonkeyPatch
+) -> None:
     store = Store(settings.data_path)
+    monotonic_values = iter((100.1, 101.1))
+    monkeypatch.setattr(diagnostics_module, "_PROCESS_STARTED_MONOTONIC", 100.0)
+    monkeypatch.setattr(diagnostics_module.time, "monotonic", lambda: next(monotonic_values))
+    monkeypatch.setattr(
+        diagnostics_module.shutil,
+        "disk_usage",
+        lambda _path: SimpleNamespace(free=128 * 1024 * 1024),
+    )
+
     first = build_support_bundle(settings, store, case_id="case-private-44")
     first_bytes = first.path.read_bytes()
     first_archive_entries = _archive_entries(first.path)
@@ -174,19 +185,52 @@ def test_bundle_manifest_hashes_entries_and_is_deterministic(settings: Settings)
     manifest = json.loads(entries.pop("manifest.json"))
 
     assert set(first_archive_entries) == set(second_archive_entries)
+    first_system = json.loads(first_entries["system.json"])
+    second_system = json.loads(entries["system.json"])
+    assert "uptime_seconds" in first_system
+    assert "uptime_seconds" in second_system
+    assert first_system["uptime_seconds"] == 0
+    assert second_system["uptime_seconds"] == 1
+    # uptime_seconds is excluded because it advances between collections;
+    # process_started_at is captured once at process start, and disk usage is
+    # pinned at the collector boundary so both remain part of the stable system subset.
+    stable_first_system = {key: value for key, value in first_system.items() if key != "uptime_seconds"}
+    stable_second_system = {key: value for key, value in second_system.items() if key != "uptime_seconds"}
+    assert stable_first_system == stable_second_system
+
     assert {
-        name: hashlib.sha256(content).hexdigest() for name, content in first_archive_entries.items()
+        name: hashlib.sha256(content).hexdigest()
+        for name, content in first_entries.items()
+        if name != "system.json"
     } == {
-        name: hashlib.sha256(content).hexdigest() for name, content in second_archive_entries.items()
+        name: hashlib.sha256(content).hexdigest()
+        for name, content in entries.items()
+        if name != "system.json"
     }
-    assert first_manifest["overall_sha256"] == manifest["overall_sha256"]
+    assert first_manifest["overall_sha256"] != manifest["overall_sha256"]
     assert first.sha256 == hashlib.sha256(first_bytes).hexdigest()
     assert second.entries == tuple(sorted((*entries, "manifest.json")))
-    expected = []
+
+    first_expected = []
+    for name, content in sorted(first_entries.items()):
+        first_expected.append(
+            {"name": name, "sha256": hashlib.sha256(content).hexdigest(), "size_bytes": len(content)}
+        )
+    assert first_manifest["entries"] == first_expected
+    first_digest_input = "".join(
+        f"{item['name']}\0{item['sha256']}\n" for item in first_expected
+    ).encode("ascii")
+    assert first_manifest["overall_sha256"] == hashlib.sha256(first_digest_input).hexdigest()
+
+    second_expected = []
     for name, content in sorted(entries.items()):
-        expected.append({"name": name, "sha256": hashlib.sha256(content).hexdigest(), "size_bytes": len(content)})
-    assert manifest["entries"] == expected
-    digest_input = "".join(f"{item['name']}\0{item['sha256']}\n" for item in expected).encode("ascii")
+        second_expected.append(
+            {"name": name, "sha256": hashlib.sha256(content).hexdigest(), "size_bytes": len(content)}
+        )
+    assert manifest["entries"] == second_expected
+    digest_input = "".join(
+        f"{item['name']}\0{item['sha256']}\n" for item in second_expected
+    ).encode("ascii")
     assert manifest["overall_sha256"] == hashlib.sha256(digest_input).hexdigest()
     assert manifest["case_reference_sha256"] == hashlib.sha256(b"case-private-44").hexdigest()
     assert "case-private-44" not in json.dumps(manifest)

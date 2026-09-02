@@ -98,6 +98,25 @@ function MspAdminRoute({ children, description }: { children: ReactNode; descrip
   );
 }
 
+function SettingsRoute() {
+  const { role, roleResolved } = useDashboard();
+  return (
+    <RoleGate
+      role={role}
+      resolved={roleResolved}
+      allowed={["admin"]}
+      fallback={(
+        <section className="panel" role="alert">
+          <h2>Administrator access required</h2>
+          <p className="screen-note">Only administrators can manage appliance settings.</p>
+        </section>
+      )}
+    >
+      <Settings />
+    </RoleGate>
+  );
+}
+
 function PrincipalsAdminRoute() {
   const { role, roleResolved, isMspAdmin } = useDashboard();
   const allowed = roleResolved && isMspAdmin;
@@ -171,7 +190,7 @@ export function AppRoutes() {
       <Route path="technician-path" element={<TechnicianPath />} />
       <Route path="backfills" element={<ActivityShell><Backfills /></ActivityShell>} />
       <Route path="executions" element={<ActivityShell><Executions /></ActivityShell>} />
-      <Route path="settings" element={<Settings />} />
+      <Route path="settings" element={<SettingsRoute />} />
       <Route path="system/appliance-health" element={<ApplianceHealth />} />
       <Route path="system/diagnostics" element={<DiagnosticsSupport />} />
       <Route path="system/extensions" element={<ExtensionsPacks />} />

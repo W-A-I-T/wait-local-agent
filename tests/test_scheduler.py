@@ -20,6 +20,8 @@ from wait_local_agent.ingestion_poller import IngestionPoller, PollStatus, PollS
 from wait_local_agent.models import ScheduledJob
 from wait_local_agent.rbac import Role
 from wait_local_agent.scheduler import (
+    SCHEDULED_JOB_MAX_INSTANCES,
+    SCHEDULED_JOB_MISFIRE_GRACE_TIME_SECONDS,
     SchedulerManager,
     _backup_retention_count,
     _schedule_trigger,
@@ -64,6 +66,13 @@ def test_scheduler_manager_registers_and_reloads_persisted_jobs(tmp_path: Path) 
         assert len(jobs) == 1
         assert jobs[0].id == scheduled_job.id
         assert jobs[0].next_run_at is not None
+        assert reloaded_manager._scheduler is not None  # noqa: SLF001
+        live_job = reloaded_manager._scheduler.get_job(  # noqa: SLF001
+            reloaded_manager._job_identity(scheduled_job.id)
+        )
+        assert live_job is not None
+        assert live_job.max_instances == SCHEDULED_JOB_MAX_INSTANCES
+        assert live_job.misfire_grace_time == SCHEDULED_JOB_MISFIRE_GRACE_TIME_SECONDS
 
         reloaded_manager.shutdown()
 

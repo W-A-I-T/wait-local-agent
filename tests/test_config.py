@@ -2,7 +2,9 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from wait_local_agent.config import load_settings
+import pytest
+
+from wait_local_agent.config import Settings, load_settings, validate_scheduler_worker_configuration
 from wait_local_agent.vault import SecretVault
 
 
@@ -69,6 +71,7 @@ def test_safe_defaults_are_disabled(monkeypatch) -> None:
     monkeypatch.delenv("WAIT_LICENSE_KEY", raising=False)
     monkeypatch.delenv("WAIT_LICENSE_SECRET", raising=False)
     monkeypatch.delenv("WAIT_PACK_SIGNING_SECRET", raising=False)
+    monkeypatch.delenv("WAIT_TRUSTED_HOSTS", raising=False)
 
     settings = load_settings()
 
@@ -158,6 +161,35 @@ def test_safe_defaults_are_disabled(monkeypatch) -> None:
     assert settings.license_key == ""
     assert settings.license_secret == ""
     assert settings.pack_signing_secret == ""
+    assert "testserver" not in settings.trusted_hosts
+
+
+def test_scheduler_worker_guard_rejects_multi_worker_startup() -> None:
+    settings = Settings(
+        data_path=Path("state.db"),
+        allowed_doc_root=Path("."),
+        allow_write_actions=False,
+        allow_http_probing=False,
+        allow_cloud_fallback=False,
+        allow_llm_inference=False,
+        local_model_provider="deterministic",
+        local_model_base_url="",
+        local_model_name="",
+        local_model_timeout_seconds=20.0,
+        vector_backend="sqlite",
+        scheduler_enabled=True,
+    )
+
+    with pytest.raises(RuntimeError, match="WAIT_SCHEDULER_ENABLED=false"):
+        validate_scheduler_worker_configuration(settings, {"WEB_CONCURRENCY": "2"})
+    with pytest.raises(RuntimeError, match="WAIT_SCHEDULER_ENABLED=false"):
+        validate_scheduler_worker_configuration(settings, {"UVICORN_WORKERS": "3"})
+
+    validate_scheduler_worker_configuration(settings, {"WEB_CONCURRENCY": "1"})
+    validate_scheduler_worker_configuration(
+        Settings(**{**settings.__dict__, "scheduler_enabled": False}),
+        {"WEB_CONCURRENCY": "2"},
+    )
 
 
 def test_insecure_provider_transport_requires_explicit_opt_in(monkeypatch) -> None:
