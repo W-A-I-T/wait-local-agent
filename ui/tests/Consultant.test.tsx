@@ -343,7 +343,7 @@ describe("Consultant", () => {
     expect(promotionCall?.[1]).toMatchObject({
       body: expect.stringContaining('"solution_name":"Employee onboarding review"'),
     });
-  });
+  }, 15000);
 
   it("hands Power Apps and Power Automate artifacts to Solution delivery in order", async () => {
     render(

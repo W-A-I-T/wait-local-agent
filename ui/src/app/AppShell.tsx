@@ -145,7 +145,7 @@ export function WriteGateStatus({
       </button>
       {open ? (
         <div className="auth-help-popover write-gate-popover" role="note">
-          <strong>PSA write gates</strong>
+          <strong>{psaConnectors.length === 1 ? `PSA write gate (${psaConnectors[0].name})` : "PSA write gates"}</strong>
           {psaConnectors.length > 0 ? (
             <ul>
               {psaConnectors.map((connector) => {

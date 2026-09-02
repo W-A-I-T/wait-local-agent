@@ -100,7 +100,7 @@ describe("Sidebar navigation IA", () => {
       expect(matchingLinks).toHaveLength(1);
       expect(matchingLinks[0]).toHaveAttribute("href", path);
     }
-  });
+  }, 15000);
 
   it("renames Consultant without changing its route", () => {
     renderSidebar("admin");

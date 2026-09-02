@@ -78,7 +78,7 @@ describe("AppShell write-gate posture", () => {
     expect(button).not.toHaveClass("danger");
     fireEvent.click(button);
 
-    expect(screen.getByText("PSA write gates")).toBeInTheDocument();
+    expect(screen.getByText("PSA write gate (HaloPSA)")).toBeInTheDocument();
     expect(screen.getByText("Safe Mode · writes disabled")).toBeInTheDocument();
     expect(screen.getByText("Writes are blocked until WAIT_ALLOW_HTTP_PROBING=true and WAIT_ALLOW_WRITE_ACTIONS=true.")).toBeInTheDocument();
     expect(screen.getByText("Writes stay disabled until you explicitly enable them.")).toBeInTheDocument();

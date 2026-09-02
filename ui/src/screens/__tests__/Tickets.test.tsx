@@ -14,6 +14,7 @@ vi.mock("../../api/client", () => ({
 const selectTicket = vi.fn();
 let mockRefreshNonce = 0;
 let mockSelectedTicketId = "T-1";
+let mockAuthState: "demo" | "authenticated" = "authenticated";
 vi.mock("../../app/DashboardContext", () => ({
   defaultFieldText: "note=Reviewed by WAIT Local Agent",
   useDashboard: () => ({
@@ -25,7 +26,8 @@ vi.mock("../../app/DashboardContext", () => ({
     canWrite: false,
     busyId: null,
     createDraft: vi.fn(),
-    refreshNonce: mockRefreshNonce
+    refreshNonce: mockRefreshNonce,
+    authState: mockAuthState
   })
 }));
 
@@ -51,6 +53,7 @@ describe("Tickets workspace", () => {
     selectTicket.mockReset();
     mockRefreshNonce = 0;
     mockSelectedTicketId = "T-1";
+    mockAuthState = "authenticated";
     mockedApiFetch.mockImplementation((path) => {
       if (path === "/tickets?client_id=acme") return Promise.resolve([{ id: "T-1", client_id: "acme", subject: "Cannot sign in", status: "open", priority: "high", source_system: "connectwise", external_id: "CW-9" }]) as ReturnType<typeof apiFetch>;
       if (path === "/tickets/T-1/summary") return Promise.resolve({ ticket_id: "T-1", classification: "Access", summary: "Login issue", suggested_response: "Reset access", sources: [] }) as ReturnType<typeof apiFetch>;
@@ -65,6 +68,26 @@ describe("Tickets workspace", () => {
     fireEvent.click(screen.getByRole("button", { name: "Cannot sign in" }));
     expect(selectTicket).toHaveBeenCalledWith("T-1");
     expect(mockedApiFetch).toHaveBeenCalledWith("/tickets?client_id=acme");
+  });
+
+  it("directs authenticated users to connect a PSA when the ticket list is empty", async () => {
+    mockedApiFetch.mockResolvedValue([] as never);
+
+    render(<Tickets />);
+
+    expect(await screen.findByText("Connect a PSA to see tickets.")).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Connect a PSA" })).toHaveAttribute("href", "/integrations/connector-instances");
+    expect(screen.queryByText(/wait-local-agent demo seed/)).not.toBeInTheDocument();
+  });
+
+  it("explains the demo seed command only in demo mode", async () => {
+    mockAuthState = "demo";
+    mockedApiFetch.mockResolvedValue([] as never);
+
+    render(<Tickets />);
+
+    expect(await screen.findByText(/wait-local-agent demo seed --client-id demo/)).toBeInTheDocument();
+    expect(screen.queryByText("Connect a PSA to see tickets.")).not.toBeInTheDocument();
   });
 
   it("fetches and renders each detail tab", async () => {

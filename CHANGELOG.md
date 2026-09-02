@@ -28,6 +28,9 @@ All notable changes to WAIT Local Agent will be documented in this file.
   in-process scheduler is enabled.
 - Capability grants are now part of the canonical startup migration sequence,
   so authenticated requests no longer run migration checks on the hot path.
+- The operator shell now reports the aggregate write gate across configured PSA
+  connectors, keeps administrator-only surfaces behind role checks, and makes
+  the separate customer portal boundary explicit in navigation.
 - The Solutions Architect screen (renamed from Consultant) now surfaces the
   architecture decision engine, including per-component chosen targets,
   rationale, alternatives, requirements, and a decision-engine summary.
@@ -64,6 +67,9 @@ All notable changes to WAIT Local Agent will be documented in this file.
 
 ### Fixed
 
+- Removed the unreachable local-open auth presentation, made wizard progress
+  controls match their available handlers, and replaced misleading empty
+  ticket/demo states with actionable connector guidance.
 - Fixed Settings update checks and collector exports to use their backend POST
   contracts, routed desktop Microsoft sign-in through the configured API base,
   and added frontend route/method contract guards for the development proxy.

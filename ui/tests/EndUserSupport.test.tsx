@@ -52,7 +52,7 @@ describe("EndUserSupport", () => {
     const fetchMock = vi.mocked(fetch);
     fetchMock.mockImplementation(() => Promise.resolve(new Response(JSON.stringify({ detail: "end-user access required" }), { status: 403 })));
 
-    render(<EndUserSupport />);
+    render(<MemoryRouter><EndUserSupport /></MemoryRouter>);
     fireEvent.change(screen.getByLabelText("Request number"), { target: { value: "EUS-404" } });
     expect(screen.getByRole("button", { name: "Check status" })).toBeDisabled();
     expect(fetchMock).not.toHaveBeenCalled();
@@ -70,7 +70,7 @@ describe("EndUserSupport", () => {
     const fetchMock = vi.mocked(fetch);
     fetchMock.mockResolvedValue(json({ brand_name: "WAIT Support", brand_tagline: "Private help desk" }));
 
-    render(<EndUserSupport />);
+    render(<MemoryRouter><EndUserSupport /></MemoryRouter>);
 
     expect(screen.getByRole("link", { name: "Back to WAIT dashboard" })).toHaveAttribute("href", "/");
     fireEvent.change(screen.getByLabelText("Support access token"), { target: { value: "scoped-token" } });
