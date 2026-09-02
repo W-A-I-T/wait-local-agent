@@ -5,7 +5,6 @@ import sqlite3
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-from wait_local_agent.migrations import Migration, MigrationRunner
 from wait_local_agent.models import utc_now
 
 if TYPE_CHECKING:
@@ -41,18 +40,9 @@ class PrincipalSummary:
 
 
 def ensure_capability_schema(store: Store) -> None:
-    """Apply the capability-grant migration to the canonical local SQLite store."""
+    """Retain the extension hook; the canonical Store applies this at startup."""
 
-    with store._connect() as connection:  # noqa: SLF001 - same-store extension migration
-        MigrationRunner(connection).run(
-            (
-                Migration(
-                    CAPABILITY_MIGRATION_VERSION,
-                    "principal_capability_grants",
-                    _apply_capability_migration,
-                ),
-            )
-        )
+    del store
 
 
 def active_capability_grants(store: Store, principal_id: str) -> frozenset[tuple[str, str | None]]:
@@ -236,30 +226,6 @@ def list_principals(store: Store) -> list[PrincipalSummary]:
                 )
             )
     return result
-
-
-def _apply_capability_migration(connection: sqlite3.Connection) -> None:
-    connection.execute(
-        """
-        create table if not exists principal_capability_grants (
-            principal_id text not null references principals(principal_id) on delete cascade,
-            capability_key text not null,
-            client_scope text not null default '',
-            active integer not null default 1 check (active in (0, 1)),
-            granted_by text not null,
-            updated_by text not null,
-            created_at text not null,
-            updated_at text not null,
-            primary key (principal_id, capability_key, client_scope)
-        )
-        """
-    )
-    connection.execute(
-        """
-        create index if not exists idx_principal_capability_grants_active
-        on principal_capability_grants (principal_id, capability_key, active, client_scope)
-        """
-    )
 
 
 def _validate_grant_target(

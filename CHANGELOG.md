@@ -23,6 +23,11 @@ All notable changes to WAIT Local Agent will be documented in this file.
 
 ### Changed
 
+- Scheduled jobs now declare single-instance execution and a bounded 300-second
+  misfire grace period; startup rejects multi-worker configurations while the
+  in-process scheduler is enabled.
+- Capability grants are now part of the canonical startup migration sequence,
+  so authenticated requests no longer run migration checks on the hot path.
 - The Solutions Architect screen (renamed from Consultant) now surfaces the
   architecture decision engine, including per-component chosen targets,
   rationale, alternatives, requirements, and a decision-engine summary.
@@ -63,6 +68,8 @@ All notable changes to WAIT Local Agent will be documented in this file.
   contracts, routed desktop Microsoft sign-in through the configured API base,
   and added frontend route/method contract guards for the development proxy.
 
+- Production trusted-host defaults no longer include the test-only `testserver`
+  host, and refused demo-mode backup requests no longer create audit events.
 - Power Platform deployment and rollback execution now enforce the minimum CLI
   version and block when the installed version cannot be determined.
 

@@ -135,7 +135,10 @@ def test_backup_status_api_is_paged_and_refuses_demo_runs(settings: Settings) ->
         assert refused.status_code == 403
         assert "demo mode" in refused.json()["detail"]
 
-    assert any(event.event_type == "backup.run_requested" for event in application.state.store.list_audit_events())
+    assert not any(
+        event.event_type == "backup.run_requested"
+        for event in application.state.store.list_audit_events()
+    )
 
 
 def test_backup_and_restore_reject_paths_outside_data_root(settings: Settings, tmp_path: Path) -> None:

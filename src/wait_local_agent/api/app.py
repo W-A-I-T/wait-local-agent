@@ -3982,14 +3982,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @app.post("/backups/run")
     def run_backup(context: AdminAccess) -> dict[str, object]:
         _require_msp_operator(context)
+        if active_settings.demo_mode:
+            raise HTTPException(status_code=403, detail="backup runs are unavailable in demo mode")
         store.add_audit_event(
             "backup.run_requested",
             "manual",
             "admin requested backup run",
             approver_id=context.approver_id,
         )
-        if active_settings.demo_mode:
-            raise HTTPException(status_code=403, detail="backup runs are unavailable in demo mode")
         return asdict(scheduler.run_backup())
 
     @app.post("/backups")
