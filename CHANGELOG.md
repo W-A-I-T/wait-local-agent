@@ -6,6 +6,10 @@ All notable changes to WAIT Local Agent will be documented in this file.
 
 ### Breaking
 
+- Power Platform solution packages now use the proven XML layout under
+  `Other/` instead of YAML; emitted file paths and package digests change, and
+  custom connectors are reported as design-only rather than deployable source.
+
 - Power Platform source package metadata now includes `design_only_components`;
   `package_status` may be `partial_source`, and package digests change for
   flow-bearing solutions.
@@ -41,6 +45,10 @@ All notable changes to WAIT Local Agent will be documented in this file.
   Automation Discovery panel now exposes pack status, categories, mapping
   readiness, and credential-free time-entry evidence import with role-aware
   loading and error states.
+- Power Platform BUILD stages now stop after the local unmanaged solution pack;
+  `pac solution check` is no longer run as part of BUILD because checker
+  findings are advisory and the command requires an active cloud environment.
+
 - The Solutions Architect screen (renamed from Consultant) now surfaces the
   architecture decision engine, including per-component chosen targets,
   rationale, alternatives, requirements, and a decision-engine summary.
@@ -98,9 +106,8 @@ All notable changes to WAIT Local Agent will be documented in this file.
   after any terminal execution status, preserving the original promotion
   evidence.
 
-- Packaged `flow.yml` now records the real trigger and action sequence instead
-  of an empty trigger and empty step list; package digests for flow-bearing
-  solutions change accordingly.
+- Flow-bearing package digests now reflect the design-only flow record rather
+  than a fake `flow.yml` source file.
 
 - The Solutions Architect screen now loads each section independently, so a
   failed `/consultant/*` sub-request does not blank the blueprint list or

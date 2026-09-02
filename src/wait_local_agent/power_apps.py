@@ -76,24 +76,27 @@ def build_power_apps_artifact(
     tables = cast(list[dict[str, object]], dataverse_tables)
     canvas_screens = cast(list[dict[str, object]], canvas["screens"])
     canvas_actions = cast(list[dict[str, object]], canvas["actions"])
+    schema_tables: list[dict[str, object]] = []
+    for table in tables:
+        schema_table: dict[str, object] = {
+            "logical_name": table["logical_name"],
+            "display_name": table["display_name"],
+            "columns": [
+                {
+                    "logical_name": field["name"],
+                    "display_name": field["name"],
+                    "type": _dataverse_type(field["type"]),
+                    "required": field["required"],
+                }
+                for field in cast(list[dict[str, object]], table["fields"])
+            ],
+        }
+        if "primary_name_column" in table:
+            schema_table["primary_name_column"] = table["primary_name_column"]
+        schema_tables.append(schema_table)
     schema = {
         "schema_version": 1,
-        "tables": [
-            {
-                "logical_name": table["logical_name"],
-                "display_name": table["display_name"],
-                "columns": [
-                    {
-                        "logical_name": field["name"],
-                        "display_name": field["name"],
-                        "type": _dataverse_type(field["type"]),
-                        "required": field["required"],
-                    }
-                    for field in cast(list[dict[str, object]], table["fields"])
-                ],
-            }
-            for table in tables
-        ],
+        "tables": schema_tables,
     }
     manifest = {
         "manifest_version": 1,
@@ -198,6 +201,12 @@ def _entities(value: object) -> list[dict[str, object]]:
         fields = _objects(entity.get("fields", []), f"{logical_name}.fields", MAX_APP_FIELDS)
         field_views: list[dict[str, object]] = []
         field_names: set[str] = set()
+        primary_name_column: str | None = None
+        if "primary_name_column" in entity:
+            primary_name_column = _identifier(
+                entity.get("primary_name_column"),
+                f"{logical_name}.primary_name_column",
+            )
         for field in fields:
             field_name = _identifier(field.get("name"), f"{logical_name}.field.name")
             if field_name in field_names:
@@ -215,13 +224,18 @@ def _entities(value: object) -> list[dict[str, object]]:
                     "required": bool(field.get("required", False)),
                 }
             )
-        result.append(
-            {
-                "logical_name": logical_name,
-                "display_name": _text(entity.get("display_name", logical_name), "entity.display_name", 120),
-                "fields": field_views,
-            }
-        )
+        if primary_name_column is not None and primary_name_column not in field_names:
+            raise PowerAppsPlanError(
+                f"{logical_name}.primary_name_column must name a declared field: {primary_name_column}"
+            )
+        entity_view: dict[str, object] = {
+            "logical_name": logical_name,
+            "display_name": _text(entity.get("display_name", logical_name), "entity.display_name", 120),
+            "fields": field_views,
+        }
+        if primary_name_column is not None:
+            entity_view["primary_name_column"] = primary_name_column
+        result.append(entity_view)
     return result
 
 

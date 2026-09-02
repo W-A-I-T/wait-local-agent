@@ -208,7 +208,10 @@ def test_solution_plan_is_reviewable_and_does_not_execute(monkeypatch, settings)
     plan = build_solution_command_plan("onboarding", "WAIT_Dev", "wait", "/tmp/onboarding")
     assert plan["execution_started"] is False
     assert plan["deployment_started"] is False
-    assert plan["commands"][-1][:3] == ["pac", "solution", "check"]
+    assert plan["commands"][0][:3] == ["pac", "solution", "pack"]
+    assert all(command[3] != "init" for command in plan["commands"])
+    assert "--packagetype" in plan["commands"][0]
+    assert all(command[:3] != ["pac", "solution", "check"] for command in plan["commands"])
 
 
 def test_power_platform_cli_status_reports_probe_execution(settings, monkeypatch) -> None:
