@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import os
 from collections.abc import Mapping, Sequence
+from dataclasses import dataclass
 from pathlib import Path
 
 CANONICAL_INPUT_ARTIFACT: dict[str, object] = {
@@ -45,6 +46,82 @@ CANONICAL_INPUT_ARTIFACT: dict[str, object] = {
 }
 
 _GOLDEN_ROOT = Path(__file__).parent / "power_platform_reference" / "golden"
+
+
+@dataclass(frozen=True)
+class PacShim:
+    """On-disk PAC substitute used to exercise real subprocess execution."""
+
+    executable: Path
+    argv_log: Path
+    failure_trigger: str
+
+
+def write_pac_shim(tmp_path: Path) -> PacShim:
+    """Write a cross-platform executable that implements the tested PAC edges.
+
+    The shim is intentionally tiny and local: it records each invocation, emits
+    a stable version from ``help``, writes a real ZIP for ``solution pack``, and
+    has one deterministic non-zero trigger for failure-path tests. It does not
+    contact Dataverse or represent a tenant.
+    """
+
+    shim_directory = tmp_path / "pac-shim"
+    shim_directory.mkdir()
+    argv_log = shim_directory / "argv.jsonl"
+    failure_trigger = "--wait-pac-shim-fail"
+    implementation = f'''import json
+import os
+import sys
+import zipfile
+from pathlib import Path
+
+argv = sys.argv[1:]
+with Path(os.environ["WAIT_PAC_SHIM_ARGV_LOG"]).open("a", encoding="utf-8") as stream:
+    json.dump({{"argv": argv, "cwd": os.getcwd()}}, stream)
+    stream.write("\\n")
+
+if {failure_trigger!r} in argv:
+    print("token=REDACTION-PROBE-VALUE-DO-NOT-MATCH")
+    print("authorization=REDACTION-PROBE-VALUE-DO-NOT-MATCH", file=sys.stderr)
+    raise SystemExit(7)
+
+if argv == ["help"]:
+    print("Version: 2.4.1")
+    raise SystemExit(0)
+
+if len(argv) >= 2 and argv[:2] == ["solution", "pack"]:
+    try:
+        zipfile_argument = argv.index("--zipfile") + 1
+        artifact = Path(argv[zipfile_argument])
+    except (ValueError, IndexError):
+        print("missing --zipfile", file=sys.stderr)
+        raise SystemExit(2) from None
+    artifact.parent.mkdir(parents=True, exist_ok=True)
+    with zipfile.ZipFile(artifact, "w") as archive:
+        archive.writestr("solution.xml", "<ImportExportXml />")
+    print("packed")
+    raise SystemExit(0)
+
+print("unsupported command", file=sys.stderr)
+raise SystemExit(2)
+'''
+
+    if os.name == "nt":
+        script = shim_directory / "pac_shim.py"
+        script.write_text(implementation, encoding="utf-8", newline="\r\n")
+        executable = shim_directory / "pac.cmd"
+        executable.write_text(
+            '@echo off\r\npython "%~dp0pac_shim.py" %*\r\nexit /b %ERRORLEVEL%\r\n',
+            encoding="utf-8",
+            newline="",
+        )
+    else:
+        executable = shim_directory / "pac"
+        executable.write_text("#!/usr/bin/env python3\n" + implementation, encoding="utf-8")
+        executable.chmod(executable.stat().st_mode | 0o111)
+
+    return PacShim(executable=executable, argv_log=argv_log, failure_trigger=failure_trigger)
 
 
 def assert_matches_golden(files: Sequence[Mapping[str, object]], name: str) -> None:

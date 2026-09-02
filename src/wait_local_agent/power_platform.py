@@ -8,6 +8,7 @@ import re
 import shutil
 import subprocess  # nosec B404 - probe argv is fixed, shell=False, and timeout is bounded below
 from collections.abc import Mapping
+from pathlib import Path
 from typing import Any, cast
 
 from wait_local_agent.config import Settings, load_settings
@@ -308,7 +309,7 @@ def build_solution_command_plan(
                 "--folder",
                 directory,
                 "--zipfile",
-                f"{directory}/{name}.zip",
+                str(Path(directory) / f"{name}.zip"),
                 "--packagetype",
                 "Unmanaged",
             ]

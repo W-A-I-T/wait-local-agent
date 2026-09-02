@@ -1,5 +1,13 @@
+"""Power Platform deployment tests.
+
+The PAC shim tests prove the local execution path and nothing about Dataverse:
+a shim is not a tenant.
+"""
+
 from __future__ import annotations
 
+import json
+import os
 import stat
 import subprocess
 import zipfile
@@ -10,6 +18,7 @@ from typing import cast
 import pytest
 
 import wait_local_agent.power_platform_deployment as deployment
+from tests.power_platform_support import PacShim, write_pac_shim
 from wait_local_agent.power_platform_deployment import (
     PowerPlatformDeploymentError,
     build_power_platform_deployment_plan,
@@ -21,9 +30,19 @@ from wait_local_agent.power_platform_deployment import (
     validate_promotion_source,
 )
 
+_REAL_PAC_SHIM_TESTS = frozenset(
+    {
+        "test_stage_executes_real_pac_shim_and_verifies_artifact",
+        "test_stage_enforces_version_floor_from_real_pac_shim",
+        "test_stage_reports_real_pac_shim_failure_and_redacts_output",
+    }
+)
+
 
 @pytest.fixture(autouse=True)
-def fake_pac_version(monkeypatch) -> None:
+def fake_pac_version(monkeypatch, request) -> None:
+    if request.node.name in _REAL_PAC_SHIM_TESTS:
+        return
     monkeypatch.setattr(deployment, "pac_cli_version", lambda _: "2.4.1")
 
 
@@ -43,6 +62,25 @@ def _plan(output_directory: str = "/tmp/power-platform/solution") -> dict[str, o
         output_directory=output_directory,
         deployment_targets=_targets(),
     )
+
+
+def _configured_with_pac_shim(settings, workspace: Path, shim: PacShim, monkeypatch):
+    monkeypatch.setenv("WAIT_PAC_PATH", str(shim.executable))
+    monkeypatch.setenv("WAIT_PAC_SHIM_ARGV_LOG", str(shim.argv_log))
+    return replace(
+        settings,
+        allow_write_actions=True,
+        allow_power_platform_deployment=True,
+        power_platform_workspace=workspace,
+        pac_path=Path(os.environ["WAIT_PAC_PATH"]),
+    )
+
+
+def _pac_shim_records(shim: PacShim) -> list[dict[str, object]]:
+    return [
+        cast(dict[str, object], json.loads(line))
+        for line in shim.argv_log.read_text(encoding="utf-8").splitlines()
+    ]
 
 
 def _rollback_evidence(digest: str) -> dict[str, object]:
@@ -399,31 +437,64 @@ def test_stage_blocks_when_pac_version_cannot_be_determined_before_runner(
     assert calls == []
 
 
-@pytest.mark.parametrize("version", ["2.4.1", "2.10.0"])
-def test_stage_proceeds_at_or_above_minimum_pac_version(settings, tmp_path: Path, monkeypatch, version: str) -> None:
+def test_stage_executes_real_pac_shim_and_verifies_artifact(settings, tmp_path: Path, monkeypatch) -> None:
     workspace = tmp_path / "workspace"
     workspace.mkdir()
-    configured = replace(
-        settings,
-        allow_write_actions=True,
-        allow_power_platform_deployment=True,
-        power_platform_workspace=workspace,
-    )
-    monkeypatch.setattr(deployment, "resolve_pac_executable", lambda _: "/fake/pac")
-    monkeypatch.setattr(deployment, "pac_cli_version", lambda _: version)
-
-    def runner(command, cwd, timeout):
-        artifact = cwd / "solution" / "onboarding_review.zip"
-        artifact.parent.mkdir(parents=True, exist_ok=True)
-        with zipfile.ZipFile(artifact, "w") as archive:
-            archive.writestr("solution.xml", "<ImportExportXml />")
-        return subprocess.CompletedProcess(command, 0, "", "")
+    shim = write_pac_shim(tmp_path)
+    configured = _configured_with_pac_shim(settings, workspace, shim, monkeypatch)
 
     result = execute_power_platform_stage(
-        _plan(str(workspace / "solution")), "build", configured, approved=True, runner=runner
+        _plan(str(workspace / "solution")), "build", configured, approved=True
     )
 
     assert result["status"] == "succeeded"
+    artifact = workspace / "solution" / "onboarding_review.zip"
+    assert artifact.is_file()
+    assert zipfile.is_zipfile(artifact)
+    assert result["artifact_digest"] == validate_power_platform_solution_package(artifact, workspace)
+
+    records = _pac_shim_records(shim)
+    assert len(records) == 2
+    version_probe, stage_command = records
+    assert version_probe["argv"] == ["help"]
+    version_probe_cwd = version_probe["cwd"]
+    assert isinstance(version_probe_cwd, str)
+    assert Path(version_probe_cwd).is_dir()
+    assert stage_command == {
+        "argv": [
+            "solution",
+            "pack",
+            "--folder",
+            str(workspace / "solution"),
+            "--zipfile",
+            str(artifact),
+            "--packagetype",
+            "Unmanaged",
+        ],
+        "cwd": str(workspace.resolve()),
+    }
+
+
+def test_stage_enforces_version_floor_from_real_pac_shim(settings, tmp_path: Path, monkeypatch) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    shim = write_pac_shim(tmp_path)
+    configured = _configured_with_pac_shim(settings, workspace, shim, monkeypatch)
+    monkeypatch.setattr(deployment, "PAC_YAML_MINIMUM_VERSION", "2.4.2")
+
+    result = execute_power_platform_stage(
+        _plan(str(workspace / "solution")), "build", configured, approved=True
+    )
+
+    assert result["status"] == "blocked"
+    assert "2.4.1" in str(result["message"])
+    assert "2.4.2" in str(result["message"])
+    records = _pac_shim_records(shim)
+    assert len(records) == 1
+    assert records[0]["argv"] == ["help"]
+    version_probe_cwd = records[0]["cwd"]
+    assert isinstance(version_probe_cwd, str)
+    assert Path(version_probe_cwd).is_dir()
 
 
 def test_launch_argv_handles_windows_batch_shims_and_shell_metacharacters(monkeypatch) -> None:
@@ -490,31 +561,49 @@ def test_batch_shim_metacharacters_fail_closed_for_stage_and_rollback(
     assert "invalid command" in str(rollback_result["message"])
 
 
-def test_execution_is_shell_free_bounded_and_stops_on_failure(settings, tmp_path: Path, monkeypatch) -> None:
+def test_stage_reports_real_pac_shim_failure_and_redacts_output(settings, tmp_path: Path, monkeypatch) -> None:
     workspace = tmp_path / "workspace"
     workspace.mkdir()
     plan = _plan(str(workspace / "solution"))
-    configured = replace(
-        settings,
-        allow_write_actions=True,
-        allow_power_platform_deployment=True,
-        power_platform_workspace=workspace,
+    shim = write_pac_shim(tmp_path)
+    configured = _configured_with_pac_shim(settings, workspace, shim, monkeypatch)
+    stages = cast(list[dict[str, object]], plan["stages"])
+    build_stage = stages[0]
+    commands = cast(list[list[str]], build_stage["commands"])
+    failed_plan = dict(
+        plan,
+        stages=[
+            {
+                **build_stage,
+                "commands": [[*commands[0], shim.failure_trigger]],
+            }
+        ],
     )
-    monkeypatch.setattr(deployment, "resolve_pac_executable", lambda _: "/usr/local/bin/pac")
-    calls: list[tuple[list[str], Path, float]] = []
 
-    def runner(command: list[str], cwd: Path, timeout: float) -> subprocess.CompletedProcess[str]:
-        calls.append((command, cwd, timeout))
-        return subprocess.CompletedProcess(command, 1, "token=secret", "failed")
-
-    result = execute_power_platform_stage(plan, "build", configured, approved=True, runner=runner)
+    result = execute_power_platform_stage(failed_plan, "build", configured, approved=True)
 
     assert result["status"] == "failed"
-    assert len(calls) == 1
-    assert calls[0][0][0] == "/usr/local/bin/pac"
-    assert calls[0][1] == workspace.resolve()
-    assert calls[0][2] <= 1_800
-    assert result["commands"][0]["stdout"] == "token=[redacted]"  # type: ignore[index]
+    command_result = cast(list[dict[str, object]], result["commands"])[0]
+    assert command_result["return_code"] == 7
+    stdout = cast(str, command_result["stdout"])
+    stderr = cast(str, command_result["stderr"])
+    assert "REDACTION-PROBE-VALUE-DO-NOT-MATCH" not in stdout
+    assert "[redacted]" in stdout
+    assert "token=" in stdout
+    assert "REDACTION-PROBE-VALUE-DO-NOT-MATCH" not in stderr
+    assert "[redacted]" in stderr
+    assert "authorization=" in stderr
+    records = _pac_shim_records(shim)
+    assert len(records) == 2
+    version_probe, stage_command = records
+    assert version_probe["argv"] == ["help"]
+    version_probe_cwd = version_probe["cwd"]
+    assert isinstance(version_probe_cwd, str)
+    assert Path(version_probe_cwd).is_dir()
+    assert stage_command == {
+        "argv": [*commands[0], shim.failure_trigger][1:],
+        "cwd": str(workspace.resolve()),
+    }
 
 
 def test_deployment_payload_rebuild_rejects_missing_fields_and_accepts_canonical_payload() -> None:

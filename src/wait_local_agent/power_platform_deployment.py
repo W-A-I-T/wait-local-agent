@@ -79,7 +79,7 @@ def build_power_platform_deployment_plan(
         raise PowerPlatformDeploymentError(str(exc)) from exc
     targets = _targets(deployment_targets)
     commands = cast(list[list[str]], base["commands"])
-    zipfile = f"{output_directory.rstrip('/')}/{base['solution_name']}.zip"
+    zipfile = str(Path(output_directory) / f"{base['solution_name']}.zip")
     stages: list[dict[str, object]] = [
         {
             "id": "build",
