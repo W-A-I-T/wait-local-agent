@@ -24,7 +24,7 @@ WAIT_DEMO_MODE=false
 
 | Variable | Accepted values | Behavior |
 | --- | --- | --- |
-| `WAIT_SECRETS_BACKEND` | `env` or `fernet` | Selects environment-backed or Fernet-vault-backed secrets. Any other value refuses startup with an actionable error. |
+| `WAIT_SECRETS_BACKEND` | `env` or `fernet` (blank defaults to `env`) | Selects environment-backed or Fernet-vault-backed secrets. Any other non-blank value refuses startup with an actionable error. |
 
 Keep credentials in the environment or configured local vault. Do not place
 secrets, bearer tokens, provider credentials, or client data in action payloads,

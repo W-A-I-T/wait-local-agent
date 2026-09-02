@@ -58,6 +58,8 @@ def _secrets_backend() -> str:
 
 def _validated_secrets_backend(value: str) -> str:
     backend = value.strip().lower()
+    if not backend:
+        return "env"
     if backend not in SUPPORTED_SECRETS_BACKENDS:
         accepted = " or ".join(SUPPORTED_SECRETS_BACKENDS)
         raise ValueError(

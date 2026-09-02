@@ -464,7 +464,7 @@ def test_fernet_secret_backend_overrides_env_values(monkeypatch, tmp_path) -> No
     assert settings.license_key == "vault-license-key"
 
 
-@pytest.mark.parametrize("backend", ["vault", "sqlite", ""])
+@pytest.mark.parametrize("backend", ["vault", "sqlite"])
 def test_invalid_secrets_backend_is_rejected(monkeypatch, backend: str) -> None:
     monkeypatch.setenv("WAIT_SECRETS_BACKEND", backend)
 
@@ -478,13 +478,13 @@ def test_invalid_secrets_backend_is_rejected(monkeypatch, backend: str) -> None:
     assert "fernet" in message
 
 
-@pytest.mark.parametrize("backend", ["env", " ENV ", "fernet", " FERNET "])
+@pytest.mark.parametrize("backend", ["", "   ", "env", " ENV ", "fernet", " FERNET "])
 def test_supported_secrets_backend_values_are_normalized(monkeypatch, backend: str) -> None:
     monkeypatch.setenv("WAIT_SECRETS_BACKEND", backend)
 
     settings = load_settings()
 
-    assert settings.secrets_backend == backend.strip().lower()
+    assert settings.secrets_backend == (backend.strip().lower() or "env")
 
 
 def test_fernet_secret_vault_errors_propagate_during_settings_load(monkeypatch) -> None:
