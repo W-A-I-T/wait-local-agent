@@ -20,6 +20,17 @@
               <IsRenameable>1</IsRenameable><MaxLength>100</MaxLength><Length>100</Length><Format>text</Format>
               <displaynames><displayname description="Display name" languagecode="1033" /></displaynames>
             </attribute>
+            <attribute PhysicalName="wait_start_date">
+              <Type>datetime</Type>
+              <Name>wait_start_date</Name><LogicalName>wait_start_date</LogicalName>
+              <RequiredLevel>none</RequiredLevel>
+              <DisplayMask>ValidForAdvancedFind|ValidForForm|ValidForGrid</DisplayMask>
+              <ImeMode>auto</ImeMode><ValidForCreateApi>1</ValidForCreateApi><ValidForReadApi>1</ValidForReadApi>
+              <ValidForUpdateApi>1</ValidForUpdateApi><IsCustomField>1</IsCustomField><IsAuditEnabled>0</IsAuditEnabled>
+              <IsSecured>0</IsSecured><IntroducedVersion>1.0</IntroducedVersion><IsCustomizable>1</IsCustomizable>
+              <IsRenameable>1</IsRenameable><Format>date</Format><Behavior>1</Behavior>
+              <displaynames><displayname description="Start date" languagecode="1033" /></displaynames>
+            </attribute>
           </attributes>
           <EntitySetName>wait_employees</EntitySetName>
           <IsCustomEntity>1</IsCustomEntity><OwnershipTypeMask>UserOwned</OwnershipTypeMask>

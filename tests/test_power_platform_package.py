@@ -219,7 +219,7 @@ def test_real_power_apps_artifact_is_import_complete_when_packaged(tmp_path: Pat
     )
 
     assert package["deployable"] is True
-    assert package["package_status"] == "partial_source"
+    assert package["package_status"] == "deployable_source"
     files = cast(list[dict[str, object]], package["files"])
     solution_xml = cast(str, next(item["content"] for item in files if item["path"] == "Other/Solution.xml"))
     customizations_xml = cast(
@@ -229,12 +229,11 @@ def test_real_power_apps_artifact_is_import_complete_when_packaged(tmp_path: Pat
     assert '<RootComponent type="1" schemaName="wait_employee" behavior="0" />' in solution_xml
     assert '<attribute PhysicalName="wait_display_name">' in customizations_xml
     assert "<Name>wait_display_name</Name>" in customizations_xml
-    design_only = cast(list[dict[str, object]], package["design_only_components"])
-    assert any(
-        item["path"] == "entities/wait_employee"
-        and "wait_start_date" in str(item["reason"])
-        for item in design_only
-    )
+    assert '<attribute PhysicalName="wait_start_date">' in customizations_xml
+    assert "<Type>datetime</Type>" in customizations_xml
+    assert "<Format>date</Format>" in customizations_xml
+    assert "<Behavior>1</Behavior>" in customizations_xml
+    assert package["design_only_components"] == []
 
     string_only_artifact = build_power_apps_artifact(
         client_id="acme",
@@ -287,12 +286,13 @@ def test_employee_onboarding_demo_artifacts_yield_deployable_entity(tmp_path: Pa
     assert '<RootComponent type="1" schemaName="wait_employee" behavior="0" />' in solution_xml
     assert '<attribute PhysicalName="wait_display_name">' in customizations_xml
     assert "<Name>wait_display_name</Name>" in customizations_xml
-    assert any(item["path"] == "modernflows/employee_onboarding" for item in package["design_only_components"])
-    assert not any(
-        item["path"] == "entities/wait_employee"
-        and "entity was omitted" in str(item["reason"])
-        for item in package["design_only_components"]
-    )
+    assert '<attribute PhysicalName="wait_start_date">' in customizations_xml
+    assert "<Type>datetime</Type>" in customizations_xml
+    assert "<Format>date</Format>" in customizations_xml
+    assert "<Behavior>1</Behavior>" in customizations_xml
+    assert {item["path"] for item in package["design_only_components"]} == {
+        "modernflows/employee_onboarding"
+    }
 
 
 def test_entity_is_declared_as_a_numeric_root_component(tmp_path: Path) -> None:
@@ -537,7 +537,7 @@ def test_unmappable_non_primary_attribute_is_omitted_and_reported(tmp_path: Path
     table = tables[0]
     table["columns"] = [
         {"logical_name": "wait_display_name", "display_name": "Display name", "type": "String"},
-        {"logical_name": "wait_department", "display_name": "Department", "type": "DateOnly"},
+        {"logical_name": "wait_department", "display_name": "Department", "type": "Integer"},
     ]
     package = _package(tmp_path, [artifact])
     files = cast(list[dict[str, object]], package["files"])
@@ -559,7 +559,36 @@ def test_unmappable_non_primary_attribute_is_omitted_and_reported(tmp_path: Path
     assert any(
         item["path"] == "entities/wait_employee"
         and "wait_department" in str(item["reason"])
-        and "DateOnly" in str(item["reason"])
+        and "Integer" in str(item["reason"])
+        for item in design_only
+    )
+
+
+def test_unverified_field_type_is_omitted_and_reported(tmp_path: Path) -> None:
+    artifact = _entity_artifact()
+    dataverse = cast(dict[str, object], artifact["dataverse"])
+    table = cast(list[dict[str, object]], dataverse["tables"])[0]
+    table["columns"] = [
+        {"logical_name": "wait_display_name", "display_name": "Display name", "type": "String"},
+        {"logical_name": "wait_employee_number", "display_name": "Employee number", "type": "integer"},
+    ]
+
+    package = _package(tmp_path, [artifact])
+    customizations_xml = cast(
+        str,
+        next(
+            item["content"]
+            for item in cast(list[dict[str, object]], package["files"])
+            if item["path"] == "Other/Customizations.xml"
+        ),
+    )
+    design_only = cast(list[dict[str, object]], package["design_only_components"])
+
+    assert 'PhysicalName="wait_employee_number"' not in customizations_xml
+    assert any(
+        item["path"] == "entities/wait_employee"
+        and "wait_employee_number" in str(item["reason"])
+        and "integer" in str(item["reason"])
         for item in design_only
     )
 
@@ -570,7 +599,7 @@ def test_unmappable_primary_attribute_omits_entity_and_root_component(tmp_path: 
     tables = cast(list[dict[str, object]], dataverse["tables"])
     table = tables[0]
     table["columns"] = [
-        {"logical_name": "wait_display_name", "display_name": "Display name", "type": "DateOnly"},
+        {"logical_name": "wait_display_name", "display_name": "Display name", "type": "Integer"},
         {"logical_name": "wait_department", "display_name": "Department", "type": "String"},
     ]
     package = _package(tmp_path, [artifact])
@@ -595,7 +624,7 @@ def test_unmappable_primary_attribute_omits_entity_and_root_component(tmp_path: 
         and "entity was omitted because its primary name column wait_display_name could not be mapped" in str(
             item["reason"]
         )
-        and "unmapped WAIT type DateOnly" in str(item["reason"])
+        and "unmapped WAIT type Integer" in str(item["reason"])
         for item in design_only
     )
 
