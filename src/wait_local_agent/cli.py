@@ -4586,7 +4586,7 @@ def set_knowledge_document_authority(
 ) -> None:
     settings = load_settings()
     context = _cli_access(settings, token, Role.ADMIN)
-    scope = resolve_client_scope(context, client_id, allow_all=True)
+    scope = resolve_client_scope(context, client_id)
     store = Store(settings.data_path)
     try:
         document = store.set_knowledge_document_authority(

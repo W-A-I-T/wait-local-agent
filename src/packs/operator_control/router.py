@@ -284,7 +284,7 @@ def create_router() -> APIRouter:
         status_filter: str | None = Query(default=None, alias="status", max_length=64),
         limit: int = Query(default=100, ge=1, le=500),
     ) -> list[dict[str, object]]:
-        scope = resolve_client_scope(context, client_id, allow_all=True)
+        scope = resolve_client_scope(context, client_id)
         kind_set = (
             frozenset(part.strip() for part in kinds.split(",") if part.strip())
             if kinds is not None

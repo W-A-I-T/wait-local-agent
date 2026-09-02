@@ -110,7 +110,7 @@ def test_connection_seam_profile_resolution_failures_are_sanitized(settings, ope
     class Resolver:
         calls = 0
 
-        def resolve(self, _client_id: str | None):
+        def resolve(self, _client_id: str | None, **_kwargs):
             self.calls += 1
             if self.calls == 1:
                 return M365Connection(

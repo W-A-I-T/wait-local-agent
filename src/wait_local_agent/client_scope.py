@@ -43,8 +43,6 @@ ClientScope = BoundClients | AllClients
 def resolve_client_scope(
     context: AuthContext,
     requested_client_id: str | None = None,
-    *,
-    allow_all: bool = False,
 ) -> ClientScope:
     """Resolve a request's client scope without treating None as an implicit wildcard.
 

@@ -113,6 +113,7 @@ class LocalCollectorRmmAdapter:
     """Normalize persisted endpoint-agent collector assets as RMM devices."""
 
     adapter_id = "local-collector"
+    tier = "environment"
 
     def __init__(self, store: Store) -> None:
         self.store = store
@@ -198,10 +199,12 @@ def rmm_provider_from_settings(
     store: RmmInstanceStore,
     client_id: str | None = None,
     vault: Any | None = None,
+    *,
+    allow_msp_wide: bool = False,
 ) -> RmmInventoryProvider:
-    """Select a vendor adapter, preferring an unambiguous active instance."""
+    """Select a vendor adapter without crossing a requested client boundary."""
     normalized_client_id = client_id.strip() if isinstance(client_id, str) else ""
-    if normalized_client_id:
+    if normalized_client_id or allow_msp_wide:
         try:
             instances = store.list_connector_instances()
         except Exception as exc:
@@ -218,7 +221,11 @@ def rmm_provider_from_settings(
             if isinstance(instance.client_id, str) and instance.client_id.strip() == normalized_client_id
         ]
         candidates = client_instances
-        tier = "client-scoped"
+        tier: Literal["client-scoped", "MSP-wide"] = "client-scoped"
+        if not candidates and normalized_client_id and not allow_msp_wide:
+            raise RmmProviderResolutionError(
+                f"no active client-scoped RMM connector instance found for client {normalized_client_id}"
+            )
         if not candidates:
             candidates = [
                 instance
@@ -243,24 +250,36 @@ def rmm_provider_from_settings(
                 )
             except ConnectorFactoryError as exc:
                 raise RmmProviderResolutionError(str(exc)) from exc
+            try:
+                cast(Any, provider).tier = tier
+            except (AttributeError, TypeError) as exc:
+                raise RmmProviderResolutionError("RMM provider does not expose a resolution tier") from exc
             return provider  # type: ignore[return-value]
 
     if settings.ninjaone_base_url or settings.ninjaone_access_token:
         from wait_local_agent.ninjaone import NinjaOneRmmAdapter
 
-        return NinjaOneRmmAdapter(settings)
+        ninjaone_provider = NinjaOneRmmAdapter(settings)
+        cast(Any, ninjaone_provider).tier = "environment"
+        return ninjaone_provider
     if settings.datto_rmm_base_url or settings.datto_rmm_access_token:
         from wait_local_agent.dattormm import DattoRmmAdapter
 
-        return DattoRmmAdapter(settings, store=cast(Store, store))
+        datto_provider = DattoRmmAdapter(settings, store=cast(Store, store))
+        cast(Any, datto_provider).tier = "environment"
+        return datto_provider
     if settings.ncentral_base_url or settings.ncentral_access_token:
         from wait_local_agent.ncentral import NCentralRmmAdapter
 
-        return NCentralRmmAdapter(settings, store=cast(Store, store))
+        ncentral_provider = NCentralRmmAdapter(settings, store=cast(Store, store))
+        cast(Any, ncentral_provider).tier = "environment"
+        return ncentral_provider
     if settings.n_sight_base_url or settings.n_sight_api_key:
         from wait_local_agent.nsight import NSightRmmAdapter
 
-        return NSightRmmAdapter(settings)
+        nsight_provider = NSightRmmAdapter(settings)
+        cast(Any, nsight_provider).tier = "environment"
+        return nsight_provider
     if (
         settings.kaseya_rmm_base_url
         or settings.kaseya_rmm_token_id
@@ -268,7 +287,9 @@ def rmm_provider_from_settings(
     ):
         from wait_local_agent.kaseya import KaseyaRmmAdapter
 
-        return KaseyaRmmAdapter(settings, store=cast(Store, store))
+        kaseya_provider = KaseyaRmmAdapter(settings, store=cast(Store, store))
+        cast(Any, kaseya_provider).tier = "environment"
+        return kaseya_provider
     if (
         settings.screenconnect_base_url
         or settings.screenconnect_extension_id
@@ -276,7 +297,9 @@ def rmm_provider_from_settings(
     ):
         from wait_local_agent.screenconnect import ScreenConnectRmmAdapter
 
-        return ScreenConnectRmmAdapter(settings)
+        screenconnect_provider = ScreenConnectRmmAdapter(settings)
+        cast(Any, screenconnect_provider).tier = "environment"
+        return screenconnect_provider
     return LocalCollectorRmmAdapter(cast(Store, store))
 
 

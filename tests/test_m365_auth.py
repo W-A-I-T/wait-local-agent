@@ -243,13 +243,30 @@ def test_resolver_prefers_client_then_msp_then_environment_and_caches_profile_pr
     )
 
     assert resolver.resolve("acme").profile_id == "client-profile"
-    assert resolver.resolve("other").profile_id == "msp-profile"
+    assert resolver.resolve("other", allow_msp_wide=True).profile_id == "msp-profile"
+    assert resolver.resolve("other", allow_msp_wide=True).tier == "MSP-wide"
     assert resolver.resolve("acme").token_provider is resolver.resolve("acme").token_provider
 
     store.instances = []
-    fallback = resolver.resolve("acme")
+    with pytest.raises(M365ProfileResolutionError, match="client-scoped.*acme"):
+        resolver.resolve("acme")
+    fallback = resolver.resolve("acme", allow_msp_wide=True)
     assert fallback.profile_id is None
+    assert fallback.tier == "environment"
     assert fallback.token_provider.get_token() == "env-value"
+
+
+def test_resolver_reports_client_and_msp_profile_tiers(settings) -> None:
+    client_profile = _instance(instance_id="client-profile", client_id="acme")
+    msp_profile = _instance(instance_id="msp-profile")
+    resolver = M365ConnectionResolver(
+        settings,
+        _Store([client_profile, msp_profile]),
+        _Vault([client_profile, msp_profile]),
+    )
+
+    assert resolver.resolve("acme").tier == "client-scoped"
+    assert resolver.resolve().tier == "MSP-wide"
 
 
 def test_resolver_fails_closed_on_same_tier_ambiguity(settings) -> None:

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import asdict
-from typing import Annotated, cast
+from typing import Annotated, Any, cast
 
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
@@ -33,12 +33,14 @@ from packs.microsoft_admin.runbooks import (
 )
 from wait_local_agent.capabilities import MICROSOFT_ADMIN_CAPABILITY
 from wait_local_agent.config import Settings
+from wait_local_agent.m365_auth import M365ProfileResolutionError
 from wait_local_agent.m365_graph import M365GraphClient
 from wait_local_agent.rbac import AuthContext, Role, require_capability_scope, require_role
 from wait_local_agent.store import Store
 
 PageSize = Annotated[int, Query(ge=1, le=MAX_PAGE_SIZE)]
 Cursor = Annotated[str | None, Query(max_length=MAX_CURSOR_LENGTH)]
+ClientID = Annotated[str | None, Query(max_length=128)]
 TechnicianAccess = Annotated[AuthContext, Depends(require_role(Role.TECHNICIAN))]
 AdminAccess = Annotated[AuthContext, Depends(require_role(Role.ADMIN))]
 
@@ -62,120 +64,179 @@ def create_router() -> APIRouter:
     router = APIRouter(tags=["Microsoft administrator"])
     router.include_router(create_azure_lighthouse_router(), prefix="/azure-lighthouse")
 
+    @router.get("/health")
     @router.get("/status")
-    def status(request: Request) -> dict[str, object]:
-        client, _ = _clients(request)
+    def status(request: Request, client_id: ClientID = None) -> dict[str, object]:
+        client, _ = _clients_for(request, client_id)
         return asdict(client.health())
 
     @router.get("/dashboard")
-    def dashboard(request: Request) -> dict[str, object]:
-        client, core_client = _clients(request)
+    def dashboard(request: Request, client_id: ClientID = None) -> dict[str, object]:
+        client, core_client = _clients_for(request, client_id)
         result = build_dashboard(client, core_client)
         _audit(request, "microsoft_admin.dashboard", "tenant", str(result["status"]))
         return result
 
-    @router.get("/service-health")
-    def service_health(
+    @router.get("/users")
+    def users(
         request: Request,
+        client_id: ClientID = None,
+        identity: str | None = Query(default=None, max_length=320),
         page_size: PageSize = 25,
         cursor: Cursor = None,
     ) -> dict[str, object]:
-        client, _ = _clients(request)
+        _, core_client = _clients_for(request, client_id)
+        response = core_client.list_users(identity=identity, page_size=page_size, cursor=cursor)
+        return _core_response(response)
+
+    @router.get("/groups")
+    def groups(
+        request: Request,
+        client_id: ClientID = None,
+        identity: str | None = Query(default=None, max_length=320),
+        page_size: PageSize = 25,
+        cursor: Cursor = None,
+    ) -> dict[str, object]:
+        _, core_client = _clients_for(request, client_id)
+        response = core_client.list_groups(identity=identity, page_size=page_size, cursor=cursor)
+        return _core_response(response)
+
+    @router.get("/licenses")
+    def licenses(
+        request: Request,
+        client_id: ClientID = None,
+        cursor: Cursor = None,
+    ) -> dict[str, object]:
+        _, core_client = _clients_for(request, client_id)
+        return _core_response(core_client.list_subscribed_skus(cursor=cursor))
+
+    @router.get("/devices")
+    def devices(
+        request: Request,
+        client_id: ClientID = None,
+        page_size: PageSize = 25,
+        cursor: Cursor = None,
+    ) -> dict[str, object]:
+        _, core_client = _clients_for(request, client_id)
+        return _core_response(core_client.list_managed_devices(page_size=page_size, cursor=cursor))
+
+    @router.get("/service-health")
+    def service_health(
+        request: Request,
+        client_id: ClientID = None,
+        page_size: PageSize = 25,
+        cursor: Cursor = None,
+    ) -> dict[str, object]:
+        client, _ = _clients_for(request, client_id)
         return client.list_service_health(page_size=page_size, cursor=cursor).to_dict()
 
     @router.get("/service-issues")
     def service_issues(
         request: Request,
+        client_id: ClientID = None,
         page_size: PageSize = 25,
         cursor: Cursor = None,
     ) -> dict[str, object]:
-        client, _ = _clients(request)
+        client, _ = _clients_for(request, client_id)
         return client.list_service_issues(page_size=page_size, cursor=cursor).to_dict()
 
     @router.get("/security/secure-score")
-    def secure_score(request: Request, cursor: Cursor = None) -> dict[str, object]:
-        client, _ = _clients(request)
+    def secure_score(
+        request: Request,
+        client_id: ClientID = None,
+        cursor: Cursor = None,
+    ) -> dict[str, object]:
+        client, _ = _clients_for(request, client_id)
         return client.list_secure_scores(page_size=1, cursor=cursor).to_dict()
 
     @router.get("/security/incidents")
     def security_incidents(
         request: Request,
+        client_id: ClientID = None,
         page_size: PageSize = 25,
         cursor: Cursor = None,
     ) -> dict[str, object]:
-        client, _ = _clients(request)
+        client, _ = _clients_for(request, client_id)
         return client.list_defender_incidents(page_size=page_size, cursor=cursor).to_dict()
 
     @router.get("/security/alerts")
     def security_alerts(
         request: Request,
+        client_id: ClientID = None,
         page_size: PageSize = 25,
         cursor: Cursor = None,
     ) -> dict[str, object]:
-        client, _ = _clients(request)
+        client, _ = _clients_for(request, client_id)
         return client.list_defender_alerts(page_size=page_size, cursor=cursor).to_dict()
 
     @router.get("/identity/sign-ins")
     def sign_ins(
         request: Request,
+        client_id: ClientID = None,
         identity: str | None = Query(default=None, max_length=320),
         page_size: PageSize = 25,
         cursor: Cursor = None,
     ) -> dict[str, object]:
-        client, _ = _clients(request)
+        client, _ = _clients_for(request, client_id)
         return client.list_sign_ins(identity=identity, page_size=page_size, cursor=cursor).to_dict()
 
     @router.get("/identity/conditional-access")
     def conditional_access(
         request: Request,
+        client_id: ClientID = None,
         page_size: PageSize = 25,
         cursor: Cursor = None,
     ) -> dict[str, object]:
-        client, _ = _clients(request)
+        client, _ = _clients_for(request, client_id)
         return client.list_conditional_access_policies(page_size=page_size, cursor=cursor).to_dict()
 
     @router.get("/identity/risky-users")
     def risky_users(
         request: Request,
+        client_id: ClientID = None,
         page_size: PageSize = 25,
         cursor: Cursor = None,
     ) -> dict[str, object]:
-        client, _ = _clients(request)
+        client, _ = _clients_for(request, client_id)
         return client.list_risky_users(page_size=page_size, cursor=cursor).to_dict()
 
     @router.get("/endpoint/apps")
     def endpoint_apps(
         request: Request,
+        client_id: ClientID = None,
         page_size: PageSize = 25,
         cursor: Cursor = None,
     ) -> dict[str, object]:
-        client, _ = _clients(request)
+        client, _ = _clients_for(request, client_id)
         return client.list_intune_apps(page_size=page_size, cursor=cursor).to_dict()
 
     @router.get("/endpoint/compliance-policies")
     def compliance_policies(
         request: Request,
+        client_id: ClientID = None,
         page_size: PageSize = 25,
         cursor: Cursor = None,
     ) -> dict[str, object]:
-        client, _ = _clients(request)
+        client, _ = _clients_for(request, client_id)
         return client.list_compliance_policies(page_size=page_size, cursor=cursor).to_dict()
 
     @router.get("/endpoint/autopilot")
     def autopilot_devices(
         request: Request,
+        client_id: ClientID = None,
         page_size: PageSize = 25,
         cursor: Cursor = None,
     ) -> dict[str, object]:
-        client, _ = _clients(request)
+        client, _ = _clients_for(request, client_id)
         return client.list_autopilot_devices(page_size=page_size, cursor=cursor).to_dict()
 
     @router.post("/diagnostics/access")
     def access_diagnostic(
         payload: AccessDiagnosticRequest,
         request: Request,
+        client_id: ClientID = None,
     ) -> dict[str, object]:
-        client, core_client = _clients(request)
+        client, core_client = _clients_for(request, client_id)
         try:
             result = diagnose_access(
                 client,
@@ -279,8 +340,14 @@ def create_router() -> APIRouter:
     return router
 
 
-def _clients(request: Request) -> tuple[MicrosoftAdminGraphClient, M365GraphClient]:
+def _clients_for(
+    request: Request,
+    client_id: str | None,
+) -> tuple[MicrosoftAdminGraphClient, M365GraphClient]:
     settings = cast(Settings, request.app.state.settings)
+    effective_client_id = client_id.strip() if isinstance(client_id, str) and client_id.strip() else None
+    if effective_client_id is None:
+        effective_client_id = cast(str | None, getattr(request.state, "capability_client_id", None))
     connection_resolver = getattr(request.app.state, "m365_connection_resolver", None)
     admin_transport = cast(
         httpx.BaseTransport | None,
@@ -292,21 +359,35 @@ def _clients(request: Request) -> tuple[MicrosoftAdminGraphClient, M365GraphClie
     )
     if connection_resolver is None:
         return (
-            MicrosoftAdminGraphClient(settings, transport=admin_transport),
-            M365GraphClient(settings, transport=m365_transport),
+            MicrosoftAdminGraphClient(settings, transport=admin_transport, client_id=effective_client_id),
+            M365GraphClient(settings, transport=m365_transport, client_id=effective_client_id),
         )
+    try:
+        connection = connection_resolver.resolve(effective_client_id)
+    except M365ProfileResolutionError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     return (
         MicrosoftAdminGraphClient(
             settings,
             transport=admin_transport,
-            connection_resolver=connection_resolver,
+            connection=connection,
+            client_id=effective_client_id,
         ),
         M365GraphClient(
             settings,
             transport=m365_transport,
-            connection_resolver=connection_resolver,
+            connection=connection,
+            client_id=effective_client_id,
         ),
     )
+
+
+def _core_response(response: Any) -> dict[str, object]:
+    return {
+        "result": asdict(response.result),
+        "items": [asdict(item) for item in response.items],
+        "next_cursor": response.next_cursor,
+    }
 
 
 def _store(request: Request) -> Store:

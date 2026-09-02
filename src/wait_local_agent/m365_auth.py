@@ -8,7 +8,7 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from importlib import import_module
 from threading import Lock
-from typing import Any, Protocol
+from typing import Any, Literal, Protocol
 
 from wait_local_agent.models import ConnectorInstance
 
@@ -16,6 +16,7 @@ M365_CONNECTOR_TYPE = "m365"
 M365_GRAPH_BASE_URL = "https://graph.microsoft.com/v1.0"
 M365_GRAPH_SCOPE = "https://graph.microsoft.com/.default"
 M365_TOKEN_AUTHORITY = "login.microsoftonline.com"  # nosec B105: fixed Microsoft endpoint hostname, not a secret.
+M365ConnectionTier = Literal["client-scoped", "MSP-wide", "environment"]
 
 
 class M365AuthFailure(Exception):
@@ -38,6 +39,7 @@ class M365Connection:
     graph_base_url: str
     token_provider: TokenProvider
     profile_id: str | None = None
+    tier: M365ConnectionTier = "environment"
 
 
 class M365TokenProvider:
@@ -179,7 +181,12 @@ class M365ConnectionResolver:
         self.vault = vault
         self._providers: dict[tuple[str, str], M365TokenProvider] = {}
 
-    def resolve(self, client_id: str | None = None) -> M365Connection:
+    def resolve(
+        self,
+        client_id: str | None = None,
+        *,
+        allow_msp_wide: bool = False,
+    ) -> M365Connection:
         normalized_client_id = client_id.strip() if isinstance(client_id, str) else ""
         try:
             instances = self.store.list_connector_instances()
@@ -200,7 +207,11 @@ class M365ConnectionResolver:
             if normalized_client_id
             else []
         )
-        tier = "client-scoped"
+        tier: M365ConnectionTier = "client-scoped"
+        if not candidates and normalized_client_id and not allow_msp_wide:
+            raise M365ProfileResolutionError(
+                f"no active client-scoped Microsoft 365 connector instance found for client {normalized_client_id}"
+            )
         if not candidates:
             candidates = [
                 instance
@@ -213,7 +224,7 @@ class M365ConnectionResolver:
                 f"ambiguous active Microsoft 365 connector instances at the {tier} tier"
             )
         if candidates:
-            return self._profile_connection(candidates[0])
+            return self._profile_connection(candidates[0], tier=tier)
         return M365Connection(
             graph_base_url=self.settings.m365_graph_base_url,
             token_provider=(
@@ -221,9 +232,15 @@ class M365ConnectionResolver:
                 if self.settings.m365_access_token
                 else _UnconfiguredTokenProvider()
             ),
+            tier="environment",
         )
 
-    def _profile_connection(self, instance: ConnectorInstance) -> M365Connection:
+    def _profile_connection(
+        self,
+        instance: ConnectorInstance,
+        *,
+        tier: M365ConnectionTier,
+    ) -> M365Connection:
         _validate_profile_config(instance)
         credentials = _profile_credentials(instance, self.vault)
         cache_key = (instance.connector_instance_id, instance.credential_ref or "")
@@ -235,11 +252,22 @@ class M365ConnectionResolver:
             graph_base_url=M365_GRAPH_BASE_URL,
             token_provider=provider,
             profile_id=instance.connector_instance_id,
+            tier=tier,
         )
 
 
-def resolve_m365_connection(settings: Any, store: Any, vault: Any, client_id: str | None = None) -> M365Connection:
-    return M365ConnectionResolver(settings, store, vault).resolve(client_id)
+def resolve_m365_connection(
+    settings: Any,
+    store: Any,
+    vault: Any,
+    client_id: str | None = None,
+    *,
+    allow_msp_wide: bool = False,
+) -> M365Connection:
+    return M365ConnectionResolver(settings, store, vault).resolve(
+        client_id,
+        allow_msp_wide=allow_msp_wide,
+    )
 
 
 def env_connection(settings: Any) -> M365Connection:
@@ -250,4 +278,5 @@ def env_connection(settings: Any) -> M365Connection:
             if settings.m365_access_token
             else _UnconfiguredTokenProvider()
         ),
+        tier="environment",
     )

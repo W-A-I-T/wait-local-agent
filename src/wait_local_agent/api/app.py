@@ -1165,7 +1165,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         settings=active_settings,
         provider=provider_from_settings(active_settings),
     )
-    rmm_provider = rmm_provider_from_settings(active_settings, store)
+    rmm_provider = rmm_provider_from_settings(active_settings, store, allow_msp_wide=True)
     operational_graph_service = OperationalGraphService(store, rmm_provider=rmm_provider)
     halopsa_client = HaloPSAClient(active_settings)
     hudu_client = HuduClient(active_settings)
@@ -1338,7 +1338,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     def _m365_health_configured() -> bool:
         try:
-            return m365_connection_resolver.resolve().token_provider.configured
+            return m365_connection_resolver.resolve(allow_msp_wide=True).token_provider.configured
         except Exception:
             # Health must remain available even when a stored profile is
             # malformed or ambiguous; the connector endpoint reports the
@@ -1525,12 +1525,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         context: ViewerAccess,
         client_id: str | None = None,
     ) -> list[dict[str, object]]:
-        scope = resolve_client_scope(context, client_id, allow_all=True)
+        scope = resolve_client_scope(context, client_id)
         return [asdict(ticket) for ticket in store.list_tickets(client_id=scope)]
 
     @app.get("/clients")
     def clients(context: ViewerAccess, client_id: str | None = None) -> list[dict[str, object]]:
-        scope = resolve_client_scope(context, client_id, allow_all=True)
+        scope = resolve_client_scope(context, client_id)
         return [asdict(client) for client in store.list_clients(scope)]
 
     @app.get("/clients/commercial-activations")
@@ -1970,7 +1970,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         context: ViewerAccess,
         connector_instance_id: str | None = None,
     ) -> list[dict[str, object]]:
-        scope = resolve_client_scope(context, None, allow_all=True)
+        scope = resolve_client_scope(context, None)
         try:
             records = store.list_unmapped_records(
                 scope,
@@ -1985,7 +1985,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         context: ViewerAccess,
         connector_instance_id: str | None = None,
     ) -> list[dict[str, object]]:
-        scope = resolve_client_scope(context, None, allow_all=True)
+        scope = resolve_client_scope(context, None)
         normalized_instance_id = _normalize_client_id(connector_instance_id)
         if connector_instance_id is not None and normalized_instance_id is None:
             raise HTTPException(status_code=400, detail="connector_instance_id must be non-empty")
@@ -2142,7 +2142,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         context: ViewerAccess,
         connector_instance_id: str | None = None,
     ) -> list[dict[str, object]]:
-        scope = resolve_client_scope(context, None, allow_all=True)
+        scope = resolve_client_scope(context, None)
         try:
             mappings = store.list_client_connector_mappings(
                 scope,
@@ -2289,7 +2289,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         context: ViewerAccess,
         client_id: str | None = None,
     ) -> list[dict[str, object]]:
-        scoped_client_id = resolve_client_scope(context, client_id, allow_all=True).client_id
+        scoped_client_id = resolve_client_scope(context, client_id).client_id
         if context.role < Role.ADMIN and scoped_client_id is None and not context.is_msp_admin:
             return []
         return [_agent_definition_view(definition) for definition in agent_service.list_definitions(scoped_client_id)]
@@ -2346,7 +2346,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         context: ViewerAccess,
         client_id: str | None = None,
     ) -> list[dict[str, object]]:
-        scoped_client_id = resolve_client_scope(context, client_id, allow_all=True).client_id
+        scoped_client_id = resolve_client_scope(context, client_id).client_id
         if context.role < Role.ADMIN and scoped_client_id is None and not context.is_msp_admin:
             return []
         definition = agent_service.get(agent_id, scoped_client_id)
@@ -2793,7 +2793,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.get("/agent-runs")
     def agent_runs(context: ViewerAccess, client_id: str | None = None) -> list[dict[str, object]]:
-        scope = resolve_client_scope(context, client_id, allow_all=True)
+        scope = resolve_client_scope(context, client_id)
         return [_agent_run_view(run) for run in store.list_agent_runs(scope)]
 
     @app.get("/agent-runs/{run_id}")
@@ -2935,7 +2935,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         context: ViewerAccess,
         client_id: str | None = None,
     ) -> list[dict[str, object]]:
-        scope = resolve_client_scope(context, client_id, allow_all=True)
+        scope = resolve_client_scope(context, client_id)
         return [_event_delivery_view(delivery) for delivery in store.list_event_deliveries(scope)]
 
     @app.get("/automation/event-deliveries/{delivery_id}")
@@ -2974,7 +2974,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.get("/smart-actions/runs")
     def smart_action_runs(context: ViewerAccess, client_id: str | None = None) -> list[dict[str, object]]:
-        scope = resolve_client_scope(context, client_id, allow_all=True)
+        scope = resolve_client_scope(context, client_id)
         return [
             _smart_action_run_view(run)
             for run in smart_action_service.store.list_smart_action_runs(client_id=scope)
@@ -3090,7 +3090,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         context: TechnicianAccess,
         client_id: str | None = None,
     ) -> list[dict[str, object]]:
-        scope = resolve_client_scope(context, client_id, allow_all=True)
+        scope = resolve_client_scope(context, client_id)
         principal_id = None if context.role >= Role.ADMIN else context.approver_id or "api"
         sessions = store.list_technician_chat_sessions(
             client_id=scope,
@@ -3473,7 +3473,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         context: ViewerAccess,
         client_id: str | None = None,
     ) -> list[dict[str, object]]:
-        scope = resolve_client_scope(context, client_id, allow_all=True)
+        scope = resolve_client_scope(context, client_id)
         return [_approval_view(request) for request in store.list_approval_requests(client_id=scope)]
 
     @app.get("/approval-requests/{request_id}")
@@ -3651,7 +3651,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 "collection_scope": collector_run_collection_scope(run),
             }
             for run in store.list_collector_runs(
-                client_id=resolve_client_scope(context, client_id, allow_all=True)
+                client_id=resolve_client_scope(context, client_id)
             )
         ]
 
@@ -3799,7 +3799,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         client_id: str = "",
         project_id: str = "",
     ) -> list[dict[str, object]]:
-        scope = _operator_scope(context, active_settings.client_id, client_id or None, allow_all=True)
+        scope = _operator_scope(context, active_settings.client_id, client_id or None)
         if context.role < Role.ADMIN and isinstance(scope, AllClients):
             raise HTTPException(status_code=403, detail="reports require a single client or all-client scope")
         if isinstance(scope, BoundClients) and scope.client_id is None:
@@ -3853,7 +3853,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.get("/audit")
     def audit(context: ViewerAccess, client_id: str | None = None) -> list[dict[str, object]]:
-        scope = resolve_client_scope(context, client_id, allow_all=True)
+        scope = resolve_client_scope(context, client_id)
         return [asdict(event) for event in store.list_audit_events(client_id=scope)]
 
     @app.get("/audit/export")
@@ -3862,7 +3862,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         export_format: Literal["json", "csv"] = "json",
         client_id: str | None = None,
     ) -> Response:
-        scope = resolve_client_scope(context, client_id, allow_all=True)
+        scope = resolve_client_scope(context, client_id)
         events = [asdict(event) for event in store.list_audit_events(client_id=scope)]
         if export_format == "csv":
             output = io.StringIO()
@@ -3889,7 +3889,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         to_: Annotated[datetime | None, Query(alias="to")] = None,
         client_id: str | None = None,
     ) -> Response:
-        scope = resolve_client_scope(context, client_id, allow_all=True)
+        scope = resolve_client_scope(context, client_id)
         all_events = store.list_audit_events(client_id=scope)
         filtered = [
             e
@@ -3919,7 +3919,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         context: ViewerAccess,
         client_id: str | None = None,
     ) -> list[dict[str, object]]:
-        scope = resolve_client_scope(context, client_id, allow_all=True)
+        scope = resolve_client_scope(context, client_id)
         return [asdict(event) for event in store.list_event_history(client_id=scope)]
 
     @app.get("/connectors")
@@ -5515,7 +5515,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.get("/msp/playbook-entries")
     def msp_playbook_entries(context: ViewerAccess) -> list[dict[str, object]]:
-        scope = _operator_scope(context, active_settings.client_id, allow_all=True)
+        scope = _operator_scope(context, active_settings.client_id)
         if context.role < Role.ADMIN and isinstance(scope, AllClients):
             raise HTTPException(status_code=403, detail="authenticated principal has no tenant")
         return [
@@ -5552,7 +5552,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         entry_id: str,
         context: ViewerAccess,
     ) -> dict[str, object]:
-        scope = _operator_scope(context, active_settings.client_id, allow_all=True)
+        scope = _operator_scope(context, active_settings.client_id)
         scoped_client_id = scope.client_id
         if context.role < Role.ADMIN and isinstance(scope, AllClients):
             raise HTTPException(status_code=403, detail="authenticated principal has no tenant")
@@ -5567,7 +5567,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         request: MspPlaybookEntryUpdateRequest,
         context: TechnicianAccess,
     ) -> dict[str, object]:
-        scope = _operator_scope(context, active_settings.client_id, allow_all=True)
+        scope = _operator_scope(context, active_settings.client_id)
         scoped_client_id = scope.client_id
         if context.role < Role.ADMIN and isinstance(scope, AllClients):
             raise HTTPException(status_code=403, detail="authenticated principal has no tenant")
@@ -5616,7 +5616,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         entry_id: str,
         context: ViewerAccess,
     ) -> list[dict[str, object]]:
-        scope = _operator_scope(context, active_settings.client_id, allow_all=True)
+        scope = _operator_scope(context, active_settings.client_id)
         scoped_client_id = scope.client_id
         if context.role < Role.ADMIN and isinstance(scope, AllClients):
             raise HTTPException(status_code=403, detail="authenticated principal has no tenant")
@@ -5634,7 +5634,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         from_version: int = Query(..., ge=1),
         to_version: int = Query(..., ge=1),
     ) -> dict[str, object]:
-        scope = _operator_scope(context, active_settings.client_id, allow_all=True)
+        scope = _operator_scope(context, active_settings.client_id)
         scoped_client_id = scope.client_id
         if context.role < Role.ADMIN and isinstance(scope, AllClients):
             raise HTTPException(status_code=403, detail="authenticated principal has no tenant")
@@ -5650,7 +5650,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         version: int,
         context: TechnicianAccess,
     ) -> dict[str, object]:
-        scope = _operator_scope(context, active_settings.client_id, allow_all=True)
+        scope = _operator_scope(context, active_settings.client_id)
         if context.role < Role.ADMIN and isinstance(scope, AllClients):
             raise HTTPException(status_code=403, detail="authenticated principal has no tenant")
         existing = store.get_msp_playbook_entry(entry_id, scope.client_id)
@@ -5667,7 +5667,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.get("/msp/playbook-subscriptions")
     def msp_playbook_subscriptions(context: ViewerAccess) -> list[dict[str, object]]:
-        scope = resolve_client_scope(context, None, allow_all=True)
+        scope = resolve_client_scope(context, None)
         return [
             msp_playbook_subscription_view(subscription)
             for subscription in store.list_msp_playbook_subscriptions(scope)
@@ -6302,7 +6302,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         context: ViewerAccess,
         client_id: str | None = None,
     ) -> list[dict[str, object]]:
-        scoped_client_id = resolve_client_scope(context, client_id, allow_all=True).client_id
+        scoped_client_id = resolve_client_scope(context, client_id).client_id
         if scoped_client_id is None:
             raise HTTPException(status_code=403, detail="authenticated principal has no tenant")
         principal_id = context.approver_id or "api"
@@ -6811,7 +6811,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         context: ViewerAccess,
         client_id: str | None = None,
     ) -> dict[str, object]:
-        scope = resolve_client_scope(context, client_id, allow_all=True)
+        scope = resolve_client_scope(context, client_id)
         scoped_client_id = scope.client_id
         return build_agent_health_summary(
             store.list_agent_runs(scope),
@@ -6838,7 +6838,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         context: ViewerAccess,
         client_id: str | None = None,
     ) -> list[dict[str, object]]:
-        scope = resolve_client_scope(context, client_id, allow_all=True)
+        scope = resolve_client_scope(context, client_id)
         return [_template_gallery_view(entry) for entry in store.list_template_gallery_entries(scope)]
 
     @app.post("/workflow-templates/gallery")
@@ -7040,7 +7040,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         context: ViewerAccess,
         client_id: str | None = None,
     ) -> list[dict[str, object]]:
-        scope = resolve_client_scope(context, client_id, allow_all=True)
+        scope = resolve_client_scope(context, client_id)
         return [_scheduled_job_view(job) for job in scheduler.list_jobs(client_id=scope)]
 
     @app.post("/scheduled-jobs")
@@ -7444,7 +7444,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         context: ViewerAccess,
         client_id: str | None = None,
     ) -> list[dict[str, object]]:
-        scope = resolve_client_scope(context, client_id, allow_all=True)
+        scope = resolve_client_scope(context, client_id)
         return [asdict(run) for run in store.list_workflow_runs(client_id=scope)]
 
     @app.get("/workflow-runs/{run_id}")
@@ -7495,7 +7495,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         started_to: Annotated[str | None, Query(alias="to")] = None,
         client_id: str | None = None,
     ) -> list[dict[str, object]]:
-        scope = resolve_client_scope(context, client_id, allow_all=True)
+        scope = resolve_client_scope(context, client_id)
         if isinstance(scope, BoundClients) and scope.client_id is None:
             raise HTTPException(status_code=403, detail="execution lists require a single client or all-client scope")
         return [
@@ -7567,7 +7567,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         started_to: Annotated[str | None, Query(alias="to")] = None,
         client_id: str | None = None,
     ) -> dict[str, object]:
-        scope = resolve_client_scope(context, client_id, allow_all=True)
+        scope = resolve_client_scope(context, client_id)
         if isinstance(scope, BoundClients) and scope.client_id is None:
             raise HTTPException(status_code=403, detail="analytics require a single client or all-client scope")
         estimates = {manifest.action_id: manifest.estimated_minutes_saved for manifest in smart_action_service.list()}
@@ -7604,7 +7604,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         context: ViewerAccess,
         client_id: str | None = None,
     ) -> list[dict[str, object]]:
-        scope = resolve_client_scope(context, client_id, allow_all=True)
+        scope = resolve_client_scope(context, client_id)
         return [asdict(document) for document in store.list_knowledge_documents(client_id=scope)]
 
     @app.patch("/knowledge/documents/{document_id}/authority")
@@ -7614,7 +7614,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         context: AdminAccess,
         client_id: str | None = None,
     ) -> dict[str, object]:
-        scope = resolve_client_scope(context, client_id, allow_all=True)
+        scope = resolve_client_scope(context, client_id)
         actor = context.approver_id or context.principal_id or "authenticated-admin"
         try:
             document = store.set_knowledge_document_authority(
@@ -7639,7 +7639,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         backend: str | None = None,
         client_id: str | None = None,
     ) -> list[dict[str, object]]:
-        scope = resolve_client_scope(context, client_id, allow_all=True)
+        scope = resolve_client_scope(context, client_id)
         try:
             settings = replace(
                 active_settings,
@@ -8767,7 +8767,7 @@ def _resolve_client_target_scope(context: AuthContext, requested_client_id: str)
 def _backfill_scope(context: AuthContext, requested_client_id: str | None) -> ClientScope:
     """Resolve the scope used by agent-backfill list and entity routes."""
 
-    scope = resolve_client_scope(context, requested_client_id, allow_all=True)
+    scope = resolve_client_scope(context, requested_client_id)
     if isinstance(scope, AllClients) and context.role < Role.ADMIN and not context.demo_mode:
         raise HTTPException(status_code=403, detail="agent backfills require a client scope")
     return scope
@@ -8817,8 +8817,6 @@ def _operator_scope(
     context: AuthContext,
     configured_client_id: str | None,
     requested_client_id: str | None = None,
-    *,
-    allow_all: bool = False,
 ) -> ClientScope:
     """Use an appliance operator's configured tenant for singular portal views.
 
@@ -8831,7 +8829,7 @@ def _operator_scope(
     requested = _normalize_client_id(requested_client_id)
     if requested is None and context.is_msp_admin and context.role < Role.ADMIN:
         requested = _normalize_client_id(configured_client_id)
-    return resolve_client_scope(context, requested, allow_all=allow_all)
+    return resolve_client_scope(context, requested)
 
 
 def _end_user_client_id(context: AuthContext) -> str:

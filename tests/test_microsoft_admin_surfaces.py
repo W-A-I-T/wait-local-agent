@@ -1,17 +1,41 @@
 from __future__ import annotations
 
 import json
+from typing import cast
 
 import httpx
-from fastapi import FastAPI
+import pytest
+from fastapi import FastAPI, HTTPException
+from fastapi.routing import APIRoute
 from fastapi.testclient import TestClient
 from microsoft_admin_support import _configured
+from starlette.requests import Request
 from typer.testing import CliRunner
 
 from packs.microsoft_admin.cli import app as microsoft_admin_cli
 from packs.microsoft_admin.core import MicrosoftAdminError
 from packs.microsoft_admin.router import create_router
+from wait_local_agent.m365_auth import M365ConnectionResolver
 from wait_local_agent.models import ConnectorReadResult
+from wait_local_agent.store import Store
+from wait_local_agent.vault import SecretVault
+
+
+def _request_for_app(app: FastAPI, path: str) -> Request:
+    return Request(
+        {
+            "type": "http",
+            "method": "GET",
+            "path": path,
+            "headers": [],
+            "query_string": b"",
+            "scheme": "http",
+            "server": ("test", 80),
+            "client": ("test", 1),
+            "root_path": "",
+            "app": app,
+        }
+    )
 
 
 def test_router_exposes_real_reads_dashboard_diagnostic_and_audit(settings) -> None:
@@ -106,6 +130,113 @@ def test_router_exposes_real_reads_dashboard_diagnostic_and_audit(settings) -> N
         json={"user_identity": "bad\nidentity"},
     )
     assert invalid.status_code == 400
+
+
+def test_pack_users_route_uses_the_authorized_client_connector(settings, tmp_path) -> None:
+    configured = _configured(settings)
+    store = Store(configured.data_path)
+    store.create_client("client-a", "Client A")
+    client_instance = store.create_connector_instance(
+        "m365",
+        "Client A Graph",
+        client_id="client-a",
+        credential_ref="m365-client-a",
+    )
+    msp_instance = store.create_connector_instance(
+        "m365",
+        "MSP Graph",
+        credential_ref="m365-msp",
+    )
+    store.update_connector_instance(client_instance.connector_instance_id, status="active")
+    store.update_connector_instance(msp_instance.connector_instance_id, status="active")
+    vault = SecretVault.initialize(tmp_path / "vault")
+    vault.set("m365-client-a", '{"mode":"static_token","access_token":"client-a-token"}')
+    vault.set("m365-msp", '{"mode":"static_token","access_token":"msp-token"}')
+    seen_tokens: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen_tokens.append(request.headers["Authorization"])
+        return httpx.Response(200, json={"value": []})
+
+    app = FastAPI()
+    app.state.settings = configured
+    app.state.store = store
+    app.state.vault = vault
+    app.state.m365_connection_resolver = M365ConnectionResolver(configured, store, vault)
+    app.state.microsoft_admin_transport = httpx.MockTransport(handler)
+    app.state.m365_transport = httpx.MockTransport(handler)
+    request = _request_for_app(app, "/users")
+    routes = {
+        route.path: cast(APIRoute, route)
+        for route in create_router().routes
+        if isinstance(route, APIRoute)
+    }
+
+    result = routes["/users"].endpoint(
+        request,
+        client_id="client-a",
+        identity=None,
+        page_size=25,
+        cursor=None,
+    )
+    groups_result = routes["/groups"].endpoint(
+        request,
+        client_id="client-a",
+        identity=None,
+        page_size=25,
+        cursor=None,
+    )
+    sign_ins_result = routes["/identity/sign-ins"].endpoint(
+        request,
+        client_id="client-a",
+        identity=None,
+        page_size=25,
+        cursor=None,
+    )
+    status_result = routes["/status"].endpoint(request, client_id="client-a")
+
+    assert result["result"]["status"] == "ready"
+    assert groups_result["result"]["status"] == "ready"
+    assert sign_ins_result["result"]["status"] == "ready"
+    assert status_result["status"] == "ready"
+    assert len(seen_tokens) >= 4
+    assert set(seen_tokens) == {"Bearer client-a-token"}
+
+
+def test_pack_client_scope_fails_before_graph_when_only_msp_connector_exists(settings, tmp_path) -> None:
+    configured = _configured(settings)
+    store = Store(configured.data_path)
+    store.create_client("client-a", "Client A")
+    msp_instance = store.create_connector_instance(
+        "m365",
+        "MSP Graph",
+        credential_ref="m365-msp",
+    )
+    store.update_connector_instance(msp_instance.connector_instance_id, status="active")
+    vault = SecretVault.initialize(tmp_path / "vault")
+    vault.set("m365-msp", '{"mode":"static_token","access_token":"msp-token"}')
+    calls: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls.append(str(request.url))
+        return httpx.Response(200, json={"value": []})
+
+    app = FastAPI()
+    app.state.settings = configured
+    app.state.store = store
+    app.state.vault = vault
+    app.state.m365_connection_resolver = M365ConnectionResolver(configured, store, vault)
+    app.state.m365_transport = httpx.MockTransport(handler)
+    request = _request_for_app(app, "/users")
+    route = cast(APIRoute, next(route for route in create_router().routes if getattr(route, "path", None) == "/users"))
+
+    with pytest.raises(HTTPException) as error:
+        route.endpoint(request, client_id="client-a")
+
+    assert error.value.status_code == 409
+    assert "client-a" in str(error.value.detail)
+    assert "client-scoped" in str(error.value.detail)
+    assert calls == []
 
 
 def test_cli_lists_available_approval_gated_remediations() -> None:

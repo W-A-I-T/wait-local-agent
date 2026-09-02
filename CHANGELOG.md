@@ -23,6 +23,9 @@ All notable changes to WAIT Local Agent will be documented in this file.
 
 ### Changed
 
+- Microsoft 365 and RMM connector resolution now reports its selected tier and
+  keeps explicit client-scoped requests from falling back to MSP-wide or
+  environment credentials.
 - The Solutions Architect screen (renamed from Consultant) now surfaces the
   architecture decision engine, including per-component chosen targets,
   rationale, alternatives, requirements, and a decision-engine summary.
@@ -62,6 +65,8 @@ All notable changes to WAIT Local Agent will be documented in this file.
 - Fixed Settings update checks and collector exports to use their backend POST
   contracts, routed desktop Microsoft sign-in through the configured API base,
   and added frontend route/method contract guards for the development proxy.
+- Microsoft Admin Graph routes now use the client scope authorized for the
+  request, and fail closed when that client has no active connector.
 
 - Power Platform deployment and rollback execution now enforce the minimum CLI
   version and block when the installed version cannot be determined.

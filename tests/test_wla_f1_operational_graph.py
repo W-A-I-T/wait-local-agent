@@ -727,7 +727,9 @@ def test_client_graph_endpoints_are_fail_closed_and_operator_gated(settings, mon
 
     store = Store(settings.data_path)
     _seed_clients(store)
-    monkeypatch.setattr(app_module, "rmm_provider_from_settings", lambda *_args: _FakeRmmProvider())
+    monkeypatch.setattr(
+        app_module, "rmm_provider_from_settings", lambda *_args, **_kwargs: _FakeRmmProvider()
+    )
     secure_settings = replace(
         settings, demo_mode=False, api_token="bootstrap-admin", viewer_token="", allow_http_probing=True
     )
@@ -782,7 +784,7 @@ def test_m365_graph_endpoint_is_operator_and_probing_gated(settings, monkeypatch
     monkeypatch.setattr(
         app_module.M365ConnectionResolver,
         "resolve",
-        lambda _resolver, _client_id=None: SimpleNamespace(profile_id="m365-profile-1"),
+        lambda _resolver, _client_id=None, **_kwargs: SimpleNamespace(profile_id="m365-profile-1"),
     )
     active_settings = replace(settings, allow_http_probing=True)
     app = create_app(active_settings)
@@ -830,13 +832,15 @@ def test_scheduled_graph_sync_runner_guards(settings, monkeypatch) -> None:
 
     store.set_client_status(AllClients(), "client-a", "active")
 
-    def raise_resolution_error(*_args) -> object:
+    def raise_resolution_error(*_args, **_kwargs) -> object:
         raise RmmProviderResolutionError("ambiguous RMM provider")
 
     monkeypatch.setattr(app_module, "rmm_provider_from_settings", raise_resolution_error)
     with pytest.raises(ValueError, match="ambiguous RMM provider"):
         runner("client-a")
 
-    monkeypatch.setattr(app_module, "rmm_provider_from_settings", lambda *_args: _FakeRmmProvider())
+    monkeypatch.setattr(
+        app_module, "rmm_provider_from_settings", lambda *_args, **_kwargs: _FakeRmmProvider()
+    )
     with pytest.raises(ValueError, match="RMM read probing is disabled"):
         runner("client-a")
