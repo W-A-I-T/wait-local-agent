@@ -127,6 +127,7 @@
       "GET /consultant/discovery/sessions": "exposed",
       "GET /consultant/discovery/sessions/{session_id}": "exposed",
       "GET /consultant/monitoring/agents": "exposed",
+      "GET /consultant/power-platform/cli-status": "exposed",
       "GET /consultant/use-cases": "exposed",
       "GET /diagnostics/summary": "exposed",
       "GET /docs": "exposed",

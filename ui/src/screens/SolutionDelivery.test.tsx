@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { SolutionDelivery } from "./SolutionDelivery";
@@ -52,6 +52,14 @@ describe("SolutionDelivery", () => {
       package_digest: "sha256:package",
     };
     const fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        available: false,
+        version: null,
+        version_compatible: false,
+        allow_write_actions: false,
+        allow_power_platform_deployment: false,
+        workspace_exists: false,
+      }), { status: 200 }))
       .mockResolvedValueOnce(new Response(JSON.stringify(packageArtifact), { status: 200 }))
       .mockResolvedValueOnce(new Response(JSON.stringify({ valid: true, deployable: true, deployment_started: false }), { status: 200 }))
       .mockResolvedValueOnce(new Response(JSON.stringify({ status: "blocked", message: "Power Platform source materialization is blocked until WAIT_ALLOW_WRITE_ACTIONS=true." }), { status: 200 }));
@@ -65,10 +73,13 @@ describe("SolutionDelivery", () => {
     expect(screen.getByText("Materialize")).toBeInTheDocument();
     expect(screen.getByText("Deploy stages")).toBeInTheDocument();
     expect(screen.getByText("Rollback")).toBeInTheDocument();
+    expect(screen.getByText("pac version")).toBeInTheDocument();
+    expect(screen.getByText("pac auth profile and environment — operator responsibility")).toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole("button", { name: "Build package" }));
     await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
-    expect(JSON.parse(fetchMock.mock.calls[0][1].body)).toMatchObject({
+    fireEvent.click(screen.getByRole("button", { name: "Build package" }));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+    expect(JSON.parse(fetchMock.mock.calls[1][1].body)).toMatchObject({
       client_id: "acme",
       solution_name: "employee_onboarding",
       publisher_name: "WAIT",
@@ -79,13 +90,15 @@ describe("SolutionDelivery", () => {
     });
 
     fireEvent.click(screen.getByRole("button", { name: "Validate package" }));
-    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
-    expect(JSON.parse(fetchMock.mock.calls[1][1].body)).toEqual({ client_id: "acme", package: packageArtifact });
-
-    fireEvent.click(screen.getByRole("button", { name: "Materialize source" }));
     await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(3));
     expect(JSON.parse(fetchMock.mock.calls[2][1].body)).toEqual({ client_id: "acme", package: packageArtifact });
-    expect(screen.getByText("Unmet")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Materialize source" }));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(4));
+    expect(JSON.parse(fetchMock.mock.calls[3][1].body)).toEqual({ client_id: "acme", package: packageArtifact });
+    const writeGate = screen.getByText("WAIT_ALLOW_WRITE_ACTIONS", { exact: true }).closest(".solution-gate");
+    expect(writeGate).not.toBeNull();
+    expect(within(writeGate as HTMLElement).getByText("Unmet")).toBeInTheDocument();
     expect(screen.getAllByText(/WAIT_ALLOW_WRITE_ACTIONS=true/).length).toBeGreaterThan(0);
   });
 
@@ -123,17 +136,20 @@ describe("SolutionDelivery", () => {
     const executeApproval = vi.fn().mockResolvedValue(undefined);
     const refresh = vi.fn().mockResolvedValue(undefined);
     mockedUseDashboard.mockReturnValue(dashboard({ approvalRequests: [executableRequest, request], executeApproval, refresh }) as never);
-    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({ approval: { ...request, id: 18, action_type: "power_platform.solution_rollback" }, plan: {} }), { status: 201 }));
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify({}), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ approval: { ...request, id: 18, action_type: "power_platform.solution_rollback" }, plan: {} }), { status: 201 }));
     vi.stubGlobal("fetch", fetchMock);
     vi.stubGlobal("confirm", vi.fn().mockReturnValue(true));
     render(<MemoryRouter><SolutionDelivery /></MemoryRouter>);
 
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
     fireEvent.click(screen.getAllByRole("button", { name: "Execute stage" })[0]);
     expect(executeApproval).toHaveBeenCalledWith(16, "power_platform.solution_stage");
 
     fireEvent.click(screen.getByRole("button", { name: "Request rollback" }));
-    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
-    expect(JSON.parse(fetchMock.mock.calls[0][1].body)).toMatchObject({
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+    expect(JSON.parse(fetchMock.mock.calls[1][1].body)).toMatchObject({
       client_id: "acme",
       stage: "dev",
       rollback_artifact_path: "/workspace/employee_onboarding/employee_onboarding.zip",
@@ -163,7 +179,9 @@ describe("SolutionDelivery", () => {
       deployment_started: false,
       package_digest: "sha256:package",
     };
-    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify(packageArtifact), { status: 200 }));
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify({}), { status: 200 }))
+      .mockResolvedValue(new Response(JSON.stringify(packageArtifact), { status: 200 }));
     vi.stubGlobal("fetch", fetchMock);
     render(
       <MemoryRouter initialEntries={[{
@@ -181,13 +199,13 @@ describe("SolutionDelivery", () => {
     expect(artifacts).toHaveValue(JSON.stringify([artifact], null, 2));
 
     fireEvent.click(screen.getByRole("button", { name: "Build package" }));
-    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
-    expect(JSON.parse(fetchMock.mock.calls[0][1].body)).toMatchObject({ artifacts: [artifact], client_id: "acme" });
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+    expect(JSON.parse(fetchMock.mock.calls[1][1].body)).toMatchObject({ artifacts: [artifact], client_id: "acme" });
 
     fireEvent.change(artifacts, { target: { value: "[]" } });
     fireEvent.click(screen.getByRole("button", { name: "Build package" }));
-    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
-    expect(JSON.parse(fetchMock.mock.calls[1][1].body)).toMatchObject({ artifacts: [], client_id: "acme" });
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(3));
+    expect(JSON.parse(fetchMock.mock.calls[2][1].body)).toMatchObject({ artifacts: [], client_id: "acme" });
   });
 
   it("ignores malformed handoff state without weakening materialization gates", () => {

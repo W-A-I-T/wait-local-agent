@@ -176,6 +176,7 @@ def run_employee_onboarding_demo(
     )
     governance = evaluate_solution_governance(architecture, [])
     review_artifacts = _build_review_artifacts(client_id)
+    design_handoffs = _build_design_handoffs(client_id)
     review_package, review_package_digest = build_consultant_artifact_review_package(
         client_id=client_id,
         artifacts=review_artifacts,
@@ -205,6 +206,7 @@ def run_employee_onboarding_demo(
         "entity_id": entity_id,
         "request": _blueprint_request(persisted_blueprint),
         "mode": "local_fixture",
+        "design_handoffs": design_handoffs,
         "stages": {
             "discovery": discovery,
             "environment": environment,
@@ -433,7 +435,7 @@ def _target_tools(blueprint: SolutionBlueprint, role: str, systems: tuple[str, .
 
 
 def _build_review_artifacts(client_id: str) -> list[dict[str, Any]]:
-    """Generate validated local manifests for the canonical Microsoft handoff."""
+    """Generate package-eligible local manifests for the Microsoft handoff."""
 
     return [
         build_power_apps_artifact(
@@ -494,6 +496,13 @@ def _build_review_artifacts(client_id: str) -> list[dict[str, Any]]:
                 },
             ],
         ),
+    ]
+
+
+def _build_design_handoffs(client_id: str) -> list[dict[str, Any]]:
+    """Generate design deliverables that makers complete outside the packager."""
+
+    return [
         build_copilot_studio_plan(
             client_id=client_id,
             copilot_name="Employee onboarding copilot",

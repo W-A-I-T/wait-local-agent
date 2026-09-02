@@ -13,7 +13,18 @@ type GateState = {
   deployment: GateStatus;
   writes: GateStatus;
   pac: GateStatus;
+  pacVersion: GateStatus;
   workspace: GateStatus;
+};
+
+type PowerPlatformCliStatus = {
+  available?: boolean;
+  version?: string | null;
+  minimum_version?: string;
+  version_compatible?: boolean;
+  allow_write_actions?: boolean;
+  allow_power_platform_deployment?: boolean;
+  workspace_exists?: boolean;
 };
 
 type PackageForm = {
@@ -65,6 +76,7 @@ const initialGates: GateState = {
   deployment: "unknown",
   writes: "unknown",
   pac: "unknown",
+  pacVersion: "unknown",
   workspace: "unknown",
 };
 
@@ -134,6 +146,8 @@ export function SolutionDelivery() {
   const [deploymentPlan, setDeploymentPlan] = useState<JsonRecord | null>(null);
   const [rollbackApproval, setRollbackApproval] = useState<ApprovalRequest | null>(null);
   const [gates, setGates] = useState<GateState>(initialGates);
+  const [cliStatus, setCliStatus] = useState<PowerPlatformCliStatus | null>(null);
+  const [cliStatusFetched, setCliStatusFetched] = useState(false);
   const [message, setMessage] = useState("");
   const [busy, setBusy] = useState<string | null>(null);
   const [rollbackBusyId, setRollbackBusyId] = useState<number | null>(null);
@@ -151,11 +165,34 @@ export function SolutionDelivery() {
   }, [defaultClientId]);
 
   useEffect(() => {
+    let cancelled = false;
+    void apiFetch<PowerPlatformCliStatus>("/consultant/power-platform/cli-status")
+      .then((status) => {
+        if (cancelled) return;
+        setCliStatus(status);
+        setCliStatusFetched(true);
+        setGates((current) => ({
+          ...current,
+          deployment: gateFromBoolean(status.allow_power_platform_deployment),
+          writes: gateFromBoolean(status.allow_write_actions),
+          pac: gateFromBoolean(status.available),
+          pacVersion: gateFromBoolean(status.version_compatible),
+          workspace: gateFromBoolean(status.workspace_exists),
+        }));
+      })
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (cliStatusFetched) return;
     setGates((current) => approvalRequests.reduce(
       (state, request) => mergeGateObservation(state, request.block_reason, request.can_execute === true),
       current,
     ));
-  }, [approvalRequests]);
+  }, [approvalRequests, cliStatusFetched]);
 
   const powerPlatformApprovals = approvalRequests.filter(
     (request) => request.action_type === deploymentAction || request.action_type === rollbackAction,
@@ -361,7 +398,7 @@ export function SolutionDelivery() {
     const reason = stringValue(approval?.block_reason) || stringValue(response?.message);
     const executable = approval?.can_execute === true;
     setGates((current) => {
-      const next = mergeGateObservation(current, reason, executable);
+      const next = cliStatusFetched ? { ...current } : mergeGateObservation(current, reason, executable);
       if (source === "materialize" && response?.status === "succeeded") next.writes = "met";
       return next;
     });
@@ -393,7 +430,7 @@ export function SolutionDelivery() {
         </ol>
       </section>
 
-      <GateBanner gates={gates} />
+      <GateBanner gates={gates} cliStatus={cliStatus} />
 
       <section className="panel delivery-step-panel">
         <div className="panel-heading"><div><h2><PackageOpen size={18} aria-hidden="true" /> 1. Package</h2><p className="screen-note">Create deterministic, credential-free YAML source in memory.</p></div></div>
@@ -483,23 +520,34 @@ function PipelineStep({ label, done, active }: { label: string; done: boolean; a
   return <li className={`solution-pipeline-step ${done ? "done" : ""} ${active ? "active" : ""}`}><span>{done ? <CheckCircle2 size={16} aria-hidden="true" /> : <Circle size={16} aria-hidden="true" />}</span>{label}</li>;
 }
 
-function GateBanner({ gates }: { gates: GateState }) {
+function GateBanner({ gates, cliStatus }: { gates: GateState; cliStatus: PowerPlatformCliStatus | null }) {
+  const pacVersionDetail = cliStatus
+    ? typeof cliStatus.version === "string"
+      ? `${cliStatus.version} (minimum ${cliStatus.minimum_version ?? "required version"})`
+      : "The server could not determine the installed CLI version."
+    : undefined;
   return (
     <section className="panel solution-gates" aria-labelledby="solution-gates-heading">
-      <div className="panel-heading"><div><h2 id="solution-gates-heading">Backend gate state</h2><p className="screen-note">These indicators reflect backend responses and approval block reasons; the UI does not re-implement the gates.</p></div></div>
+      <div className="panel-heading"><div><h2 id="solution-gates-heading">Backend gate state</h2><p className="screen-note">These indicators come from the server; the UI does not re-implement the gates.</p></div></div>
       <div className="solution-gate-grid">
         <Gate label="WAIT_ALLOW_POWER_PLATFORM_DEPLOYMENT" status={gates.deployment} />
         <Gate label="WAIT_ALLOW_WRITE_ACTIONS" status={gates.writes} />
         <Gate label="pac on the local PATH" status={gates.pac} />
+        <Gate label="pac version" status={gates.pacVersion} detail={pacVersionDetail} />
         <Gate label="WAIT_POWER_PLATFORM_WORKSPACE" status={gates.workspace} />
+        <Gate
+          label="pac auth profile and environment — operator responsibility"
+          status="unknown"
+          detail="Run pac auth create and pac env select; WAIT cannot check this safely across CLI versions."
+        />
       </div>
     </section>
   );
 }
 
-function Gate({ label, status }: { label: string; status: GateStatus }) {
+function Gate({ label, status, detail }: { label: string; status: GateStatus; detail?: string }) {
   const text = status === "met" ? "Met" : status === "unmet" ? "Unmet" : "Not checked";
-  return <div className={`solution-gate ${status}`}><strong>{label}</strong><span>{text}</span></div>;
+  return <div className={`solution-gate ${status}`}><strong>{label}</strong><span>{text}</span>{detail ? <small>{detail}</small> : null}</div>;
 }
 
 function DeliveryApprovalCard({
@@ -596,15 +644,21 @@ function isDeploymentApproval(request: ApprovalRequest): boolean {
 }
 
 function mergeGateObservation(state: GateState, reason: string | undefined, executable: boolean): GateState {
-  if (executable) return { deployment: "met", writes: "met", pac: "met", workspace: "met" };
-  return mergeGateReason(state, reason ?? "");
+  const next = mergeGateReason(state, reason ?? "");
+  if (executable) {
+    next.deployment = "met";
+    next.writes = "met";
+  }
+  return next;
 }
 
 function mergeGateReason(state: GateState, reason: string): GateState {
   const next = { ...state };
   if (reason.includes("WAIT_ALLOW_POWER_PLATFORM_DEPLOYMENT")) next.deployment = "unmet";
   if (reason.includes("WAIT_ALLOW_WRITE_ACTIONS")) next.writes = "unmet";
-  if (reason.includes("pac executable")) next.pac = "unmet";
-  if (reason.includes("WAIT_POWER_PLATFORM_WORKSPACE")) next.workspace = "unmet";
   return next;
+}
+
+function gateFromBoolean(value: boolean | undefined): GateStatus {
+  return value === undefined ? "unknown" : value ? "met" : "unmet";
 }

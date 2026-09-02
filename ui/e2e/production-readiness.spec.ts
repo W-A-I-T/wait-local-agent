@@ -44,6 +44,8 @@ test("completes the safe local setup journey and exercises primary UI surfaces",
     ["/knowledge", "Knowledge"],
     ["/playbooks", "MSP Playbooks"],
     ["/integrations/mcp", "MCP server"],
+    ["/consultant", "Solutions Architect"],
+    ["/consultant/solution-delivery", "Solution delivery"],
     ["/settings", "Admin Settings"]
   ] as const;
 

@@ -235,7 +235,9 @@ from wait_local_agent.power_apps import (
 from wait_local_agent.power_automate import PowerAutomatePlanError, build_power_automate_flow_plan
 from wait_local_agent.power_platform import (
     OpenApiDefinitionError,
+    compare_pac_versions,
     generate_power_platform_connector,
+    power_platform_cli_status,
     resolve_pac_executable,
 )
 from wait_local_agent.power_platform_deployment import (
@@ -250,6 +252,7 @@ from wait_local_agent.power_platform_deployment import (
     validate_rollback_evidence,
 )
 from wait_local_agent.power_platform_package import (
+    PAC_XML_MINIMUM_VERSION,
     PowerPlatformPackageError,
     build_power_platform_package,
     materialize_power_platform_package,
@@ -6079,6 +6082,28 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         except PowerPlatformPackageError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
 
+    @app.get("/consultant/power-platform/cli-status")
+    def consultant_power_platform_cli_status(
+        _: TechnicianAccess,
+    ) -> dict[str, object]:
+        cli_status = power_platform_cli_status(active_settings)
+        version = cli_status.get("version")
+        try:
+            version_compatible = (
+                isinstance(version, str)
+                and compare_pac_versions(version, PAC_XML_MINIMUM_VERSION) >= 0
+            )
+        except ValueError:
+            version_compatible = False
+        return {
+            **cli_status,
+            "minimum_version": PAC_XML_MINIMUM_VERSION,
+            "version_compatible": version_compatible,
+            "allow_write_actions": active_settings.allow_write_actions,
+            "allow_power_platform_deployment": active_settings.allow_power_platform_deployment,
+            "workspace_exists": active_settings.power_platform_workspace.is_dir(),
+        }
+
     @app.post("/consultant/power-platform/package/validate")
     def validate_consultant_power_platform_package(
         payload: PowerPlatformPackageValidationRequest,
@@ -6391,12 +6416,18 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             )
         if len(transcript) > 64:
             raise HTTPException(status_code=422, detail="discovery session has reached its turn limit")
-        status = cast(str, result["status"])
+        discovery_status = cast(str, result["status"])
+        persisted_status = {
+            "active": "active",
+            "complete": "completed",
+        }.get(discovery_status)
+        if persisted_status is None:
+            raise HTTPException(status_code=422, detail="discovery result status is invalid")
         updated = store.update_consultant_discovery_session(
             session_id,
             client_id=scoped_client_id,
             principal_id=principal_id,
-            status=status,
+            status=persisted_status,
             answers=answered,
             transcript=transcript,
             blueprint_id=cast(str | None, result.get("blueprint_id")),
@@ -6428,22 +6459,26 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     if isinstance(item.get("connector_id"), str)
                     and item.get("status") == "configured"
                 ]
-                probe_results = probe_connector_health(
-                    connector_ids,
-                    active_settings,
-                    halopsa_client=halopsa_client,
-                    hudu_client=hudu_client,
-                    connectwise_client=connectwise_client,
-                    syncro_client=syncro_client,
-                    servicenow_client=servicenow_client,
-                    autotask_client=autotask_client,
-                    itglue_client=itglue_client,
-                    confluence_client=confluence_client,
-                    notion_client=notion_client,
-                    sharepoint_client=sharepoint_client,
-                    m365_client=m365_client,
-                    timezest_client=timezest_client,
-                    scalepad_client=scalepad_client,
+                probe_results = (
+                    probe_connector_health(
+                        connector_ids,
+                        active_settings,
+                        halopsa_client=halopsa_client,
+                        hudu_client=hudu_client,
+                        connectwise_client=connectwise_client,
+                        syncro_client=syncro_client,
+                        servicenow_client=servicenow_client,
+                        autotask_client=autotask_client,
+                        itglue_client=itglue_client,
+                        confluence_client=confluence_client,
+                        notion_client=notion_client,
+                        sharepoint_client=sharepoint_client,
+                        m365_client=m365_client,
+                        timezest_client=timezest_client,
+                        scalepad_client=scalepad_client,
+                    )
+                    if active_settings.allow_http_probing
+                    else {}
                 )
                 result = discover_solution_environment(
                     client_id=scoped_client_id,
