@@ -174,6 +174,7 @@ const DashboardContext = createContext<DashboardContextValue | undefined>(undefi
 export function DashboardProvider({ children, activePath = "" }: { children: ReactNode; activePath?: string }) {
   const [apiToken, setApiToken] = useState(() => loadStoredApiToken());
   const [role, setRole] = useState<AuthRoleResponse["role"]>("viewer");
+  const [allowWriteActions, setAllowWriteActions] = useState(false);
   const [isMspAdmin, setIsMspAdmin] = useState(false);
   const [endUserSupportEnabled, setEndUserSupportEnabled] = useState(false);
   const [authState, setAuthState] = useState<AuthState | null>(null);
@@ -230,6 +231,7 @@ export function DashboardProvider({ children, activePath = "" }: { children: Rea
     const roleRequestId = ++roleRequestIdRef.current;
     setLoading(true);
     setRole("viewer");
+    setAllowWriteActions(false);
     setIsMspAdmin(false);
     setEndUserSupportEnabled(false);
     setAuthState(null);
@@ -321,6 +323,9 @@ export function DashboardProvider({ children, activePath = "" }: { children: Rea
       }
       const nextAuthState = deriveAuthState(auth, loadStoredApiToken());
       setRole(auth.role);
+      // Older appliances do not publish this field; retain their established
+      // role gate while honoring an explicit server-side false value.
+      setAllowWriteActions(auth.allow_write_actions !== false);
       setIsMspAdmin(auth.is_msp_admin === true);
       setClientScopeIds(Array.isArray(auth.client_ids)
         ? auth.client_ids.filter((clientId): clientId is string => typeof clientId === "string" && clientId.trim().length > 0)
@@ -378,6 +383,7 @@ export function DashboardProvider({ children, activePath = "" }: { children: Rea
         return null;
       }
       setRole("viewer");
+      setAllowWriteActions(false);
       setIsMspAdmin(false);
       setEndUserSupportEnabled(false);
       setRoleResolved(false);
@@ -598,7 +604,7 @@ export function DashboardProvider({ children, activePath = "" }: { children: Rea
       hasClientScope: clientScopeIds !== null && clientScopeIds.length > 0,
       busyId,
       selectedTicketId,
-      canWrite: roleResolved && role !== "viewer",
+      canWrite: roleResolved && allowWriteActions && role !== "viewer" && role !== "end_user",
       isAdmin: roleResolved && role === "admin",
       isConfigured: configuration.isConfigured,
       configurationLoading: configuration.loading,
@@ -625,6 +631,7 @@ export function DashboardProvider({ children, activePath = "" }: { children: Rea
     };
   }, [
     apiToken,
+    allowWriteActions,
     authMethod,
     expiresAt,
     principalId,

@@ -86,6 +86,7 @@ def build_consultant_delivery_plan(
             deployable_digest = validate_power_platform_package(deployable_package, client_id=tenant)
         except PowerPlatformPackageError as exc:
             raise DeliveryPlanError(str(exc)) from exc
+    deployable_source_package = dict(deployable_package) if deployable_package is not None else None
     return {
         "format": "wait-local-agent.consultant-delivery-plan",
         "format_version": 1,
@@ -115,9 +116,27 @@ def build_consultant_delivery_plan(
         "delivery_bundle_generated": delivery_bundle is not None,
         "delivery_bundle_digest": delivery_bundle_digest,
         "delivery_bundle_status": "review_only" if delivery_bundle is not None else "not_generated",
-        "deployable_source_package": dict(deployable_package) if deployable_package is not None else None,
+        "deployable_source_package": deployable_source_package,
         "deployable_source_package_generated": deployable_package is not None,
         "deployable_source_package_digest": deployable_digest,
+        "deployable_source_package_deployable": bool(
+            deployable_source_package and deployable_source_package.get("deployable")
+        ),
+        "deployable_source_package_status": (
+            deployable_source_package.get("package_status", "partial_source")
+            if deployable_source_package is not None
+            else "not_generated"
+        ),
+        "deployable_source_package_design_only_components": (
+            deployable_source_package.get("design_only_components", [])
+            if deployable_source_package is not None
+            else []
+        ),
+        "deployable_source_package_unsupported_components": (
+            deployable_source_package.get("unsupported_components", [])
+            if deployable_source_package is not None
+            else []
+        ),
         "deployment_package_generated": False,
         "deployment_package_status": "not_generated",
         "production_deployment_requires_approval": True,

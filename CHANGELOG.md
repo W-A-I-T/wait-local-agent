@@ -27,6 +27,13 @@ All notable changes to WAIT Local Agent will be documented in this file.
 
 ### Fixed
 
+- Power Platform package validation, delivery plans, the employee demo, and
+  Solution Delivery now report computed deployability, package status, and
+  design-only or unsupported components; dropped entities and relationships
+  degrade source readiness instead of disappearing from the result.
+- Dashboard write controls now honor the server write-action flag and exclude
+  end-user roles, and the deployment stage/docs now describe the pack-only
+  build plan.
 - Backup failures now emit sanitized structured logs with a correlation ID,
   and Appliance Health loads scheduled backup history when the screen opens.
 - Re-landed the reviewed Solutions Architect live supervisor delegation panel

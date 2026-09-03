@@ -136,7 +136,6 @@ def build_power_platform_package(
                 design_only,
             )
         else:
-            artifact_component_classes.add("unsupported")
             unsupported.append(
                 {
                     "id": str(_component_id(tenant, f"unsupported:{artifact_index}:{artifact_format}")),
@@ -185,12 +184,11 @@ def build_power_platform_package(
         "output_directory": output,
         "files": file_views,
         "file_count": len(file_views),
-        "deployable": bool(artifact_component_classes & import_complete_component_classes)
-        if normalized_artifacts
-        else bool(import_complete_component_classes),
+        "deployable": bool(artifact_component_classes & import_complete_component_classes),
         "package_status": (
             "deployable_source"
-            if emitted_component_classes <= import_complete_component_classes
+            if artifact_component_classes & import_complete_component_classes
+            and emitted_component_classes <= import_complete_component_classes
             else "partial_source"
         ),
         "credentials_included": False,
@@ -449,7 +447,10 @@ def package_validation_result(package: Mapping[str, object], *, client_id: str |
         "package_digest": digest,
         "client_id": package["client_id"],
         "file_count": package["file_count"],
-        "deployable": True,
+        "deployable": package["deployable"],
+        "package_status": package["package_status"],
+        "design_only_components": package["design_only_components"],
+        "unsupported_components": package["unsupported_components"],
         "execution_started": False,
         "deployment_started": False,
     }
@@ -861,6 +862,7 @@ def _emit_power_apps_artifact(
         emitted_component_classes.add("entity")
         expected_prefix = f"{publisher_prefix}_"
         if not logical.startswith(expected_prefix):
+            emitted_component_classes.add("withheld_entity")
             design_only.append(
                 {
                     "id": str(_component_id(tenant, f"entities/{logical}")),
@@ -914,6 +916,7 @@ def _emit_power_apps_artifact(
                 target = _identifier(target_value, f"{logical}.{field_name}.target_entity")
                 lookup_columns[(logical, field_name)] = {"target_entity": target}
                 if target not in table_names:
+                    emitted_component_classes.add("withheld_relationship")
                     design_only.append(
                         {
                             "id": str(_component_id(tenant, f"entities/{logical}/relationships/{field_name}")),
@@ -994,6 +997,7 @@ def _emit_power_apps_artifact(
             if len(marked_primary) == 1:
                 declared_primary = marked_primary[0]
             elif len(marked_primary) > 1:
+                emitted_component_classes.add("withheld_entity")
                 design_only.append(
                     {
                         "id": str(_component_id(tenant, f"entities/{logical}")),
@@ -1007,6 +1011,7 @@ def _emit_power_apps_artifact(
                 )
                 continue
         if declared_primary is None:
+            emitted_component_classes.add("withheld_entity")
             design_only.append(
                 {
                     "id": str(_component_id(tenant, f"entities/{logical}")),
@@ -1017,6 +1022,7 @@ def _emit_power_apps_artifact(
             )
             continue
         if declared_primary in unmapped_types:
+            emitted_component_classes.add("withheld_entity")
             design_only.append(
                 {
                     "id": str(_component_id(tenant, f"entities/{logical}")),
@@ -1030,6 +1036,7 @@ def _emit_power_apps_artifact(
             )
             continue
         if declared_primary not in column_names:
+            emitted_component_classes.add("withheld_entity")
             design_only.append(
                 {
                     "id": str(_component_id(tenant, f"entities/{logical}")),
@@ -1066,6 +1073,7 @@ def _emit_power_apps_artifact(
             raw_referencing = raw_relationship.get("referencing_entity")
             raw_referenced = raw_relationship.get("referenced_entity")
             if raw_referencing is None or raw_referenced is None:
+                emitted_component_classes.add("withheld_relationship")
                 design_only.append(
                     {
                         "id": str(_component_id(tenant, relationship_id)),
@@ -1092,6 +1100,7 @@ def _emit_power_apps_artifact(
                 raw_relationship.get("referencing_attribute", raw_relationship.get("referencing_attribute_name")),
             )
             if raw_attribute is None:
+                emitted_component_classes.add("withheld_relationship")
                 design_only.append(
                     {
                         "id": str(_component_id(tenant, f"{relationship_id}/{name}")),
@@ -1107,6 +1116,7 @@ def _emit_power_apps_artifact(
             lookup_column = _identifier(raw_attribute, "relationship.lookup_column")
             lookup = lookup_columns.get((referencing, lookup_column))
             if lookup is None:
+                emitted_component_classes.add("withheld_relationship")
                 design_only.append(
                     {
                         "id": str(_component_id(tenant, f"{relationship_id}/{name}")),
@@ -1120,6 +1130,7 @@ def _emit_power_apps_artifact(
                 )
                 continue
             if lookup["target_entity"] != referenced:
+                emitted_component_classes.add("withheld_relationship")
                 design_only.append(
                     {
                         "id": str(_component_id(tenant, f"{relationship_id}/{name}")),
@@ -1134,6 +1145,7 @@ def _emit_power_apps_artifact(
                 continue
             if referencing not in emitted_artifact_entity_names or referenced not in emitted_artifact_entity_names:
                 _remove_lookup_attribute(entities, referencing, lookup_column)
+                emitted_component_classes.add("withheld_relationship")
                 design_only.append(
                     {
                         "id": str(_component_id(tenant, f"{relationship_id}/{name}")),
@@ -1165,6 +1177,7 @@ def _emit_power_apps_artifact(
         lookup_column = cast(str, candidate["referencing_attribute"])
         if referencing not in emitted_artifact_entity_names or referenced not in emitted_artifact_entity_names:
             _remove_lookup_attribute(entities, referencing, lookup_column)
+            emitted_component_classes.add("withheld_relationship")
             design_only.append(
                 {
                     "id": str(_component_id(tenant, f"entities/{referencing}/relationships/{lookup_column}")),

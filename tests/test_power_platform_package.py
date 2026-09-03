@@ -955,6 +955,33 @@ def test_entity_only_package_reports_deployable_source(tmp_path: Path) -> None:
     assert package["design_only_components"] == []
 
 
+def test_mixed_emitted_and_withheld_entities_report_partial_source(tmp_path: Path) -> None:
+    artifact = _entity_artifact()
+    tables = cast(list[dict[str, object]], cast(dict[str, object], artifact["dataverse"])["tables"])
+    tables.append(
+        {
+            "logical_name": "external_employee",
+            "display_name": "External employee",
+            "primary_name_column": "external_name",
+            "columns": [{"logical_name": "external_name", "display_name": "Name"}],
+        }
+    )
+
+    package = _package(tmp_path, [artifact])
+
+    assert package["deployable"] is True
+    assert package["package_status"] == "partial_source"
+    design_only = cast(list[dict[str, object]], package["design_only_components"])
+    assert any(item["path"] == "entities/external_employee" for item in design_only)
+
+
+def test_artifactless_package_is_not_deployable(tmp_path: Path) -> None:
+    package = _package(tmp_path, [])
+
+    assert package["deployable"] is False
+    assert package["package_status"] == "partial_source"
+
+
 def test_flow_bearing_package_reports_partial_source_and_names_the_design_only_flow(tmp_path: Path) -> None:
     package = _package(tmp_path, [_entity_artifact(), _flow_plan()])
     files = cast(list[dict[str, object]], package["files"])
@@ -1106,7 +1133,12 @@ def test_flow_artifact_rejects_malformed_or_legacy_trigger_and_action_shapes(tmp
 def test_package_validation_rederives_file_and_package_digests(tmp_path: Path) -> None:
     package = _package(tmp_path)
     assert validate_power_platform_package(package, client_id="acme") == package["package_digest"]
-    assert package_validation_result(package)["valid"] is True
+    validation = package_validation_result(package)
+    assert validation["valid"] is True
+    assert validation["deployable"] == package["deployable"]
+    assert validation["package_status"] == package["package_status"]
+    assert validation["design_only_components"] == package["design_only_components"]
+    assert validation["unsupported_components"] == package["unsupported_components"]
 
     tampered = json.loads(json.dumps(package))
     tampered["files"][0]["content"] += "tampered"
@@ -1480,7 +1512,7 @@ def test_materialization_failure_branches(settings, tmp_path: Path, monkeypatch:
         replace(settings, allow_write_actions=True, power_platform_workspace=workspace),
     )
     assert result["status"] == "failed"
-    assert "inside" in str(result["message"])
+    assert "no component that will import" in str(result["message"])
 
     open_package = build_power_platform_package(
         client_id="acme",
@@ -1562,6 +1594,10 @@ def test_delivery_keeps_review_bundle_non_deployable_and_links_source_digest(tmp
     )
     assert result["delivery_bundle"]["manifest"]["deployable"] is False
     assert result["deployable_source_package_digest"] == package["package_digest"]
+    assert result["deployable_source_package_deployable"] == package["deployable"]
+    assert result["deployable_source_package_status"] == package["package_status"]
+    assert result["deployable_source_package_design_only_components"] == package["design_only_components"]
+    assert result["deployable_source_package_unsupported_components"] == package["unsupported_components"]
     assert result["deployment_package_generated"] is False
 
     foreign = dict(package)

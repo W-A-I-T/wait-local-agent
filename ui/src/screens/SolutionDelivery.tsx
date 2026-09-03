@@ -64,6 +64,10 @@ type PackageArtifact = JsonRecord & {
   package_digest?: string;
   file_count?: number;
   client_id?: string;
+  deployable?: boolean;
+  package_status?: string;
+  design_only_components?: unknown[];
+  unsupported_components?: unknown[];
   solution?: JsonRecord;
 };
 
@@ -448,7 +452,10 @@ export function SolutionDelivery() {
           <button type="submit" disabled={!canWrite || busy !== null}>{busy === "package" ? "Packaging…" : "Build package"}</button>
           {!canWrite ? <p className="screen-note">Technician access is required to create a package.</p> : null}
         </form>
-        {packageArtifact ? <ResultSummary title="Package ready" value={packageArtifact} detail={`${packageArtifact.file_count ?? 0} files · ${packageArtifact.package_digest ?? "digest pending"}`} /> : null}
+        {packageArtifact ? <>
+          <ResultSummary title="Package ready" value={packageArtifact} detail={`${packageArtifact.file_count ?? 0} files · ${packageArtifact.package_digest ?? "digest pending"}`} />
+          <PackageReadiness value={packageArtifact} />
+        </> : null}
       </section>
 
       <section className="panel delivery-step-panel">
@@ -456,7 +463,7 @@ export function SolutionDelivery() {
         <form className="row-actions" onSubmit={(event) => void validatePackage(event)}>
           <button type="submit" disabled={!packageArtifact || busy !== null}>{busy === "validate" ? "Validating…" : "Validate package"}</button>
         </form>
-        {validationResult ? <ResultSummary title="Validation passed" value={validationResult} detail="deployable: true · execution_started: false · deployment_started: false" /> : null}
+        {validationResult ? <ResultSummary title="Validation passed" value={validationResult} detail={packageTruthDetail(validationResult)} /> : null}
       </section>
 
       <section className="panel delivery-step-panel">
@@ -591,6 +598,38 @@ function DeliveryApprovalCard({
 
 function ResultSummary({ title, value, detail }: { title: string; value: unknown; detail: string }) {
   return <div className="solution-result"><strong>{title}</strong><span>{detail}</span><details><summary>Show response</summary><pre>{JSON.stringify(value, null, 2)}</pre></details></div>;
+}
+
+function PackageReadiness({ value }: { value: JsonRecord }) {
+  return (
+    <div className="solution-result" aria-label="Package readiness">
+      <strong>Package readiness</strong>
+      <span>{packageTruthDetail(value)}</span>
+      <ul>
+        <li>Design-only components: {componentNames(value.design_only_components)}</li>
+        <li>Unsupported components: {componentNames(value.unsupported_components)}</li>
+      </ul>
+    </div>
+  );
+}
+
+function packageTruthDetail(value: JsonRecord): string {
+  const status = stringValue(value.package_status) || "status not reported";
+  const deployable = value.deployable === true ? "yes" : value.deployable === false ? "no" : "not reported";
+  return `Package status: ${status} · deployable: ${deployable} · design-only: ${componentCount(value.design_only_components)} · unsupported: ${componentCount(value.unsupported_components)}`;
+}
+
+function componentCount(value: unknown): string {
+  return Array.isArray(value) ? String(value.length) : "not reported";
+}
+
+function componentNames(value: unknown): string {
+  if (!Array.isArray(value) || value.length === 0) return "none";
+  const names = value.map((item) => {
+    const record = asRecord(item);
+    return stringValue(record?.path) || stringValue(record?.id) || "unnamed";
+  });
+  return names.join(", ");
 }
 
 function TextField({ label, value, onChange }: { label: string; value: string; onChange: (value: string) => void }) {

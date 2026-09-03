@@ -36,6 +36,9 @@ beforeEach(() => {
 describe("SolutionDelivery", () => {
   it("renders the governed pipeline and submits the verified package and follow-up bodies", async () => {
     mockedUseDashboard.mockReturnValue(dashboard() as never);
+    const packageStatus = "partial_source";
+    const designOnlyComponents = [{ path: "modernflows/onboarding" }];
+    const unsupportedComponents = [{ path: "canvas/onboarding" }];
     const packageArtifact = {
       format: "wait-local-agent.power-platform.deployable-source",
       format_version: 1,
@@ -45,7 +48,9 @@ describe("SolutionDelivery", () => {
       files: [],
       file_count: 0,
       deployable: true,
-      package_status: "deployable_source",
+      package_status: packageStatus,
+      design_only_components: designOnlyComponents,
+      unsupported_components: unsupportedComponents,
       credentials_included: false,
       execution_started: false,
       deployment_started: false,
@@ -61,7 +66,14 @@ describe("SolutionDelivery", () => {
         workspace_exists: false,
       }), { status: 200 }))
       .mockResolvedValueOnce(new Response(JSON.stringify(packageArtifact), { status: 200 }))
-      .mockResolvedValueOnce(new Response(JSON.stringify({ valid: true, deployable: true, deployment_started: false }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        valid: true,
+        deployable: true,
+        package_status: packageStatus,
+        design_only_components: designOnlyComponents,
+        unsupported_components: unsupportedComponents,
+        deployment_started: false,
+      }), { status: 200 }))
       .mockResolvedValueOnce(new Response(JSON.stringify({ status: "blocked", message: "Power Platform source materialization is blocked until WAIT_ALLOW_WRITE_ACTIONS=true." }), { status: 200 }));
     vi.stubGlobal("fetch", fetchMock);
     render(<MemoryRouter><SolutionDelivery /></MemoryRouter>);
@@ -79,6 +91,9 @@ describe("SolutionDelivery", () => {
     await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
     fireEvent.click(screen.getByRole("button", { name: "Build package" }));
     await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+    expect(screen.getByText(new RegExp(`Package status: ${packageStatus}`))).toBeInTheDocument();
+    expect(screen.getByText("Design-only components: modernflows/onboarding")).toBeInTheDocument();
+    expect(screen.getByText("Unsupported components: canvas/onboarding")).toBeInTheDocument();
     expect(JSON.parse(fetchMock.mock.calls[1][1].body)).toMatchObject({
       client_id: "acme",
       solution_name: "employee_onboarding",
@@ -91,6 +106,7 @@ describe("SolutionDelivery", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Validate package" }));
     await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(3));
+    expect(screen.getAllByText(new RegExp(`Package status: ${packageStatus}`))).toHaveLength(2);
     expect(JSON.parse(fetchMock.mock.calls[2][1].body)).toEqual({ client_id: "acme", package: packageArtifact });
 
     fireEvent.click(screen.getByRole("button", { name: "Materialize source" }));

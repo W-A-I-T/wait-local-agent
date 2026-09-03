@@ -1,6 +1,6 @@
 import type { ReactNode } from "react";
 
-type Role = "admin" | "technician" | "viewer";
+type Role = "admin" | "technician" | "viewer" | "end_user";
 
 type RoleGateProps = {
   role: Role;

@@ -8,8 +8,8 @@ POST /consultant/solutions/deployment-approvals
 POST /consultant/solutions/deployment-approvals/{request_id}/execute
 ```
 
-The plan contains a `build` stage (`pac solution init`, `pack`, and `check`)
-followed by optional `dev`, `test`, and `prod` import stages. Targets must be
+The plan contains a `build` stage (`pac solution pack`) followed by optional
+`dev`, `test`, and `prod` import stages. Targets must be
 ordered in promotion order and contain HTTPS environment URLs without
 credentials or query data.
 

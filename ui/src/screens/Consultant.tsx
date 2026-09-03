@@ -1271,7 +1271,7 @@ export function Consultant() {
                   <h3>Delivery handoff</h3>
                   <p className="screen-note">A deterministic, redacted review bundle is ready for operator handoff.</p>
                 </div>
-                <StatusChip status="evidence_partial" />
+                <StatusChip status={employeeOnboardingDemo.stages.artifacts.delivery_bundle.manifest.bundle_status} />
               </div>
               <p>
                 <strong>Review-only.</strong> {employeeOnboardingDemo.stages.artifacts.delivery_bundle.manifest.files.length} files · {employeeOnboardingDemo.stages.artifacts.delivery_bundle.manifest.deployment_targets.join(", ")} · deployable: {employeeOnboardingDemo.stages.artifacts.delivery_bundle.manifest.deployable ? "yes" : "no"}.

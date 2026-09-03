@@ -8,6 +8,7 @@
   },
   "scripts": {
     "dev": "vite",
+    "lint": "vitest run lint/status-literals.test.ts",
     "build": "tsc -b && vite build",
     "test": "vitest run",
     "test:coverage": "vitest run --coverage",

@@ -173,7 +173,7 @@ function AuthStatus({
   roleResolved
 }: {
   authState: AuthState | null;
-  role: "admin" | "technician" | "viewer";
+  role: "admin" | "technician" | "viewer" | "end_user";
   roleResolved: boolean;
 }) {
   const label = authState === "demo"
