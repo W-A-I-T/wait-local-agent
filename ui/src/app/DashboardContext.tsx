@@ -127,6 +127,7 @@ type DashboardContextValue = {
   busyId: number | "draft" | null;
   selectedTicketId: string;
   canWrite: boolean;
+  canWriteExternally: boolean;
   isAdmin: boolean;
   isConfigured: boolean;
   configurationLoading: boolean;
@@ -604,7 +605,8 @@ export function DashboardProvider({ children, activePath = "" }: { children: Rea
       hasClientScope: clientScopeIds !== null && clientScopeIds.length > 0,
       busyId,
       selectedTicketId,
-      canWrite: roleResolved && allowWriteActions && role !== "viewer" && role !== "end_user",
+      canWrite: roleResolved && role !== "viewer" && role !== "end_user",
+      canWriteExternally: roleResolved && allowWriteActions && role !== "viewer" && role !== "end_user",
       isAdmin: roleResolved && role === "admin",
       isConfigured: configuration.isConfigured,
       configurationLoading: configuration.loading,

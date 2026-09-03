@@ -4,6 +4,7 @@ import { apiFetch } from "../api/client";
 import type { CollectorConfigField, SmartActionInvokeResult, SmartActionManifest } from "../api/types";
 import { SchemaForm, defaultsForFields, validateRequiredFields, type SchemaFormValue } from "../components/SchemaForm";
 import { StatusChip } from "../components/StatusChip";
+import { useDashboard } from "../app/DashboardContext";
 
 type ApprovalFilter = "all" | "required" | "not-required";
 
@@ -200,6 +201,7 @@ export function SmartActionCatalog() {
 }
 
 function SmartActionDetail({ action, onClose }: { action: SmartActionManifest; onClose: () => void }) {
+  const { canWrite, canWriteExternally } = useDashboard();
   const fields = schemaFields(action.input_schema);
   const [payload, setPayload] = useState<SchemaFormValue>(() => defaultsForFields(fields));
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
@@ -280,7 +282,7 @@ function SmartActionDetail({ action, onClose }: { action: SmartActionManifest; o
               onJsonValidityChange={setJsonValid}
             />
             {invokeError ? <div className="notice danger" role="alert">{invokeError}</div> : null}
-            <button type="submit" disabled={busy || !jsonValid}>{busy ? "Invoking…" : "Invoke action"}</button>
+            <button type="submit" disabled={busy || !jsonValid || !canWrite || (action.access_mode === "write" && !canWriteExternally)}>{busy ? "Invoking…" : "Invoke action"}</button>
           </form>
           {invokeResult ? (
             <div className="connection-state" role="status">

@@ -124,6 +124,7 @@ export function SolutionDelivery() {
   const {
     approvalRequests,
     canWrite,
+    canWriteExternally = canWrite,
     clients = [],
     clientId: scopedClientId,
     executeApproval,
@@ -515,7 +516,7 @@ export function SolutionDelivery() {
       <section className="panel approvals-panel">
         <div className="panel-heading"><div><h2>Deployment approvals</h2><p className="screen-note">Tenant-scoped stage and rollback approvals from the shared approval feed.</p></div><span>{powerPlatformApprovals.length} found</span></div>
         <div className="stack-list">
-          {powerPlatformApprovals.map((request) => <DeliveryApprovalCard key={request.id} request={request} canExecute={isAdmin && canWrite && request.can_execute === true} busy={busy === `execute-${request.id}`} rollbackBusy={rollbackBusyId === request.id} onExecute={() => void executeStage(request)} onRollback={() => void requestRollbackFor(request)} />)}
+          {powerPlatformApprovals.map((request) => <DeliveryApprovalCard key={request.id} request={request} canExecute={isAdmin && canWriteExternally && request.can_execute === true} busy={busy === `execute-${request.id}`} rollbackBusy={rollbackBusyId === request.id} onExecute={() => void executeStage(request)} onRollback={() => void requestRollbackFor(request)} />)}
           {powerPlatformApprovals.length === 0 ? <p className="screen-note">No Power Platform approvals are in the feed yet.</p> : null}
         </div>
       </section>

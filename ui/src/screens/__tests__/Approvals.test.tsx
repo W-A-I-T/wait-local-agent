@@ -27,7 +27,7 @@ function approval(overrides: Partial<ApprovalRequest> = {}): ApprovalRequest {
 
 function renderApproval(
   request: ReturnType<typeof approval>,
-  options: { canWrite?: boolean; liveWritesReady?: boolean; isAdmin?: boolean } = {}
+  options: { canWrite?: boolean; canWriteExternally?: boolean; liveWritesReady?: boolean; isAdmin?: boolean } = {}
 ) {
   const executeApproval = vi.fn().mockResolvedValue(undefined);
   const refresh = vi.fn().mockResolvedValue(undefined);
@@ -35,6 +35,7 @@ function renderApproval(
     approvalRequests: [request],
     pendingApprovals: [],
     canWrite: options.canWrite ?? true,
+    canWriteExternally: options.canWriteExternally ?? options.canWrite ?? true,
     isAdmin: options.isAdmin ?? true,
     busyId: null,
     updateApproval: vi.fn(),
@@ -136,6 +137,14 @@ describe("Approvals execute button", () => {
 
     expect(executeButton).toBeDisabled();
     expect(executeButton).toHaveAttribute("title", "Writes are in Safe Mode — see the write-gate indicator");
+  });
+
+  it("keeps external execution disabled while local approval controls remain available", () => {
+    const { executeButton } = renderApproval(approval({ status: "pending" }), { canWriteExternally: false });
+
+    expect(executeButton).toBeDisabled();
+    expect(executeButton).toHaveAttribute("title", "External writes are disabled in Safe Mode");
+    expect(screen.getByRole("button", { name: "Approve" })).toBeEnabled();
   });
 
   it("renders the backend block reason for Power Platform approvals", () => {

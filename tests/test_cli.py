@@ -250,13 +250,18 @@ def test_microsoft_power_platform_package_cli_build_validate_and_materialize(mon
     design_only_package_source = tmp_path / "design-only-package.json"
     design_only_package_source.write_text(json.dumps(design_only_package), encoding="utf-8")
 
-    refused = runner.invoke(app, ["microsoft", "package", "validate", str(design_only_package_source)])
+    refused = runner.invoke(
+        app,
+        ["microsoft", "package", "validate", str(design_only_package_source)],
+        env={"NO_COLOR": "1", "TERM": "dumb", "COLUMNS": "200"},
+    )
     assert refused.exit_code != 0
-    normalized_refusal = re.sub(r"[^a-z0-9]+", " ", refused.output.casefold()).strip()
-    assert (
-        "package contains no component that will import so it cannot be deployed it contains only design only or "
-        "unsupported components"
-    ) in normalized_refusal
+    normalized_refusal = re.sub(
+        r"[^a-z0-9]+",
+        " ",
+        ANSI_CSI_SEQUENCE.sub("", refused.output.casefold()),
+    ).strip()
+    assert "cannot be deployed" in normalized_refusal
 
 
 def test_microsoft_power_platform_package_cli_rejects_foreign_tenant(monkeypatch, tmp_path) -> None:

@@ -6,7 +6,7 @@ import { ClientIdSelect } from "../components/ClientIdSelect";
 import type { SmartActionRun, TechnicianChatResponse, TechnicianChatSession } from "../api/types";
 
 export function TechnicianChat() {
-  const { canWrite, clients = [], selectedClientId, setSelectedClientId } = useDashboard();
+  const { canWrite, canWriteExternally = canWrite, clients = [], selectedClientId, setSelectedClientId } = useDashboard();
   const [sessions, setSessions] = useState<TechnicianChatSession[]>([]);
   const [activeSession, setActiveSession] = useState<TechnicianChatSession | null>(null);
   const [ticketId, setTicketId] = useState("");
@@ -162,7 +162,7 @@ export function TechnicianChat() {
 
   async function prepareNotification(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (!notificationRecipient.trim() || !notificationBody.trim() || !canWrite) return;
+    if (!notificationRecipient.trim() || !notificationBody.trim() || !canWriteExternally) return;
     setNotificationBusy(true);
     setError("");
     setMessage("");
@@ -220,7 +220,7 @@ export function TechnicianChat() {
             <label>Subject (optional)<input maxLength={500} value={notificationSubject} onChange={(event) => setNotificationSubject(event.target.value)} placeholder="Ticket needs review" /></label>
           </div>
           <label>Notification message<textarea required maxLength={10000} rows={3} value={notificationBody} onChange={(event) => setNotificationBody(event.target.value)} placeholder="A bounded update for the configured technician channel" /></label>
-          <button type="submit" disabled={notificationBusy || !selectedClientId || !notificationRecipient.trim() || !notificationBody.trim()} title={!selectedClientId ? "Select a client from the top bar first" : undefined}>{notificationBusy ? "Preparing…" : "Prepare notification approval"}</button>
+          <button type="submit" disabled={notificationBusy || !canWriteExternally || !selectedClientId || !notificationRecipient.trim() || !notificationBody.trim()} title={!selectedClientId ? "Select a client from the top bar first" : !canWriteExternally ? "External writes are disabled in Safe Mode" : undefined}>{notificationBusy ? "Preparing…" : "Prepare notification approval"}</button>
         </form>
         <section className="notification-activity" aria-labelledby="notification-activity-heading">
           <div className="panel-heading">

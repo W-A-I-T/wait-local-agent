@@ -20,6 +20,7 @@ export function Approvals() {
     approvalRequests,
     pendingApprovals,
     canWrite,
+    canWriteExternally = canWrite,
     liveWritesReady,
     isAdmin,
     busyId,
@@ -88,6 +89,7 @@ export function Approvals() {
           <ApprovalCard
             busy={busyId === request.id || runbookBusyId === request.id}
             canWrite={canWrite}
+            canWriteExternally={canWriteExternally}
             liveWritesReady={liveWritesReady}
             isAdmin={isAdmin}
             draftPayloadFields={draftPayloadFields}
@@ -111,6 +113,7 @@ type ApprovalCardProps = {
   request: ApprovalRequest;
   busy: boolean;
   canWrite: boolean;
+  canWriteExternally: boolean;
   liveWritesReady: boolean;
   isAdmin: boolean;
   draftPayloadFields: Record<number, string>;
@@ -126,6 +129,7 @@ function ApprovalCard({
   request,
   busy,
   canWrite,
+  canWriteExternally,
   liveWritesReady,
   isAdmin,
   draftPayloadFields,
@@ -150,6 +154,8 @@ function ApprovalCard({
   const executionCompleted = ["succeeded", "verified", "unverified", "submitted"].includes(request.execution_status);
   const executeHint = request.block_reason || (!canWrite
     ? "Requires technician access"
+    : !canWriteExternally
+      ? "External writes are disabled in Safe Mode"
     : !roleCanExecute
       ? "Requires administrator access"
       : request.action_type.startsWith("halopsa.") &&
@@ -252,7 +258,7 @@ function ApprovalCard({
         ) : null}
         {hasExecuteEndpoint ? (
           <button
-            disabled={busy || !canWrite || !canExecute || !hasExecuteEndpoint || !roleCanExecute}
+            disabled={busy || !canWriteExternally || !canExecute || !hasExecuteEndpoint || !roleCanExecute}
             title={executeHint}
             type="button"
             onClick={() => void executeRequest(request)}
