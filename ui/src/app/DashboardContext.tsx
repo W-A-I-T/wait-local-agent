@@ -1,6 +1,8 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { apiFetch } from "../api/client";
 import {
+  clearInMemoryApiToken,
+  loadApiToken,
   loadStoredApiToken,
   loadStoredSelectedClientId,
   persistApiToken,
@@ -319,7 +321,7 @@ export function DashboardProvider({ children, activePath = "" }: { children: Rea
       if (roleRequestId !== roleRequestIdRef.current) {
         return null;
       }
-      const nextAuthState = deriveAuthState(auth, loadStoredApiToken());
+      const nextAuthState = deriveAuthState(auth, loadApiToken());
       setRole(auth.role);
       setIsMspAdmin(auth.is_msp_admin === true);
       setClientScopeIds(Array.isArray(auth.client_ids)
@@ -384,7 +386,7 @@ export function DashboardProvider({ children, activePath = "" }: { children: Rea
       setPrincipalId(null);
       setAuthMethod("bearer");
       setExpiresAt(null);
-      const nextAuthState = hasStoredApiToken() && isUnauthorized(error) ? "invalid-token" : null;
+      const nextAuthState = hasApiToken() && isUnauthorized(error) ? "invalid-token" : null;
       setAuthState(nextAuthState);
       setCapabilityGrants([]);
       setCapabilityResolved(false);
@@ -412,6 +414,7 @@ export function DashboardProvider({ children, activePath = "" }: { children: Rea
   }, [refresh]);
 
   const saveApiToken = useCallback(async () => {
+    clearInMemoryApiToken();
     persistApiToken(apiToken);
     const result = await refresh();
     if (result?.authState === "invalid-token") {
@@ -427,6 +430,7 @@ export function DashboardProvider({ children, activePath = "" }: { children: Rea
 
   const clearApiToken = useCallback(async () => {
     setApiToken("");
+    clearInMemoryApiToken();
     persistApiToken("");
     setStatusMessage("API token cleared.");
     await refresh();
@@ -440,6 +444,7 @@ export function DashboardProvider({ children, activePath = "" }: { children: Rea
       return;
     }
     setApiToken("");
+    clearInMemoryApiToken();
     persistApiToken("");
     setStatusMessage("Signed out.");
     await refresh();
@@ -690,8 +695,8 @@ function asArray<T>(value: T[] | unknown): T[] {
   return Array.isArray(value) ? value : [];
 }
 
-function hasStoredApiToken(): boolean {
-  return loadStoredApiToken().trim().length > 0;
+function hasApiToken(): boolean {
+  return loadApiToken().trim().length > 0;
 }
 
 function isUnauthorized(error: unknown): boolean {

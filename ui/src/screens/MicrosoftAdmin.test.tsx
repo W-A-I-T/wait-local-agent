@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, within } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { MicrosoftAdmin } from "./MicrosoftAdmin";
@@ -249,7 +249,8 @@ describe("Microsoft Administrator workspace", () => {
     });
     fireEvent.click(screen.getByRole("button", { name: "Run diagnostic" }));
 
-    expect(await screen.findByText(/Evidence completeness: 86%/)).toBeInTheDocument();
+    const diagnosticStatus = (await screen.findAllByRole("status")).find((node) => node.textContent?.includes("Evidence completeness: 86%"));
+    expect(diagnosticStatus).toBeDefined();
     expect(screen.getAllByText("Managed device LAPTOP-001 is not compliant.").length).toBeGreaterThan(0);
     expect(screen.getAllByText(/m365-managed-device-sync/).length).toBeGreaterThan(0);
     const diagnosticCall = vi.mocked(fetch).mock.calls.find(([input]) => String(input) === "/packs/microsoft-admin/diagnostics/access");
@@ -337,6 +338,9 @@ describe("Microsoft Administrator workspace", () => {
       target: { value: "adele@example.test" }
     });
     fireEvent.click(screen.getByRole("button", { name: "Run diagnostic" }));
-    expect(await screen.findByText(/The appliance couldn't complete/)).toBeInTheDocument();
+    await waitFor(async () => {
+      const diagnosticAlerts = await screen.findAllByRole("alert");
+      expect(diagnosticAlerts.some((node) => node.textContent?.includes("The appliance couldn't complete the request"))).toBe(true);
+    });
   });
 });

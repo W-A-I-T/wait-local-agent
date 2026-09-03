@@ -213,7 +213,7 @@ def test_bundle_manifest_hashes_entries_and_is_deterministic(
         for name, content in entries.items()
         if name != "system.json"
     }
-    assert first_manifest["overall_sha256"] != manifest["overall_sha256"]
+    assert first_manifest["overall_sha256"] == manifest["overall_sha256"]
     assert first.sha256 == hashlib.sha256(first_bytes).hexdigest()
     assert second.entries == tuple(sorted((*entries, "manifest.json")))
 
@@ -224,7 +224,9 @@ def test_bundle_manifest_hashes_entries_and_is_deterministic(
         )
     assert first_manifest["entries"] == first_expected
     first_digest_input = "".join(
-        f"{item['name']}\0{item['sha256']}\n" for item in first_expected
+        f"{item['name']}\0{item['sha256']}\n"
+        for item in first_expected
+        if item["name"] != "system.json"
     ).encode("ascii")
     assert first_manifest["overall_sha256"] == hashlib.sha256(first_digest_input).hexdigest()
 
@@ -235,7 +237,9 @@ def test_bundle_manifest_hashes_entries_and_is_deterministic(
         )
     assert manifest["entries"] == second_expected
     digest_input = "".join(
-        f"{item['name']}\0{item['sha256']}\n" for item in second_expected
+        f"{item['name']}\0{item['sha256']}\n"
+        for item in second_expected
+        if item["name"] != "system.json"
     ).encode("ascii")
     assert manifest["overall_sha256"] == hashlib.sha256(digest_input).hexdigest()
     assert manifest["case_reference_sha256"] == hashlib.sha256(b"case-private-44").hexdigest()

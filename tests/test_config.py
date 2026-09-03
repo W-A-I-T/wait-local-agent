@@ -516,6 +516,7 @@ def test_fernet_secret_vault_errors_propagate_during_settings_load(monkeypatch) 
         ("WAIT_ADMIN_TOKEN", "short-admin"),
         ("WAIT_TECH_TOKEN", "short-tech"),
         ("WAIT_VIEWER_TOKEN", "short-viewer"),
+        ("WAIT_END_USER_TOKEN", "short-end-user"),
         ("WAIT_API_TOKEN", "short-api"),
     ],
 )
@@ -536,8 +537,14 @@ def test_short_bootstrap_token_logs_one_warning_without_value(
 def test_bootstrap_token_warning_is_skipped_for_strong_tokens_and_demo_mode(
     monkeypatch, caplog
 ) -> None:
-    for variable in ("WAIT_ADMIN_TOKEN", "WAIT_TECH_TOKEN", "WAIT_VIEWER_TOKEN", "WAIT_API_TOKEN"):
-        monkeypatch.setenv(variable, "a" * 16)
+    for variable in (
+        "WAIT_ADMIN_TOKEN",
+        "WAIT_TECH_TOKEN",
+        "WAIT_VIEWER_TOKEN",
+        "WAIT_END_USER_TOKEN",
+        "WAIT_API_TOKEN",
+    ):
+        monkeypatch.setenv(variable, "a" * 32)
 
     with caplog.at_level("WARNING", logger="wait_local_agent.config"):
         load_settings()

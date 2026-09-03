@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import json
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+from threading import Barrier
 from typing import cast
 
 import pytest
@@ -1750,11 +1752,12 @@ def test_power_platform_cli_status_route_surfaces_server_owned_prerequisites(mon
         },
     )
 
-    result = _get_endpoint(settings, "/consultant/power-platform/cli-status")(_technician())
+    result = _get_endpoint(settings, "/consultant/power-platform/cli-status")(_request(), _technician())
 
     assert result == {
         "available": True,
-        "path": "/usr/bin/pac",
+        "path": "pac",
+        "path_configured": True,
         "version": "2.4.1",
         "commands_executed": True,
         "minimum_version": "2.4.1",
@@ -1763,6 +1766,46 @@ def test_power_platform_cli_status_route_surfaces_server_owned_prerequisites(mon
         "allow_power_platform_deployment": False,
         "workspace_exists": False,
     }
+
+
+def test_power_platform_stage_execution_is_atomic_under_concurrency(settings, monkeypatch) -> None:
+    request_approval = _endpoint(settings, "/consultant/solutions/deployment-approvals")(
+        PowerPlatformDeploymentRequest(
+            client_id="acme",
+            solution_name="onboarding_concurrent",
+            publisher_name="WAITConsulting",
+            publisher_prefix="wlp",
+            output_directory="/tmp/wait-consultant-solution",
+            deployment_targets=[{"name": "dev", "environment_url": "https://dev.crm.dynamics.com"}],
+            stage="build",
+        ),
+        _request(),
+        _technician(),
+    )
+    approval_id = request_approval["approval"]["id"]
+    Store(settings.data_path).update_approval_request(approval_id, "approved", approver_id="admin")
+    runner_calls: list[int] = []
+    start = Barrier(2)
+
+    def fake_execute(*args, **kwargs):
+        runner_calls.append(1)
+        return {"status": "succeeded", "message": "bounded PAC fixture succeeded", "stage": "build"}
+
+    monkeypatch.setattr("wait_local_agent.api.app.execute_power_platform_stage", fake_execute)
+    execute = _endpoint(settings, "/consultant/solutions/deployment-approvals/{request_id}/execute")
+
+    def invoke():
+        start.wait()
+        try:
+            return execute(approval_id, _request(), _admin())
+        except HTTPException as exc:
+            return exc
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        results = list(pool.map(lambda _: invoke(), range(2)))
+
+    assert len(runner_calls) == 1
+    assert sum(isinstance(result, HTTPException) and result.status_code == 409 for result in results) == 1
 
 
 def test_environment_discovery_route_records_probe_request_without_claiming_success(settings) -> None:

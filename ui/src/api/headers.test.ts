@@ -1,14 +1,19 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import {
+  apiTokenStorageKey,
   buildApiHeaders,
+  clearInMemoryApiToken,
   loadStoredSelectedClientId,
+  persistApiToken,
   persistSelectedClientId,
+  setInMemoryApiToken,
   selectedClientStorageKey
 } from "./headers";
 
 describe("selected client API scope header", () => {
   beforeEach(() => {
     window.localStorage.clear();
+    clearInMemoryApiToken();
   });
 
   it("persists a non-secret selected client and sends it as a scope hint", () => {
@@ -26,5 +31,13 @@ describe("selected client API scope header", () => {
 
     expect(loadStoredSelectedClientId()).toBe("");
     expect(buildApiHeaders()).not.toHaveProperty("X-WAIT-Client-ID");
+  });
+
+  it("uses a tab-only token before any stored credential", () => {
+    persistApiToken("stored-token");
+    setInMemoryApiToken("bootstrap-token");
+
+    expect(buildApiHeaders()).toMatchObject({ Authorization: "Bearer bootstrap-token" });
+    expect(window.localStorage.getItem(apiTokenStorageKey)).toBe("stored-token");
   });
 });

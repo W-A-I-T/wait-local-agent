@@ -4,6 +4,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { Login } from "./Login";
 import { apiFetch } from "../api/client";
 import { useDashboard } from "../app/DashboardContext";
+import { buildApiHeaders, clearInMemoryApiToken } from "../api/headers";
 
 vi.mock("../api/client", () => ({ apiFetch: vi.fn() }));
 vi.mock("../app/DashboardContext", () => ({ useDashboard: vi.fn() }));
@@ -18,6 +19,7 @@ function renderScreen(initialEntries = ["/"]) {
 describe("Login", () => {
   beforeEach(() => {
     window.localStorage.clear();
+    clearInMemoryApiToken();
     delete window.__WAIT_API_BASE__;
     mockedApiFetch.mockReset();
     mockedUseDashboard.mockReturnValue({ refresh: vi.fn().mockResolvedValue({ role: "viewer" }) } as never);
@@ -37,14 +39,16 @@ describe("Login", () => {
     expect(window.localStorage.getItem("wait-local-agent-api-token")).toBeNull();
   });
 
-  it("keeps bootstrap credentials in the bearer break-glass path", async () => {
+  it("keeps bootstrap credentials in memory for the bearer break-glass path", async () => {
     mockedApiFetch.mockResolvedValue({ session_created: false } as never);
 
     renderScreen();
     fireEvent.change(screen.getByLabelText("Access token"), { target: { value: "bootstrap-token" } });
     fireEvent.click(screen.getByRole("button", { name: "Sign in" }));
 
-    await waitFor(() => expect(window.localStorage.getItem("wait-local-agent-api-token")).toBe("bootstrap-token"));
+    await waitFor(() => expect(window.localStorage.getItem("wait-local-agent-api-token")).toBeNull());
+    expect(buildApiHeaders()).toMatchObject({ Authorization: "Bearer bootstrap-token" });
+    expect(screen.getByRole("status")).toHaveTextContent("this session is not persisted");
   });
 
   it("uses the desktop API base for Microsoft sign-in and preserves the validated next path", async () => {

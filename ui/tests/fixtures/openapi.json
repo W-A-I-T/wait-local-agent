@@ -79,9 +79,6 @@
     "/audit-events/export": {
       "get": {}
     },
-    "/audit/export": {
-      "get": {}
-    },
     "/auth/login/local": {
       "post": {}
     },
@@ -914,6 +911,9 @@
     "/packs/microsoft-admin/dashboard": {
       "get": {}
     },
+    "/packs/microsoft-admin/devices": {
+      "get": {}
+    },
     "/packs/microsoft-admin/diagnostics/access": {
       "post": {}
     },
@@ -926,6 +926,12 @@
     "/packs/microsoft-admin/endpoint/compliance-policies": {
       "get": {}
     },
+    "/packs/microsoft-admin/groups": {
+      "get": {}
+    },
+    "/packs/microsoft-admin/health": {
+      "get": {}
+    },
     "/packs/microsoft-admin/identity/conditional-access": {
       "get": {}
     },
@@ -933,6 +939,9 @@
       "get": {}
     },
     "/packs/microsoft-admin/identity/sign-ins": {
+      "get": {}
+    },
+    "/packs/microsoft-admin/licenses": {
       "get": {}
     },
     "/packs/microsoft-admin/remediations": {
@@ -969,6 +978,9 @@
       "get": {}
     },
     "/packs/microsoft-admin/status": {
+      "get": {}
+    },
+    "/packs/microsoft-admin/users": {
       "get": {}
     },
     "/packs/operator-control/activity/runs": {
