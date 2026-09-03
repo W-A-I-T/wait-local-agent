@@ -37,6 +37,9 @@ class ConnectorFactoryError(Exception):
 
 
 class ConnectorInstanceStore(Protocol):
+    def list_connector_instances(self) -> list[ConnectorInstance]:
+        ...
+
     def get_connector_instance(self, connector_instance_id: str) -> ConnectorInstance | None:
         ...
 
@@ -621,6 +624,7 @@ def build_read_client_for(
     base_settings: Settings,
     vault: VaultReader | None = None,
     resolver: Resolver | None = None,
+    inner_transport: httpx.BaseTransport | None = None,
 ) -> ReadClient:
     """Load an instance from storage and build its isolated read client."""
     try:
@@ -636,4 +640,65 @@ def build_read_client_for(
         base_settings=base_settings,
         vault=vault,
         resolver=resolver,
+        inner_transport=inner_transport,
+    )
+
+
+def build_read_client_for_client(
+    store: ConnectorInstanceStore,
+    connector_type: str,
+    client_id: str,
+    *,
+    base_settings: Settings,
+    vault: VaultReader | None = None,
+    resolver: Resolver | None = None,
+    inner_transport: httpx.BaseTransport | None = None,
+    allow_msp_wide: bool = False,
+) -> ReadClient:
+    """Build the active read client selected for one WAIT client.
+
+    A client-scoped instance is always preferred.  MSP-wide selection is an
+    explicit opt-in for callers that already have appliance-wide authority;
+    ordinary client-bound reads must leave it disabled.
+    """
+    normalized_type = connector_type.strip().casefold()
+    normalized_client_id = client_id.strip()
+    if normalized_type not in _BUILDERS:
+        raise ConnectorFactoryError("unsupported connector_type")
+    if not normalized_client_id:
+        raise ConnectorFactoryError("client_id must be non-empty")
+    try:
+        instances = store.list_connector_instances()
+    except Exception as exc:
+        raise ConnectorFactoryError("connector instances could not be loaded") from exc
+
+    active = [
+        instance
+        for instance in instances
+        if str(instance.status).strip().casefold() == "active"
+        and str(instance.connector_type).strip().casefold() == normalized_type
+    ]
+    candidates = [
+        instance
+        for instance in active
+        if isinstance(instance.client_id, str) and instance.client_id.strip() == normalized_client_id
+    ]
+    tier = "client-scoped"
+    if not candidates and allow_msp_wide:
+        candidates = [
+            instance for instance in active if not isinstance(instance.client_id, str) or not instance.client_id.strip()
+        ]
+        tier = "MSP-wide"
+    if not candidates:
+        raise ConnectorFactoryError(
+            f"no active {normalized_type} connector instance found for client {normalized_client_id}"
+        )
+    if len(candidates) > 1:
+        raise ConnectorFactoryError(f"ambiguous active {normalized_type} connector instances at the {tier} tier")
+    return build_read_client(
+        candidates[0],
+        base_settings=base_settings,
+        vault=vault,
+        resolver=resolver,
+        inner_transport=inner_transport,
     )

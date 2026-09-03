@@ -15,6 +15,7 @@ from urllib.parse import parse_qs, quote, urlsplit
 import httpx
 
 from wait_local_agent.config import Settings
+from wait_local_agent.m365_auth import M365AuthFailure, M365Connection
 from wait_local_agent.models import ConnectorReadResult, ConnectorStatusValue
 from wait_local_agent.net_security import NetSecurityError, validate_operator_url
 from wait_local_agent.reports.renderers import redact_text
@@ -96,9 +97,16 @@ class TeamsGraphReadError(Exception):
 class TeamsGraphClient:
     """Read-bounded and approval-gated Microsoft Graph Teams client."""
 
-    def __init__(self, settings: Settings, *, transport: httpx.BaseTransport | None = None) -> None:
+    def __init__(
+        self,
+        settings: Settings,
+        *,
+        transport: httpx.BaseTransport | None = None,
+        connection: M365Connection | None = None,
+    ) -> None:
         self.settings = settings
         self.transport = transport
+        self.connection = connection
 
     def health(self) -> ConnectorReadResult:
         response = self.list_teams(page_size=1)
@@ -231,7 +239,7 @@ class TeamsGraphClient:
     def _get(self, endpoint: str, *, params: dict[str, str | int]) -> object:
         if not self.settings.allow_http_probing:
             raise TeamsGraphReadError("Microsoft Graph live reads are blocked until WAIT_ALLOW_HTTP_PROBING=true.")
-        missing = _missing_configuration(self.settings)
+        missing = _missing_configuration(self.settings, self.connection)
         if missing:
             raise TeamsGraphReadError(missing)
         return self._request("GET", endpoint, params=params)
@@ -256,8 +264,19 @@ class TeamsGraphClient:
         payload: dict[str, object] | None = None,
     ) -> object:
         safe_endpoint = _safe_endpoint(endpoint)
+        graph_base_url = (
+            self.connection.graph_base_url if self.connection is not None else self.settings.m365_graph_base_url
+        )
+        try:
+            access_token = (
+                self.connection.token_provider.get_token()
+                if self.connection is not None
+                else self.settings.m365_access_token
+            )
+        except M365AuthFailure as exc:
+            raise TeamsGraphReadError("Microsoft Graph Teams token acquisition failed.") from exc
         base_url = _api_base_url(
-            self.settings.m365_graph_base_url,
+            graph_base_url,
             allow_insecure_transport=self.settings.allow_insecure_provider_transport,
         )
         try:
@@ -266,7 +285,7 @@ class TeamsGraphClient:
                     method,
                     f"{base_url}/{safe_endpoint}",
                     headers={
-                        "Authorization": f"Bearer {self.settings.m365_access_token}",
+                        "Authorization": f"Bearer {access_token}",
                         "Accept": "application/json",
                         "Content-Type": "application/json",
                     },
@@ -285,7 +304,11 @@ class TeamsGraphClient:
             raise TeamsGraphReadError(f"Microsoft Graph {method} {safe_endpoint} returned malformed JSON.") from exc
 
 
-def _missing_configuration(settings: Settings) -> str:
+def _missing_configuration(settings: Settings, connection: M365Connection | None = None) -> str:
+    if connection is not None:
+        if connection.token_provider.configured and connection.graph_base_url:
+            return ""
+        return "Microsoft Graph credentials are incomplete."
     missing = [
         key
         for key, value in {
