@@ -86,6 +86,10 @@ All notable changes to WAIT Local Agent will be documented in this file.
 
 ### Security
 
+- Core connector read routes now resolve bound callers through the requested
+  client-scoped connector instance and fail closed with structured 409 errors
+  when that scope is unavailable or unsupported; appliance-wide behavior is
+  preserved for MSP administrators without a requested client.
 - Smart-action invoke now rejects caller-supplied `_approval_completed` payload
   fields to prevent approval-gate bypasses; the invoke route returns 400 for
   reserved-field and validation errors.

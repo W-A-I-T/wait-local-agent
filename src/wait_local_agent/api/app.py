@@ -94,6 +94,7 @@ from wait_local_agent.config import (
 from wait_local_agent.confluence import ConfluenceClient, ConfluenceReadResponse
 from wait_local_agent.connector_factory import (
     ConnectorFactoryError,
+    build_read_client_for_client,
     validate_connector_instance,
 )
 from wait_local_agent.connectors import (
@@ -1382,6 +1383,69 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             # malformed or ambiguous; the connector endpoint reports the
             # sanitized failure when it is used.
             return bool(active_settings.m365_graph_base_url and active_settings.m365_access_token)
+
+    def _connector_read_client(
+        request: Request,
+        context: AuthContext,
+        connector_type: str,
+        appliance_client: object,
+        *,
+        requested_client_id: str | None = None,
+        m365_teams: bool = False,
+    ) -> object:
+        """Resolve a provider read client without widening a tenant scope."""
+        scope = resolve_client_scope(context, requested_client_from(request, requested_client_id))
+        if isinstance(scope, AllClients):
+            return appliance_client
+        client_id = scope.client_id
+        if client_id is None:  # pragma: no cover - BoundClients rejects empty scopes
+            raise HTTPException(status_code=403, detail="client scope is required")
+        if connector_type == "m365":
+            transport = getattr(
+                request.app.state,
+                f"{connector_type}_transport",
+                getattr(appliance_client, "transport", None),
+            )
+            try:
+                connection = m365_connection_resolver.resolve(client_id)
+                if m365_teams:
+                    return TeamsGraphClient(
+                        active_settings,
+                        transport=transport,
+                        connection=connection,
+                    )
+                return M365GraphClient(
+                    active_settings,
+                    transport=transport,
+                    connection=connection,
+                    client_id=client_id,
+                )
+            except M365ProfileResolutionError as exc:
+                raise HTTPException(
+                    status_code=409,
+                    detail={"code": "client_scope_unavailable", "client_id": client_id},
+                ) from exc
+        if connector_type not in {"halopsa", "connectwise", "syncro", "servicenow", "autotask"}:
+            raise HTTPException(status_code=409, detail={"code": "client_scope_unsupported"})
+        transport = getattr(
+            request.app.state,
+            f"{connector_type}_transport",
+            getattr(appliance_client, "transport", None),
+        )
+        try:
+            return build_read_client_for_client(
+                store,
+                connector_type,
+                client_id,
+                base_settings=active_settings,
+                vault=vault,
+                inner_transport=transport,
+            )
+        except ConnectorFactoryError as exc:
+            raise HTTPException(
+                status_code=409,
+                detail={"code": "client_scope_unavailable", "client_id": client_id},
+            ) from exc
 
     @app.get("/health")
     @limiter.exempt
@@ -4264,34 +4328,59 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         page_size: int = 50,
         client_id: str | None = None,
     ) -> dict[str, object]:
-        # Halo tickets are provider rows.  They carry the provider's customer
-        # identifier, not a WAIT client boundary, so scope validation here is
-        # intentionally separate from response filtering.
-        resolve_client_scope(context, requested_client_from(request, client_id))
+        # Halo tickets cannot be filtered to a WAIT client without guessing
+        # from provider customer names.  Keep the appliance-wide result for
+        # operators, but fail closed for bound principals.
+        scope = resolve_client_scope(context, requested_client_from(request, client_id))
+        if isinstance(scope, BoundClients):
+            raise HTTPException(status_code=409, detail={"code": "client_scope_unsupported"})
         response = halopsa_client.list_tickets(page=page, page_size=page_size)
         return _halopsa_response("tickets.list", response)
 
     @app.get("/connectors/halopsa/tickets/{ticket_id}")
     @limiter.limit(active_settings.rate_limit_connector)
-    def halopsa_ticket(ticket_id: str, request: Request, _: ViewerAccess) -> dict[str, object]:
-        response = halopsa_client.get_ticket(ticket_id)
+    def halopsa_ticket(
+        ticket_id: str,
+        request: Request,
+        context: ViewerAccess,
+        client_id: str | None = None,
+    ) -> dict[str, object]:
+        client = cast(
+            HaloPSAClient,
+            _connector_read_client(request, context, "halopsa", halopsa_client, requested_client_id=client_id),
+        )
+        response = client.get_ticket(ticket_id)
         return _halopsa_response("tickets.get", response)
 
     @app.get("/connectors/halopsa/tickets/{ticket_id}/notes")
     @limiter.limit(active_settings.rate_limit_connector)
-    def halopsa_ticket_notes(ticket_id: str, request: Request, _: ViewerAccess) -> dict[str, object]:
-        response = halopsa_client.list_ticket_notes(ticket_id)
+    def halopsa_ticket_notes(
+        ticket_id: str,
+        request: Request,
+        context: ViewerAccess,
+        client_id: str | None = None,
+    ) -> dict[str, object]:
+        client = cast(
+            HaloPSAClient,
+            _connector_read_client(request, context, "halopsa", halopsa_client, requested_client_id=client_id),
+        )
+        response = client.list_ticket_notes(ticket_id)
         return _halopsa_response("tickets.notes", response)
 
     @app.get("/connectors/halopsa/clients")
     @limiter.limit(active_settings.rate_limit_connector)
     def halopsa_clients(
         request: Request,
-        _: ViewerAccess,
+        context: ViewerAccess,
         page: int = 1,
         page_size: int = 50,
+        client_id: str | None = None,
     ) -> dict[str, object]:
-        response = halopsa_client.list_clients(page=page, page_size=page_size)
+        client = cast(
+            HaloPSAClient,
+            _connector_read_client(request, context, "halopsa", halopsa_client, requested_client_id=client_id),
+        )
+        response = client.list_clients(page=page, page_size=page_size)
         return _halopsa_response("clients.list", response)
 
     @app.get("/connectors/halopsa/clients/{client_id}/assets")
@@ -4300,13 +4389,31 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         scoped_client_id = _resolve_detail_scope(context, client_id).client_id
         if scoped_client_id is None:
             raise HTTPException(status_code=403, detail="client scope is required")
-        response = halopsa_client.list_client_assets(scoped_client_id)
+        client = cast(
+            HaloPSAClient,
+            _connector_read_client(
+                request,
+                context,
+                "halopsa",
+                halopsa_client,
+                requested_client_id=scoped_client_id,
+            ),
+        )
+        response = client.list_client_assets(scoped_client_id)
         return _halopsa_response("clients.assets", response)
 
     @app.get("/connectors/halopsa/categories")
     @limiter.limit(active_settings.rate_limit_connector)
-    def halopsa_categories(request: Request, _: ViewerAccess) -> dict[str, object]:
-        response = halopsa_client.list_categories()
+    def halopsa_categories(
+        request: Request,
+        context: ViewerAccess,
+        client_id: str | None = None,
+    ) -> dict[str, object]:
+        client = cast(
+            HaloPSAClient,
+            _connector_read_client(request, context, "halopsa", halopsa_client, requested_client_id=client_id),
+        )
+        response = client.list_categories()
         return _halopsa_response("categories.list", response)
 
     @app.get("/connectors/hudu/health")
@@ -4320,23 +4427,31 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @limiter.limit(active_settings.rate_limit_connector)
     def hudu_companies(
         request: Request,
-        _: ViewerAccess,
+        context: ViewerAccess,
         page: int = 1,
         page_size: int | None = None,
+        client_id: str | None = None,
     ) -> dict[str, object]:
-        response = hudu_client.list_companies(page=page, page_size=page_size)
+        client = cast(
+            HuduClient, _connector_read_client(request, context, "hudu", hudu_client, requested_client_id=client_id)
+        )
+        response = client.list_companies(page=page, page_size=page_size)
         return _hudu_response("companies.list", response)
 
     @app.get("/connectors/hudu/articles")
     @limiter.limit(active_settings.rate_limit_connector)
     def hudu_articles(
         request: Request,
-        _: ViewerAccess,
+        context: ViewerAccess,
         company_id: str | None = None,
         page: int = 1,
         page_size: int | None = None,
+        client_id: str | None = None,
     ) -> dict[str, object]:
-        response = hudu_client.list_articles(
+        client = cast(
+            HuduClient, _connector_read_client(request, context, "hudu", hudu_client, requested_client_id=client_id)
+        )
+        response = client.list_articles(
             company_id=company_id,
             page=page,
             page_size=page_size,
@@ -4345,20 +4460,32 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.get("/connectors/hudu/articles/{article_id}")
     @limiter.limit(active_settings.rate_limit_connector)
-    def hudu_article(article_id: str, request: Request, _: ViewerAccess) -> dict[str, object]:
-        response = hudu_client.get_article(article_id)
+    def hudu_article(
+        article_id: str,
+        request: Request,
+        context: ViewerAccess,
+        client_id: str | None = None,
+    ) -> dict[str, object]:
+        client = cast(
+            HuduClient, _connector_read_client(request, context, "hudu", hudu_client, requested_client_id=client_id)
+        )
+        response = client.get_article(article_id)
         return _hudu_response("articles.get", response)
 
     @app.get("/connectors/hudu/folders")
     @limiter.limit(active_settings.rate_limit_connector)
     def hudu_folders(
         request: Request,
-        _: ViewerAccess,
+        context: ViewerAccess,
         company_id: str | None = None,
         page: int = 1,
         page_size: int | None = None,
+        client_id: str | None = None,
     ) -> dict[str, object]:
-        response = hudu_client.list_folders(
+        client = cast(
+            HuduClient, _connector_read_client(request, context, "hudu", hudu_client, requested_client_id=client_id)
+        )
+        response = client.list_folders(
             company_id=company_id,
             page=page,
             page_size=page_size,
@@ -4404,12 +4531,17 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @limiter.limit(active_settings.rate_limit_connector)
     def connectwise_tickets(
         request: Request,
-        _: ViewerAccess,
+        context: ViewerAccess,
         page: int = 1,
         page_size: int | None = None,
         conditions: str | None = None,
+        client_id: str | None = None,
     ) -> dict[str, object]:
-        response = connectwise_client.list_tickets(
+        client = cast(
+            ConnectWiseClient,
+            _connector_read_client(request, context, "connectwise", connectwise_client, requested_client_id=client_id),
+        )
+        response = client.list_tickets(
             page=page,
             page_size=(page_size if page_size is not None else active_settings.connectwise_page_size),
             conditions=conditions,
@@ -4421,21 +4553,31 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     def connectwise_ticket(
         ticket_id: str,
         request: Request,
-        _: ViewerAccess,
+        context: ViewerAccess,
+        client_id: str | None = None,
     ) -> dict[str, object]:
-        response = connectwise_client.get_ticket(ticket_id)
+        client = cast(
+            ConnectWiseClient,
+            _connector_read_client(request, context, "connectwise", connectwise_client, requested_client_id=client_id),
+        )
+        response = client.get_ticket(ticket_id)
         return _connectwise_response("tickets.get", response)
 
     @app.get("/connectors/connectwise/companies")
     @limiter.limit(active_settings.rate_limit_connector)
     def connectwise_companies(
         request: Request,
-        _: ViewerAccess,
+        context: ViewerAccess,
         page: int = 1,
         page_size: int | None = None,
         conditions: str | None = None,
+        client_id: str | None = None,
     ) -> dict[str, object]:
-        response = connectwise_client.list_companies(
+        client = cast(
+            ConnectWiseClient,
+            _connector_read_client(request, context, "connectwise", connectwise_client, requested_client_id=client_id),
+        )
+        response = client.list_companies(
             page=page,
             page_size=(page_size if page_size is not None else active_settings.connectwise_page_size),
             conditions=conditions,
@@ -4453,14 +4595,19 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @limiter.limit(active_settings.rate_limit_connector)
     def syncro_tickets(
         request: Request,
-        _: ViewerAccess,
+        context: ViewerAccess,
         page: int = 1,
         query: str | None = None,
         customer_id: str | None = None,
         status: str | None = None,
         since_updated_at: str | None = None,
+        client_id: str | None = None,
     ) -> dict[str, object]:
-        response = syncro_client.list_tickets(
+        client = cast(
+            SyncroClient,
+            _connector_read_client(request, context, "syncro", syncro_client, requested_client_id=client_id),
+        )
+        response = client.list_tickets(
             page=page,
             query=query,
             customer_id=customer_id,
@@ -4471,8 +4618,17 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.get("/connectors/syncro/tickets/{ticket_id}")
     @limiter.limit(active_settings.rate_limit_connector)
-    def syncro_ticket(ticket_id: str, request: Request, _: ViewerAccess) -> dict[str, object]:
-        response = syncro_client.get_ticket(ticket_id)
+    def syncro_ticket(
+        ticket_id: str,
+        request: Request,
+        context: ViewerAccess,
+        client_id: str | None = None,
+    ) -> dict[str, object]:
+        client = cast(
+            SyncroClient,
+            _connector_read_client(request, context, "syncro", syncro_client, requested_client_id=client_id),
+        )
+        response = client.get_ticket(ticket_id)
         return _syncro_response("tickets.get", response)
 
     @app.get("/connectors/syncro/tickets/{ticket_id}/comments")
@@ -4480,11 +4636,16 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     def syncro_ticket_comments(
         ticket_id: str,
         request: Request,
-        _: ViewerAccess,
+        context: ViewerAccess,
         page: int = 1,
         per_page: int = 10,
+        client_id: str | None = None,
     ) -> dict[str, object]:
-        response = syncro_client.list_ticket_comments(
+        client = cast(
+            SyncroClient,
+            _connector_read_client(request, context, "syncro", syncro_client, requested_client_id=client_id),
+        )
+        response = client.list_ticket_comments(
             ticket_id,
             page=page,
             per_page=per_page,
@@ -4495,12 +4656,17 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @limiter.limit(active_settings.rate_limit_connector)
     def syncro_customers(
         request: Request,
-        _: ViewerAccess,
+        context: ViewerAccess,
         page: int = 1,
         query: str | None = None,
         business_name: str | None = None,
+        client_id: str | None = None,
     ) -> dict[str, object]:
-        response = syncro_client.list_customers(
+        client = cast(
+            SyncroClient,
+            _connector_read_client(request, context, "syncro", syncro_client, requested_client_id=client_id),
+        )
+        response = client.list_customers(
             page=page,
             query=query,
             business_name=business_name,
@@ -4512,9 +4678,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     def syncro_customer(
         customer_id: str,
         request: Request,
-        _: ViewerAccess,
+        context: ViewerAccess,
+        client_id: str | None = None,
     ) -> dict[str, object]:
-        response = syncro_client.get_customer(customer_id)
+        client = cast(
+            SyncroClient,
+            _connector_read_client(request, context, "syncro", syncro_client, requested_client_id=client_id),
+        )
+        response = client.get_customer(customer_id)
         return _syncro_response("customers.get", response)
 
     @app.get("/connectors/servicenow/health")
@@ -4535,12 +4706,17 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @limiter.limit(active_settings.rate_limit_connector)
     def servicenow_incidents(
         request: Request,
-        _: ViewerAccess,
+        context: ViewerAccess,
         page: int = 1,
         page_size: int | None = None,
         query: str | None = None,
+        client_id: str | None = None,
     ) -> dict[str, object]:
-        response = servicenow_client.list_incidents(
+        client = cast(
+            ServiceNowClient,
+            _connector_read_client(request, context, "servicenow", servicenow_client, requested_client_id=client_id),
+        )
+        response = client.list_incidents(
             page=page,
             page_size=(page_size if page_size is not None else active_settings.servicenow_page_size),
             query=query,
@@ -4552,21 +4728,31 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     def servicenow_incident(
         sys_id: str,
         request: Request,
-        _: ViewerAccess,
+        context: ViewerAccess,
+        client_id: str | None = None,
     ) -> dict[str, object]:
-        response = servicenow_client.get_incident(sys_id)
+        client = cast(
+            ServiceNowClient,
+            _connector_read_client(request, context, "servicenow", servicenow_client, requested_client_id=client_id),
+        )
+        response = client.get_incident(sys_id)
         return _servicenow_response("incidents.get", response)
 
     @app.get("/connectors/servicenow/companies")
     @limiter.limit(active_settings.rate_limit_connector)
     def servicenow_companies(
         request: Request,
-        _: ViewerAccess,
+        context: ViewerAccess,
         page: int = 1,
         page_size: int | None = None,
         query: str | None = None,
+        client_id: str | None = None,
     ) -> dict[str, object]:
-        response = servicenow_client.list_companies(
+        client = cast(
+            ServiceNowClient,
+            _connector_read_client(request, context, "servicenow", servicenow_client, requested_client_id=client_id),
+        )
+        response = client.list_companies(
             page=page,
             page_size=(page_size if page_size is not None else active_settings.servicenow_page_size),
             query=query,
@@ -4578,9 +4764,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     def servicenow_company(
         sys_id: str,
         request: Request,
-        _: ViewerAccess,
+        context: ViewerAccess,
+        client_id: str | None = None,
     ) -> dict[str, object]:
-        response = servicenow_client.get_company(sys_id)
+        client = cast(
+            ServiceNowClient,
+            _connector_read_client(request, context, "servicenow", servicenow_client, requested_client_id=client_id),
+        )
+        response = client.get_company(sys_id)
         return _servicenow_response("companies.get", response)
 
     @app.get("/connectors/autotask/health")
@@ -4601,11 +4792,16 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @limiter.limit(active_settings.rate_limit_connector)
     def autotask_tickets(
         request: Request,
-        _: ViewerAccess,
+        context: ViewerAccess,
         page: int = 1,
         page_size: int | None = None,
+        client_id: str | None = None,
     ) -> dict[str, object]:
-        response = autotask_client.list_tickets(
+        client = cast(
+            AutotaskClient,
+            _connector_read_client(request, context, "autotask", autotask_client, requested_client_id=client_id),
+        )
+        response = client.list_tickets(
             page=page,
             page_size=(page_size if page_size is not None else active_settings.autotask_page_size),
         )
@@ -4616,20 +4812,30 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     def autotask_ticket(
         ticket_id: str,
         request: Request,
-        _: ViewerAccess,
+        context: ViewerAccess,
+        client_id: str | None = None,
     ) -> dict[str, object]:
-        response = autotask_client.get_ticket(ticket_id)
+        client = cast(
+            AutotaskClient,
+            _connector_read_client(request, context, "autotask", autotask_client, requested_client_id=client_id),
+        )
+        response = client.get_ticket(ticket_id)
         return _autotask_response("tickets.get", response)
 
     @app.get("/connectors/autotask/companies")
     @limiter.limit(active_settings.rate_limit_connector)
     def autotask_companies(
         request: Request,
-        _: ViewerAccess,
+        context: ViewerAccess,
         page: int = 1,
         page_size: int | None = None,
+        client_id: str | None = None,
     ) -> dict[str, object]:
-        response = autotask_client.list_companies(
+        client = cast(
+            AutotaskClient,
+            _connector_read_client(request, context, "autotask", autotask_client, requested_client_id=client_id),
+        )
+        response = client.list_companies(
             page=page,
             page_size=(page_size if page_size is not None else active_settings.autotask_page_size),
         )
@@ -4640,9 +4846,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     def autotask_company(
         company_id: str,
         request: Request,
-        _: ViewerAccess,
+        context: ViewerAccess,
+        client_id: str | None = None,
     ) -> dict[str, object]:
-        response = autotask_client.get_company(company_id)
+        client = cast(
+            AutotaskClient,
+            _connector_read_client(request, context, "autotask", autotask_client, requested_client_id=client_id),
+        )
+        response = client.get_company(company_id)
         return _autotask_response("companies.get", response)
 
     @app.get("/connectors/itglue/health")
@@ -4656,11 +4867,16 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @limiter.limit(active_settings.rate_limit_connector)
     def itglue_organizations(
         request: Request,
-        _: ViewerAccess,
+        context: ViewerAccess,
         page: int = 1,
         page_size: int | None = None,
+        client_id: str | None = None,
     ) -> dict[str, object]:
-        response = itglue_client.list_organizations(
+        client = cast(
+            ItGlueClient,
+            _connector_read_client(request, context, "itglue", itglue_client, requested_client_id=client_id),
+        )
+        response = client.list_organizations(
             page=page,
             page_size=(page_size if page_size is not None else active_settings.itglue_page_size),
         )
@@ -4671,12 +4887,17 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     def itglue_documents(
         organization_id: str,
         request: Request,
-        _: ViewerAccess,
+        context: ViewerAccess,
         folder_id: str | None = None,
         page: int = 1,
         page_size: int | None = None,
+        client_id: str | None = None,
     ) -> dict[str, object]:
-        response = itglue_client.list_documents(
+        client = cast(
+            ItGlueClient,
+            _connector_read_client(request, context, "itglue", itglue_client, requested_client_id=client_id),
+        )
+        response = client.list_documents(
             organization_id,
             folder_id=folder_id,
             page=page,
@@ -4689,9 +4910,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     def itglue_document(
         document_id: str,
         request: Request,
-        _: ViewerAccess,
+        context: ViewerAccess,
+        client_id: str | None = None,
     ) -> dict[str, object]:
-        response = itglue_client.get_document(document_id)
+        client = cast(
+            ItGlueClient,
+            _connector_read_client(request, context, "itglue", itglue_client, requested_client_id=client_id),
+        )
+        response = client.get_document(document_id)
         return _itglue_response("documents.get", response)
 
     @app.get("/connectors/itglue/organizations/{organization_id}/folders")
@@ -4699,11 +4925,16 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     def itglue_folders(
         organization_id: str,
         request: Request,
-        _: ViewerAccess,
+        context: ViewerAccess,
         page: int = 1,
         page_size: int | None = None,
+        client_id: str | None = None,
     ) -> dict[str, object]:
-        response = itglue_client.list_folders(
+        client = cast(
+            ItGlueClient,
+            _connector_read_client(request, context, "itglue", itglue_client, requested_client_id=client_id),
+        )
+        response = client.list_folders(
             organization_id,
             page=page,
             page_size=(page_size if page_size is not None else active_settings.itglue_page_size),
@@ -4721,13 +4952,18 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @limiter.limit(active_settings.rate_limit_connector)
     def confluence_pages(
         request: Request,
-        _: ViewerAccess,
+        context: ViewerAccess,
         space_id: str | None = None,
         title: str | None = None,
         cursor: str | None = None,
         page_size: int | None = None,
+        client_id: str | None = None,
     ) -> dict[str, object]:
-        response = confluence_client.list_pages(
+        client = cast(
+            ConfluenceClient,
+            _connector_read_client(request, context, "confluence", confluence_client, requested_client_id=client_id),
+        )
+        response = client.list_pages(
             space_id=space_id,
             title=title,
             cursor=cursor,
@@ -4737,8 +4973,17 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.get("/connectors/confluence/pages/{page_id}")
     @limiter.limit(active_settings.rate_limit_connector)
-    def confluence_page(page_id: str, request: Request, _: ViewerAccess) -> dict[str, object]:
-        response = confluence_client.get_page(page_id)
+    def confluence_page(
+        page_id: str,
+        request: Request,
+        context: ViewerAccess,
+        client_id: str | None = None,
+    ) -> dict[str, object]:
+        client = cast(
+            ConfluenceClient,
+            _connector_read_client(request, context, "confluence", confluence_client, requested_client_id=client_id),
+        )
+        response = client.get_page(page_id)
         return _confluence_response("pages.get", response)
 
     @app.get("/connectors/notion/health")
@@ -4757,7 +5002,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         query: str = "",
         page_size: int | None = None,
     ) -> dict[str, object]:
-        scoped_client_id = resolve_client_scope(context, client_id).client_id
+        scoped_client_id = resolve_client_scope(context, requested_client_from(request, client_id)).client_id
         if scoped_client_id is None:
             raise HTTPException(status_code=403, detail="Notion reads require a tenant scope")
         response = notion_client.search_pages(
@@ -4775,7 +5020,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         context: ViewerAccess,
         client_id: str | None = None,
     ) -> dict[str, object]:
-        scoped_client_id = resolve_client_scope(context, client_id).client_id
+        scoped_client_id = resolve_client_scope(context, requested_client_from(request, client_id)).client_id
         if scoped_client_id is None:
             raise HTTPException(status_code=403, detail="Notion reads require a tenant scope")
         response = notion_client.get_page(page_id, client_id=scoped_client_id)
@@ -4791,7 +5036,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         start_cursor: str = "",
         page_size: int | None = None,
     ) -> dict[str, object]:
-        scoped_client_id = resolve_client_scope(context, client_id).client_id
+        scoped_client_id = resolve_client_scope(context, requested_client_from(request, client_id)).client_id
         if scoped_client_id is None:
             raise HTTPException(status_code=403, detail="Notion data-source reads require a tenant scope")
         response = notion_client.query_data_source(
@@ -4810,7 +5055,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         context: ViewerAccess,
         client_id: str | None = None,
     ) -> dict[str, object]:
-        scoped_client_id = resolve_client_scope(context, client_id).client_id
+        scoped_client_id = resolve_client_scope(context, requested_client_from(request, client_id)).client_id
         if scoped_client_id is None:
             raise HTTPException(status_code=403, detail="Notion data-source reads require a tenant scope")
         response = notion_client.get_data_source(data_source_id, client_id=scoped_client_id)
@@ -4827,11 +5072,16 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @limiter.limit(active_settings.rate_limit_connector)
     def sharepoint_sites(
         request: Request,
-        _: ViewerAccess,
+        context: ViewerAccess,
         cursor: str | None = None,
         page_size: int | None = None,
+        client_id: str | None = None,
     ) -> dict[str, object]:
-        response = sharepoint_client.list_sites(
+        client = cast(
+            SharePointClient,
+            _connector_read_client(request, context, "sharepoint", sharepoint_client, requested_client_id=client_id),
+        )
+        response = client.list_sites(
             cursor=cursor,
             page_size=(page_size if page_size is not None else active_settings.sharepoint_page_size),
         )
@@ -4839,8 +5089,17 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.get("/connectors/sharepoint/sites/{site_id}")
     @limiter.limit(active_settings.rate_limit_connector)
-    def sharepoint_site(site_id: str, request: Request, _: ViewerAccess) -> dict[str, object]:
-        response = sharepoint_client.get_site(site_id)
+    def sharepoint_site(
+        site_id: str,
+        request: Request,
+        context: ViewerAccess,
+        client_id: str | None = None,
+    ) -> dict[str, object]:
+        client = cast(
+            SharePointClient,
+            _connector_read_client(request, context, "sharepoint", sharepoint_client, requested_client_id=client_id),
+        )
+        response = client.get_site(site_id)
         return _sharepoint_response("sites.get", response)
 
     @app.get("/connectors/sharepoint/sites/{site_id}/documents")
@@ -4848,12 +5107,17 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     def sharepoint_documents(
         site_id: str,
         request: Request,
-        _: ViewerAccess,
+        context: ViewerAccess,
         parent_item_id: str | None = None,
         cursor: str | None = None,
         page_size: int | None = None,
+        client_id: str | None = None,
     ) -> dict[str, object]:
-        response = sharepoint_client.list_documents(
+        client = cast(
+            SharePointClient,
+            _connector_read_client(request, context, "sharepoint", sharepoint_client, requested_client_id=client_id),
+        )
+        response = client.list_documents(
             site_id,
             parent_item_id=parent_item_id,
             cursor=cursor,
@@ -4867,9 +5131,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         site_id: str,
         item_id: str,
         request: Request,
-        _: ViewerAccess,
+        context: ViewerAccess,
+        client_id: str | None = None,
     ) -> dict[str, object]:
-        response = sharepoint_client.get_document(site_id, item_id)
+        client = cast(
+            SharePointClient,
+            _connector_read_client(request, context, "sharepoint", sharepoint_client, requested_client_id=client_id),
+        )
+        response = client.get_document(site_id, item_id)
         return _sharepoint_response("documents.get", response)
 
     @app.get("/connectors/sharepoint/sites/{site_id}/documents/{item_id}/content")
@@ -4878,9 +5147,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         site_id: str,
         item_id: str,
         request: Request,
-        _: ViewerAccess,
+        context: ViewerAccess,
+        client_id: str | None = None,
     ) -> dict[str, object]:
-        response = sharepoint_client.get_document_content(site_id, item_id)
+        client = cast(
+            SharePointClient,
+            _connector_read_client(request, context, "sharepoint", sharepoint_client, requested_client_id=client_id),
+        )
+        response = client.get_document_content(site_id, item_id)
         return _sharepoint_response("documents.content", response)
 
     @app.get("/connectors/scalepad/health")
@@ -4897,7 +5171,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         context: ViewerAccess,
         client_id: str | None = None,
     ) -> dict[str, object]:
-        scoped_client_id = resolve_client_scope(context, client_id).client_id
+        scoped_client_id = resolve_client_scope(context, requested_client_from(request, client_id)).client_id
         if scoped_client_id is None:
             raise HTTPException(status_code=403, detail="ScalePad reads require a tenant scope")
         response = scalepad_client.get_client(client_id=scoped_client_id)
@@ -4910,7 +5184,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         context: ViewerAccess,
         client_id: str | None = None,
     ) -> dict[str, object]:
-        scoped_client_id = resolve_client_scope(context, client_id).client_id
+        scoped_client_id = resolve_client_scope(context, requested_client_from(request, client_id)).client_id
         if scoped_client_id is None:
             raise HTTPException(
                 status_code=403,
@@ -4926,7 +5200,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         context: ViewerAccess,
         client_id: str | None = None,
     ) -> dict[str, object]:
-        scoped_client_id = resolve_client_scope(context, client_id).client_id
+        scoped_client_id = resolve_client_scope(context, requested_client_from(request, client_id)).client_id
         if scoped_client_id is None:
             raise HTTPException(
                 status_code=403,
@@ -4945,7 +5219,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         title: str | None = None,
         cursor: str | None = None,
     ) -> dict[str, object]:
-        scoped_client_id = resolve_client_scope(context, client_id).client_id
+        scoped_client_id = resolve_client_scope(context, requested_client_from(request, client_id)).client_id
         if scoped_client_id is None:
             raise HTTPException(
                 status_code=403,
@@ -4969,7 +5243,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         assessment_template_id: str | None = None,
         cursor: str | None = None,
     ) -> dict[str, object]:
-        scoped_client_id = resolve_client_scope(context, client_id).client_id
+        scoped_client_id = resolve_client_scope(context, requested_client_from(request, client_id)).client_id
         if scoped_client_id is None:
             raise HTTPException(
                 status_code=403,
@@ -4994,12 +5268,17 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @limiter.limit(active_settings.rate_limit_connector)
     def m365_users(
         request: Request,
-        _: ViewerAccess,
+        context: ViewerAccess,
         identity: str | None = None,
         cursor: str | None = None,
         page_size: int | None = None,
+        client_id: str | None = None,
     ) -> dict[str, object]:
-        response = m365_client.list_users(
+        client = cast(
+            M365GraphClient,
+            _connector_read_client(request, context, "m365", m365_client, requested_client_id=client_id),
+        )
+        response = client.list_users(
             identity=identity,
             cursor=cursor,
             page_size=(page_size if page_size is not None else active_settings.m365_page_size),
@@ -5010,12 +5289,17 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @limiter.limit(active_settings.rate_limit_connector)
     def m365_groups(
         request: Request,
-        _: ViewerAccess,
+        context: ViewerAccess,
         identity: str | None = None,
         cursor: str | None = None,
         page_size: int | None = None,
+        client_id: str | None = None,
     ) -> dict[str, object]:
-        response = m365_client.list_groups(
+        client = cast(
+            M365GraphClient,
+            _connector_read_client(request, context, "m365", m365_client, requested_client_id=client_id),
+        )
+        response = client.list_groups(
             identity=identity,
             cursor=cursor,
             page_size=(page_size if page_size is not None else active_settings.m365_page_size),
@@ -5026,22 +5310,32 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @limiter.limit(active_settings.rate_limit_connector)
     def m365_licenses(
         request: Request,
-        _: ViewerAccess,
+        context: ViewerAccess,
         cursor: str | None = None,
+        client_id: str | None = None,
     ) -> dict[str, object]:
-        response = m365_client.list_subscribed_skus(cursor=cursor)
+        client = cast(
+            M365GraphClient,
+            _connector_read_client(request, context, "m365", m365_client, requested_client_id=client_id),
+        )
+        response = client.list_subscribed_skus(cursor=cursor)
         return _m365_license_response("licenses.list", response)
 
     @app.get("/connectors/m365/users/license-details")
     @limiter.limit(active_settings.rate_limit_connector)
     def m365_user_license_details(
         request: Request,
-        _: ViewerAccess,
+        context: ViewerAccess,
         identity: str,
         cursor: str | None = None,
         page_size: int | None = None,
+        client_id: str | None = None,
     ) -> dict[str, object]:
-        response = m365_client.list_license_details(
+        client = cast(
+            M365GraphClient,
+            _connector_read_client(request, context, "m365", m365_client, requested_client_id=client_id),
+        )
+        response = client.list_license_details(
             identity=identity,
             cursor=cursor,
             page_size=(page_size if page_size is not None else active_settings.m365_page_size),
@@ -5052,12 +5346,17 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @limiter.limit(active_settings.rate_limit_connector)
     def m365_mail_folders(
         request: Request,
-        _: ViewerAccess,
+        context: ViewerAccess,
         identity: str | None = None,
         cursor: str | None = None,
         page_size: int | None = None,
+        client_id: str | None = None,
     ) -> dict[str, object]:
-        response = m365_client.list_mail_folders(
+        client = cast(
+            M365GraphClient,
+            _connector_read_client(request, context, "m365", m365_client, requested_client_id=client_id),
+        )
+        response = client.list_mail_folders(
             identity=identity,
             cursor=cursor,
             page_size=(page_size if page_size is not None else active_settings.m365_page_size),
@@ -5068,13 +5367,18 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @limiter.limit(active_settings.rate_limit_connector)
     def m365_mail_messages(
         request: Request,
-        _: ViewerAccess,
+        context: ViewerAccess,
         identity: str | None = None,
         folder_id: str | None = None,
         cursor: str | None = None,
         page_size: int | None = None,
+        client_id: str | None = None,
     ) -> dict[str, object]:
-        response = m365_client.list_mail_messages(
+        client = cast(
+            M365GraphClient,
+            _connector_read_client(request, context, "m365", m365_client, requested_client_id=client_id),
+        )
+        response = client.list_mail_messages(
             identity=identity,
             folder_id=folder_id,
             cursor=cursor,
@@ -5086,11 +5390,16 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @limiter.limit(active_settings.rate_limit_connector)
     def m365_managed_devices(
         request: Request,
-        _: ViewerAccess,
+        context: ViewerAccess,
         cursor: str | None = None,
         page_size: int | None = None,
+        client_id: str | None = None,
     ) -> dict[str, object]:
-        response = m365_client.list_managed_devices(
+        client = cast(
+            M365GraphClient,
+            _connector_read_client(request, context, "m365", m365_client, requested_client_id=client_id),
+        )
+        response = client.list_managed_devices(
             cursor=cursor,
             page_size=(page_size if page_size is not None else active_settings.m365_page_size),
         )
@@ -5098,8 +5407,18 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.get("/connectors/m365/teams")
     @limiter.limit(active_settings.rate_limit_connector)
-    def m365_teams(request: Request, _: ViewerAccess) -> dict[str, object]:
-        response = teams_client.list_teams(page_size=active_settings.m365_page_size)
+    def m365_teams(
+        request: Request,
+        context: ViewerAccess,
+        client_id: str | None = None,
+    ) -> dict[str, object]:
+        client = cast(
+            TeamsGraphClient,
+            _connector_read_client(
+                request, context, "m365", teams_client, requested_client_id=client_id, m365_teams=True
+            ),
+        )
+        response = client.list_teams(page_size=active_settings.m365_page_size)
         _audit_m365_read("teams.list", response.result.status, response.result.count)
         return {
             "result": asdict(response.result),
@@ -5112,11 +5431,18 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     def m365_team_channels(
         team_id: str,
         request: Request,
-        _: ViewerAccess,
+        context: ViewerAccess,
         cursor: str | None = None,
         page_size: int | None = None,
+        client_id: str | None = None,
     ) -> dict[str, object]:
-        response = teams_client.list_channels(
+        client = cast(
+            TeamsGraphClient,
+            _connector_read_client(
+                request, context, "m365", teams_client, requested_client_id=client_id, m365_teams=True
+            ),
+        )
+        response = client.list_channels(
             team_id,
             cursor=cursor,
             page_size=(page_size if page_size is not None else active_settings.m365_page_size),
@@ -5134,11 +5460,18 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         team_id: str,
         channel_id: str,
         request: Request,
-        _: ViewerAccess,
+        context: ViewerAccess,
         cursor: str | None = None,
         page_size: int | None = None,
+        client_id: str | None = None,
     ) -> dict[str, object]:
-        response = teams_client.list_messages(
+        client = cast(
+            TeamsGraphClient,
+            _connector_read_client(
+                request, context, "m365", teams_client, requested_client_id=client_id, m365_teams=True
+            ),
+        )
+        response = client.list_messages(
             team_id,
             channel_id,
             cursor=cursor,

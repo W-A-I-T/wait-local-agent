@@ -871,6 +871,9 @@ def test_both_supported_providers_build(settings, tmp_path: Path, connector_type
 
 def test_build_read_client_for_repeats_active_gate(settings, tmp_path: Path) -> None:
     class Store:
+        def list_connector_instances(self) -> list[ConnectorInstance]:
+            return []
+
         def get_connector_instance(self, connector_instance_id: str) -> ConnectorInstance:
             assert connector_instance_id == "instance-1"
             return _instance(status="inactive")
@@ -889,6 +892,9 @@ def test_build_read_client_for_repeats_active_gate(settings, tmp_path: Path) -> 
 @pytest.mark.parametrize("stored", [None])
 def test_build_read_client_for_handles_missing_instance(settings, tmp_path: Path, stored) -> None:
     class Store:
+        def list_connector_instances(self) -> list[ConnectorInstance]:
+            return []
+
         def get_connector_instance(self, connector_instance_id: str) -> ConnectorInstance | None:
             return stored
 
@@ -898,6 +904,9 @@ def test_build_read_client_for_handles_missing_instance(settings, tmp_path: Path
 
 def test_build_read_client_for_builds_loaded_instance(settings, tmp_path: Path) -> None:
     class Store:
+        def list_connector_instances(self) -> list[ConnectorInstance]:
+            return []
+
         def get_connector_instance(self, connector_instance_id: str) -> ConnectorInstance:
             assert connector_instance_id == "instance-1"
             return _instance()
@@ -916,6 +925,9 @@ def test_build_read_client_for_builds_loaded_instance(settings, tmp_path: Path) 
 
 def test_build_read_client_for_redacts_store_errors(settings, tmp_path: Path) -> None:
     class Store:
+        def list_connector_instances(self) -> list[ConnectorInstance]:
+            return []
+
         def get_connector_instance(self, connector_instance_id: str) -> ConnectorInstance | None:
             raise RuntimeError("database path and secret")
 

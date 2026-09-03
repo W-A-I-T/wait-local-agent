@@ -88,6 +88,14 @@ collector. Multiple active instances at the selected tier fail closed.
 Connector polling is read-only and records health and last-successful-sync
 state in the existing `sync_cursors` table.
 
+Core connector reads honor the authenticated client scope from `client_id` or
+`X-WAIT-Client-ID`. A bound client uses only its active client-scoped connector
+instance; if none resolves, the API returns HTTP 409 with
+`{"code":"client_scope_unavailable","client_id":"..."}`. Provider reads
+without a client-scoped implementation return HTTP 409 with
+`{"code":"client_scope_unsupported"}`. MSP administrators and demo mode keep
+appliance-wide behavior when no client is requested.
+
 ## Microsoft sign-in
 
 Microsoft Entra OIDC is configured from **Settings → People & Access**. The

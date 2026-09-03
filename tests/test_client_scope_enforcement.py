@@ -219,7 +219,9 @@ def test_requested_client_header_is_one_shared_precedence_boundary() -> None:
         requested_client_from(request, "beta")
 
 
-def test_halopsa_selected_scope_validates_without_filtering_provider_rows(settings, monkeypatch) -> None:
+def test_halopsa_selected_scope_fails_closed_for_bound_principals_and_stays_unfiltered_for_msp(
+    settings, monkeypatch
+) -> None:
     secure_settings = replace(
         settings,
         demo_mode=False,
@@ -259,11 +261,24 @@ def test_halopsa_selected_scope_validates_without_filtering_provider_rows(settin
             "headers": [(b"x-wait-client-id", b"alpha")],
         })
 
-    selected = endpoint(request=scoped_request(), context=context, page=1, page_size=50, client_id=None)
-
-    assert selected["items"][0]["id"] == "HALO-1"
+    with pytest.raises(HTTPException) as unsupported:
+        endpoint(request=scoped_request(), context=context, page=1, page_size=50, client_id=None)
+    assert unsupported.value.status_code == 409
+    assert unsupported.value.detail == {"code": "client_scope_unsupported"}
     with pytest.raises(HTTPException, match="conflicting"):
         endpoint(request=scoped_request(), context=context, page=1, page_size=50, client_id="beta")
+
+    msp_context = replace(context, role=Role.ADMIN, is_msp_admin=True, client_ids=frozenset({"alpha", "beta"}))
+    appliance_request = Request(
+        {
+            "type": "http",
+            "method": "GET",
+            "path": "/connectors/halopsa/tickets",
+            "headers": [],
+        }
+    )
+    unfiltered = endpoint(request=appliance_request, context=msp_context, page=1, page_size=50, client_id=None)
+    assert unfiltered["items"][0]["id"] == "HALO-1"
 
 
 def test_collection_routes_honor_selected_client_header(settings) -> None:
