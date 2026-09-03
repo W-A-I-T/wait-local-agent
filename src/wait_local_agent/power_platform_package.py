@@ -1104,8 +1104,8 @@ def _emit_power_apps_artifact(
                     }
                 )
                 continue
-            attribute = _identifier(raw_attribute, "relationship.lookup_column")
-            lookup = lookup_columns.get((referencing, attribute))
+            lookup_column = _identifier(raw_attribute, "relationship.lookup_column")
+            lookup = lookup_columns.get((referencing, lookup_column))
             if lookup is None:
                 design_only.append(
                     {
@@ -1114,7 +1114,7 @@ def _emit_power_apps_artifact(
                         "format": str(artifact.get("format")),
                         "reason": (
                             f"relationship {name} was omitted because referencing lookup column "
-                            f"{attribute} is not declared"
+                            f"{lookup_column} is not declared"
                         ),
                     }
                 )
@@ -1126,14 +1126,14 @@ def _emit_power_apps_artifact(
                         "path": f"entities/{referencing}",
                         "format": str(artifact.get("format")),
                         "reason": (
-                            f"relationship {name} was omitted because lookup column {attribute} "
+                            f"relationship {name} was omitted because lookup column {lookup_column} "
                             f"targets {lookup['target_entity']}, not {referenced}"
                         ),
                     }
                 )
                 continue
             if referencing not in emitted_artifact_entity_names or referenced not in emitted_artifact_entity_names:
-                _remove_lookup_attribute(entities, referencing, attribute)
+                _remove_lookup_attribute(entities, referencing, lookup_column)
                 design_only.append(
                     {
                         "id": str(_component_id(tenant, f"{relationship_id}/{name}")),
@@ -1151,7 +1151,7 @@ def _emit_power_apps_artifact(
                     "name": name,
                     "referencing_entity": referencing,
                     "referenced_entity": referenced,
-                    "referencing_attribute": attribute,
+                    "referencing_attribute": lookup_column,
                     "description": (
                         f"{table_display_names.get(referenced, referenced)} to "
                         f"{referencing.removeprefix(f'{publisher_prefix}_')}"
@@ -1162,16 +1162,16 @@ def _emit_power_apps_artifact(
     for candidate in relationship_candidates:
         referencing = cast(str, candidate["referencing_entity"])
         referenced = cast(str, candidate["referenced_entity"])
-        attribute = cast(str, candidate["referencing_attribute"])
+        lookup_column = cast(str, candidate["referencing_attribute"])
         if referencing not in emitted_artifact_entity_names or referenced not in emitted_artifact_entity_names:
-            _remove_lookup_attribute(entities, referencing, attribute)
+            _remove_lookup_attribute(entities, referencing, lookup_column)
             design_only.append(
                 {
-                    "id": str(_component_id(tenant, f"entities/{referencing}/relationships/{attribute}")),
+                    "id": str(_component_id(tenant, f"entities/{referencing}/relationships/{lookup_column}")),
                     "path": f"entities/{referencing}",
                     "format": str(artifact.get("format")),
                     "reason": (
-                        f"relationship for lookup column {attribute} was omitted because "
+                        f"relationship for lookup column {lookup_column} was omitted because "
                         f"referencing or referenced entity is not importable in this package "
                         f"({referencing} -> {referenced})"
                     ),
@@ -1187,7 +1187,7 @@ def _emit_power_apps_artifact(
                 "name": name,
                 "referencing_entity": referencing,
                 "referenced_entity": referenced,
-                "referencing_attribute": attribute,
+                "referencing_attribute": lookup_column,
                 "description": candidate["description"],
             }
         )
