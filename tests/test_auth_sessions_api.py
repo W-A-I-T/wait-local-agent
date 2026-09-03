@@ -45,6 +45,8 @@ def test_local_login_uses_hashed_cookie_session_and_logout_revokes_it(settings) 
     assert role.status_code == 200
     assert role.json()["principal_id"] == "operator"
     assert role.json()["auth_method"] == "local"
+    assert role.json()["allow_write_actions"] is False
+    assert client.get("/auth/session").json()["allow_write_actions"] is False
 
     csrf_failure = client.post("/auth/logout")
     assert csrf_failure.status_code == 403
@@ -109,6 +111,7 @@ def test_session_probe_returns_authenticated_session_expiry(settings) -> None:
     assert response.json()["authenticated"] is True
     assert response.json()["principal_id"] == "operator"
     assert response.json()["expires_at"] == absolute
+    assert response.json()["allow_write_actions"] is False
 
 
 def test_local_login_rejects_invalid_credentials(settings) -> None:

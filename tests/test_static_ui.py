@@ -88,6 +88,10 @@ def test_known_browser_routes_are_served_before_api_matching(settings, monkeypat
         "/clients",
         headers={"Accept": "application/json", "Authorization": "Bearer local-secret"},
     )
+    session_authenticated_api = client.get(
+        "/clients",
+        headers={"Accept": "application/json", "Cookie": "wait_session=session"},
+    )
     authenticated_browser = client.get(
         "/clients",
         headers={**browser_headers, "Authorization": "Bearer local-secret"},
@@ -120,6 +124,11 @@ def test_known_browser_routes_are_served_before_api_matching(settings, monkeypat
     assert authenticated_api.status_code == 200
     assert isinstance(authenticated_api.json(), list)
     assert "spa-sentinel" not in authenticated_api.text
+    assert authenticated_api.headers["vary"] == "Accept"
+    assert authenticated_api.headers["cache-control"] == "no-store"
+    assert session_authenticated_api.status_code == 401
+    assert session_authenticated_api.headers["vary"] == "Accept"
+    assert session_authenticated_api.headers["cache-control"] == "no-store"
     assert authenticated_browser.status_code == 200
     assert "spa-sentinel" in authenticated_browser.text
     assert authenticated_browser.headers["cache-control"] == "no-store"
@@ -183,7 +192,7 @@ def test_spa_route_manifest_matches_ui_routes_and_reserved_namespaces() -> None:
     assert re.search(r"<Route\s+index(?:\s|>)", source)
     ui_paths = explicit_paths | {"/"}
 
-    assert len(SPA_ROUTE_PATHS) == 44
+    assert len(SPA_ROUTE_PATHS) == 43
     assert ui_paths == SPA_ROUTE_PATHS
     reserved_prefixes = ("/api", "/docs", "/packs", "/openapi.json", "/healthz", "/auth")
     assert not any(

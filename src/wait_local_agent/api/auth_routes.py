@@ -36,10 +36,20 @@ AdminAccess = Annotated[AuthContext, Depends(require_role(Role.ADMIN))]
 _CLIENT_ROLES = Literal["end_user", "viewer", "technician", "admin"]
 
 
+class ClientRoleRequest(BaseModel):
+    client_id: str = Field(min_length=1, max_length=128)
+    role: _CLIENT_ROLES
+
+    model_config = ConfigDict(extra="forbid")
+
+
 class PrincipalCreateRequest(BaseModel):
     principal_id: str = Field(min_length=1, max_length=128)
     kind: Literal["customer", "staff"] = "staff"
     display_name: str = Field(min_length=1, max_length=256)
+    client_roles: list[ClientRoleRequest] = Field(default_factory=list, max_length=50)
+    msp_admin: bool = False
+    issue_credential: bool = False
 
     model_config = ConfigDict(extra="forbid")
 
@@ -53,13 +63,6 @@ class PrincipalPatchRequest(BaseModel):
 
 class CredentialRevokeRequest(BaseModel):
     credential_hash: str = Field(min_length=1, max_length=128)
-
-    model_config = ConfigDict(extra="forbid")
-
-
-class ClientRoleRequest(BaseModel):
-    client_id: str = Field(min_length=1, max_length=128)
-    role: _CLIENT_ROLES
 
     model_config = ConfigDict(extra="forbid")
 
@@ -327,18 +330,34 @@ def create_auth_router(limiter: Limiter | None = None) -> APIRouter:
     ) -> dict[str, object]:
         _require_management_access(context)
         store = _store(request)
+        token = secrets.token_urlsafe(32) if payload.issue_credential else None
         try:
-            principal_id = store.create_principal(
+            principal_id, issued_token = store.create_principal_with_access(
                 payload.principal_id,
                 kind=payload.kind,
                 display_name=payload.display_name,
+                client_roles=tuple((role.client_id, role.role) for role in payload.client_roles),
+                msp_admin=payload.msp_admin,
+                credential=token,
             )
+        except PrincipalInvariantError as exc:
+            _audit_principal_rejection(store, "principal.created", payload.principal_id.strip(), str(exc), context)
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail="client not found") from exc
         except ValueError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
         except sqlite3.IntegrityError as exc:
             raise HTTPException(status_code=409, detail="principal already exists") from exc
         store.add_audit_event("principal.created", principal_id, "succeeded", approver_id=_actor_id(context))
-        return _principal_view_by_id(store, principal_id)
+        result = _principal_view_by_id(store, principal_id)
+        result["token"] = issued_token
+        result["credential_notice"] = (
+            "This credential is returned once. Store it securely; WAIT persists only its hash."
+            if issued_token is not None
+            else "No credential was issued."
+        )
+        return result
 
     @router.patch("/principals/{principal_id}")
     def update_principal(
@@ -357,10 +376,14 @@ def create_auth_router(limiter: Limiter | None = None) -> APIRouter:
             raise HTTPException(status_code=409, detail="you cannot deactivate your own principal")
         store = _store(request)
         try:
-            if payload.active is not None:
-                store.set_principal_active(normalized_id, payload.active)
-                if payload.active is False:
-                    store.revoke_principal_sessions(normalized_id)
+            if payload.active is False:
+                store.deactivate_principal(
+                    normalized_id,
+                    actor_principal_id=context.principal_id,
+                    audit_actor_id=_actor_id(context),
+                )
+            elif payload.active is True:
+                store.set_principal_active(normalized_id, True)
             if payload.display_name is not None:
                 store.set_principal_display_name(normalized_id, payload.display_name)
         except PrincipalInvariantError as exc:
@@ -370,7 +393,8 @@ def create_auth_router(limiter: Limiter | None = None) -> APIRouter:
             raise HTTPException(status_code=404, detail="principal not found") from exc
         except ValueError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
-        store.add_audit_event("principal.updated", normalized_id, "succeeded", approver_id=_actor_id(context))
+        if payload.active is not False:
+            store.add_audit_event("principal.updated", normalized_id, "succeeded", approver_id=_actor_id(context))
         return _principal_view_by_id(store, normalized_id)
 
     @router.post("/principals/{principal_id}/credentials")
@@ -402,6 +426,68 @@ def create_auth_router(limiter: Limiter | None = None) -> APIRouter:
             "credential_hash": credential_hash,
             "created_at": _credential_created_at(store, principal.principal_id, credential_hash),
         }
+
+    @router.post("/principals/{principal_id}/credentials/rotate")
+    def rotate_credential(
+        principal_id: str,
+        request: Request,
+        context: AdminAccess,
+    ) -> dict[str, object]:
+        _require_management_access(context)
+        normalized_id = principal_id.strip()
+        store = _store(request)
+        principal = _find_principal(store, normalized_id)
+        if principal is None:
+            raise HTTPException(status_code=404, detail="principal not found")
+        token = secrets.token_urlsafe(32)
+        try:
+            credential_hash = store.rotate_principal_credential(normalized_id, token)
+        except PrincipalInvariantError as exc:
+            _audit_principal_rejection(store, "principal.credential.rotated", normalized_id, str(exc), context)
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        except (KeyError, ValueError) as exc:
+            raise HTTPException(status_code=404, detail="principal not found") from exc
+        store.add_audit_event(
+            "principal.credential.rotated",
+            normalized_id,
+            "succeeded",
+            approver_id=_actor_id(context),
+        )
+        return {
+            "principal_id": normalized_id,
+            "token": token,
+            "credential_hash": credential_hash,
+            "created_at": _credential_created_at(store, normalized_id, credential_hash),
+        }
+
+    @router.post("/principals/{principal_id}/credentials/revoke-all")
+    def revoke_all_credentials(
+        principal_id: str,
+        request: Request,
+        context: AdminAccess,
+    ) -> dict[str, object]:
+        _require_management_access(context)
+        normalized_id = principal_id.strip()
+        store = _store(request)
+        if _find_principal(store, normalized_id) is None:
+            raise HTTPException(status_code=404, detail="principal not found")
+        try:
+            store.revoke_all_principal_credentials(
+                normalized_id,
+                actor_principal_id=context.principal_id,
+            )
+        except PrincipalInvariantError as exc:
+            _audit_principal_rejection(store, "principal.credentials.revoked", normalized_id, str(exc), context)
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        except (KeyError, ValueError) as exc:
+            raise HTTPException(status_code=404, detail="principal not found") from exc
+        store.add_audit_event(
+            "principal.credentials.revoked",
+            normalized_id,
+            "succeeded",
+            approver_id=_actor_id(context),
+        )
+        return _principal_view_by_id(store, normalized_id)
 
     @router.post("/principals/{principal_id}/credentials/revoke")
     def revoke_credential(
@@ -743,6 +829,7 @@ def _auth_view(
         "expires_at": expires_at,
         "api_auth_required": not settings.demo_mode,
         "demo_mode": settings.demo_mode,
+        "allow_write_actions": settings.allow_write_actions,
         "end_user_support_enabled": settings.end_user_support_enabled,
     }
 

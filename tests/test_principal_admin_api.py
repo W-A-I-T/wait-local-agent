@@ -17,6 +17,7 @@ from wait_local_agent.api.auth_routes import (
     _store,
 )
 from wait_local_agent.rbac import AuthContext, Role, resolve_auth_context
+from wait_local_agent.sessions import hash_session_token, session_expiries
 from wait_local_agent.store import PrincipalInvariantError, Store, hash_credential
 
 
@@ -182,6 +183,90 @@ def test_principal_management_crud_credentials_roles_and_audit(settings) -> None
         "principal.client_role.removed",
         "principal.global_role.removed",
     ]))
+
+
+def test_principal_management_supports_scoped_creation_rotation_and_bulk_revoke(settings) -> None:
+    secure = _secure(settings)
+    store = Store(secure.data_path)
+    store.create_client("alpha", "Alpha")
+    _seed_operator(store)
+    client = TestClient(create_app(secure))
+
+    created = client.post(
+        "/auth/principals",
+        headers=_auth("operator-secret"),
+        json={
+            "principal_id": "scoped-tech",
+            "kind": "staff",
+            "display_name": "Scoped technician",
+            "client_roles": [{"client_id": "alpha", "role": "technician"}],
+            "issue_credential": True,
+        },
+    )
+    assert created.status_code == 200
+    first_token = created.json()["token"]
+    assert created.json()["client_roles"] == [["alpha", "technician"]]
+    assert store.find_principal_by_credential_hash(hash_credential(first_token)) is not None
+
+    rotated = client.post(
+        "/auth/principals/scoped-tech/credentials/rotate",
+        headers=_auth("operator-secret"),
+    )
+    assert rotated.status_code == 200
+    second_token = rotated.json()["token"]
+    assert second_token != first_token
+    assert store.find_principal_by_credential_hash(hash_credential(first_token)) is None
+
+    revoked = client.post(
+        "/auth/principals/scoped-tech/credentials/revoke-all",
+        headers=_auth("operator-secret"),
+    )
+    assert revoked.status_code == 200
+    assert all(not credential["active"] for credential in revoked.json()["credentials"])
+
+
+def test_principal_deactivation_invalidates_sessions_credentials_grants_and_audits_once(settings) -> None:
+    secure = _secure(settings)
+    store = Store(secure.data_path)
+    store.create_client("alpha", "Alpha")
+    store.create_principal("target", kind="staff", display_name="Target")
+    credential_hash = store.add_principal_credential("target", "target-secret")
+    store.add_principal_client_role("target", "alpha", "admin")
+    idle, absolute = session_expiries()
+    session_hash = hash_session_token("target-session")
+    store.create_auth_session(
+        session_hash,
+        "target",
+        idle_expires_at=idle,
+        absolute_expires_at=absolute,
+    )
+    with store._connect() as connection:  # noqa: SLF001 - seed an active grant for the invariant test
+        connection.execute(
+            """
+            insert into principal_capability_grants
+              (principal_id, capability_key, client_scope, active, granted_by, updated_by, created_at, updated_at)
+            values (?, ?, ?, 1, ?, ?, ?, ?)
+            """,
+            ("target", "microsoft_admin", "alpha", "operator", "operator", "now", "now"),
+        )
+    client = TestClient(create_app(secure))
+
+    response = client.patch(
+        "/auth/principals/target",
+        headers=_auth("bootstrap-admin"),
+        json={"active": False},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["active"] is False
+    assert store.find_principal_by_credential_hash(credential_hash) is None
+    assert store.get_auth_session(session_hash) is None
+    with store._connect() as connection:  # noqa: SLF001 - verify the persisted grant state
+        assert connection.execute(
+            "select active from principal_capability_grants where principal_id = ?",
+            ("target",),
+        ).fetchone()[0] == 0
+    assert [event.event_type for event in store.list_audit_events()] == ["principal.deactivated"]
 
 
 def test_principal_management_is_double_gated_and_has_self_lockout_guards(settings) -> None:
@@ -495,7 +580,7 @@ def test_principal_management_maps_store_errors_and_unusual_ids(settings, monkey
     def fail_create_value(self, *args, **kwargs):
         raise ValueError("invalid principal")
 
-    monkeypatch.setattr(Store, "create_principal", fail_create_value)
+    monkeypatch.setattr(Store, "create_principal_with_access", fail_create_value)
     value_create = client.post(
         "/auth/principals",
         headers=_auth("operator-secret"),
@@ -506,7 +591,7 @@ def test_principal_management_maps_store_errors_and_unusual_ids(settings, monkey
     def fail_create_integrity(self, *args, **kwargs):
         raise sqlite3.IntegrityError("duplicate")
 
-    monkeypatch.setattr(Store, "create_principal", fail_create_integrity)
+    monkeypatch.setattr(Store, "create_principal_with_access", fail_create_integrity)
     duplicate_create = client.post(
         "/auth/principals",
         headers=_auth("operator-secret"),

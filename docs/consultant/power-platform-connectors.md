@@ -44,8 +44,8 @@ wait-local-agent microsoft solution plan onboarding WAIT_Dev wait /workspace/onb
 ```
 
 `status` checks whether the executable is discoverable on the local PATH without
-starting it. `plan` emits the proposed `pac solution init`, `pack`, and `check`
-arguments. It does not create directories, overwrite files, contact Dataverse,
+starting it. `plan` emits the proposed `pac solution pack` arguments. It does
+not create directories, overwrite files, contact Dataverse,
 or execute a subprocess.
 
 This no-side-effect planning command is distinct from the staged solution

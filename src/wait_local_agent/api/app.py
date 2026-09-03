@@ -312,6 +312,7 @@ from wait_local_agent.scheduler import SchedulerManager, validate_scheduled_repo
 from wait_local_agent.security import auth_required
 from wait_local_agent.servicenow import ServiceNowClient, ServiceNowReadResponse
 from wait_local_agent.services import TicketIntelligenceService
+from wait_local_agent.sessions import SESSION_COOKIE_NAME
 from wait_local_agent.sharepoint import SharePointClient, SharePointReadResponse
 from wait_local_agent.smart_actions import SmartActionService
 from wait_local_agent.spa_routes import SPA_ROUTE_PATHS
@@ -1216,15 +1217,44 @@ class SPAHtmlRoutesMiddleware:
             await self.app(scope, receive, send)
             return
 
+        request_headers = Headers(scope=scope)
+        has_authenticated_request = (
+            request_headers.get("authorization") is not None
+            or _has_session_cookie(request_headers.get("cookie"))
+        )
+
         accept = next(
             (value for name, value in scope["headers"] if name == b"accept"),
             b"",
         ).decode("latin-1").lower()
         if "text/html" not in accept:
-            await self.app(scope, receive, send)
+            async def send_with_cache_headers(message: Message) -> None:
+                if message["type"] == "http.response.start":
+                    response_headers = MutableHeaders(scope=message)
+                    vary = response_headers.get("Vary")
+                    if vary and "accept" not in {value.strip().lower() for value in vary.split(",")}:
+                        response_headers["Vary"] = f"{vary}, Accept"
+                    else:
+                        response_headers["Vary"] = "Accept"
+                    content_type = response_headers.get("Content-Type", "").split(";", 1)[0].strip().lower()
+                    is_json_response = content_type == "application/json" or content_type.endswith("+json")
+                    if has_authenticated_request and is_json_response:
+                        response_headers["Cache-Control"] = "no-store"
+                await send(message)
+
+            await self.app(scope, receive, send_with_cache_headers)
             return
 
         await _spa_index_response(self.index_path)(scope, receive, send)
+
+
+def _has_session_cookie(cookie_header: str | None) -> bool:
+    # The browser session cookie is SESSION_COOKIE_NAME ("wait_session"); the OIDC transaction
+    # cookie only exists mid-login, but a response carrying it is also user-specific.
+    return any(
+        part.strip().partition("=")[0] in {SESSION_COOKIE_NAME, "wait_oidc_txn"}
+        for part in (cookie_header or "").split(";")
+    )
 
 
 def _set_spa_html_headers(response: Response) -> None:
@@ -1526,6 +1556,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             "is_msp_admin": context.is_msp_admin,
             "api_auth_required": auth_required(active_settings),
             "demo_mode": active_settings.demo_mode,
+            "allow_write_actions": active_settings.allow_write_actions,
             "end_user_support_enabled": active_settings.end_user_support_enabled,
         }
 
@@ -4318,7 +4349,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return asdict(result)
 
     @app.get("/connectors/halopsa/write-health")
-    @limiter.limit(active_settings.rate_limit_general)
+    @limiter.limit(active_settings.rate_limit_connector)
     def halopsa_write_health(request: Request, _: ViewerAccess) -> dict[str, object]:
         result = halopsa_client.write_health()
         store.add_audit_event("halopsa.write_health", "halopsa", result.status)
@@ -4523,7 +4554,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return asdict(result)
 
     @app.get("/connectors/connectwise/write-health")
-    @limiter.limit(active_settings.rate_limit_general)
+    @limiter.limit(active_settings.rate_limit_connector)
     def connectwise_write_health(request: Request, _: ViewerAccess) -> dict[str, object]:
         result = connectwise_client.write_health()
         store.add_audit_event("connectwise.write_health", "connectwise", result.status)
@@ -4719,7 +4750,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return asdict(result)
 
     @app.get("/connectors/servicenow/write-health")
-    @limiter.limit(active_settings.rate_limit_general)
+    @limiter.limit(active_settings.rate_limit_connector)
     def servicenow_write_health(request: Request, _: ViewerAccess) -> dict[str, object]:
         result = servicenow_client.write_health()
         store.add_audit_event("servicenow.write_health", "servicenow", result.status)
@@ -4805,7 +4836,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return asdict(result)
 
     @app.get("/connectors/autotask/write-health")
-    @limiter.limit(active_settings.rate_limit_general)
+    @limiter.limit(active_settings.rate_limit_connector)
     def autotask_write_health(request: Request, _: ViewerAccess) -> dict[str, object]:
         result = autotask_client.write_health()
         store.add_audit_event("autotask.write_health", "autotask", result.status)

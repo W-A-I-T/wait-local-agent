@@ -98,7 +98,7 @@ describe("App", () => {
   it("creates drafts, edits payload fields, and approves from controls", async () => {
     renderApp("/tickets");
 
-    await screen.findAllByText("HALO-1");
+    fireEvent.click(await screen.findByRole("button", { name: "Printer offline" }));
     fireEvent.click(screen.getByRole("button", { name: /Create Draft/i }));
 
     await waitFor(() => {
@@ -279,11 +279,8 @@ async function mockFetch(
       count: 0
     });
   }
-  if (path === "/connectors/halopsa/tickets") {
-    return json({
-      result: { status: "ready", message: "ok", count: 1 },
-      items: [{ id: "HALO-1", summary: "Printer offline", status: "Open", priority: "High" }]
-    });
+  if (path === "/tickets") {
+    return json([{ id: "HALO-1", summary: "Printer offline", status: "Open", priority: "High" }]);
   }
   if (path === "/approval-requests") {
     return json(approvals);

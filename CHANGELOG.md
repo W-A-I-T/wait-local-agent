@@ -14,6 +14,8 @@ All notable changes to WAIT Local Agent will be documented in this file.
 
 - Weak-token startup warnings now cover end-user credentials and all bootstrap
   tokens shorter than 32 characters.
+- Principal lifecycle mutations now use one canonical Store path; deactivation
+  revokes sessions, credentials, and capability grants together (#513).
 - Production installs now fetch version-matched release assets, verify keyless
   cosign signatures by image digest by default, and persist a digest-pinned
   image reference with an explicit, recorded `--no-verify` escape hatch.
@@ -22,6 +24,8 @@ All notable changes to WAIT Local Agent will be documented in this file.
 
 ### Changed
 
+- Consolidated principal management into People & Access and removed the
+  duplicate operator-control identity routes and screen (#513).
 - Release images are smoke-tested and pushed from one loaded image artifact;
   the workflow asserts that the smoke-tested and published digests match.
 - Pull-request secret scans now inspect only the event's commit range, while a
@@ -36,6 +40,18 @@ All notable changes to WAIT Local Agent will be documented in this file.
   receive a minimal environment, and CLI status exposes only a configured
   flag plus the executable basename.
 
+- Power Platform package validation, delivery plans, the employee demo, and
+  Solution Delivery now report computed deployability, package status, and
+  design-only or unsupported components; dropped entities and relationships
+  degrade source readiness instead of disappearing from the result.
+- Dashboard write controls now honor the server write-action flag and exclude
+  end-user roles, and the deployment stage/docs now describe the pack-only
+  build plan.
+- Dual-served UI routes now vary JSON and HTML responses correctly, authenticated
+  JSON responses are never stored by intermediaries, and dashboard write-health
+  checks are cached per connector for one minute with an explicit Settings
+  re-check; the checks use the connector rate limit and no longer bootstrap Halo
+  tickets.
 - Backup failures now emit sanitized structured logs with a correlation ID,
   and Appliance Health loads scheduled backup history when the screen opens.
 - Re-landed the reviewed Solutions Architect live supervisor delegation panel

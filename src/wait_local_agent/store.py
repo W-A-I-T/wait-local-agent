@@ -1034,6 +1034,80 @@ class Store:
             )
         return normalized_id
 
+    def create_principal_with_access(
+        self,
+        principal_id: str,
+        *,
+        kind: str = "staff",
+        display_name: str = "",
+        client_roles: tuple[tuple[str, str], ...] = (),
+        msp_admin: bool = False,
+        credential: str | None = None,
+    ) -> tuple[str, str | None]:
+        """Create a principal and its initial access atomically."""
+
+        normalized_id = principal_id.strip()
+        normalized_kind = kind.strip().lower()
+        normalized_roles = tuple(
+            sorted(
+                {
+                    (_normalize_client_id(client_id) or "", _principal_role_label(role))
+                    for client_id, role in client_roles
+                }
+            )
+        )
+        if not normalized_id:
+            raise ValueError("principal_id must be non-empty")
+        if normalized_kind not in {"customer", "staff"}:
+            raise ValueError("principal kind must be customer or staff")
+        if any(not client_id for client_id, _ in normalized_roles):
+            raise ValueError("client_id must be non-empty")
+        if any(role not in {"end_user", "viewer", "technician", "admin"} for _, role in normalized_roles):
+            raise ValueError("unsupported principal client role")
+        if normalized_kind == "customer" and msp_admin:
+            raise PrincipalInvariantError("customer principals cannot receive the msp_admin role")
+        if normalized_kind == "customer" and len(normalized_roles) != 1:
+            raise PrincipalInvariantError("customer principals require exactly one client role")
+        safe_name = _redact_text(display_name.strip())
+        now = utc_now()
+        credential_hash = hash_credential(credential) if credential is not None else None
+
+        with self._connect() as connection:
+            for client_id, _ in normalized_roles:
+                _reject_reserved_client_id(client_id)
+                if connection.execute(
+                    "select 1 from clients where client_id = ?", (client_id,)
+                ).fetchone() is None:
+                    raise KeyError(client_id)
+            connection.execute(
+                """
+                insert into principals (principal_id, kind, display_name, created_at)
+                values (?, ?, ?, ?)
+                """,
+                (normalized_id, normalized_kind, safe_name, now),
+            )
+            connection.executemany(
+                """
+                insert into principal_client_roles (principal_id, client_id, role)
+                values (?, ?, ?)
+                """,
+                ((normalized_id, client_id, role) for client_id, role in normalized_roles),
+            )
+            if msp_admin:
+                connection.execute(
+                    "insert into principal_global_roles (principal_id, role) values (?, 'msp_admin')",
+                    (normalized_id,),
+                )
+            if credential_hash is not None:
+                connection.execute(
+                    """
+                    insert into principal_credentials (principal_id, credential_hash, created_at)
+                    values (?, ?, ?)
+                    """,
+                    (normalized_id, credential_hash, now),
+                )
+        return normalized_id, credential
+
     def add_principal_credential(self, principal_id: str, credential: str) -> str:
         normalized_id = principal_id.strip()
         credential_hash = hash_credential(credential)
@@ -1047,6 +1121,34 @@ class Store:
                 raise KeyError(normalized_id)
             if not bool(principal["active"]):
                 raise PrincipalInvariantError("inactive principals cannot receive credentials")
+            connection.execute(
+                """
+                insert into principal_credentials (principal_id, credential_hash, created_at)
+                values (?, ?, ?)
+                """,
+                (normalized_id, credential_hash, utc_now()),
+            )
+        return credential_hash
+
+    def rotate_principal_credential(self, principal_id: str, credential: str) -> str:
+        """Replace every active credential for an active principal atomically."""
+
+        normalized_id = principal_id.strip()
+        credential_hash = hash_credential(credential)
+        if not normalized_id:
+            raise ValueError("principal_id must be non-empty")
+        with self._connect() as connection:
+            principal = connection.execute(
+                "select active from principals where principal_id = ?", (normalized_id,)
+            ).fetchone()
+            if principal is None:
+                raise KeyError(normalized_id)
+            if not bool(principal["active"]):
+                raise PrincipalInvariantError("inactive principals cannot receive credentials")
+            connection.execute(
+                "update principal_credentials set active = 0 where principal_id = ?",
+                (normalized_id,),
+            )
             connection.execute(
                 """
                 insert into principal_credentials (principal_id, credential_hash, created_at)
@@ -1117,15 +1219,76 @@ class Store:
             raise ValueError("principal_id must be non-empty")
         if not isinstance(active, bool):
             raise ValueError("active must be a boolean")
+        if not active:
+            self.deactivate_principal(principal_id)
+            return
         with self._connect() as connection:
-            if not active:
-                _guard_last_msp_admin(connection, normalized_id)
             cursor = connection.execute(
                 "update principals set active = ? where principal_id = ?",
                 (int(active), normalized_id),
             )
             if cursor.rowcount != 1:
                 raise KeyError(normalized_id)
+
+    def deactivate_principal(
+        self,
+        principal_id: str,
+        *,
+        actor_principal_id: str | None = None,
+        audit_actor_id: str | None = None,
+    ) -> int:
+        """Deactivate a principal and invalidate every access mechanism in one transaction."""
+
+        normalized_id = principal_id.strip()
+        if not normalized_id:
+            raise ValueError("principal_id must be non-empty")
+        if normalized_id == actor_principal_id:
+            raise PrincipalInvariantError("the authenticated principal cannot revoke or deactivate itself")
+        now = utc_now()
+        with self._connect() as connection:
+            principal = connection.execute(
+                "select 1 from principals where principal_id = ?", (normalized_id,)
+            ).fetchone()
+            if principal is None:
+                raise KeyError(normalized_id)
+            _guard_last_msp_admin(connection, normalized_id)
+            connection.execute(
+                "update principals set active = 0 where principal_id = ?",
+                (normalized_id,),
+            )
+            connection.execute(
+                "update principal_credentials set active = 0 where principal_id = ?",
+                (normalized_id,),
+            )
+            connection.execute(
+                """
+                update principal_capability_grants
+                set active = 0, updated_at = ?
+                where principal_id = ?
+                """,
+                (now, normalized_id),
+            )
+            cursor = connection.execute(
+                "update auth_sessions set revoked = 1 where principal_id = ? and revoked = 0",
+                (normalized_id,),
+            )
+            self._add_audit_event(
+                connection,
+                "principal.deactivated",
+                normalized_id,
+                "succeeded",
+                approver_id=audit_actor_id,
+            )
+            self._add_event_history(
+                connection,
+                "principal.deactivated",
+                normalized_id,
+                "completed",
+                "succeeded",
+                "{}",
+                None,
+            )
+        return cursor.rowcount
 
     def set_principal_display_name(self, principal_id: str, display_name: str) -> None:
         normalized_id = principal_id.strip()
@@ -1186,6 +1349,31 @@ class Store:
             if cursor.rowcount != 1:
                 raise KeyError(normalized_hash)
 
+    def revoke_all_principal_credentials(
+        self,
+        principal_id: str,
+        *,
+        actor_principal_id: str | None = None,
+    ) -> int:
+        """Revoke every credential for a principal while preserving the MSP lockout guard."""
+
+        normalized_id = principal_id.strip()
+        if not normalized_id:
+            raise ValueError("principal_id must be non-empty")
+        if normalized_id == actor_principal_id:
+            raise PrincipalInvariantError("the authenticated principal cannot revoke or deactivate itself")
+        with self._connect() as connection:
+            if connection.execute(
+                "select 1 from principals where principal_id = ?", (normalized_id,)
+            ).fetchone() is None:
+                raise KeyError(normalized_id)
+            _guard_last_msp_admin(connection, normalized_id)
+            cursor = connection.execute(
+                "update principal_credentials set active = 0 where principal_id = ? and active = 1",
+                (normalized_id,),
+            )
+        return cursor.rowcount
+
     def remove_principal_client_role(
         self,
         principal_id: str,
@@ -1243,6 +1431,14 @@ class Store:
             )
             if cursor.rowcount != 1:
                 raise KeyError((normalized_id, normalized_client_id, normalized_role))
+            connection.execute(
+                """
+                update principal_capability_grants
+                set active = 0, updated_at = ?
+                where principal_id = ? and client_scope = ?
+                """,
+                (utc_now(), normalized_id, normalized_client_id),
+            )
 
     def remove_principal_global_role(self, principal_id: str, role: str = "msp_admin") -> None:
         normalized_id = principal_id.strip()
@@ -1276,6 +1472,14 @@ class Store:
             )
             if cursor.rowcount != 1:
                 raise KeyError((normalized_id, normalized_role))
+            connection.execute(
+                """
+                update principal_capability_grants
+                set active = 0, updated_at = ?
+                where principal_id = ? and client_scope = ''
+                """,
+                (utc_now(), normalized_id),
+            )
 
     def list_principal_credentials(self, principal_id: str) -> list[PrincipalCredentialSummary]:
         normalized_id = principal_id.strip()
