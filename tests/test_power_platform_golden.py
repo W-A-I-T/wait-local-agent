@@ -85,6 +85,8 @@ def test_golden_regeneration_prints_diff_before_overwriting(tmp_path: Path, monk
     golden_file.write_text("old\n", encoding="utf-8")
     monkeypatch.setattr(power_platform_support, "_GOLDEN_ROOT", golden_root)
     monkeypatch.setenv("WAIT_REGENERATE_GOLDEN", "1")
+    # GitHub Actions sets CI=true; this test exercises the developer path, not the CI refusal.
+    monkeypatch.delenv("CI", raising=False)
 
     assert_matches_golden(
         [{"path": "Other/Solution.xml", "content": "new\n"}],
