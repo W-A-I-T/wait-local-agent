@@ -428,6 +428,7 @@ a {
 
 .prerequisite-list li.missing strong {
   color: #8a2f1d;
+}
 
 .settings-group {
   display: grid;
