@@ -9,7 +9,7 @@ import { type LaunchPassportStatus, type PackInfo, type ProviderHealth, type Pro
 import { connectorSetupEnvVarNames } from "../lib/connectorSetup";
 
 export function Settings() {
-  const { authState, isAdmin, loading, role } = useDashboard();
+  const { authState, isAdmin, loading, recheckWriteHealth: recheckDashboardWriteHealth, role } = useDashboard();
   const accessRole = role ?? (isAdmin ? "admin" : "viewer");
   const canViewLaunchPassport = !loading && accessRole === "admin";
   const [providers, setProviders] = useState<ProviderSettings | null>(null);
@@ -22,6 +22,7 @@ export function Settings() {
   const [statusMessage, setStatusMessage] = useState("");
   const [launchPassport, setLaunchPassport] = useState<LaunchPassportStatus | null>(null);
   const [launchPassportState, setLaunchPassportState] = useState<"loading" | "not_configured" | "available" | "unavailable">("loading");
+  const [writeHealthChecking, setWriteHealthChecking] = useState(false);
 
   const [packPath, setPackPath] = useState("");
   const [secretName, setSecretName] = useState("");
@@ -189,6 +190,18 @@ export function Settings() {
     }
   }
 
+  async function recheckWriteHealth() {
+    setWriteHealthChecking(true);
+    try {
+      await recheckDashboardWriteHealth();
+      setStatusMessage("Write health re-check complete.");
+    } catch (error) {
+      setStatusMessage(error instanceof Error ? error.message : "Unable to re-check write health.");
+    } finally {
+      setWriteHealthChecking(false);
+    }
+  }
+
   return (
     <section className="screen-stack">
       <section className="panel settings-panel">
@@ -198,6 +211,9 @@ export function Settings() {
         </div>
         <div className="row-actions">
           <Link className="icon-button" to="/?onboarding=1">Launch onboarding</Link>
+          <button className="icon-button" type="button" onClick={() => void recheckWriteHealth()} disabled={writeHealthChecking}>
+            {writeHealthChecking ? "Re-checking…" : "Re-check"}
+          </button>
           {isAdmin ? <button className="icon-button" type="button" onClick={() => void checkForUpdates()}>Check for updates</button> : null}
         </div>
 
