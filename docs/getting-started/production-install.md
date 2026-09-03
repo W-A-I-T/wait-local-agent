@@ -108,8 +108,9 @@ backup commands before upgrades and before changing credentials.
 
 ## Upgrade
 
-Re-run the installer from the new release tag after backing up the data volume;
-it preserves existing credentials and updates the digest-pinned image reference:
+Re-run the installer from the new release tag after backing up the data volume,
+passing the release explicitly with `--version`; it preserves existing
+credentials and updates the digest-pinned image reference:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/W-A-I-T/wait-local-agent/v2.0.1/scripts/install.sh \
@@ -118,6 +119,11 @@ curl -fsSL https://raw.githubusercontent.com/W-A-I-T/wait-local-agent/v2.0.1/scr
 
 Do not edit only `WAIT_IMAGE_TAG`: the digest in `WAIT_IMAGE_REF` is the image
 that Compose starts, and an explicit installer run is the upgrade operation.
+The normal upgrade verifies the digest-pinned image with cosign and stops if
+cosign is unavailable or verification fails. `--no-verify` bypasses only that
+signature check, keeps the immutable digest pin, logs the exception, and writes
+`WAIT_IMAGE_VERIFIED=false`; use it only in a controlled environment and record
+the exception.
 
 The named volume is not removed by `docker compose down`; do not add
 `--volumes` unless you intentionally want to delete the appliance state.

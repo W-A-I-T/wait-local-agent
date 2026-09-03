@@ -15,6 +15,7 @@ from __future__ import annotations
 import os
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
+from difflib import unified_diff
 from pathlib import Path
 
 CANONICAL_INPUT_ARTIFACT: dict[str, object] = {
@@ -126,6 +127,11 @@ if len(argv) >= 2 and argv[:2] == ["solution", "pack"]:
     print("packed")
     raise SystemExit(0)
 
+if len(argv) >= 2 and argv[:2] == ["solution", "import"]:
+    print("token=FAKE-PAC-PAT-DO-NOT-KEEP")
+    print("authorization=FAKE-PAC-PAT-DO-NOT-KEEP", file=sys.stderr)
+    raise SystemExit(0)
+
 print("unsupported command", file=sys.stderr)
 raise SystemExit(2)
 '''
@@ -173,6 +179,34 @@ def assert_matches_golden(files: Sequence[Mapping[str, object]], name: str) -> N
         raise AssertionError(f"golden fixture name must be a single relative directory: {name}")
     golden_dir = _GOLDEN_ROOT / fixture_name
     if os.environ.get("WAIT_REGENERATE_GOLDEN") == "1":
+        if os.environ.get("CI"):
+            raise RuntimeError("WAIT_REGENERATE_GOLDEN=1 is disabled when CI is set")
+        expected_before = (
+            {
+                path.relative_to(golden_dir).as_posix(): path.read_bytes()
+                for path in golden_dir.rglob("*")
+                if path.is_file()
+            }
+            if golden_dir.is_dir()
+            else {}
+        )
+        print(f"Golden regeneration diff for {golden_dir}:")
+        changed = False
+        for path in sorted(set(expected_before) | set(actual)):
+            old = expected_before.get(path, b"").decode("utf-8", errors="replace")
+            new = actual.get(path, b"").decode("utf-8", errors="replace")
+            if old == new:
+                continue
+            changed = True
+            diff = unified_diff(
+                old.splitlines(keepends=True),
+                new.splitlines(keepends=True),
+                fromfile=f"golden/{path}",
+                tofile=f"generated/{path}",
+            )
+            print("".join(diff), end="")
+        if not changed:
+            print("(no changes)")
         golden_dir.mkdir(parents=True, exist_ok=True)
         for existing in sorted(golden_dir.rglob("*"), key=str, reverse=True):
             if existing.is_file():
