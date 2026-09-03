@@ -59,18 +59,18 @@ describe("wla-wp17 Launch Passport UI", () => {
     render(<MemoryRouter><Settings /></MemoryRouter>);
 
     expect(await screen.findByText("Not connected")).toBeInTheDocument();
-    expect(screen.getByLabelText("Secret name")).toHaveAttribute("autocomplete", "off");
-    expect(screen.getByLabelText("Secret name")).toHaveAttribute("name", "secret-name");
-    expect(screen.getByLabelText("Secret value")).toHaveAttribute("autocomplete", "new-password");
-    expect(screen.getByLabelText("Secret value")).toHaveAttribute("name", "new-password");
-    expect(screen.getByRole("heading", { name: "Vault (advanced)" })).toBeInTheDocument();
-    expect(screen.getByText(/The vault stores credentials referenced by Connector Instances/)).toBeInTheDocument();
-    expect(screen.getByText(/default env backend, this form does not configure environment providers/)).toBeInTheDocument();
-    expect(screen.getByLabelText("Secret name")).toHaveAttribute("list", "connector-secret-names");
+    expect(screen.getByLabelText("Credential name")).toHaveAttribute("autocomplete", "off");
+    expect(screen.getByLabelText("Credential name")).toHaveAttribute("name", "secret-name");
+    expect(screen.getByLabelText("Credential value")).toHaveAttribute("autocomplete", "new-password");
+    expect(screen.getByLabelText("Credential value")).toHaveAttribute("name", "new-password");
+    expect(screen.getByRole("heading", { name: "Secure store (advanced)" })).toBeInTheDocument();
+    expect(screen.getByText(/The secure store keeps credentials used by Connector Instances/)).toBeInTheDocument();
+    expect(screen.getByText(/Environment-backed values are configured in the server environment/)).toBeInTheDocument();
+    expect(screen.getByLabelText("Credential name")).toHaveAttribute("list", "connector-secret-names");
     expect(document.querySelector('#connector-secret-names option[value="WAIT_HALOPSA_BASE_URL"]')).toBeInTheDocument();
     expect(screen.getByText(/ready to use on its own/i)).toBeInTheDocument();
     expect(screen.getByText("admin mode")).toBeInTheDocument();
-    expect(screen.getByText("No API token configured")).toBeInTheDocument();
+    expect(screen.getByText("No access token configured")).toBeInTheDocument();
     expect(screen.queryByText(/temporarily unavailable/i)).not.toBeInTheDocument();
   });
 

@@ -88,7 +88,7 @@ describe("Appliance Health wiring", () => {
     expect(screen.getByText("Write health").parentElement).toHaveTextContent("Disabled");
     expect(screen.getByText("HTTP probing").parentElement).toHaveTextContent("Enabled");
     expect(screen.getByText("LLM inference").parentElement).toHaveTextContent("Enabled");
-    expect(screen.getByText("Secrets backend").parentElement).toHaveTextContent("local");
+    expect(screen.getByText("Secure store").parentElement).toHaveTextContent("local");
     expect(screen.getByText("HaloPSA").parentElement).toHaveTextContent("Configured");
     expect(screen.getByText("SharePoint").parentElement).toHaveTextContent("Configured");
     expect(screen.getByText("No update available.")).toBeInTheDocument();

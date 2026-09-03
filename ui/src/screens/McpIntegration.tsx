@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { Check, Copy, ExternalLink, ShieldCheck } from "lucide-react";
 import { apiFetch } from "../api/client";
 import { useDashboard } from "../app/DashboardContext";
+import { EmptyState } from "../components/EmptyState";
 import { RoleGate } from "../components/RoleGate";
 import { StatusChip } from "../components/StatusChip";
 import { apiUrl } from "../lib/config";
@@ -218,7 +219,13 @@ function McpIntegrationContent() {
           </div>
           <span>{loading ? "Loading…" : `${tools.length} tool${tools.length === 1 ? "" : "s"}`}</span>
         </div>
-        {!loading && tools.length === 0 ? <p className="screen-note">No tools are currently published to the catalog.</p> : null}
+        {!loading && tools.length === 0 ? (
+          <EmptyState
+            title="No tools published"
+            why="Tools are published by installed packs. Review the Extensions surface to install or repair a pack before returning here."
+            action={{ label: "Open Extensions", to: "/system/extensions" }}
+          />
+        ) : null}
         <div className="mcp-tool-list">
           {tools.map((tool) => (
             <article className="mcp-tool" key={tool.id}>

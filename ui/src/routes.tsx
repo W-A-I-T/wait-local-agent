@@ -103,7 +103,7 @@ function PrincipalsAdminRoute() {
       fallback={(
         <section className="panel" role="alert">
           <h2>MSP administrator access required</h2>
-          <p className="screen-note">Only MSP administrators can manage people, roles, and bearer credentials.</p>
+          <p className="screen-note">Only MSP administrators can manage people, roles, and access credentials.</p>
         </section>
       )}
     >

@@ -72,8 +72,9 @@ describe("Settings demo mode explanation", () => {
 
     expect(await screen.findByRole("heading", { name: "Demo mode is active." })).toBeInTheDocument();
     expect(screen.getByText(/Write actions and Power Platform deployment are disabled/)).toBeInTheDocument();
-    expect(screen.getByText(/Other actions may also be unavailable if their own/)).toHaveTextContent("WAIT_ALLOW_*");
-    expect(screen.getByText(/There is no in-app switch for this/)).toHaveTextContent("WAIT_DEMO_MODE");
+    expect(screen.getByText(/Other actions may also be unavailable when their own/)).toBeInTheDocument();
+    expect(screen.getByText(/There is no in-app switch for this/)).not.toHaveTextContent("WAIT_DEMO_MODE");
+    expect(screen.getByText(/WAIT_DEMO_MODE/)).toBeInTheDocument();
     expect(screen.getByText(/There is no in-app switch for this/)).toHaveTextContent(/restart/i);
   });
 
@@ -94,6 +95,23 @@ describe("Settings demo mode explanation", () => {
 });
 
 describe("Settings loading", () => {
+  it("renders the four settings groups and keeps implementation vocabulary in disclosures", async () => {
+    installSettingsResponses(true);
+    render(<MemoryRouter><Settings /></MemoryRouter>);
+
+    await screen.findByText("Settings loaded.");
+    for (const heading of ["Appliance", "Access", "Integrations", "Advanced"]) {
+      expect(screen.getByRole("heading", { name: heading })).toBeInTheDocument();
+    }
+    expect(screen.getByRole("link", { name: /^MCP server/ })).toHaveAttribute("href", "/integrations/mcp");
+
+    for (const phrase of ["API token", "USD per million tokens", "WAIT_DEMO_MODE"]) {
+      expect(screen.getAllByText(new RegExp(phrase)).every((element) => element.closest("details") !== null)).toBe(true);
+    }
+    expect(screen.queryByText("API token saved")).not.toBeInTheDocument();
+    expect(screen.queryByText("remote model")).not.toBeInTheDocument();
+  });
+
   it("provides an explicit write health re-check action", async () => {
     installSettingsResponses(false);
     render(<MemoryRouter><Settings /></MemoryRouter>);
@@ -148,13 +166,13 @@ describe("Settings loading", () => {
     render(<MemoryRouter><Settings /></MemoryRouter>);
 
     expect(await screen.findByText("Settings loaded.")).toBeInTheDocument();
-    expect(screen.getByText("Provider mode").parentElement).toHaveTextContent("llama.cpp");
+    expect(screen.getByText("AI model").parentElement).toHaveTextContent("llama.cpp");
     expect(screen.getByText("Demo mode").parentElement).toHaveTextContent("enabled");
     expect(screen.getByText("Update check").parentElement).toHaveTextContent("current");
     const packsPanel = screen.getByRole("heading", { name: "Packs" }).closest(".panel") as HTMLElement;
     expect(within(packsPanel).getByText("Core pack")).toBeInTheDocument();
     expect(screen.getByText("unavailable in demo mode")).toBeInTheDocument();
-    expect(screen.getByText("Vault contents are unavailable in demo mode.")).toBeInTheDocument();
+    expect(screen.getByText("Secure store contents are unavailable in demo mode.")).toBeInTheDocument();
     expect(screen.queryByText(/Administrator role required for admin settings/)).not.toBeInTheDocument();
     expect(fetchMock.mock.calls.map(([input]) => String(input))).toEqual(expect.arrayContaining([
       "/settings/providers",
@@ -193,7 +211,7 @@ describe("Settings loading", () => {
     expect(await screen.findByText("Administrator role required for admin settings. Current role: viewer.")).toBeInTheDocument();
   });
 
-  it("preserves the populated Vault state when secrets are available", async () => {
+  it("preserves the populated secure-store state when secrets are available", async () => {
     dashboardState.authState = "authenticated";
     const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
       const path = String(input);

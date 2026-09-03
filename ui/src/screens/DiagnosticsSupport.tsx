@@ -129,7 +129,7 @@ export function DiagnosticsSupport() {
             <StatusRow label="Build" value={system?.build_commit ?? "Not recorded"} />
             <StatusRow label="Operating system" value={system?.os_name} />
             <StatusRow label="Install mode" value={system?.install_mode} />
-            <StatusRow label="Database integrity" value={databaseIntegrity(summary)} />
+            <StatusRow label="Data integrity" value={databaseIntegrity(summary)} />
           </div>
         </section>
 
@@ -179,9 +179,9 @@ export function DiagnosticsSupport() {
         </section>
 
         <section className="panel">
-          <div className="panel-heading"><h2>Hardening and updates</h2><span>Local status</span></div>
+          <div className="panel-heading"><h2>Security checks and updates</h2><span>Local status</span></div>
           <div className="table-list settings-list">
-            <StatusRow label="Latest hardening run" value={hardening?.status} status={hardening?.status} />
+            <StatusRow label="Latest security checks" value={hardening?.status} status={hardening?.status} />
             <StatusRow label="Update check" value={update?.detail} status={update?.status} />
             <StatusRow label="Installed packs" value={String(packs.length)} />
           </div>
