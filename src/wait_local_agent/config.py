@@ -52,6 +52,16 @@ def _int_env(name: str, default: int) -> int:
     return parsed if parsed > 0 else default
 
 
+def _optional_absolute_path_env(name: str) -> Path | None:
+    value = os.getenv(name, "").strip()
+    if not value:
+        return None
+    path = Path(value)
+    if not path.is_absolute():
+        raise ValueError(f"{name} must be an absolute path when set")
+    return path
+
+
 def _secrets_backend() -> str:
     return _validated_secrets_backend(os.getenv("WAIT_SECRETS_BACKEND", "env"))
 
@@ -175,6 +185,7 @@ class Settings:
     demo_mode: bool = False
     secrets_backend: str = "env"
     vault_path: Path = Path(".wait-local-agent/vault")
+    backup_dir: Path | None = None
     power_platform_workspace: Path = Path(".wait-local-agent/power-platform")
     pac_path: Path | None = None
     power_platform_command_timeout_seconds: float = 600.0
@@ -516,6 +527,7 @@ def load_settings() -> Settings:
         demo_mode=_bool_env("WAIT_DEMO_MODE", False),
         secrets_backend=backend,
         vault_path=vault_path,
+        backup_dir=_optional_absolute_path_env("WAIT_BACKUP_DIR"),
         power_platform_workspace=Path(
             os.getenv("WAIT_POWER_PLATFORM_WORKSPACE", ".wait-local-agent/power-platform")
         ),

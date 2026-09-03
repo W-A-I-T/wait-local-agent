@@ -39,6 +39,7 @@ from wait_local_agent.smart_actions import (
     SmartActionService,
 )
 from wait_local_agent.store import Store
+from wait_local_agent.vault import SecretVault
 from wait_local_agent.workflows import get_workflow_template, run_workflow_template
 
 
@@ -740,6 +741,30 @@ def test_scheduler_backup_registration_and_runner_edges(tmp_path: Path, monkeypa
     failed_prune = string_manager.run_backup()
     assert failed_prune.status == "succeeded"
     assert failed_prune.failure_summary == "retention pruning failed"
+
+
+def test_scheduler_backup_failure_logs_sanitized_correlation_id(settings, tmp_path: Path, caplog) -> None:
+    secure_settings = replace(
+        settings,
+        secrets_backend="fernet",
+        vault_path=tmp_path / "vault",
+    )
+    SecretVault.initialize(secure_settings.vault_path).set(
+        "WAIT_BACKUP_FERNET_KEY",
+        "not-a-fernet-key",
+    )
+    manager = SchedulerManager(Store(secure_settings.data_path), enabled=False, settings=secure_settings)
+
+    with caplog.at_level(logging.ERROR, logger=scheduler_module.LOGGER.name):
+        result = manager.run_backup()
+
+    assert result.status == "failed"
+    records = [record for record in caplog.records if "backup creation failed" in record.getMessage()]
+    assert records
+    assert records[0].levelno == logging.ERROR
+    assert records[0].correlation_id
+    assert "BackupEncryptionError" in records[0].getMessage()
+    assert "not-a-fernet-key" not in caplog.text
 
 
 def test_scheduler_baseline_and_completion_guards_are_noops(tmp_path: Path, caplog) -> None:

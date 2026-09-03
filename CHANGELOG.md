@@ -4,8 +4,16 @@ All notable changes to WAIT Local Agent will be documented in this file.
 
 ## [Unreleased]
 
+### Added
+
+- Scheduled encrypted backups can use an optional separately mounted
+  `WAIT_BACKUP_DIR`, and production Compose provisions a dedicated backup
+  volume.
+
 ### Fixed
 
+- Backup failures now emit sanitized structured logs with a correlation ID,
+  and Appliance Health loads scheduled backup history when the screen opens.
 - Invalid `WAIT_SECRETS_BACKEND` values now refuse startup instead of silently
   selecting the environment backend; Fernet vault read failures are surfaced
   during settings load, and short non-demo bootstrap tokens emit value-free

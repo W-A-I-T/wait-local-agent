@@ -119,6 +119,7 @@ def test_summary_uses_explicit_safe_shape_and_authoritative_version(settings: Se
         "demo_mode",
         "scheduler_enabled",
         "secrets_backend",
+        "backup_dir_configured",
         "halopsa_configured",
         "hudu_configured",
         "syncro_configured",
@@ -131,6 +132,7 @@ def test_summary_uses_explicit_safe_shape_and_authoritative_version(settings: Se
         "m365_configured",
         "paths",
     }
+    assert configuration["backup_dir_configured"] is False
     path_facts = configuration["paths"]
     assert isinstance(path_facts, dict)
     assert all(set(facts) == {"exists", "writable"} for facts in path_facts.values())

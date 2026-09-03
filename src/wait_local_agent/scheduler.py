@@ -8,6 +8,7 @@ from dataclasses import replace
 from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
+from uuid import uuid4
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
@@ -19,6 +20,7 @@ from wait_local_agent.agents import AgentService
 from wait_local_agent.backup import create_scheduled_backup, prune_backup_files, scheduled_backup_directory
 from wait_local_agent.client_scope import AllClients, ClientScope
 from wait_local_agent.config import Settings
+from wait_local_agent.diagnostics import scrub_text
 from wait_local_agent.models import EVENT_RETRY_POLL_SECONDS, BackupRun, ScheduledJob, utc_now
 from wait_local_agent.msp_playbooks import run_msp_playbook
 from wait_local_agent.reports.models import ReportType
@@ -370,6 +372,7 @@ class SchedulerManager:
         """Run one encrypted appliance backup and persist its sanitized outcome."""
 
         started_at = utc_now()
+        correlation_id = str(uuid4())
         destination = str(self._backup_directory)
         destination_path = self._backup_directory
         status = "failed"
@@ -385,15 +388,36 @@ class SchedulerManager:
             destination = str(destination_path)
             size_bytes = destination_path.stat().st_size
             status = "succeeded"
-        except Exception:  # noqa: BLE001 - persisted failure is intentionally generic
+        except Exception as exc:  # noqa: BLE001 - persisted failure is intentionally generic
             failure_summary = "backup creation failed"
+            LOGGER.error(
+                "backup creation failed correlation_id=%s exception_class=%s error=%s",
+                correlation_id,
+                type(exc).__name__,
+                scrub_text(str(exc)),
+                extra={"correlation_id": correlation_id},
+            )
         if status == "succeeded":
             try:
                 retention_count = _backup_retention_count(self._store)
-                if prune_backup_files(self._backup_directory, retention_count, destination_path):
+                prune_failures = prune_backup_files(self._backup_directory, retention_count, destination_path)
+                if prune_failures:
                     failure_summary = "retention pruning failed"
-            except Exception:  # noqa: BLE001 - retention failures are non-fatal and recorded
+                    LOGGER.error(
+                        "backup retention pruning reported failures correlation_id=%s count=%s",
+                        correlation_id,
+                        prune_failures,
+                        extra={"correlation_id": correlation_id},
+                    )
+            except Exception as exc:  # noqa: BLE001 - retention failures are non-fatal and recorded
                 failure_summary = "retention pruning failed"
+                LOGGER.error(
+                    "backup retention pruning failed correlation_id=%s exception_class=%s error=%s",
+                    correlation_id,
+                    type(exc).__name__,
+                    scrub_text(str(exc)),
+                    extra={"correlation_id": correlation_id},
+                )
         finished_at = utc_now()
         backup_run = self._store.add_backup_run(
             started_at=started_at,

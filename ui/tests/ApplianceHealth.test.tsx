@@ -36,6 +36,16 @@ const health = {
   m365_configured: false
 };
 
+const scheduledBackupStatus = {
+  items: [{ backup_run_id: 11, started_at: "2026-09-01T09:00:00Z", finished_at: "2026-09-01T09:00:02Z", status: "succeeded", destination: "backups/state.db.enc", size_bytes: 1024, failure_summary: "" }],
+  page: 1,
+  page_size: 25,
+  total: 1,
+  schedule_configured: true,
+  schedule: null,
+  last_restore_exercise: null
+};
+
 afterEach(() => {
   dashboard.isAdmin = true;
   dashboard.role = "admin";
@@ -61,6 +71,7 @@ describe("Appliance Health wiring", () => {
           results: []
         }]);
       }
+      if (path === "/backups") return jsonResponse(scheduledBackupStatus);
       throw new Error(`Unexpected request: ${path}`);
     });
     vi.stubGlobal("fetch", fetchMock);
@@ -83,8 +94,9 @@ describe("Appliance Health wiring", () => {
     expect(screen.getByText("No update available.")).toBeInTheDocument();
     expect(screen.getByText("Run 12")).toBeInTheDocument();
     expect(fetchMock.mock.calls.map(([input]) => String(input))).toEqual(
-      expect.arrayContaining(["/health", "/update-status", "/hardening/runs"])
+      expect.arrayContaining(["/health", "/update-status", "/hardening/runs", "/backups"])
     );
+    expect(screen.getByLabelText("Latest backup run")).toHaveTextContent("Run 11");
   });
 
   it("refreshes through the same read-only endpoints", async () => {
@@ -93,6 +105,7 @@ describe("Appliance Health wiring", () => {
       if (path === "/health") return jsonResponse(health);
       if (path === "/update-status") return jsonResponse({ status: "current", detail: "Current" });
       if (path === "/hardening/runs") return jsonResponse([]);
+      if (path === "/backups") return jsonResponse(emptyBackupStatus());
       throw new Error(`Unexpected request: ${path}`);
     });
     vi.stubGlobal("fetch", fetchMock);
@@ -105,6 +118,7 @@ describe("Appliance Health wiring", () => {
       expect(fetchMock.mock.calls.filter(([input]) => String(input) === "/health")).toHaveLength(2);
       expect(fetchMock.mock.calls.filter(([input]) => String(input) === "/update-status")).toHaveLength(2);
       expect(fetchMock.mock.calls.filter(([input]) => String(input) === "/hardening/runs")).toHaveLength(2);
+      expect(fetchMock.mock.calls.filter(([input]) => String(input) === "/backups")).toHaveLength(2);
     });
   });
 
@@ -161,6 +175,7 @@ describe("Appliance Health wiring", () => {
       if (path === "/health") return jsonResponse(health);
       if (path === "/update-status") return jsonResponse({ status: "current", detail: "Current" });
       if (path === "/hardening/runs") return jsonResponse([]);
+      if (path === "/backups") return jsonResponse(emptyBackupStatus());
       if (path === "/backups/run") return new Response(JSON.stringify({ detail: "not allowed" }), { status: 403 });
       throw new Error(`Unexpected request: ${path}`);
     });
@@ -174,6 +189,24 @@ describe("Appliance Health wiring", () => {
     expect(await screen.findByRole("alert")).toHaveTextContent("You do not have permission to do that.");
   });
 
+  it("shows an administrator note when backup history is forbidden", async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const path = String(input);
+      if (path === "/health") return jsonResponse(health);
+      if (path === "/update-status") return jsonResponse({ status: "current", detail: "Current" });
+      if (path === "/hardening/runs") return jsonResponse([]);
+      if (path === "/backups") return new Response(JSON.stringify({ detail: "not allowed" }), { status: 403 });
+      throw new Error(`Unexpected request: ${path}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(<MemoryRouter><ApplianceHealth /></MemoryRouter>);
+
+    expect(await screen.findByText("Administrator access required to view backup history.")).toBeInTheDocument();
+    expect(screen.queryByText(/admin only/i)).not.toBeInTheDocument();
+    expect(screen.getByText("—")).toBeInTheDocument();
+  });
+
   it("disables backup runs and explains the demo restriction", async () => {
     const demoHealth = { ...health, demo_mode: true };
     const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
@@ -181,6 +214,7 @@ describe("Appliance Health wiring", () => {
       if (path === "/health") return jsonResponse(demoHealth);
       if (path === "/update-status") return jsonResponse({ status: "current", detail: "Current" });
       if (path === "/hardening/runs") return jsonResponse([]);
+      if (path === "/backups") return jsonResponse(emptyBackupStatus());
       throw new Error(`Unexpected request: ${path}`);
     });
     vi.stubGlobal("fetch", fetchMock);
@@ -196,4 +230,16 @@ function jsonResponse(payload: unknown): Response {
   return new Response(JSON.stringify(payload), {
     headers: { "Content-Type": "application/json" }
   });
+}
+
+function emptyBackupStatus() {
+  return {
+    items: [],
+    page: 1,
+    page_size: 25,
+    total: 0,
+    schedule_configured: false,
+    schedule: null,
+    last_restore_exercise: null
+  };
 }

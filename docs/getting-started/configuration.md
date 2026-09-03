@@ -5,6 +5,7 @@ WAIT Local Agent reads environment variables into the `Settings` dataclass in
 
 ```text
 WAIT_DATA_PATH=.wait-local-agent/state.db
+WAIT_BACKUP_DIR=
 WAIT_ALLOWED_DOC_ROOT=examples/sample_docs
 WAIT_SECRETS_BACKEND=env
 WAIT_VAULT_PATH=.wait-local-agent/vault
@@ -24,6 +25,12 @@ Provider, model, MCP, update, communication, tenant-map, and connector
 variables are also read by `config.py`; see
 [`environment-variables.md`](../reference/environment-variables.md) for the
 source-of-truth warning and `.env.example` pointer.
+
+`WAIT_BACKUP_DIR` is optional. When unset, scheduled encrypted backups keep
+the existing location under the data directory. When set, it must be an
+absolute path; the directory and its descendants become the additional
+settings-controlled backup root. API and CLI backup paths outside the data
+directory or this configured root are rejected.
 
 ## Authentication and demo mode
 

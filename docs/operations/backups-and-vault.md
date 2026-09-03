@@ -55,4 +55,26 @@ the last evidence reference in `GET /backups`.
 The backup API and CLI operate on the local SQLite state. Restore is an
 operator action and should be tested against a copy or recovery environment
 before replacing active state. Backup and restore paths must remain inside the
-configured local data directory; paths outside it are rejected.
+configured local data directory or the optional `WAIT_BACKUP_DIR`; paths
+outside those settings-controlled roots are rejected.
+
+## What to copy off-box
+
+To survive loss of the appliance host or its mounted volumes, copy all of the
+following to protected off-box storage:
+
+- every encrypted backup file from the configured backup directory;
+- the `WAIT_VAULT_KEY` value from the `.env` file, stored as a secret; and
+- the complete vault directory at `WAIT_VAULT_PATH`.
+
+Keep the backup files, vault key, and vault directory under the same access
+controls. A backup file without the vault key and vault directory cannot be
+used to restore encrypted state.
+
+## Restore rehearsal
+
+At least periodically, copy the backup file, vault key, and vault directory to
+a separate recovery environment, configure the same data and vault paths, and
+run a restore exercise against the copied artifact. Confirm the exercise
+passes its integrity and row-count checks, then record the date and artifact
+used. Do not replace the live database as part of the rehearsal.

@@ -26,10 +26,12 @@ class BackupEncryptionError(RuntimeError):
 
 
 class BackupPathError(ValueError):
-    """Raised when a backup path escapes the appliance data directory."""
+    """Raised when a backup path escapes the configured backup roots."""
 
 
 def scheduled_backup_directory(settings: Settings) -> Path:
+    if settings.backup_dir is not None:
+        return settings.backup_dir.expanduser().resolve()
     return settings.data_path.expanduser().resolve().parent / "backups"
 
 
@@ -74,14 +76,24 @@ def _confine_backup_path(path: Path, settings: Settings | None) -> Path:
     resolved = path.expanduser().resolve()
     if settings is None:
         return resolved
-    root = settings.data_path.expanduser().resolve().parent
-    try:
-        resolved.relative_to(root)
-    except ValueError as exc:
+    roots = [settings.data_path.expanduser().resolve().parent]
+    if settings.backup_dir is not None:
+        roots.append(settings.backup_dir.expanduser().resolve())
+    if not any(_is_relative_to(resolved, root) for root in roots):
+        allowed_roots = ", ".join(str(root) for root in roots)
         raise BackupPathError(
-            f"backup paths must remain under the appliance data directory: {root}"
-        ) from exc
+            "backup paths must remain under the appliance data directory or a configured backup root: "
+            f"{allowed_roots}"
+        )
     return resolved
+
+
+def _is_relative_to(path: Path, root: Path) -> bool:
+    try:
+        path.relative_to(root)
+    except ValueError:
+        return False
+    return True
 
 
 def backup_state(
