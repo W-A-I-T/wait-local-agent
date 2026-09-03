@@ -166,6 +166,8 @@ test("collectors exports text from a locally created run", async ({ page }) => {
   await expect(page.getByRole("heading", { name: "Collectors", exact: true })).toBeVisible();
   const collector = page.getByRole("combobox", { name: "Collector", exact: true });
   await expect(collector).toBeVisible();
+  // Select a local collector explicitly because the default is credential-gated.
+  await collector.selectOption("host-runtime");
   await expect(collector).toHaveValue(/.+/);
   const runNow = page.getByRole("button", { name: "Run now", exact: true });
   await expect(runNow).toBeEnabled();
