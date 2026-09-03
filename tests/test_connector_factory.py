@@ -20,6 +20,7 @@ from wait_local_agent.connector_factory import (
     _validate_urls,
     build_read_client,
     build_read_client_for,
+    build_read_client_for_client,
     validate_connector_instance,
 )
 from wait_local_agent.connectwise import ConnectWiseClient
@@ -934,3 +935,24 @@ def test_build_read_client_for_redacts_store_errors(settings, tmp_path: Path) ->
     with pytest.raises(ConnectorFactoryError, match="could not be loaded") as error:
         build_read_client_for(Store(), "instance-1", base_settings=_base_settings(settings, tmp_path))
     assert "database path" not in str(error.value)
+
+
+def test_build_read_client_for_client_allows_explicit_msp_wide_fallback(settings, tmp_path: Path) -> None:
+    class Store:
+        def list_connector_instances(self) -> list[ConnectorInstance]:
+            return [_instance(connector_type="connectwise", client_id=None)]
+
+        def get_connector_instance(self, connector_instance_id: str) -> ConnectorInstance | None:
+            return _instance(connector_type="connectwise", client_id=None)
+
+    client = build_read_client_for_client(
+        Store(),
+        "connectwise",
+        "alpha",
+        base_settings=_base_settings(settings, tmp_path),
+        vault=_Vault(_connectwise_secret()),
+        resolver=_resolver("8.8.8.8"),
+        inner_transport=httpx.MockTransport(lambda request: httpx.Response(200, json=[])),
+        allow_msp_wide=True,
+    )
+    assert isinstance(client, ConnectWiseClient)

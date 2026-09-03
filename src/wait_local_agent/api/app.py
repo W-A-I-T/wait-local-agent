@@ -13,6 +13,7 @@ from concurrent.futures import ThreadPoolExecutor
 from contextlib import asynccontextmanager
 from dataclasses import asdict, replace
 from datetime import UTC, date, datetime
+from functools import partial
 from pathlib import Path
 from typing import Annotated, Literal, cast
 
@@ -349,6 +350,76 @@ ViewerAccess = Annotated[AuthContext, Depends(require_role(Role.VIEWER))]
 TechnicianAccess = Annotated[AuthContext, Depends(require_role(Role.TECHNICIAN))]
 AdminAccess = Annotated[AuthContext, Depends(require_role(Role.ADMIN))]
 EndUserAccess = Annotated[AuthContext, Depends(require_end_user)]
+
+
+def _connector_read_client(
+    request: Request,
+    context: AuthContext,
+    connector_type: str,
+    appliance_client: object,
+    *,
+    requested_client_id: str | None = None,
+    m365_teams: bool = False,
+    settings: Settings,
+    store: Store,
+    vault: SecretVault,
+    m365_connection_resolver: M365ConnectionResolver,
+) -> object:
+    """Resolve a provider read client without widening a tenant scope."""
+    scope = resolve_client_scope(context, requested_client_from(request, requested_client_id))
+    if isinstance(scope, AllClients):
+        return appliance_client
+    client_id = scope.client_id
+    if client_id is None:  # pragma: no cover - BoundClients rejects empty scopes
+        raise HTTPException(status_code=403, detail="client scope is required")
+    if connector_type == "m365":
+        transport = getattr(
+            request.app.state,
+            f"{connector_type}_transport",
+            getattr(appliance_client, "transport", None),
+        )
+        try:
+            connection = m365_connection_resolver.resolve(client_id)
+            if m365_teams:
+                return TeamsGraphClient(
+                    settings,
+                    transport=transport,
+                    connection=connection,
+                )
+            return M365GraphClient(
+                settings,
+                transport=transport,
+                connection=connection,
+                client_id=client_id,
+            )
+        except M365ProfileResolutionError as exc:
+            raise HTTPException(
+                status_code=409,
+                detail={"code": "client_scope_unavailable", "client_id": client_id},
+            ) from exc
+    if connector_type not in {"halopsa", "connectwise", "syncro", "servicenow", "autotask"}:
+        raise HTTPException(status_code=409, detail={"code": "client_scope_unsupported"})
+    transport = getattr(
+        request.app.state,
+        f"{connector_type}_transport",
+        getattr(appliance_client, "transport", None),
+    )
+    try:
+        return build_read_client_for_client(
+            store,
+            connector_type,
+            client_id,
+            base_settings=settings,
+            vault=vault,
+            inner_transport=transport,
+        )
+    except ConnectorFactoryError as exc:
+        raise HTTPException(
+            status_code=409,
+            detail={"code": "client_scope_unavailable", "client_id": client_id},
+        ) from exc
+
+
 LOGGER = logging.getLogger(__name__)
 CORRELATION_HEADER = "X-Correlation-ID"
 _TERMINAL_EXECUTION_STATUSES = frozenset({"succeeded", "verified", "unverified", "submitted"})
@@ -1384,68 +1455,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             # sanitized failure when it is used.
             return bool(active_settings.m365_graph_base_url and active_settings.m365_access_token)
 
-    def _connector_read_client(
-        request: Request,
-        context: AuthContext,
-        connector_type: str,
-        appliance_client: object,
-        *,
-        requested_client_id: str | None = None,
-        m365_teams: bool = False,
-    ) -> object:
-        """Resolve a provider read client without widening a tenant scope."""
-        scope = resolve_client_scope(context, requested_client_from(request, requested_client_id))
-        if isinstance(scope, AllClients):
-            return appliance_client
-        client_id = scope.client_id
-        if client_id is None:  # pragma: no cover - BoundClients rejects empty scopes
-            raise HTTPException(status_code=403, detail="client scope is required")
-        if connector_type == "m365":
-            transport = getattr(
-                request.app.state,
-                f"{connector_type}_transport",
-                getattr(appliance_client, "transport", None),
-            )
-            try:
-                connection = m365_connection_resolver.resolve(client_id)
-                if m365_teams:
-                    return TeamsGraphClient(
-                        active_settings,
-                        transport=transport,
-                        connection=connection,
-                    )
-                return M365GraphClient(
-                    active_settings,
-                    transport=transport,
-                    connection=connection,
-                    client_id=client_id,
-                )
-            except M365ProfileResolutionError as exc:
-                raise HTTPException(
-                    status_code=409,
-                    detail={"code": "client_scope_unavailable", "client_id": client_id},
-                ) from exc
-        if connector_type not in {"halopsa", "connectwise", "syncro", "servicenow", "autotask"}:
-            raise HTTPException(status_code=409, detail={"code": "client_scope_unsupported"})
-        transport = getattr(
-            request.app.state,
-            f"{connector_type}_transport",
-            getattr(appliance_client, "transport", None),
-        )
-        try:
-            return build_read_client_for_client(
-                store,
-                connector_type,
-                client_id,
-                base_settings=active_settings,
-                vault=vault,
-                inner_transport=transport,
-            )
-        except ConnectorFactoryError as exc:
-            raise HTTPException(
-                status_code=409,
-                detail={"code": "client_scope_unavailable", "client_id": client_id},
-            ) from exc
+    _connector_read_client = partial(
+        globals()["_connector_read_client"],
+        settings=active_settings,
+        store=store,
+        vault=vault,
+        m365_connection_resolver=m365_connection_resolver,
+    )
 
     @app.get("/health")
     @limiter.exempt
@@ -4386,18 +4402,15 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @app.get("/connectors/halopsa/clients/{client_id}/assets")
     @limiter.limit(active_settings.rate_limit_connector)
     def halopsa_client_assets(client_id: str, request: Request, context: ViewerAccess) -> dict[str, object]:
+        # The path client id is validated against the principal's scope here; it must not be
+        # re-submitted as a *requested* client, or an appliance-wide (AllClients) caller would be
+        # narrowed to a bound scope and fail closed for lack of a client-scoped instance.
         scoped_client_id = _resolve_detail_scope(context, client_id).client_id
         if scoped_client_id is None:
             raise HTTPException(status_code=403, detail="client scope is required")
         client = cast(
             HaloPSAClient,
-            _connector_read_client(
-                request,
-                context,
-                "halopsa",
-                halopsa_client,
-                requested_client_id=scoped_client_id,
-            ),
+            _connector_read_client(request, context, "halopsa", halopsa_client),
         )
         response = client.list_client_assets(scoped_client_id)
         return _halopsa_response("clients.assets", response)

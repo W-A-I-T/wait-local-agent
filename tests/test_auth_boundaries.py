@@ -372,6 +372,25 @@ def test_live_core_connector_reads_honor_bound_scope(live_settings, monkeypatch)
     )
     assert msp["items"][0]["display_name"] == "alpha,beta"
 
+    teams = endpoint_for("/connectors/m365/teams")(
+        request=request_for("/connectors/m365/teams"),
+        context=bound_context,
+        client_id=None,
+    )
+    assert teams["result"]["status"] == "blocked"
+    with pytest.raises(HTTPException) as unsupported:
+        endpoint_for("/connectors/confluence/pages")(
+            request=request_for("/connectors/confluence/pages"),
+            context=bound_context,
+            space_id=None,
+            title=None,
+            cursor=None,
+            page_size=None,
+            client_id=None,
+        )
+    assert unsupported.value.status_code == 409
+    assert unsupported.value.detail == {"code": "client_scope_unsupported"}
+
     FakeM365Resolver.unavailable = True
     with pytest.raises(HTTPException) as unavailable:
         endpoint_for("/connectors/m365/users")(

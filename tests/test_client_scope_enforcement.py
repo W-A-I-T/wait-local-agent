@@ -467,6 +467,7 @@ def test_route_walk_requires_scope_for_client_bearing_routes(settings) -> None:
         "_operator_scope",
         "_resolve_client_target_scope",
         "_resolve_detail_scope",
+        "_connector_read_client",
     }
 
     checked = 0
