@@ -676,10 +676,97 @@ export type ConsultantArchitecture = {
   };
   supervisor?: {
     mode: string;
-    children: Array<{ id: string; kind: string; purpose?: string; context_policy?: string }>;
+    children: Array<{ id: string; kind: string; purpose?: string; tool_ids?: string[]; context_policy?: string; depends_on_agent_ids?: string[] }>;
     context_policy?: string;
     execution_started?: boolean;
   };
+};
+
+export type ConsultantSupervisorPlan = {
+  format: string;
+  format_version: number;
+  client_id: string;
+  supervisor: {
+    id: string;
+    mode: string;
+    max_depth: number;
+    recursion: string;
+    task: string;
+    children: Array<{
+      id: string;
+      name: string;
+      enabled: boolean;
+      tool_ids: string[];
+      depends_on_agent_ids: string[];
+      context_policy: string;
+      result_contract: Record<string, string>;
+    }>;
+    selection: string;
+  };
+  assignments: Array<{
+    sequence: number;
+    child_agent_id: string;
+    input_contract: Record<string, string>;
+  }>;
+  context_policy: string;
+  retry_policy: {
+    max_retries_per_child: number;
+    retryable_statuses: string[];
+    attempts_are_lineage_bound: boolean;
+  };
+  cancellation_policy: {
+    supported: boolean;
+    target: string;
+    stops_before_next_child: boolean;
+  };
+  delegation_started: boolean;
+  execution_started: boolean;
+  approval_requests_created: boolean;
+  cross_tenant_context: boolean;
+};
+
+export type ConsultantSupervisorRun = {
+  format: string;
+  format_version: number;
+  client_id: string;
+  entity_id: string;
+  status: string;
+  supervisor: {
+    id: string;
+    mode: string;
+    max_depth: number;
+    recursion: string;
+    task: string;
+    ordered_child_agent_ids: string[];
+    lineage_contract: string;
+  };
+  children: Array<{
+    agent_id: string;
+    run_id?: number;
+    sequence: number;
+    status: string;
+    current_step?: number | null;
+    final_result?: Record<string, unknown>;
+    approval_id?: number | null;
+    error_detail?: string;
+    resumed?: boolean;
+    attempt?: number;
+    retry_of_run_id?: number | null;
+    attempts?: Array<Record<string, unknown>>;
+    retry_count?: number;
+    lineage?: Record<string, unknown>;
+  }>;
+  resumption: {
+    completed_run_ids: number[];
+    pending_run_id: number | null;
+    next_child_agent_id: string | null;
+  };
+  delegation_started: boolean;
+  execution_started: boolean;
+  approval_requests_created: boolean;
+  retry_policy: { max_retries_per_child: number; retryable_statuses: string[] };
+  cancellation: { requested_run_id: number | null; applied: boolean };
+  cross_tenant_context: boolean;
 };
 
 export type ConsultantEnvironmentSystem = {
@@ -910,6 +997,60 @@ export type PowerAppsArtifact = {
   execution_started: boolean;
   deployment_started: boolean;
   package_status: string;
+};
+
+export type ConsultantCopilotStudioPlan = {
+  format: string;
+  format_version: number;
+  client_id: string;
+  target: string;
+  copilot: { name: string; business_goal: string };
+  topics: Array<{ id: string; name: string; trigger_phrases: string[] }>;
+  knowledge_sources: string[];
+  actions: Array<{
+    id: string;
+    connector_id: string;
+    method: string;
+    approval_required: boolean;
+  }>;
+  requires_approval: boolean;
+  credentials_included: boolean;
+  generation_status: string;
+  provider_verification: string;
+  execution_started: boolean;
+  deployment_started: boolean;
+  open_items: string[];
+};
+
+export type ConsultantConnectorArtifact = {
+  format: string;
+  format_version: number;
+  connector_id: string;
+  display_name: string;
+  api_version: string;
+  host: string;
+  base_path: string;
+  authentication: Array<{
+    name: string;
+    type: string;
+    in: string | null;
+    authorization_url_present: boolean;
+  }>;
+  actions: Array<{
+    id: string;
+    method: string;
+    path: string;
+    summary: string;
+    parameters: Array<{ name: string; in: string; required: boolean; type: unknown }>;
+    response_statuses: string[];
+  }>;
+  credentials_included: boolean;
+  deployment_started: boolean;
+};
+
+export type ConsultantConnectorValidationResult = {
+  valid: boolean;
+  connector: ConsultantConnectorArtifact;
 };
 
 export type ConsultantDiscoveryResult = {

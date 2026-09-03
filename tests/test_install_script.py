@@ -15,6 +15,69 @@ def _stub(tmp_path: Path, name: str, contents: str) -> None:
     path.chmod(0o755)
 
 
+def _installer_environment(tmp_path: Path, *, with_cosign: bool = False) -> dict[str, str]:
+    image_ref = "ghcr.io/w-a-i-t/wait-local-agent@sha256:" + "a" * 64
+    _stub(
+        tmp_path,
+        "docker",
+        f"""#!/bin/sh
+if [ \"$1\" = compose ] && [ \"$2\" = version ]; then
+  printf '%s\\n' 'Docker Compose version v2.30.0'
+elif [ \"$1\" = image ] && [ \"$2\" = inspect ]; then
+  printf '%s\\n' '{image_ref}'
+elif [ \"$1\" = run ]; then
+  printf '%s\\n' 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopq='
+fi
+""",
+    )
+    _stub(
+        tmp_path,
+        "curl",
+        """#!/bin/sh
+log_file=\"$FAKE_CURL_LOG\"
+printf '%s\\n' \"$@\" >> \"$log_file\"
+url=''
+for arg do url=\"$arg\"; done
+    case \"$url\" in
+      https://api.github.com/*) printf '%s\\n' '{\"tag_name\":\"v2.0.0\"}' ;;
+      https://raw.githubusercontent.com/*) printf '%s\\n' 'services: {}' ;;
+  http://127.0.0.1:*) exit 0 ;;
+  *) exit 1 ;;
+esac
+""",
+    )
+    if with_cosign:
+        _stub(
+            tmp_path,
+            "cosign",
+            """#!/bin/sh
+printf '%s\\n' "$@" > "$FAKE_COSIGN_LOG"
+""",
+        )
+    install_dir = tmp_path / "install"
+    environment = {
+        **os.environ,
+        "PATH": f"{tmp_path}:/bin",
+        "WAIT_INSTALL_DIR": str(install_dir),
+        "FAKE_CURL_LOG": str(tmp_path / "curl.log"),
+    }
+    if with_cosign:
+        environment["FAKE_COSIGN_LOG"] = str(tmp_path / "cosign.log")
+    return environment
+
+
+def _run_installer(
+    tmp_path: Path, *args: str, with_cosign: bool = False
+) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        ["/bin/bash", str(SCRIPT), *args],
+        env=_installer_environment(tmp_path, with_cosign=with_cosign),
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+
 def test_dry_run_rejects_missing_docker(tmp_path: Path) -> None:
     _stub(tmp_path, "uname", "#!/bin/sh\nprintf '%s\\n' Linux\n")
 
@@ -67,6 +130,59 @@ fi
     assert f"Install directory: {install_dir}" in result.stdout
     assert "Setup URL: http://127.0.0.1:8788" in result.stdout
     assert not install_dir.exists()
+
+
+def test_pinned_install_fetches_release_compose_and_records_digest(tmp_path: Path) -> None:
+    result = _run_installer(tmp_path, "--version", "2.0.0", "--no-verify")
+
+    assert result.returncode == 0, result.stderr
+    install_dir = tmp_path / "install"
+    env_file = (install_dir / ".env").read_text(encoding="utf-8")
+    curl_log = (tmp_path / "curl.log").read_text(encoding="utf-8")
+    assert "WAIT_IMAGE_REF=ghcr.io/w-a-i-t/wait-local-agent@sha256:" in env_file
+    assert "WAIT_IMAGE_VERIFIED=false" in env_file
+    assert "/v2.0.0/docker-compose.prod.yml" in curl_log
+    assert "/main/" not in curl_log
+    assert "One-time" not in result.stdout
+
+
+def test_install_fails_closed_without_cosign(tmp_path: Path) -> None:
+    result = _run_installer(tmp_path, "--version", "2.0.0")
+
+    assert result.returncode != 0
+    assert "cosign" in result.stderr
+    assert "--no-verify" in result.stderr
+
+
+def test_install_verifies_the_pulled_digest_with_cosign(tmp_path: Path) -> None:
+    result = _run_installer(tmp_path, "--version", "2.0.0", with_cosign=True)
+
+    assert result.returncode == 0, result.stderr
+    env_file = (tmp_path / "install" / ".env").read_text(encoding="utf-8")
+    cosign_log = (tmp_path / "cosign.log").read_text(encoding="utf-8")
+    assert "WAIT_IMAGE_VERIFIED=true" in env_file
+    assert "verify" in cosign_log
+    assert "--certificate-identity-regexp" in cosign_log
+    assert "--certificate-oidc-issuer" in cosign_log
+    assert "@sha256:" in cosign_log
+
+
+def test_stable_resolves_to_a_release_tag(tmp_path: Path) -> None:
+    result = _run_installer(tmp_path, "--version", "stable", "--no-verify")
+
+    assert result.returncode == 0, result.stderr
+    assert "Resolved stable to release v2.0.0" in result.stderr
+    curl_log = (tmp_path / "curl.log").read_text(encoding="utf-8")
+    assert "/v2.0.0/docker-compose.prod.yml" in curl_log
+
+
+def test_no_verify_is_loud_and_persists_bootstrap_token_wording(tmp_path: Path) -> None:
+    result = _run_installer(tmp_path, "--version", "2.0.0", "--no-verify")
+
+    assert result.returncode == 0, result.stderr
+    assert "WARNING: --no-verify" in result.stderr
+    assert "Bootstrap admin token (persisted in .env; rotate after creating a database admin):" in result.stdout
+    assert "One-time" not in result.stdout
 
 
 def test_release_validation_and_ci_measure_the_same_python_coverage_sources() -> None:

@@ -4,8 +4,26 @@ All notable changes to WAIT Local Agent will be documented in this file.
 
 ## [Unreleased]
 
+### Security
+
+- Production installs now fetch version-matched release assets, verify keyless
+  cosign signatures by image digest by default, and persist a digest-pinned
+  image reference with an explicit, recorded `--no-verify` escape hatch.
+- Production and development Compose stacks explicitly default session cookies
+  to secure, with documented guidance for deliberate plain-HTTP proxies.
+
+### Changed
+
+- Release images are smoke-tested and pushed from one loaded image artifact;
+  the workflow asserts that the smoke-tested and published digests match.
+- Pull-request secret scans now inspect only the event's commit range, while a
+  weekly scheduled job retains the all-history scan.
+
 ### Fixed
 
+- Re-landed the reviewed Solutions Architect live supervisor delegation panel
+  from #484 and the Copilot Studio planner and Custom Connector validator
+  screens from #485; both remain reviewable and approval-gated.
 - Invalid `WAIT_SECRETS_BACKEND` values now refuse startup instead of silently
   selecting the environment backend; Fernet vault read failures are surfaced
   during settings load, and short non-demo bootstrap tokens emit value-free
