@@ -1,6 +1,6 @@
 services:
   api:
-    image: ghcr.io/w-a-i-t/wait-local-agent:${WAIT_IMAGE_TAG:-stable}
+    image: ${WAIT_IMAGE_REF:-ghcr.io/w-a-i-t/wait-local-agent:${WAIT_IMAGE_TAG:-stable}}
     env_file:
       - path: .env
         required: false
@@ -16,6 +16,9 @@ services:
       WAIT_VAULT_KEY: ${WAIT_VAULT_KEY:-}
       WAIT_VAULT_PATH: /data/vault
       WAIT_TRUSTED_HOSTS: ${WAIT_TRUSTED_HOSTS:-127.0.0.1,localhost}
+      # Keep session cookies secure by default; see the production install guide
+      # before disabling this for a plain-HTTP reverse proxy on a non-localhost host.
+      WAIT_SESSION_COOKIE_SECURE: ${WAIT_SESSION_COOKIE_SECURE:-true}
     ports:
       - "127.0.0.1:${WAIT_COMPOSE_API_PORT:-8788}:8788"
     volumes:
