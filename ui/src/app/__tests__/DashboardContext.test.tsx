@@ -2,6 +2,7 @@ import { act, fireEvent, render, screen, waitFor } from "@testing-library/react"
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { DashboardProvider, getWriteHealthPosture, useDashboard } from "../DashboardContext";
 import { apiFetch } from "../../api/client";
+import { apiTokenStorageKey } from "../../api/headers";
 
 vi.mock("../../api/client", () => ({
   apiFetch: vi.fn()
@@ -40,6 +41,7 @@ function DashboardHarness() {
     refresh,
     refreshConfiguration,
     recheckWriteHealth,
+    logout,
     roleResolved,
     selectedClientId,
     setSelectedClientId,
@@ -49,6 +51,7 @@ function DashboardHarness() {
   return (
     <>
       <button type="button" onClick={() => void refresh()}>Refresh credentials</button>
+      <button type="button" onClick={() => void logout()}>Sign out</button>
       <button type="button" onClick={() => void refreshConfiguration()}>Refresh configuration</button>
       <button type="button" onClick={() => void recheckWriteHealth()}>Re-check write health</button>
       <button type="button" onClick={() => setSelectedClientId("client-a")}>Select client A</button>
@@ -75,6 +78,7 @@ function DashboardHarness() {
 describe("DashboardContext role refresh", () => {
   beforeEach(() => {
     window.localStorage.clear();
+    window.sessionStorage.clear();
     mockedApiFetch.mockReset();
     mockedApiFetch.mockImplementation((path: string) => {
       if (path === "/auth/role") {
@@ -188,6 +192,26 @@ describe("DashboardContext role refresh", () => {
     await waitFor(() => expect(screen.getByTestId("auth-state")).toHaveTextContent("authenticated"));
     expect(window.localStorage.getItem("wait-local-agent-api-token")).toBe("legacy-token");
     expect(mockedApiFetch.mock.calls.some(([path]) => path === "/auth/role")).toBe(true);
+  });
+
+  it("clears a break-glass session token when signing out", async () => {
+    window.sessionStorage.setItem(apiTokenStorageKey, "bootstrap-token");
+    mockedApiFetch.mockImplementation((path: string) => {
+      if (path === "/auth/role") {
+        return Promise.resolve({ role: "admin", api_auth_required: true, demo_mode: false }) as ReturnType<typeof apiFetch>;
+      }
+      if (path === "/auth/logout") {
+        return Promise.resolve({ authenticated: false }) as ReturnType<typeof apiFetch>;
+      }
+      return Promise.resolve(defaultResponse(path)) as ReturnType<typeof apiFetch>;
+    });
+
+    render(<DashboardProvider><DashboardHarness /></DashboardProvider>);
+
+    await waitFor(() => expect(screen.getByText("access resolved")).toBeInTheDocument());
+    fireEvent.click(screen.getByRole("button", { name: "Sign out" }));
+
+    await waitFor(() => expect(window.sessionStorage.getItem(apiTokenStorageKey)).toBeNull());
   });
 
   it("derives invalid-token only when a saved token receives a 401", async () => {

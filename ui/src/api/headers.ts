@@ -19,16 +19,39 @@ export function buildApiHeaders(includeJsonContentType = false): HeadersInit {
   return headers;
 }
 
-export function setInMemoryApiToken(token: string): void {
-  inMemoryApiToken = token.trim();
+export function setSessionApiToken(token: string): void {
+  const normalizedToken = token.trim();
+  inMemoryApiToken = normalizedToken;
+  try {
+    if (normalizedToken) {
+      window.sessionStorage.setItem(apiTokenStorageKey, normalizedToken);
+    } else {
+      window.sessionStorage.removeItem(apiTokenStorageKey);
+    }
+  } catch {
+    // Keep the token in memory when browser storage is unavailable.
+  }
 }
 
 export function clearInMemoryApiToken(): void {
   inMemoryApiToken = "";
+  try {
+    window.sessionStorage.removeItem(apiTokenStorageKey);
+  } catch {
+    return;
+  }
 }
 
 export function loadApiToken(): string {
-  return inMemoryApiToken || loadStoredApiToken();
+  return loadSessionApiToken() || inMemoryApiToken || loadStoredApiToken();
+}
+
+function loadSessionApiToken(): string {
+  try {
+    return window.sessionStorage.getItem(apiTokenStorageKey)?.trim() ?? "";
+  } catch {
+    return "";
+  }
 }
 
 export function loadStoredApiToken(): string {

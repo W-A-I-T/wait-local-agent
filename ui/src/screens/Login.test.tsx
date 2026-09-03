@@ -19,6 +19,7 @@ function renderScreen(initialEntries = ["/"]) {
 describe("Login", () => {
   beforeEach(() => {
     window.localStorage.clear();
+    window.sessionStorage.clear();
     clearInMemoryApiToken();
     delete window.__WAIT_API_BASE__;
     mockedApiFetch.mockReset();
@@ -39,7 +40,7 @@ describe("Login", () => {
     expect(window.localStorage.getItem("wait-local-agent-api-token")).toBeNull();
   });
 
-  it("keeps bootstrap credentials in memory for the bearer break-glass path", async () => {
+  it("keeps bootstrap credentials in session storage for the bearer break-glass path", async () => {
     mockedApiFetch.mockResolvedValue({ session_created: false } as never);
 
     renderScreen();
@@ -47,6 +48,7 @@ describe("Login", () => {
     fireEvent.click(screen.getByRole("button", { name: "Sign in" }));
 
     await waitFor(() => expect(window.localStorage.getItem("wait-local-agent-api-token")).toBeNull());
+    expect(window.sessionStorage.getItem("wait-local-agent-api-token")).toBe("bootstrap-token");
     expect(buildApiHeaders()).toMatchObject({ Authorization: "Bearer bootstrap-token" });
     expect(screen.getByRole("status")).toHaveTextContent("this session is not persisted");
   });

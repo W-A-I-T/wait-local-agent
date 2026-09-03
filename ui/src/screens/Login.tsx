@@ -1,7 +1,7 @@
 import { useEffect, useState, type FormEvent } from "react";
 import { useLocation } from "react-router-dom";
 import { apiFetch } from "../api/client";
-import { clearInMemoryApiToken, persistApiToken, setInMemoryApiToken } from "../api/headers";
+import { clearInMemoryApiToken, persistApiToken, setSessionApiToken } from "../api/headers";
 import { useDashboard } from "../app/DashboardContext";
 import { apiUrl } from "../lib/config";
 
@@ -59,7 +59,7 @@ export function Login() {
       } else {
         // Break-glass bootstrap tokens remain bearer-only by design.
         persistApiToken("");
-        setInMemoryApiToken(candidate);
+        setSessionApiToken(candidate);
         setBreakGlassSession(true);
       }
       setToken("");

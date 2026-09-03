@@ -1,18 +1,20 @@
-import { beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   apiTokenStorageKey,
   buildApiHeaders,
   clearInMemoryApiToken,
+  loadApiToken,
   loadStoredSelectedClientId,
   persistApiToken,
   persistSelectedClientId,
-  setInMemoryApiToken,
+  setSessionApiToken,
   selectedClientStorageKey
 } from "./headers";
 
 describe("selected client API scope header", () => {
   beforeEach(() => {
     window.localStorage.clear();
+    window.sessionStorage.clear();
     clearInMemoryApiToken();
   });
 
@@ -33,11 +35,41 @@ describe("selected client API scope header", () => {
     expect(buildApiHeaders()).not.toHaveProperty("X-WAIT-Client-ID");
   });
 
-  it("uses a tab-only token before any stored credential", () => {
+  it("uses a session token before memory and legacy stored credentials", () => {
     persistApiToken("stored-token");
-    setInMemoryApiToken("bootstrap-token");
+    setSessionApiToken("bootstrap-token");
 
     expect(buildApiHeaders()).toMatchObject({ Authorization: "Bearer bootstrap-token" });
+    expect(window.sessionStorage.getItem(apiTokenStorageKey)).toBe("bootstrap-token");
     expect(window.localStorage.getItem(apiTokenStorageKey)).toBe("stored-token");
+  });
+
+  it("loads a session token after the module is re-imported", async () => {
+    window.sessionStorage.setItem(apiTokenStorageKey, "bootstrap-token");
+    vi.resetModules();
+
+    const reloadedHeaders = await import("./headers");
+
+    expect(reloadedHeaders.loadApiToken()).toBe("bootstrap-token");
+  });
+
+  it("falls back to memory when session storage cannot be written", () => {
+    const setItem = vi.spyOn(window.sessionStorage, "setItem").mockImplementation(() => {
+      throw new Error("storage unavailable");
+    });
+
+    setSessionApiToken("bootstrap-token");
+
+    expect(buildApiHeaders()).toMatchObject({ Authorization: "Bearer bootstrap-token" });
+    expect(window.localStorage.getItem(apiTokenStorageKey)).toBeNull();
+    setItem.mockRestore();
+  });
+
+  it("clears the session token and memory holder together", () => {
+    setSessionApiToken("bootstrap-token");
+    clearInMemoryApiToken();
+
+    expect(window.sessionStorage.getItem(apiTokenStorageKey)).toBeNull();
+    expect(loadApiToken()).toBe("");
   });
 });

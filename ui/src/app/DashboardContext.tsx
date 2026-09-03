@@ -3,7 +3,6 @@ import { apiFetch } from "../api/client";
 import {
   clearInMemoryApiToken,
   loadApiToken,
-  loadStoredApiToken,
   loadStoredSelectedClientId,
   persistApiToken,
   persistSelectedClientId
@@ -205,7 +204,7 @@ export function executeEndpointFor(actionType: string): string | null {
 const DashboardContext = createContext<DashboardContextValue | undefined>(undefined);
 
 export function DashboardProvider({ children }: { children: ReactNode }) {
-  const [apiToken, setApiToken] = useState(() => loadStoredApiToken());
+  const [apiToken, setApiToken] = useState(() => loadApiToken());
   const [role, setRole] = useState<AuthRoleResponse["role"]>("viewer");
   const [allowWriteActions, setAllowWriteActions] = useState(false);
   const [isMspAdmin, setIsMspAdmin] = useState(false);
