@@ -132,7 +132,7 @@ export function PrincipalsAdmin() {
       setOneTimeToken(response.token ?? null);
       setCopied(false);
       await refresh(false);
-      setNotice({ kind: "success", message: response.credential_notice ?? "Principal created." });
+      setNotice({ kind: "success", message: response.credential_notice ?? "Operator account created." });
     } catch (error) {
       setNotice({ kind: "danger", message: error instanceof Error ? error.message : "Principal could not be created." });
     } finally {
@@ -151,9 +151,9 @@ export function PrincipalsAdmin() {
         body: JSON.stringify({ active })
       });
       await refresh(false);
-      setNotice({ kind: "success", message: active ? "Principal activated." : "Principal deactivated." });
+      setNotice({ kind: "success", message: active ? "Operator account activated." : "Operator account deactivated." });
     } catch (error) {
-      setNotice({ kind: "danger", message: error instanceof Error ? error.message : "Principal status could not be changed." });
+      setNotice({ kind: "danger", message: error instanceof Error ? error.message : "Operator account status could not be changed." });
     } finally {
       setBusy(false);
     }
@@ -309,7 +309,7 @@ export function PrincipalsAdmin() {
           <div>
             <p className="eyebrow">Authorization</p>
             <h2>People &amp; Access</h2>
-            <p className="screen-note">Create technician and viewer identities, manage roles, and issue or revoke bearer credentials.</p>
+            <p className="screen-note">Create operator accounts, manage client roles and capabilities, and issue or revoke access credentials.</p>
           </div>
           <button type="button" onClick={() => void refresh()} disabled={loading || busy}>{loading ? "Refreshing…" : "Refresh"}</button>
         </div>
@@ -317,8 +317,24 @@ export function PrincipalsAdmin() {
 
       {notice ? <div className={`notice ${notice.kind}`} role={notice.kind === "danger" ? "alert" : "status"}>{notice.message}</div> : null}
 
+      <section className="panel access-explainer" aria-labelledby="access-model-heading">
+        <div className="panel-heading">
+          <div>
+            <p className="eyebrow">Access model</p>
+            <h3 id="access-model-heading">How access fits together</h3>
+            <p className="screen-note">These four concepts work together, but each answers a different access question.</p>
+          </div>
+        </div>
+        <dl className="access-concepts">
+          <div><dt>Operator account</dt><dd>The person or service identity managed on this screen.</dd></div>
+          <div><dt>Client role</dt><dd>What an operator account can do for one client; manage it under the account's Roles.</dd></div>
+          <div><dt>Capability</dt><dd>A focused high-impact permission, such as Microsoft Admin; manage it from Microsoft Admin Access.</dd></div>
+          <div><dt>Access credential</dt><dd>The sign-in secret for an operator account; issue, rotate, or revoke it under Access credentials.</dd></div>
+        </dl>
+      </section>
+
       <section className="panel" aria-labelledby="create-principal-heading">
-        <div className="panel-heading"><h3 id="create-principal-heading">Create principal</h3></div>
+        <div className="panel-heading"><h3 id="create-principal-heading">Create operator account</h3></div>
         <form onSubmit={(event) => void submitCreate(event)}>
           <label htmlFor="principal-id">Principal ID</label>
           <input id="principal-id" value={newPrincipalId} onChange={(event) => setNewPrincipalId(event.target.value)} disabled={busy} required />
@@ -348,7 +364,7 @@ export function PrincipalsAdmin() {
       </section>
 
       <section className="panel" aria-labelledby="oidc-config-heading">
-        <div className="panel-heading"><div><h3 id="oidc-config-heading">Microsoft sign-in</h3><p className="screen-note">Connect a single Microsoft Entra tenant. The client secret is write-only and stays in the encrypted vault.</p></div></div>
+        <div className="panel-heading"><div><h3 id="oidc-config-heading">Microsoft sign-in</h3><p className="screen-note">Connect a single Microsoft Entra tenant. The client secret is write-only and stays in the encrypted secure store.</p></div></div>
         <form onSubmit={(event) => void saveOidcConfig(event)}>
           <label htmlFor="oidc-tenant-id">Tenant ID</label>
           <input id="oidc-tenant-id" value={oidcConfig.tenant_id} onChange={(event) => setOidcConfig({ ...oidcConfig, tenant_id: event.target.value })} disabled={busy} />
@@ -367,11 +383,11 @@ export function PrincipalsAdmin() {
         </form>
       </section>
 
-      {loading ? <LoadingState label="Loading principals…" /> : principals.length === 0 ? (
-        <EmptyState title="No principals yet" why="Create the first staff or customer identity to manage access." />
+      {loading ? <LoadingState label="Loading operator accounts…" /> : principals.length === 0 ? (
+        <EmptyState title="No operator accounts yet" why="Create the first staff or customer operator account to manage access." />
       ) : (
         <section className="panel" aria-labelledby="principal-list-heading">
-          <div className="panel-heading"><div><h3 id="principal-list-heading">Principals</h3><span>{principals.length} principal(s)</span></div></div>
+          <div className="panel-heading"><div><h3 id="principal-list-heading">Operator accounts</h3><span>{principals.length} account(s)</span></div></div>
           <div className="event-list">
             {principals.map((principal) => (
               <article className="event-row" key={principal.principal_id}>
@@ -388,9 +404,9 @@ export function PrincipalsAdmin() {
       )}
 
       {selected ? (
-        <aside className="panel" aria-label="Principal details">
+        <aside className="panel" aria-label="Operator account details">
           <div className="panel-heading">
-            <div><p className="eyebrow">Principal details</p><h3>{selected.display_name}</h3><span>{selected.principal_id}</span></div>
+            <div><p className="eyebrow">Operator account details</p><h3>{selected.display_name}</h3><span>{selected.principal_id}</span></div>
             <button type="button" onClick={() => void updatePrincipal(!selected.active)} disabled={busy}>{selected.active ? "Deactivate" : "Activate"}</button>
           </div>
           <p className="screen-note">Status: {selected.active ? "Active" : "Inactive"}. Deactivating preserves audit history and disables its credentials.</p>
@@ -419,7 +435,7 @@ export function PrincipalsAdmin() {
           </section>
 
           <section aria-labelledby="principal-credentials-heading">
-            <div className="panel-heading"><h4 id="principal-credentials-heading">Credentials</h4><div><button type="button" onClick={() => void issueCredential()} disabled={busy || !selected.active}>Issue credential</button><button type="button" onClick={() => void rotateCredential()} disabled={busy || !selected.active}>Rotate credential</button><button type="button" onClick={() => void revokeAllCredentials()} disabled={busy || !selected.active}>Revoke all</button></div></div>
+            <div className="panel-heading"><h4 id="principal-credentials-heading">Access credentials</h4><div><button type="button" onClick={() => void issueCredential()} disabled={busy || !selected.active}>Issue credential</button><button type="button" onClick={() => void rotateCredential()} disabled={busy || !selected.active}>Rotate credential</button><button type="button" onClick={() => void revokeAllCredentials()} disabled={busy || !selected.active}>Revoke all</button></div></div>
             {selected.credentials.length ? <ul>{selected.credentials.map((credential) => <li key={credential.credential_hash_prefix}>{credential.credential_hash_prefix}… · {credential.active ? "Active" : "Revoked"} {credential.active ? <button type="button" onClick={() => void revokeCredential(credential)} disabled={busy}>Revoke</button> : null}</li>)}</ul> : <p className="screen-note">No credentials issued.</p>}
           </section>
           <section aria-labelledby="principal-identities-heading">
@@ -438,7 +454,7 @@ export function PrincipalsAdmin() {
       {oneTimeToken ? (
         <div className="panel" role="dialog" aria-labelledby="one-time-token-heading">
           <h3 id="one-time-token-heading">Credential issued</h3>
-          <p className="screen-note">This bearer token is shown once. Copy it now; it cannot be retrieved later.</p>
+          <p className="screen-note">This access credential is shown once. Copy it now; it cannot be retrieved later.</p>
           <code>{oneTimeToken}</code>
           <div><button type="button" onClick={() => void copyToken()}>{copied ? "Copied" : "Copy token"}</button><button type="button" onClick={() => { setOneTimeToken(null); setCopied(false); }}>Close</button></div>
         </div>

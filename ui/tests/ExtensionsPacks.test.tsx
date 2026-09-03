@@ -79,7 +79,7 @@ describe("Extensions / Packs wiring", () => {
     render(<MemoryRouter><ExtensionsPacks /></MemoryRouter>);
 
     expect(await screen.findByRole("alert")).toHaveTextContent("The appliance couldn't complete the request. Try again shortly.");
-    expect(screen.queryByText("No packs are installed on this appliance.")).not.toBeInTheDocument();
+    expect(screen.queryByText("No packs installed")).not.toBeInTheDocument();
   });
 
   it("renders the empty state when no packs are installed", async () => {
@@ -88,7 +88,8 @@ describe("Extensions / Packs wiring", () => {
 
     render(<MemoryRouter><ExtensionsPacks /></MemoryRouter>);
 
-    expect(await screen.findByText("No packs are installed on this appliance.")).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "No packs installed" })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Go to install control" })).toHaveAttribute("href", "/#pack-install-form");
   });
 
   it("hides the admin surface from viewers", async () => {

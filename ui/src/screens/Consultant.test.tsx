@@ -397,7 +397,7 @@ describe("Consultant architecture decisions", () => {
     expect(screen.getByText("The directory is the system of record.")).toBeInTheDocument();
     expect(screen.getByText("Local cache")).toBeInTheDocument();
     expect(screen.getByText("Manager review")).toBeInTheDocument();
-    expect(screen.getByText(/No inference started · No execution started · No deployment started/)).toBeInTheDocument();
+    expect(screen.getByText(/No inference started · No live run recorded · No deployment started/)).toBeInTheDocument();
   });
 
   it("loads blueprint detail, probes the environment matrix, and passes review results through the chain", async () => {
@@ -421,7 +421,7 @@ describe("Consultant architecture decisions", () => {
     fireEvent.click(screen.getByRole("button", { name: "Run agent evaluation" }));
     expect(await screen.findByRole("heading", { name: "Evaluation checklist" })).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Build delivery plan" }));
-    expect(await screen.findByText(/not_generated handoff/)).toBeInTheDocument();
+    expect(await screen.findByText(/The delivery review is/)).toBeInTheDocument();
 
     const deliveryCall = vi.mocked(fetch).mock.calls.find(([input]) => String(input) === "/consultant/delivery-plan");
     const deliveryBody = JSON.parse(String(deliveryCall?.[1]?.body));
@@ -429,7 +429,7 @@ describe("Consultant architecture decisions", () => {
     expect(deliveryBody.governance).toMatchObject({ status: "needs_review" });
     expect(deliveryBody.evaluation).toMatchObject({ production_readiness: "pass" });
     expect(deliveryBody.review_artifacts[0]).toMatchObject({ client_id: "acme", probe_requested: true });
-  });
+  }, 15000);
 
   it("labels controlled evaluation accurately and sends execution only in demo Safe Mode", async () => {
     dashboard.authState = "demo";

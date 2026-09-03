@@ -5,8 +5,14 @@ import { executeEndpointFor, useDashboard } from "../app/DashboardContext";
 import { apiFetch } from "../api/client";
 import { ScopeBadge } from "../components/ScopeBadge";
 import { SelectClientNotice } from "../components/SelectClientNotice";
+import { LifecycleBar } from "../components/LifecycleBar";
 import type { ApprovalRequest } from "../api/types";
-import { readSolutionDeliveryHandoff } from "../lib/solutionDeliveryHandoff";
+import {
+  clearStoredSolutionDeliveryHandoff,
+  readStoredSolutionDeliveryHandoff,
+  solutionDeliveryHandoffStorageKey,
+  type SolutionDeliveryHandoff,
+} from "../lib/solutionDeliveryHandoff";
 
 type JsonRecord = Record<string, unknown>;
 type GateStatus = "met" | "unmet" | "unknown";
@@ -131,10 +137,13 @@ export function SolutionDelivery() {
   const navigate = useNavigate();
   const defaultClientId = selectedClientId.trim();
   const scopeRequired = !defaultClientId;
-  const handoff = useMemo(() => readSolutionDeliveryHandoff(location.state), [location.state]);
-  const [handoffNotice] = useState(
-    handoff ? `${handoff.artifacts.length} artifact${handoff.artifacts.length === 1 ? "" : "s"} received from Solutions Architect. Review the package contents before building.` : "",
-  );
+  const handoffKey = useMemo(() => new URLSearchParams(location.search).get("handoff"), [location.search]);
+  const [storedHandoff, setHandoff] = useState<SolutionDeliveryHandoff | null>(() => (
+    handoffKey === solutionDeliveryHandoffStorageKey(defaultClientId)
+      ? readStoredSolutionDeliveryHandoff(handoffKey)
+      : null
+  ));
+  const handoff = storedHandoff?.clientId === defaultClientId ? storedHandoff : null;
   const [packageForm, setPackageForm] = useState<PackageForm>(() => ({
     ...initialPackageForm,
     artifacts: handoff ? JSON.stringify(handoff.artifacts, null, 2) : initialPackageForm.artifacts,
@@ -154,9 +163,12 @@ export function SolutionDelivery() {
   const [rollbackBusyId, setRollbackBusyId] = useState<number | null>(null);
 
   useEffect(() => {
-    if (!handoff) return;
-    navigate(location.pathname, { replace: true, state: null });
-  }, [handoff, location.pathname, navigate]);
+    const nextHandoff = handoffKey === solutionDeliveryHandoffStorageKey(defaultClientId)
+      ? readStoredSolutionDeliveryHandoff(handoffKey)
+      : null;
+    setHandoff(nextHandoff);
+    setPackageForm((current) => ({ ...current, artifacts: nextHandoff ? JSON.stringify(nextHandoff.artifacts, null, 2) : "[]" }));
+  }, [defaultClientId, handoffKey]);
 
   useEffect(() => {
     let cancelled = false;
@@ -191,6 +203,36 @@ export function SolutionDelivery() {
   const powerPlatformApprovals = approvalRequests.filter(
     (request) => request.action_type === deploymentAction || request.action_type === rollbackAction,
   );
+  const handoffNotice = handoff
+    ? `${handoff.artifacts.length} artifact${handoff.artifacts.length === 1 ? "" : "s"} received from Solutions Architect. Review the package contents before building.`
+    : "";
+  const lifecycleRecord = {
+    ...(packageArtifact ?? {}),
+    ...(validationResult ?? {}),
+    ...(handoff && !packageArtifact ? { deployable: false, package_status: "review_only" } : {}),
+    materialized: materializationResult?.status === "succeeded",
+    execution_started: packageArtifact?.execution_started === true
+      || materializationResult?.execution_started === true
+      || powerPlatformApprovals.some((request) => request.execution_status === "succeeded" && stageFor(request) === "build"),
+    deployment_started: packageArtifact?.deployment_started === true
+      || materializationResult?.deployment_started === true
+      || powerPlatformApprovals.some((request) => request.execution_status === "succeeded" && stageFor(request) !== "build"),
+    approval_status: powerPlatformApprovals.find((request) => request.status !== "rejected")?.status,
+    approval_required: powerPlatformApprovals.some((request) => request.status === "pending") || packageArtifact?.requires_approval === true,
+  };
+
+  function startOver() {
+    clearStoredSolutionDeliveryHandoff(defaultClientId);
+    setHandoff(null);
+    setPackageForm((current) => ({ ...current, artifacts: "[]" }));
+    setPackageArtifact(null);
+    setValidationResult(null);
+    setMaterializationResult(null);
+    setDeploymentPlan(null);
+    setRollbackApproval(null);
+    setMessage("");
+    navigate(location.pathname, { replace: true });
+  }
 
   function effectiveClientId(): string {
     return defaultClientId;
@@ -264,9 +306,9 @@ export function SolutionDelivery() {
       });
       setMaterializationResult(result);
       observeGateResponse(result, "materialize");
-      setMessage(typeof result.message === "string" ? result.message : "Package materialization returned.");
+      setMessage(typeof result.message === "string" ? result.message : "Source files are ready.");
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : "The package could not be materialized.");
+      setMessage(error instanceof Error ? error.message : "The source files could not be created.");
     } finally {
       setBusy(null);
     }
@@ -409,8 +451,11 @@ export function SolutionDelivery() {
           <div className="row-actions">
             <Link className="inline-link" to="/approvals">Open Approvals</Link>
             <button className="icon-button" type="button" onClick={() => void refresh()}><RefreshCw size={16} aria-hidden="true" /> Refresh</button>
+            {handoff ? <button className="secondary-button" type="button" onClick={startOver}>Start over</button> : null}
           </div>
         </div>
+        {handoff ? <p className="screen-note solution-source">Source: {handoff.blueprint?.name || "Solutions Architect"} · {handoff.artifacts.length} artifacts · generated {formatGeneratedAt(handoff.generatedAt)}</p> : null}
+        <LifecycleBar record={lifecycleRecord} />
         <div className="notice">
           <strong>Local operator boundary.</strong> Deploys via your locally-authenticated pac CLI. Nothing runs until WAIT_ALLOW_POWER_PLATFORM_DEPLOYMENT and WAIT_ALLOW_WRITE_ACTIONS are enabled and each stage is approved.
         </div>
@@ -418,7 +463,7 @@ export function SolutionDelivery() {
         <ol className="solution-pipeline" aria-label="Solution delivery pipeline">
           <PipelineStep label="Package" done={Boolean(packageArtifact)} active={!packageArtifact} />
           <PipelineStep label="Validate" done={Boolean(validationResult)} active={Boolean(packageArtifact) && !validationResult} />
-          <PipelineStep label="Materialize" done={materializationResult?.status === "succeeded"} active={Boolean(validationResult) && !materializationResult} />
+          <PipelineStep label="Materialized" done={materializationResult?.status === "succeeded"} active={Boolean(validationResult) && !materializationResult} />
           <PipelineStep label="Deploy stages" done={Boolean(deploymentPlan)} active={Boolean(materializationResult) && !deploymentPlan} />
           <PipelineStep label="Rollback" done={Boolean(rollbackApproval)} active={Boolean(deploymentPlan) && !rollbackApproval} />
         </ol>
@@ -445,7 +490,10 @@ export function SolutionDelivery() {
         </form>
         {packageArtifact ? <>
           <ResultSummary title="Package ready" value={packageArtifact} detail={`${packageArtifact.file_count ?? 0} files · ${packageArtifact.package_digest ?? "digest pending"}`} />
-          <PackageReadiness value={packageArtifact} />
+          <details>
+            <summary>Technical package details</summary>
+            <PackageReadiness value={packageArtifact} />
+          </details>
         </> : null}
       </section>
 
@@ -454,16 +502,22 @@ export function SolutionDelivery() {
         <form className="row-actions" onSubmit={(event) => void validatePackage(event)}>
           <button type="submit" disabled={!packageArtifact || scopeRequired || busy !== null}>{busy === "validate" ? "Validating…" : "Validate package"}</button>
         </form>
-        {validationResult ? <ResultSummary title="Validation passed" value={validationResult} detail={packageTruthDetail(validationResult)} /> : null}
+        {validationResult ? <>
+          <ResultSummary title="Validation passed" value={validationResult} detail="The package was rechecked before any local write." />
+          <details>
+            <summary>Technical validation details</summary>
+            <PackageReadiness value={validationResult} />
+          </details>
+        </> : null}
       </section>
 
       <section className="panel delivery-step-panel">
-        <div className="panel-heading"><div><h2><ShieldCheck size={18} aria-hidden="true" /> 3. Materialize</h2><p className="screen-note">Write source files only after the admin-gated endpoint accepts the package.</p></div></div>
+        <div className="panel-heading"><div><h2><ShieldCheck size={18} aria-hidden="true" /> 3. Create source files</h2><p className="screen-note">Write source files only after the admin-gated endpoint accepts the package.</p></div></div>
         <form className="row-actions" onSubmit={(event) => void materializePackage(event)}>
-          <button type="submit" disabled={!packageArtifact || scopeRequired || !isAdmin || busy !== null}>{busy === "materialize" ? "Materializing…" : "Materialize source"}</button>
+          <button type="submit" disabled={!packageArtifact || scopeRequired || !isAdmin || busy !== null}>{busy === "materialize" ? "Creating files…" : "Create source files"}</button>
         </form>
-        {!isAdmin ? <p className="screen-note">Administrator access is required to materialize source files.</p> : null}
-        {materializationResult ? <ResultSummary title="Materialization response" value={materializationResult} detail={stringValue(materializationResult.message)} /> : null}
+        {!isAdmin ? <p className="screen-note">Administrator access is required to create source files.</p> : null}
+        {materializationResult ? <ResultSummary title="Source-file response" value={materializationResult} detail={stringValue(materializationResult.message)} /> : null}
       </section>
 
       <section className="panel delivery-step-panel">
@@ -663,6 +717,12 @@ function asRecord(value: unknown): JsonRecord | null {
 
 function stringValue(value: unknown): string {
   return typeof value === "string" ? value : "";
+}
+
+function formatGeneratedAt(value: string | undefined): string {
+  if (!value) return "time not recorded";
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? value : date.toLocaleString();
 }
 
 function stageFor(request: ApprovalRequest): string {
