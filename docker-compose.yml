@@ -15,6 +15,8 @@ services:
       WAIT_VAULT_KEY: ${WAIT_VAULT_KEY:-}
       WAIT_VAULT_PATH: /data/vault
       WAIT_TRUSTED_HOSTS: 127.0.0.1,localhost,api
+      # Keep session cookies secure by default; local plain-HTTP development may override this.
+      WAIT_SESSION_COOKIE_SECURE: ${WAIT_SESSION_COOKIE_SECURE:-true}
     command: ["wait-local-agent", "serve", "--host", "0.0.0.0", "--port", "8788"]
     ports:
       - "127.0.0.1:${WAIT_COMPOSE_API_PORT:-8788}:8788"
@@ -46,6 +48,8 @@ services:
       WAIT_VAULT_KEY: ${WAIT_VAULT_KEY:-}
       WAIT_VAULT_PATH: /data/vault
       WAIT_TRUSTED_HOSTS: 127.0.0.1,localhost,api
+      # Keep session cookies secure by default; local plain-HTTP development may override this.
+      WAIT_SESSION_COOKIE_SECURE: ${WAIT_SESSION_COOKIE_SECURE:-true}
       WAIT_COLLECTION_SCOPE: host
       WAIT_HOST_ROOT: /host
     healthcheck:

@@ -1,9 +1,10 @@
-# false positives: deterministic test vectors and docs placeholder token
+# Pull-request and main-push CI scan only the commits introduced by that event.
+# Keep entries for findings reachable from main because the weekly scheduled job
+# scans all refs and history. Do not add fingerprints only present on an
+# unrelated in-flight branch to this file.
 52e48f421cafaede4c6707669d41da60e936b7c0:tests/test_update_channel.py:generic-api-key:27
 52e48f421cafaede4c6707669d41da60e936b7c0:tests/test_update_channel.py:generic-api-key:29
 06cda2615941c229cd2b4e808508b9e140245179:docs/local-demo.md:curl-auth-header:83
-# Historical deterministic test vectors and documentation placeholders were
-# re-detected after the repository history was rebased onto the current main.
 ab32db28ff5b1ff73cae06a53ac043bc71c2b4dc:docs/getting-started/local-demo.md:curl-auth-header:112
 ab32db28ff5b1ff73cae06a53ac043bc71c2b4dc:tests/test_founder_surface.py:stripe-access-token:378
 ab32db28ff5b1ff73cae06a53ac043bc71c2b4dc:tests/test_founder_surface.py:stripe-access-token:390
@@ -12,22 +13,3 @@ ab32db28ff5b1ff73cae06a53ac043bc71c2b4dc:tests/test_update_channel.py:generic-ap
 903cb595e8f735fcc306a68f2bee150fce58a416:docs/getting-started/local-demo.md:curl-auth-header:107
 016f12083dd69ad8e5b1d5cc048d8ccf3186b8d2:tests/test_founder_surface.py:stripe-access-token:200
 016f12083dd69ad8e5b1d5cc048d8ccf3186b8d2:tests/test_founder_surface.py:stripe-access-token:212
-12409579071106a319208d64cd4364001cf64f75:tests/test_founder_surface.py:stripe-access-token:168
-12409579071106a319208d64cd4364001cf64f75:tests/test_founder_surface.py:stripe-access-token:180
-2c2408b47397e92458c2e2c80c31b1cf82293663:tests/test_update_channel.py:generic-api-key:25
-2c2408b47397e92458c2e2c80c31b1cf82293663:tests/test_update_channel.py:generic-api-key:27
-350d90b5dee6493890094418f62024eeab637ae1:docs/local-demo.md:curl-auth-header:83
-# Re-detected on other in-flight branches sharing this repository's full ref
-# set (gitleaks scans all refs, not just the PR's own diff) as of 2026-09-01.
-# Same known-safe categories: fake test fixtures and a docs placeholder token.
-# The test_diagnostics.py entries are redaction-proof vectors: a fake AWS-style
-# key used to prove the support-bundle scrubber removes it.
-0a4168ec3cfede1b199d53b6b4a8c102718cbf3b:ui/src/screens/PrincipalsAdmin.test.tsx:generic-api-key:23
-f85235d54fdd160bef17c917dc36a5e9704f8d22:tests/test_diagnostics.py:aws-access-token:148
-f85235d54fdd160bef17c917dc36a5e9704f8d22:tests/test_diagnostics.py:aws-access-token:234
-f5f4fc7f05dfea30775d62ccbc93cc76e66c940f:docs/getting-started/local-demo.md:curl-auth-header:107
-# 2026-09-02: gitleaks scans every fetched ref (CI uses fetch-depth: 0), so a
-# credential-shaped fixture on any in-flight branch fails this gate on unrelated
-# pull requests. Suppressing such a finding only masks it while the branch lives;
-# removing the string from that branch's history clears it everywhere. The durable
-# fix is to scan origin/main..HEAD rather than every ref.

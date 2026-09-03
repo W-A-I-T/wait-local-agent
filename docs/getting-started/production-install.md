@@ -12,6 +12,7 @@ default listener is local-only at `127.0.0.1:8788`.
 - Linux
 - Docker Engine with the Compose v2 plugin
 - `curl` or `wget`
+- cosign CLI 2.x or newer (required for the default image signature check)
 - A host directory where `/opt/wait-local-agent` can be created, or a custom
   `WAIT_INSTALL_DIR`
 
@@ -20,21 +21,28 @@ The installer does not install Docker, build source code, or require Git.
 ## Install a published version
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/W-A-I-T/wait-local-agent/main/scripts/install.sh \
-  | bash -s -- --version stable
-```
-
-For a specific release, use its image tag:
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/W-A-I-T/wait-local-agent/main/scripts/install.sh \
+curl -fsSL https://raw.githubusercontent.com/W-A-I-T/wait-local-agent/v2.0.0/scripts/install.sh \
   | bash -s -- --version 2.0.0
 ```
 
-The installer creates a private `.env`, generates a Fernet vault key and an
-administrator token, downloads `docker-compose.prod.yml` from the selected
-release, pulls the image, and starts it. The administrator token is printed
-once at the end; store it in a password manager immediately.
+The installer creates a private `.env`, generates a Fernet vault key and a
+bootstrap administrator token, downloads `docker-compose.prod.yml` from the
+same release tag, pulls the image, records its immutable digest as
+`WAIT_IMAGE_REF`, verifies its keyless cosign signature, and starts it. The
+bootstrap token is persisted in `.env` and printed at the end; store it in a
+password manager immediately. The installer requires cosign CLI 2.x or newer;
+the release workflow currently installs cosign 3.0.6 through
+`sigstore/cosign-installer` v4.1.2.
+
+If cosign cannot be installed, the default is to stop before starting the
+appliance. An explicit exception is available for a controlled environment:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/W-A-I-T/wait-local-agent/v2.0.0/scripts/install.sh \
+  | bash -s -- --version 2.0.0 --no-verify
+```
+
+This logs the bypass and records `WAIT_IMAGE_VERIFIED=false` in `.env`.
 
 Preview the actions without changing the host:
 
@@ -45,7 +53,7 @@ WAIT_INSTALL_DIR=/srv/wait-local-agent \
 
 ## First access and configuration
 
-Open the printed local URL, then use the one-time administrator token when the
+Open the printed local URL, then use the bootstrap administrator token when the
 dashboard asks for access. The production Compose file passes only the
 bootstrap settings needed by the appliance and keeps its data in the
 `wait-local-agent-data` named volume.
@@ -57,6 +65,12 @@ To place a reverse proxy in front, override the host bind and trusted hosts in
 WAIT_COMPOSE_API_PORT=8788
 WAIT_TRUSTED_HOSTS=127.0.0.1,localhost,wait.example.com
 ```
+
+The production Compose file sets `WAIT_SESSION_COOKIE_SECURE=true`. If a
+non-localhost reverse proxy deliberately serves plain HTTP, set
+`WAIT_SESSION_COOKIE_SECURE=false` in `.env`; otherwise browsers reject the
+Secure session cookie and browser login silently fails. Use HTTPS for any
+internet-facing deployment.
 
 Keep the container listener private and terminate TLS at the reverse proxy.
 Do not publish the Compose port on `0.0.0.0` unless the host firewall and proxy
@@ -94,13 +108,16 @@ backup commands before upgrades and before changing credentials.
 
 ## Upgrade
 
-Edit `WAIT_IMAGE_TAG` in `/opt/wait-local-agent/.env`, then pull and restart:
+Re-run the installer from the new release tag after backing up the data volume;
+it preserves existing credentials and updates the digest-pinned image reference:
 
 ```bash
-cd /opt/wait-local-agent
-docker compose -f docker-compose.prod.yml pull
-docker compose -f docker-compose.prod.yml up -d
+curl -fsSL https://raw.githubusercontent.com/W-A-I-T/wait-local-agent/v2.0.1/scripts/install.sh \
+  | WAIT_INSTALL_DIR=/opt/wait-local-agent bash -s -- --version 2.0.1
 ```
+
+Do not edit only `WAIT_IMAGE_TAG`: the digest in `WAIT_IMAGE_REF` is the image
+that Compose starts, and an explicit installer run is the upgrade operation.
 
 The named volume is not removed by `docker compose down`; do not add
 `--volumes` unless you intentionally want to delete the appliance state.

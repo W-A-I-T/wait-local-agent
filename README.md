@@ -272,8 +272,8 @@ one versioned image. It is the recommended MSP path and requires Linux, Docker,
 and Compose v2, but no Git or Node.js.
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/W-A-I-T/wait-local-agent/main/scripts/install.sh \
-  | bash -s -- --version stable
+curl -fsSL https://raw.githubusercontent.com/W-A-I-T/wait-local-agent/v2.0.0/scripts/install.sh \
+  | bash -s -- --version 2.0.0
 ```
 
 See the [production installation guide](docs/getting-started/production-install.md).

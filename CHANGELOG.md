@@ -10,6 +10,21 @@ All notable changes to WAIT Local Agent will be documented in this file.
   `WAIT_BACKUP_DIR`, and production Compose provisions a dedicated backup
   volume.
 
+### Security
+
+- Production installs now fetch version-matched release assets, verify keyless
+  cosign signatures by image digest by default, and persist a digest-pinned
+  image reference with an explicit, recorded `--no-verify` escape hatch.
+- Production and development Compose stacks explicitly default session cookies
+  to secure, with documented guidance for deliberate plain-HTTP proxies.
+
+### Changed
+
+- Release images are smoke-tested and pushed from one loaded image artifact;
+  the workflow asserts that the smoke-tested and published digests match.
+- Pull-request secret scans now inspect only the event's commit range, while a
+  weekly scheduled job retains the all-history scan.
+
 ### Fixed
 
 - Backup failures now emit sanitized structured logs with a correlation ID,
