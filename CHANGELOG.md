@@ -21,6 +21,9 @@ All notable changes to WAIT Local Agent will be documented in this file.
 
 ### Fixed
 
+- Re-landed the reviewed Solutions Architect live supervisor delegation panel
+  from #484 and the Copilot Studio planner and Custom Connector validator
+  screens from #485; both remain reviewable and approval-gated.
 - Invalid `WAIT_SECRETS_BACKEND` values now refuse startup instead of silently
   selecting the environment backend; Fernet vault read failures are surfaced
   during settings load, and short non-demo bootstrap tokens emit value-free
