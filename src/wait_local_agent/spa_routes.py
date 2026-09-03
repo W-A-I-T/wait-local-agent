@@ -46,7 +46,6 @@ SPA_ROUTE_PATHS: Final[frozenset[str]] = frozenset(
         "/system/appliance-health",
         "/system/diagnostics",
         "/system/extensions",
-        "/system/identity-access",
         "/integrations/mcp",
         "/integrations/connector-instances",
         "/integrations/smart-actions",

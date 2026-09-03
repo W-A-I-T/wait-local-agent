@@ -118,6 +118,12 @@
     "/auth/principals/{principal_id}/credentials/revoke": {
       "post": {}
     },
+    "/auth/principals/{principal_id}/credentials/revoke-all": {
+      "post": {}
+    },
+    "/auth/principals/{principal_id}/credentials/rotate": {
+      "post": {}
+    },
     "/auth/principals/{principal_id}/global-roles": {
       "delete": {},
       "post": {}
@@ -973,28 +979,6 @@
     },
     "/packs/operator-control/activity/runs": {
       "get": {}
-    },
-    "/packs/operator-control/principals": {
-      "get": {},
-      "post": {}
-    },
-    "/packs/operator-control/principals/{principal_id}": {
-      "delete": {},
-      "get": {},
-      "patch": {}
-    },
-    "/packs/operator-control/principals/{principal_id}/client-roles/{client_id}": {
-      "delete": {},
-      "put": {}
-    },
-    "/packs/operator-control/principals/{principal_id}/credentials/revoke-all": {
-      "post": {}
-    },
-    "/packs/operator-control/principals/{principal_id}/credentials/rotate": {
-      "post": {}
-    },
-    "/packs/operator-control/principals/{principal_id}/msp-admin": {
-      "put": {}
     },
     "/packs/operator-control/status": {
       "get": {}

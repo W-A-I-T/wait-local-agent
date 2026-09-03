@@ -27,6 +27,12 @@ type Principal = {
   identities: PrincipalIdentity[];
 };
 
+type PrincipalCredentialResponse = {
+  token: string;
+  credential_hash: string;
+  created_at: string;
+};
+
 const emptyOidcConfig: OidcConfig = {
   enabled: false,
   tenant_id: "",
@@ -55,6 +61,7 @@ export function PrincipalsAdmin() {
   const [newPrincipalId, setNewPrincipalId] = useState("");
   const [newDisplayName, setNewDisplayName] = useState("");
   const [newKind, setNewKind] = useState<"staff" | "customer">("staff");
+  const [newMspAdmin, setNewMspAdmin] = useState(false);
   const [role, setRole] = useState<ClientRole>("technician");
   const [clientId, setClientId] = useState("");
   const [loading, setLoading] = useState(true);
@@ -101,18 +108,31 @@ export function PrincipalsAdmin() {
   async function submitCreate(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!newPrincipalId.trim() || !newDisplayName.trim()) return;
+    if ((clientId && !role) || (!newMspAdmin && (!clientId || !role))) {
+      setNotice({ kind: "danger", message: "Choose an initial client and role, or grant MSP administrator access." });
+      return;
+    }
     setBusy(true);
     setNotice(null);
     try {
-      await apiFetch<Principal>("/auth/principals", {
+      const response = await apiFetch<Principal & { token?: string; credential_notice?: string }>("/auth/principals", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ principal_id: newPrincipalId, kind: newKind, display_name: newDisplayName })
+        body: JSON.stringify({
+          principal_id: newPrincipalId,
+          kind: newKind,
+          display_name: newDisplayName,
+          client_roles: clientId && role ? [{ client_id: clientId, role }] : [],
+          msp_admin: newKind === "staff" && newMspAdmin,
+          issue_credential: true
+        })
       });
       setNewPrincipalId("");
       setNewDisplayName("");
+      setOneTimeToken(response.token ?? null);
+      setCopied(false);
       await refresh(false);
-      setNotice({ kind: "success", message: "Principal created." });
+      setNotice({ kind: "success", message: response.credential_notice ?? "Principal created." });
     } catch (error) {
       setNotice({ kind: "danger", message: error instanceof Error ? error.message : "Principal could not be created." });
     } finally {
@@ -150,6 +170,43 @@ export function PrincipalsAdmin() {
       await refresh(false);
     } catch (error) {
       setNotice({ kind: "danger", message: error instanceof Error ? error.message : "Credential could not be issued." });
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function rotateCredential() {
+    if (!selected) return;
+    setBusy(true);
+    setNotice(null);
+    setCopied(false);
+    try {
+      const response = await apiFetch<PrincipalCredentialResponse>(
+        `/auth/principals/${encodeURIComponent(selected.principal_id)}/credentials/rotate`,
+        { method: "POST" }
+      );
+      setOneTimeToken(response.token);
+      await refresh(false);
+    } catch (error) {
+      setNotice({ kind: "danger", message: error instanceof Error ? error.message : "Credential could not be rotated." });
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function revokeAllCredentials() {
+    if (!selected) return;
+    setBusy(true);
+    setNotice(null);
+    try {
+      await apiFetch<Principal>(
+        `/auth/principals/${encodeURIComponent(selected.principal_id)}/credentials/revoke-all`,
+        { method: "POST" }
+      );
+      await refresh(false);
+      setNotice({ kind: "success", message: "All credentials revoked." });
+    } catch (error) {
+      setNotice({ kind: "danger", message: error instanceof Error ? error.message : "Credentials could not be revoked." });
     } finally {
       setBusy(false);
     }
@@ -268,11 +325,25 @@ export function PrincipalsAdmin() {
           <label htmlFor="principal-name">Display name</label>
           <input id="principal-name" value={newDisplayName} onChange={(event) => setNewDisplayName(event.target.value)} disabled={busy} required />
           <label htmlFor="principal-kind">Kind</label>
-          <select id="principal-kind" value={newKind} onChange={(event) => setNewKind(event.target.value as "staff" | "customer")} disabled={busy}>
+          <select id="principal-kind" value={newKind} onChange={(event) => {
+            const kind = event.target.value as "staff" | "customer";
+            setNewKind(kind);
+            if (kind === "customer") setNewMspAdmin(false);
+          }} disabled={busy}>
             <option value="staff">Staff</option>
             <option value="customer">Customer</option>
           </select>
-          <button type="submit" disabled={busy || !newPrincipalId.trim() || !newDisplayName.trim()}>Create principal</button>
+          <label htmlFor="initial-client">Initial client</label>
+          <select id="initial-client" value={clientId} onChange={(event) => setClientId(event.target.value)} disabled={busy}>
+            <option value="">No client role</option>
+            {clients.map((client) => <option key={client.client_id} value={client.client_id}>{client.name}</option>)}
+          </select>
+          <label htmlFor="initial-role">Initial role</label>
+          <select id="initial-role" value={role} onChange={(event) => setRole(event.target.value as ClientRole)} disabled={busy}>
+            {Object.entries(roleLabels).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
+          </select>
+          <label><input type="checkbox" checked={newMspAdmin} disabled={busy || newKind === "customer"} onChange={(event) => setNewMspAdmin(event.target.checked)} /> MSP administrator</label>
+          <button type="submit" disabled={busy || !newPrincipalId.trim() || !newDisplayName.trim() || (clientId && !role) || (!newMspAdmin && (!clientId || !role))}>Create &amp; issue credential</button>
         </form>
       </section>
 
@@ -348,7 +419,7 @@ export function PrincipalsAdmin() {
           </section>
 
           <section aria-labelledby="principal-credentials-heading">
-            <div className="panel-heading"><h4 id="principal-credentials-heading">Credentials</h4><button type="button" onClick={() => void issueCredential()} disabled={busy || !selected.active}>Issue credential</button></div>
+            <div className="panel-heading"><h4 id="principal-credentials-heading">Credentials</h4><div><button type="button" onClick={() => void issueCredential()} disabled={busy || !selected.active}>Issue credential</button><button type="button" onClick={() => void rotateCredential()} disabled={busy || !selected.active}>Rotate credential</button><button type="button" onClick={() => void revokeAllCredentials()} disabled={busy || !selected.active}>Revoke all</button></div></div>
             {selected.credentials.length ? <ul>{selected.credentials.map((credential) => <li key={credential.credential_hash_prefix}>{credential.credential_hash_prefix}… · {credential.active ? "Active" : "Revoked"} {credential.active ? <button type="button" onClick={() => void revokeCredential(credential)} disabled={busy}>Revoke</button> : null}</li>)}</ul> : <p className="screen-note">No credentials issued.</p>}
           </section>
           <section aria-labelledby="principal-identities-heading">

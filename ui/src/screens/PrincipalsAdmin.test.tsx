@@ -36,6 +36,9 @@ describe("PrincipalsAdmin", () => {
     mockedApiFetch.mockImplementation(async (path, init) => {
       if (path === "/auth/principals" && !init?.method) return [principal] as never;
       if (path.endsWith("/credentials") && init?.method === "POST") return { token: "one-time-secret" } as never;
+      if (path === "/auth/principals" && init?.method === "POST") {
+        return { ...principal, token: "created-one-time-secret", credential_notice: "Principal created." } as never;
+      }
       return principal as never;
     });
   });
@@ -58,13 +61,19 @@ describe("PrincipalsAdmin", () => {
     await waitFor(() => expect(screen.getAllByText("Tech Alpha").length).toBeGreaterThan(0));
     fireEvent.change(screen.getByLabelText("Principal ID"), { target: { value: "viewer-beta" } });
     fireEvent.change(screen.getByLabelText("Display name"), { target: { value: "Viewer Beta" } });
-    fireEvent.click(screen.getByRole("button", { name: "Create principal" }));
+    fireEvent.click(screen.getByRole("button", { name: "Create & issue credential" }));
 
     await waitFor(() => expect(mockedApiFetch).toHaveBeenCalledWith(
       "/auth/principals",
       expect.objectContaining({ method: "POST" })
     ));
     expect(await screen.findByText("Principal created.")).toBeInTheDocument();
+    expect(await screen.findByText("created-one-time-secret")).toBeInTheDocument();
+    const createCall = mockedApiFetch.mock.calls.find(([, init]) => init?.method === "POST" && init?.body);
+    expect(JSON.parse(String(createCall?.[1]?.body))).toMatchObject({
+      client_roles: [{ client_id: "alpha", role: "technician" }],
+      issue_credential: true
+    });
   });
 
   it("surfaces management load errors", async () => {

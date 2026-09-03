@@ -229,6 +229,8 @@
       "POST /auth/principals/{principal_id}/client-roles": "admin",
       "POST /auth/principals/{principal_id}/credentials": "admin",
       "POST /auth/principals/{principal_id}/credentials/revoke": "admin",
+      "POST /auth/principals/{principal_id}/credentials/revoke-all": "admin",
+      "POST /auth/principals/{principal_id}/credentials/rotate": "admin",
       "POST /auth/principals/{principal_id}/global-roles": "admin",
       "POST /auth/principals/{principal_id}/identities": "admin",
       "PUT /auth/oidc/config": "admin",
