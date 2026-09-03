@@ -1,4 +1,5 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { MemoryRouter } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { Approvals } from "../Approvals";
 import { useDashboard } from "../../app/DashboardContext";
@@ -21,6 +22,7 @@ function approval(overrides: Partial<ApprovalRequest> = {}): ApprovalRequest {
     execution_status: "not_started",
     execution_message: "",
     can_execute: true,
+    client_id: "acme",
     ...overrides
   };
 }
@@ -43,10 +45,12 @@ function renderApproval(
     savePayloadFields: vi.fn(),
     workflowFor: () => undefined,
     refresh,
-    liveWritesReady: options.liveWritesReady ?? false
+    liveWritesReady: options.liveWritesReady ?? false,
+    selectedClientId: "acme",
+    isMspAdmin: false
   } as never);
 
-  render(<Approvals />);
+  render(<MemoryRouter><Approvals /></MemoryRouter>);
   return {
     executeButton: screen.getByRole("button", { name: "Execute" }),
     executeApproval,
@@ -114,7 +118,7 @@ describe("Approvals execute button", () => {
       refresh: vi.fn(),
       liveWritesReady: false
     } as never);
-    render(<Approvals />);
+    render(<MemoryRouter><Approvals /></MemoryRouter>);
 
     expect(screen.queryByRole("button", { name: "Execute" })).not.toBeInTheDocument();
     expect(screen.getByText("Executed from its own workflow after approval — no manual execute here.")).toBeInTheDocument();
@@ -136,14 +140,16 @@ describe("Approvals execute button", () => {
     );
 
     expect(executeButton).toBeDisabled();
-    expect(executeButton).toHaveAttribute("title", "Writes are in Safe Mode — see the write-gate indicator");
+    expect(executeButton).toHaveAttribute("title", "Ticketing write check failed");
+    expect(screen.getAllByText("Ticketing write check failed")).toHaveLength(1);
   });
 
   it("keeps external execution disabled while local approval controls remain available", () => {
     const { executeButton } = renderApproval(approval({ status: "pending" }), { canWriteExternally: false });
 
     expect(executeButton).toBeDisabled();
-    expect(executeButton).toHaveAttribute("title", "External writes are disabled in Safe Mode");
+    expect(executeButton).toHaveAttribute("title", "Live writes are off on this appliance");
+    expect(screen.getByText("Live writes are off on this appliance")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Approve" })).toBeEnabled();
   });
 
@@ -157,7 +163,7 @@ describe("Approvals execute button", () => {
 
     expect(executeButton).toBeDisabled();
     expect(executeButton).toHaveAttribute("title", reason);
-    expect(screen.getByText(reason)).toBeInTheDocument();
+    expect(screen.getAllByText(reason)).toHaveLength(2);
     expect(screen.queryByText("Executed from its own workflow after approval — no manual execute here.")).not.toBeInTheDocument();
   });
 
@@ -179,7 +185,7 @@ describe("Approvals execute button", () => {
   it("keeps Microsoft runbook execution disabled for technicians", () => {
     const request = approval({ action_type: "microsoft_admin.powershell_runbook", can_execute: false });
     expect(renderApproval(request, { isAdmin: false }).executeButton).toBeDisabled();
-    expect(screen.getByText("PowerShell runbook execution requires administrator access.")).toBeInTheDocument();
+    expect(screen.getByText("Admin runbook execution requires administrator access.")).toBeInTheDocument();
   });
 
   it("does not allow a Microsoft runbook approval to be replayed", () => {
@@ -223,5 +229,31 @@ describe("Approvals execute button", () => {
       "That action conflicts with the appliance's current state. Refresh and try again."
     );
     expect(refresh).not.toHaveBeenCalled();
+  });
+
+  it("links executed approvals to their run and filtered audit subject", () => {
+    const request = approval({
+      execution_status: "succeeded",
+      executed_at: "2026-08-31T01:01:00Z",
+      execution_id: 88
+    });
+    renderApproval(request);
+
+    expect(screen.getByRole("link", { name: "Open run #88" })).toHaveAttribute("href", "/executions/88?kind=execution");
+    expect(screen.getByRole("link", { name: "View Audit" })).toHaveAttribute("href", "/audit?subject=subject-1");
+  });
+
+  it("falls back to the audit subject when the API has no execution record id", () => {
+    renderApproval(approval({ execution_status: "succeeded", executed_at: "2026-08-31T01:01:00Z" }));
+
+    expect(screen.getByText("Recorded in Audit · subject-1")).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "View Audit" })).toHaveAttribute("href", "/audit?subject=subject-1");
+  });
+
+  it("explains why a pending approval is awaiting execution", () => {
+    renderApproval(approval({ status: "pending", execution_status: "not_started" }));
+
+    expect(screen.getByText("Awaiting execution")).toBeInTheDocument();
+    expect(screen.getByText("Approval must be approved before execution.")).toBeInTheDocument();
   });
 });

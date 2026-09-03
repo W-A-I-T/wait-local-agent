@@ -6,7 +6,7 @@ import { AppRoutes } from "../../routes";
 vi.mock("../../screens/ActivityRuns", () => ({
   ActivityRuns: () => {
     const [searchParams] = useSearchParams();
-    return <div>Unified Runs screen · {searchParams.get("kind") ?? "all"}</div>;
+    return <div>Unified Runs screen · {searchParams.get("kind") ?? "all"} · {searchParams.get("execution_id") ?? "all"}</div>;
   }
 }));
 vi.mock("../../screens/Approvals", () => ({ Approvals: () => <div>Approvals screen</div> }));
@@ -16,7 +16,13 @@ describe("activity routes", () => {
   it("redirects executions into filtered Runs", async () => {
     render(<MemoryRouter initialEntries={["/executions"]}><AppRoutes /></MemoryRouter>);
 
-    expect(await screen.findByText("Unified Runs screen · execution")).toBeInTheDocument();
+    expect(await screen.findByText("Unified Runs screen · execution · all")).toBeInTheDocument();
+  });
+
+  it("preserves an execution deep link while moving it into filtered Runs", async () => {
+    render(<MemoryRouter initialEntries={["/executions/42?kind=execution"]}><AppRoutes /></MemoryRouter>);
+
+    expect(await screen.findByText("Unified Runs screen · execution · 42")).toBeInTheDocument();
   });
 
   it.each([

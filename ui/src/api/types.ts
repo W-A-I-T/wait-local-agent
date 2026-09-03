@@ -431,6 +431,9 @@ export type ApprovalRequest = {
   block_reason?: string;
   output?: Record<string, unknown>;
   workflow_run_id?: string | number | null;
+  execution_id?: number | null;
+  executed_at?: string | null;
+  client_id?: string | null;
 };
 
 export type EventHistory = {
@@ -1584,6 +1587,8 @@ export type AuditEvent = {
   detail?: string;
   created_at?: string;
   client_id?: string | null;
+  execution_id?: number | null;
+  run_id?: number | null;
 };
 
 export type AuditExportResponse = {

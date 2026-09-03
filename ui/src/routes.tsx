@@ -1,5 +1,5 @@
 import { lazy, Suspense } from "react";
-import { Navigate, Route, Routes } from "react-router-dom";
+import { Navigate, Route, Routes, useParams } from "react-router-dom";
 import { Approvals } from "./screens/Approvals";
 import { Analytics } from "./screens/Analytics";
 import { Agents } from "./screens/Agents";
@@ -92,6 +92,11 @@ function SettingsRoute() {
   );
 }
 
+function ExecutionDeepLink() {
+  const { executionId } = useParams();
+  return <Navigate to={`/activity/runs?kind=execution&execution_id=${encodeURIComponent(executionId ?? "")}`} replace />;
+}
+
 function PrincipalsAdminRoute() {
   const { role, roleResolved, isMspAdmin } = useDashboard();
   const allowed = roleResolved && isMspAdmin;
@@ -165,6 +170,7 @@ export function AppRoutes() {
       <Route path="technician-path" element={<TechnicianPath />} />
       <Route path="backfills" element={<Navigate to="/activity/runs?kind=backfill" replace />} />
       <Route path="executions" element={<Navigate to="/activity/runs?kind=execution" replace />} />
+      <Route path="executions/:executionId" element={<ExecutionDeepLink />} />
       <Route path="settings" element={<SettingsRoute />} />
       <Route path="system/appliance-health" element={<ApplianceHealth />} />
       <Route path="system/diagnostics" element={<DiagnosticsSupport />} />

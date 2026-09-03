@@ -3,6 +3,7 @@ import { apiFetch, apiFetchBlob } from "../api/client";
 import { EmptyState } from "../components/EmptyState";
 import { LoadingState } from "../components/LoadingState";
 import { ScopeBadge } from "../components/ScopeBadge";
+import { RunRow } from "../components/RunRow";
 import type { ExecutionDetail, ExecutionRun } from "../api/types";
 import { useDashboard } from "../app/DashboardContext";
 
@@ -11,7 +12,7 @@ function displayValue(value: unknown): string {
 }
 
 export function Executions() {
-  const { selectedClientId, clients } = useDashboard();
+  const { selectedClientId } = useDashboard();
   const [executions, setExecutions] = useState<ExecutionRun[]>([]);
   const [selected, setSelected] = useState<ExecutionDetail | null>(null);
   const [loading, setLoading] = useState(true);
@@ -79,11 +80,18 @@ export function Executions() {
       </section>
 
       <section className="table-list">
-        {loading ? <LoadingState label="Loading execution history…" /> : executions.length === 0 ? <EmptyState title="No execution history" why="Completed, failed, and cancelled runs appear here after an execution starts." /> : executions.map((execution) => <button className="table-row" type="button" key={execution.id} onClick={() => void showDetail(execution)}>
-          <div><strong>Run #{execution.id}</strong><span>{execution.run_kind} · {execution.trigger_source}</span></div>
-          <div><strong>{execution.status}</strong><span>{execution.actor} · {execution.client_id || "unbound"}</span></div>
-          <em>{execution.started_at}</em>
-        </button>)}
+        {loading ? <LoadingState label="Loading execution history…" /> : executions.length === 0 ? <EmptyState title="No execution history" why="Completed, failed, and cancelled runs appear here after an execution starts." /> : executions.map((execution) => (
+          <RunRow
+            key={execution.id}
+            title={`Run #${execution.id}`}
+            kind="execution"
+            clientId={execution.client_id}
+            origin={executionOrigin(execution)}
+            status={execution.status}
+            timestamp={execution.started_at}
+            onOpen={() => void showDetail(execution)}
+          />
+        ))}
       </section>
 
       {detailLoading ? <LoadingState label="Loading execution details…" /> : selected ? <section className="panel">
@@ -103,4 +111,11 @@ export function Executions() {
       </section> : null}
     </div>
   );
+}
+
+function executionOrigin(execution: ExecutionRun): string {
+  const source = execution.source_run_id === null || execution.source_run_id === undefined
+    ? "Source run unavailable"
+    : `Source run ${execution.source_run_id}`;
+  return `${source} · ${execution.run_kind} · ${execution.trigger_source} · ${execution.actor}`;
 }

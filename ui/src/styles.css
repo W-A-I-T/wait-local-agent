@@ -2696,6 +2696,38 @@ button:disabled {
   grid-template-columns: minmax(160px, 1fr) minmax(150px, 1fr) auto;
 }
 
+.run-row {
+  grid-template-columns: minmax(180px, 1.2fr) minmax(150px, 0.9fr) minmax(120px, auto);
+}
+
+.run-row-main,
+.run-row-context,
+.run-row-time {
+  min-width: 0;
+}
+
+.run-row-kind {
+  color: #40506b;
+  font-weight: 800;
+}
+
+.run-row-context {
+  display: grid;
+  gap: 4px;
+}
+
+.run-row-time {
+  align-items: end;
+  display: grid;
+  gap: 8px;
+  justify-items: end;
+}
+
+.run-row-time a,
+.run-row-time button {
+  white-space: nowrap;
+}
+
 .playbook-row {
   grid-template-columns: minmax(220px, 1.3fr) minmax(140px, 0.7fr) minmax(220px, 1.2fr) minmax(120px, 0.6fr);
 }
@@ -2866,6 +2898,23 @@ button:disabled {
 
 .approval-row.live {
   grid-template-columns: minmax(140px, 0.8fr) minmax(0, 1fr) auto;
+}
+
+.approval-result {
+  align-items: start;
+  border-top: 1px solid #e4ebe8;
+  display: grid;
+  gap: 5px;
+  grid-template-columns: minmax(100px, 0.35fr) minmax(0, 1fr);
+  padding-top: 10px;
+}
+
+.approval-result > strong {
+  color: #40504b;
+}
+
+.approval-result a {
+  width: fit-content;
 }
 
 .approval-card {
@@ -4001,6 +4050,15 @@ dd svg {
   .table-row,
   .evidence-result,
   .event-row {
+    grid-template-columns: 1fr;
+  }
+
+  .run-row-time {
+    align-items: start;
+    justify-items: start;
+  }
+
+  .approval-result {
     grid-template-columns: 1fr;
   }
 

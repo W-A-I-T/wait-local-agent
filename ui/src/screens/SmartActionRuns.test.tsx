@@ -41,7 +41,7 @@ describe("SmartActionRuns", () => {
 
     render(<MemoryRouter><SmartActionRuns /></MemoryRouter>);
     expect(await screen.findByText("m365.device_reboot")).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "m365.device_reboot" }));
+    fireEvent.click(screen.getByRole("button", { name: "Open" }));
 
     expect(await screen.findByText(/device-1/)).toBeInTheDocument();
     expect(screen.getByText(/accepted/)).toBeInTheDocument();
@@ -63,7 +63,7 @@ describe("SmartActionRuns", () => {
     });
 
     render(<MemoryRouter><SmartActionRuns /></MemoryRouter>);
-    fireEvent.click(await screen.findByRole("button", { name: "m365.device_reboot" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Open" }));
     await waitFor(() => expect(screen.getByRole("alert")).toHaveTextContent("not found in the current client scope"));
   });
 

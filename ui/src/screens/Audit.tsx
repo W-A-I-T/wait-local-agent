@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
+import { Link, useLocation } from "react-router-dom";
 import { apiFetch } from "../api/client";
 import { useDashboard } from "../app/DashboardContext";
 import type { AuditEvent } from "../api/types";
@@ -7,13 +8,15 @@ import { LoadingState } from "../components/LoadingState";
 import { ScopeBadge } from "../components/ScopeBadge";
 
 export function Audit() {
-  const { clients = [], selectedClientId } = useDashboard();
+  const { selectedClientId } = useDashboard();
+  const location = useLocation();
   const [events, setEvents] = useState<AuditEvent[]>([]);
   const [loading, setLoading] = useState(true);
   const [fromDate, setFromDate] = useState("");
   const [toDate, setToDate] = useState("");
   const [exportStatus, setExportStatus] = useState("");
   const [eventsStatus, setEventsStatus] = useState("");
+  const subjectFilter = new URLSearchParams(location.search).get("subject")?.trim() ?? "";
 
   const refresh = useCallback(async () => {
     setLoading(true);
@@ -29,6 +32,10 @@ export function Audit() {
   useEffect(() => {
     void refresh();
   }, [refresh]);
+
+  const visibleEvents = subjectFilter
+    ? events.filter((event) => event.subject_id === subjectFilter)
+    : events;
 
   async function exportAuditCsv() {
     try {
@@ -71,7 +78,7 @@ export function Audit() {
       <section className="panel">
         <div className="panel-heading">
           <h2>Audit</h2>
-          <div><ScopeBadge /> <span>{events.length} events</span></div>
+          <div><ScopeBadge /> <span>{visibleEvents.length} events</span></div>
         </div>
 
         <div className="notice" role="note">
@@ -96,19 +103,26 @@ export function Audit() {
         {eventsStatus ? <div className="notice">{eventsStatus}</div> : null}
         {exportStatus ? <div className="notice">{exportStatus}</div> : null}
 
-        {loading ? <LoadingState label="Loading audit events…" /> : events.length === 0 ? <EmptyState title="No audit events yet" why="Audit events appear after the appliance records an operator or automation action." /> : <div className="event-list">
-          {events.map((event) => (
+        {subjectFilter ? <p className="screen-note">Showing events for subject {subjectFilter}.</p> : null}
+        {loading ? <LoadingState label="Loading audit events…" /> : visibleEvents.length === 0 ? <EmptyState title={subjectFilter ? "No matching audit events" : "No audit events yet"} why="Audit events appear after the appliance records an operator or automation action." /> : <div className="event-list">
+          {visibleEvents.map((event) => (
             <div className="event-row" key={event.id}>
               <span>{event.event_type}</span>
               <strong>{event.subject_id}</strong>
               <em>{event.status || "ok"}</em>
               <p>{event.message || event.detail || ""}</p>
+              {relatedRunId(event) !== null ? <Link to={`/executions/${relatedRunId(event)}?kind=execution`}>Open related run</Link> : null}
             </div>
           ))}
         </div>}
       </section>
     </div>
   );
+}
+
+function relatedRunId(event: AuditEvent): number | null {
+  const candidate = event.execution_id ?? event.run_id;
+  return typeof candidate === "number" && Number.isInteger(candidate) && candidate > 0 ? candidate : null;
 }
 
 function exportPath(format: "json" | "csv", fromDate = "", toDate = ""): string {
