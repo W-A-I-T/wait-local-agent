@@ -278,6 +278,7 @@ def _collect_configuration(settings: Settings) -> dict[str, object]:
         "demo_mode": settings.demo_mode,
         "scheduler_enabled": settings.scheduler_enabled,
         "secrets_backend": settings.secrets_backend,
+        "backup_dir_configured": settings.backup_dir is not None,
         "halopsa_configured": bool(
             settings.halopsa_base_url
             and settings.halopsa_client_id

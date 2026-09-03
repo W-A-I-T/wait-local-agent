@@ -4,6 +4,12 @@ All notable changes to WAIT Local Agent will be documented in this file.
 
 ## [Unreleased]
 
+### Added
+
+- Scheduled encrypted backups can use an optional separately mounted
+  `WAIT_BACKUP_DIR`, and production Compose provisions a dedicated backup
+  volume.
+
 ### Security
 
 - Production installs now fetch version-matched release assets, verify keyless
@@ -21,6 +27,8 @@ All notable changes to WAIT Local Agent will be documented in this file.
 
 ### Fixed
 
+- Backup failures now emit sanitized structured logs with a correlation ID,
+  and Appliance Health loads scheduled backup history when the screen opens.
 - Re-landed the reviewed Solutions Architect live supervisor delegation panel
   from #484 and the Copilot Studio planner and Custom Connector validator
   screens from #485; both remain reviewable and approval-gated.

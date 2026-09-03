@@ -23,6 +23,7 @@ def test_safe_defaults_are_disabled(monkeypatch) -> None:
     monkeypatch.delenv("WAIT_DEMO_MODE", raising=False)
     monkeypatch.delenv("WAIT_SECRETS_BACKEND", raising=False)
     monkeypatch.delenv("WAIT_VAULT_PATH", raising=False)
+    monkeypatch.delenv("WAIT_BACKUP_DIR", raising=False)
     monkeypatch.delenv("WAIT_LOCAL_MODEL_PROVIDER", raising=False)
     monkeypatch.delenv("WAIT_LOCAL_MODEL_TIMEOUT_SECONDS", raising=False)
     monkeypatch.delenv("WAIT_REMOTE_MODEL_PROVIDER", raising=False)
@@ -95,6 +96,7 @@ def test_safe_defaults_are_disabled(monkeypatch) -> None:
     assert settings.demo_mode is False
     assert settings.secrets_backend == "env"
     assert settings.vault_path == Path(".wait-local-agent/vault")
+    assert settings.backup_dir is None
     assert settings.local_model_provider == "deterministic"
     assert settings.local_model_timeout_seconds == 20.0
     assert settings.remote_model_provider == ""
@@ -476,6 +478,15 @@ def test_invalid_secrets_backend_is_rejected(monkeypatch, backend: str) -> None:
     assert repr(backend) in message
     assert "env" in message
     assert "fernet" in message
+
+
+def test_backup_directory_requires_an_absolute_path(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setenv("WAIT_BACKUP_DIR", str(tmp_path / "backups"))
+    assert load_settings().backup_dir == tmp_path / "backups"
+
+    monkeypatch.setenv("WAIT_BACKUP_DIR", "relative/backups")
+    with pytest.raises(ValueError, match="WAIT_BACKUP_DIR.*absolute"):
+        load_settings()
 
 
 @pytest.mark.parametrize("backend", ["", "   ", "env", " ENV ", "fernet", " FERNET "])

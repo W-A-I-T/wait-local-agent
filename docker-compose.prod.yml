@@ -15,6 +15,7 @@ services:
       WAIT_SECRETS_BACKEND: ${WAIT_SECRETS_BACKEND:-fernet}
       WAIT_VAULT_KEY: ${WAIT_VAULT_KEY:-}
       WAIT_VAULT_PATH: /data/vault
+      WAIT_BACKUP_DIR: /backups
       WAIT_TRUSTED_HOSTS: ${WAIT_TRUSTED_HOSTS:-127.0.0.1,localhost}
       # Keep session cookies secure by default; see the production install guide
       # before disabling this for a plain-HTTP reverse proxy on a non-localhost host.
@@ -23,6 +24,7 @@ services:
       - "127.0.0.1:${WAIT_COMPOSE_API_PORT:-8788}:8788"
     volumes:
       - wait-local-agent-data:/data
+      - wait-local-agent-backups:/backups
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8788/healthz', timeout=3)"]
@@ -32,3 +34,4 @@ services:
 
 volumes:
   wait-local-agent-data:
+  wait-local-agent-backups:

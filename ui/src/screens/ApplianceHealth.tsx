@@ -26,6 +26,8 @@ export function ApplianceHealth() {
   const [loading, setLoading] = useState(false);
   const [statusMessage, setStatusMessage] = useState("");
   const [backupStatus, setBackupStatus] = useState<BackupStatusResponse | null>(null);
+  const [backupStatusLoading, setBackupStatusLoading] = useState(false);
+  const [backupAccessRequired, setBackupAccessRequired] = useState(false);
   const [backupLoading, setBackupLoading] = useState(false);
   const [backupMessage, setBackupMessage] = useState("");
   const [backupError, setBackupError] = useState("");
@@ -35,16 +37,19 @@ export function ApplianceHealth() {
 
   const refresh = useCallback(async () => {
     setLoading(true);
+    setBackupStatusLoading(true);
     setStatusMessage("");
     const results = await Promise.allSettled([
       apiFetch<ApplianceHealthResponse>("/health"),
       apiFetch<UpdateStatus>("/update-status"),
-      apiFetch<HardeningRun[]>("/hardening/runs")
+      apiFetch<HardeningRun[]>("/hardening/runs"),
+      apiFetch<BackupStatusResponse>("/backups")
     ]);
 
     const healthResult = results[0] as LoadResult<ApplianceHealthResponse>;
     const updateResult = results[1] as LoadResult<UpdateStatus>;
     const hardeningResult = results[2] as LoadResult<HardeningRun[]>;
+    const backupResult = results[3] as LoadResult<BackupStatusResponse>;
     if (healthResult.status === "fulfilled") {
       setHealth(healthResult.value);
     }
@@ -54,6 +59,13 @@ export function ApplianceHealth() {
     if (hardeningResult.status === "fulfilled") {
       setHardeningRuns(sortLatest(hardeningResult.value));
     }
+    if (backupResult.status === "fulfilled") {
+      setBackupStatus(backupResult.value);
+      setBackupAccessRequired(false);
+    } else if (backupResult.reason instanceof ApiRequestError && backupResult.reason.status === 403) {
+      setBackupStatus(null);
+      setBackupAccessRequired(true);
+    }
 
     const failures = results.filter((result) => result.status === "rejected");
     setStatusMessage(
@@ -61,6 +73,7 @@ export function ApplianceHealth() {
         ? "Appliance health refreshed."
         : "Some appliance health details could not be loaded. Try refreshing again."
     );
+    setBackupStatusLoading(false);
     setLoading(false);
   }, []);
 
@@ -81,6 +94,7 @@ export function ApplianceHealth() {
       const requestedRun = await apiFetch<BackupRun>("/backups/run", { method: "POST" });
       const status = await apiFetch<BackupStatusResponse>("/backups");
       setBackupStatus(status);
+      setBackupAccessRequired(false);
       const recordedRun = status.items.find((run) => run.backup_run_id === requestedRun.backup_run_id) ?? status.items[0];
       if (recordedRun) {
         setBackupMessage(`Backup run ${recordedRun.backup_run_id} recorded with status ${recordedRun.status}.`);
@@ -88,6 +102,9 @@ export function ApplianceHealth() {
         setBackupMessage(`Backup run ${requestedRun.backup_run_id} returned status ${requestedRun.status}, but no run record was found.`);
       }
     } catch (error: unknown) {
+      if (error instanceof ApiRequestError && error.status === 403) {
+        setBackupAccessRequired(true);
+      }
       setBackupError(error instanceof ApiRequestError || error instanceof Error
         ? error.message
         : "Unable to run a backup on this appliance.");
@@ -202,10 +219,12 @@ export function ApplianceHealth() {
               <h2 id="backup-run-heading">On-demand backup</h2>
               <p className="screen-note">Create an encrypted appliance backup and verify its persisted run record.</p>
             </div>
-            <span>{backupStatus?.total ?? "admin only"}</span>
+            <span>{backupStatusLoading ? "—" : backupStatus?.total ?? "—"}</span>
           </div>
 
-          {health?.demo_mode === true ? (
+          {backupAccessRequired ? (
+            <p className="screen-note">Administrator access required to view backup history.</p>
+          ) : health?.demo_mode === true ? (
             <p className="screen-note">Backup runs are unavailable in demo mode.</p>
           ) : health === null ? (
             <p className="screen-note">Backup controls will be available after appliance health loads.</p>

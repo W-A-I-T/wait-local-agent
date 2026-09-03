@@ -78,7 +78,13 @@ def _expected_default_api_service() -> dict[str, object]:
                 "source": "wait-local-agent-data",
                 "target": "/data",
                 "volume": {},
-            }
+            },
+            {
+                "type": "volume",
+                "source": "wait-local-agent-backups",
+                "target": "/backups",
+                "volume": {},
+            },
         ],
     }
 

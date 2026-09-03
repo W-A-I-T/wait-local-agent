@@ -12,11 +12,14 @@ from wait_local_agent.backup import (
     BACKUP_KEY_SECRET_NAME,
     RESTORE_EXERCISE_SCRATCH_PREFIX,
     BackupEncryptionError,
+    BackupPathError,
     backup_state,
+    create_scheduled_backup,
     restore_state,
     run_restore_exercise,
 )
 from wait_local_agent.cli import app
+from wait_local_agent.scheduler import SchedulerManager
 from wait_local_agent.store import Store
 from wait_local_agent.vault import SecretVault
 
@@ -110,6 +113,41 @@ def test_plain_backup_bootstraps_missing_store_and_restore_requires_existing_sou
 
     with pytest.raises(FileNotFoundError):
         restore_state(store, tmp_path / "missing.db")
+
+
+def test_configured_backup_directory_is_used_and_confined(settings, tmp_path: Path) -> None:
+    backup_dir = tmp_path / "separate-backups"
+    secure_settings = settings.__class__(
+        **{
+            **settings.__dict__,
+            "secrets_backend": "fernet",
+            "vault_path": tmp_path / "vault",
+            "backup_dir": backup_dir,
+        }
+    )
+    SecretVault.initialize(secure_settings.vault_path).set(
+        BACKUP_KEY_SECRET_NAME,
+        Fernet.generate_key().decode("utf-8"),
+    )
+    store = Store(secure_settings.data_path)
+    store.set_app_config("backup.retention_count", "1")
+    for index in range(2):
+        old_backup = backup_dir / f"state-old-{index}.db.enc"
+        old_backup.parent.mkdir(parents=True, exist_ok=True)
+        old_backup.write_bytes(b"old")
+        old_backup.touch()
+
+    created = create_scheduled_backup(store, secure_settings)
+    assert created.parent == backup_dir.resolve()
+
+    run = SchedulerManager(store, enabled=False, settings=secure_settings).run_backup()
+    assert run.status == "succeeded"
+    assert Path(run.destination).parent == backup_dir.resolve()
+    assert len(list(backup_dir.glob("state-*.db.enc"))) == 1
+
+    outside = tmp_path.parent / "outside-backup.db"
+    with pytest.raises(BackupPathError):
+        backup_state(store, outside, settings=secure_settings)
 
 
 def test_restore_exercise_reports_row_count_mismatch(settings, tmp_path: Path) -> None:
