@@ -35,3 +35,6 @@ An entity may declare an optional `primary_name_column`; when present, it must
 name one of that entity's declared fields and is carried into the Dataverse
 table schema for downstream packaging. The field remains optional for callers
 that are producing a plan for review only.
+Lookup fields may use `type: "lookup"` with a `target_entity`; the target must
+be another entity declared in the same artifact, and the field's display name
+is carried into the downstream Dataverse schema.

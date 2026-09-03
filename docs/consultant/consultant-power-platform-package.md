@@ -13,8 +13,12 @@ logical names begin with the requested publisher prefix plus `_` and whose
 primary name column is explicitly declared are emitted, along with their
 confidently mapped string attributes, in
 `Other/Customizations.xml`; the solution manifest, publisher block, numeric
-entity root components, and missing-dependency element are emitted in
-`Other/Solution.xml`. The relationships file carries the proven empty
+entity and relationship root components, and missing-dependency element are
+emitted in `Other/Solution.xml`. Declared lookup columns whose target entity
+is emitted in the same artifact produce a complete OneToMany relationship in
+`Customizations.xml`, including the referencing-side role and the lookup
+attribute. Incomplete or dangling relationship declarations remain
+design-only. The relationships file carries the proven empty
 `EntityRelationships` element. Canvas app binaries are not synthesized and
 are recorded under `unsupported/components.json` with an explicit reason.
 The primary name can be declared as the table's `primary_name_column` or as

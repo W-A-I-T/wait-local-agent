@@ -2,10 +2,10 @@
 <ImportExportXml version="9.1.0.643" SolutionPackageVersion="9.1" languagecode="1033" generatedBy="CrmLive" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
   <SolutionManifest>
     <!-- Unique Name of Cds Solution-->
-    <UniqueName>employee_onboarding</UniqueName>
+    <UniqueName>waitrel</UniqueName>
     <LocalizedNames>
       <!-- Localized Solution Name in language code -->
-      <LocalizedName description="employee_onboarding" languagecode="1033" />
+      <LocalizedName description="WAIT Rel" languagecode="1033" />
     </LocalizedNames>
     <Descriptions />
     <Version>1.0</Version>
@@ -13,7 +13,7 @@
     <Managed>0</Managed>
     <Publisher>
       <!-- Unique Publisher Name of Cds Solution -->
-      <UniqueName>waitconsulting</UniqueName>
+      <UniqueName>WAITConsulting</UniqueName>
       <LocalizedNames>
         <!-- Localized Cds Publisher Name in language code-->
         <LocalizedName description="WAITConsulting" languagecode="1033" />
@@ -89,8 +89,8 @@
       </Addresses>
     </Publisher>
     <RootComponents>
-      <RootComponent type="1" schemaName="wait_dept" behavior="0" />
       <RootComponent type="1" schemaName="wait_employee" behavior="0" />
+      <RootComponent type="1" schemaName="wait_dept" behavior="0" />
       <RootComponent type="10" schemaName="wait_dept_employee" behavior="0" />
     </RootComponents>
     <MissingDependencies />

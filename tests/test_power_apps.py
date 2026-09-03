@@ -86,6 +86,55 @@ def test_power_apps_artifact_builds_bounded_reviewable_files_without_deployment(
     assert result["deployment_started"] is False
 
 
+def test_power_apps_lookup_column_is_carried_and_requires_an_in_package_target() -> None:
+    entities: list[dict[str, object]] = [
+        {
+            "logical_name": "wait_dept",
+            "display_name": "Dept",
+            "fields": [{"name": "wait_name", "display_name": "Name"}],
+        },
+        {
+            "logical_name": "wait_employee",
+            "display_name": "Employee",
+            "fields": [
+                {"name": "wait_name", "display_name": "Name"},
+                {
+                    "name": "wait_deptid",
+                    "display_name": "Dept",
+                    "type": "lookup",
+                    "target_entity": "wait_dept",
+                },
+            ],
+        },
+    ]
+    plan = build_power_apps_plan(client_id="acme", app_name="Relationships", entities=entities, screens=[], actions=[])
+    lookup = cast(list[dict[str, object]], plan["dataverse"]["tables"])[1]["fields"]
+    assert cast(list[dict[str, object]], lookup)[1] == {
+        "name": "wait_deptid",
+        "type": "lookup",
+        "display_name": "Dept",
+        "required": False,
+        "target_entity": "wait_dept",
+    }
+
+    with pytest.raises(PowerAppsPlanError, match="references unknown entity"):
+        build_power_apps_plan(
+            client_id="acme",
+            app_name="Relationships",
+            entities=[
+                {
+                    "logical_name": "wait_employee",
+                    "fields": [
+                        {"name": "wait_name"},
+                        {"name": "wait_deptid", "type": "lookup", "target_entity": "wait_missing"},
+                    ],
+                }
+            ],
+            screens=[],
+            actions=[],
+        )
+
+
 def test_power_apps_artifact_enforces_output_size_bound(monkeypatch) -> None:
     payload = _plan()
     monkeypatch.setattr(power_apps_module, "MAX_ARTIFACT_BYTES", 1)
