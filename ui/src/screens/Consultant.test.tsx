@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { Consultant } from "./Consultant";
@@ -698,19 +698,27 @@ describe("Consultant architecture decisions", () => {
     });
   });
 
-  it("enforces Copilot topic and trigger phrase limits in the editor", async () => {
+  it("enforces the Copilot topic limit in the editor", async () => {
     render(<MemoryRouter><Consultant /></MemoryRouter>);
 
     const addTopic = await screen.findByRole("button", { name: "Add topic" });
-    for (let index = 0; index < 31; index += 1) fireEvent.click(addTopic);
+    act(() => {
+      for (let index = 0; index < 31; index += 1) fireEvent.click(addTopic);
+    });
     expect(addTopic).toBeDisabled();
+  });
 
-    const triggerInput = screen.getByRole("textbox", { name: "New trigger phrase for topic 1" });
-    const addPhrase = screen.getAllByRole("button", { name: "Add phrase" })[0];
-    for (let index = 0; index < 14; index += 1) {
-      fireEvent.change(triggerInput, { target: { value: `phrase-${index}` } });
-      fireEvent.click(addPhrase);
-    }
+  it("enforces the Copilot trigger phrase limit in the editor", async () => {
+    render(<MemoryRouter><Consultant /></MemoryRouter>);
+
+    const triggerInput = await screen.findByRole("textbox", { name: "New trigger phrase for topic 1" });
+    const addPhrase = (await screen.findAllByRole("button", { name: "Add phrase" }))[0];
+    act(() => {
+      for (let index = 0; index < 14; index += 1) {
+        fireEvent.change(triggerInput, { target: { value: `phrase-${index}` } });
+        fireEvent.click(addPhrase);
+      }
+    });
     fireEvent.change(triggerInput, { target: { value: "phrase-14" } });
     expect(addPhrase).not.toBeDisabled();
     fireEvent.click(addPhrase);
