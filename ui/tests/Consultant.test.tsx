@@ -2,6 +2,7 @@ import { fireEvent, render, screen, within } from "@testing-library/react";
 import { MemoryRouter, Route, Routes, useLocation } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { Consultant } from "../src/screens/Consultant";
+import { readStoredSolutionDeliveryHandoff } from "../src/lib/solutionDeliveryHandoff";
 
 const dashboard = vi.hoisted(() => ({
   selectedClientId: "acme",
@@ -18,7 +19,9 @@ vi.mock("../src/app/DashboardContext", () => ({
 }));
 
 function HandoffProbe() {
-  return <pre data-testid="handoff-state">{JSON.stringify(useLocation().state)}</pre>;
+  const location = useLocation();
+  const key = new URLSearchParams(location.search).get("handoff");
+  return <pre data-testid="handoff-state">{JSON.stringify({ search: location.search, handoff: readStoredSolutionDeliveryHandoff(key) })}</pre>;
 }
 
 describe("Consultant", () => {

@@ -13,8 +13,15 @@ import {
   shouldSuppressClientScopeError,
 } from "../api/client";
 import { StatusChip } from "../components/StatusChip";
+import { LifecycleBar } from "../components/LifecycleBar";
 import { humanizeName } from "../lib/fields";
-import { collectHandoffArtifacts, SOLUTION_DELIVERY_ROUTE } from "../lib/solutionDeliveryHandoff";
+import {
+  collectHandoffArtifacts,
+  createSolutionDeliveryHandoff,
+  SOLUTION_DELIVERY_HANDOFF_QUERY,
+  SOLUTION_DELIVERY_ROUTE,
+  writeSolutionDeliveryHandoff,
+} from "../lib/solutionDeliveryHandoff";
 import type {
   ArchitectureDecision,
   ConsultantArchitecture,
@@ -1102,23 +1109,33 @@ export function Consultant() {
       setMessage("Build a Power Apps artifact or prepare a Power Automate plan before sending it to Solution delivery.");
       return;
     }
-    const clientIds = Array.from(new Set(
+    const artifactClientIds = Array.from(new Set(
       artifacts
         .map((artifact) => artifact.client_id)
         .filter((clientId): clientId is string => typeof clientId === "string" && clientId.trim().length > 0),
     ));
-    if (clientIds.length > 1) {
-      setMessage("Build or prepare artifacts for one tenant before sending them to Solution delivery.");
-      return;
-    }
-    const clientId = clientIds[0] ?? currentClientId();
+    const clientId = currentClientId();
     if (!clientId) {
       setMessage("A tenant scope is required before sending artifacts to Solution delivery.");
       return;
     }
-    navigate(SOLUTION_DELIVERY_ROUTE, {
-      state: { source: "solutions-architect", clientId, artifacts },
+    if (artifactClientIds.some((artifactClientId) => artifactClientId !== clientId)) {
+      setMessage("Build or prepare artifacts for the selected client before sending them to Solution delivery.");
+      return;
+    }
+    const handoff = createSolutionDeliveryHandoff({
+      clientId,
+      blueprintId: selected?.id,
+      blueprintName: selected?.solution.name,
+      artifacts,
     });
+    const handoffKey = writeSolutionDeliveryHandoff(handoff);
+    if (!handoffKey) {
+      setMessage("The handoff could not be saved for this browser session. Check session storage and try again.");
+      return;
+    }
+    const search = new URLSearchParams({ [SOLUTION_DELIVERY_HANDOFF_QUERY]: handoffKey }).toString();
+    navigate(`${SOLUTION_DELIVERY_ROUTE}?${search}`);
   }
 
   async function runEmployeeOnboardingDemo() {
@@ -1149,6 +1166,17 @@ export function Consultant() {
 
   const selected = blueprints.find((blueprint) => blueprint.id === selectedId);
   const workflowComponents = architecture?.components.filter((component) => component.kind === "workflow") ?? [];
+  const lifecycleRecord = deliveryResult
+    ? {
+      package_status: deliveryResult.deployable_source_package_status ?? deliveryResult.delivery_bundle_status,
+      deployable: deliveryResult.deployable_source_package_deployable,
+      execution_started: deliveryResult.execution_started,
+      deployment_started: deliveryResult.deployment_started,
+      approval_required: deliveryResult.production_deployment_requires_approval,
+    }
+    : architecture
+      ? { readiness: architecture.readiness, deployable: true }
+      : { package_status: selected ? "draft" : "" };
 
   function currentClientId() {
     return selectedClientId.trim();
@@ -1162,6 +1190,7 @@ export function Consultant() {
             <h2>Solutions Architect</h2>
             <p className="screen-note consultant-page-intro">This page bundles related but distinct tools for designing and reviewing automation solutions — read each section's heading before acting.</p>
             <p className="screen-note">Scope: <ScopeBadge /></p>
+            <LifecycleBar record={lifecycleRecord} />
             {!selectedClientId && !isMspAdmin ? <SelectClientNotice /> : null}
           </div>
         </div>
@@ -1242,7 +1271,7 @@ export function Consultant() {
           </div>
           <div className="notice">
             <strong>Local fixture only.</strong>{" "}
-            No external connector or deployment call is started. The walkthrough generates only local review manifests and a non-deployable package. It requires an existing tenant-scoped ticket and never seeds one. You can start without a ticket in Solution discovery or blueprints.
+            No external connector or deployment call is started. The walkthrough generates only local review manifests and a review-only package. It requires an existing tenant-scoped ticket and never seeds one. You can start without a ticket in Solution discovery or blueprints.
           </div>
           <div className="grid">
             <label>
@@ -1263,7 +1292,7 @@ export function Consultant() {
             <div className="notice">
               <strong>{employeeOnboardingDemo.stages.blueprint.solution_name} completed in {employeeOnboardingDemo.mode} mode.</strong>{" "}
               Supervisor: {employeeOnboardingDemo.stages.supervisor.status}. Evaluation: {employeeOnboardingDemo.stages.evaluation.production_readiness}. Governance: {employeeOnboardingDemo.stages.governance.status}. Delivery: {employeeOnboardingDemo.stages.delivery.production_readiness}. Artifacts: {employeeOnboardingDemo.stages.artifacts.items.length} review-only.
-              <br />{employeeOnboardingDemo.audit.agent_run_count} local agent runs · {employeeOnboardingDemo.audit.audit_event_count} audit events · live provider execution: {employeeOnboardingDemo.boundaries.live_provider_execution ? "started" : "not started"} · deployable package: {employeeOnboardingDemo.boundaries.deployable_package_generated ? "generated" : "not generated"}.
+              <br />{employeeOnboardingDemo.audit.agent_run_count} local agent runs · {employeeOnboardingDemo.audit.audit_event_count} audit events · live provider activity: {employeeOnboardingDemo.boundaries.live_provider_execution ? "started" : "not started"} · source package: {employeeOnboardingDemo.boundaries.deployable_package_generated ? "generated" : "not generated"}.
             </div>
           ) : null}
           {employeeOnboardingDemo?.stages.artifacts.delivery_bundle ? (
@@ -1276,7 +1305,7 @@ export function Consultant() {
                 <StatusChip status={employeeOnboardingDemo.stages.artifacts.delivery_bundle.manifest.bundle_status} />
               </div>
               <p>
-                <strong>Review-only.</strong> {employeeOnboardingDemo.stages.artifacts.delivery_bundle.manifest.files.length} files · {employeeOnboardingDemo.stages.artifacts.delivery_bundle.manifest.deployment_targets.join(", ")} · deployable: {employeeOnboardingDemo.stages.artifacts.delivery_bundle.manifest.deployable ? "yes" : "no"}.
+                <strong>Review-only.</strong> {employeeOnboardingDemo.stages.artifacts.delivery_bundle.manifest.files.length} files · {employeeOnboardingDemo.stages.artifacts.delivery_bundle.manifest.deployment_targets.join(", ")}.
               </p>
               {employeeOnboardingDemo.stages.artifacts.delivery_bundle_digest ? (
                 <p className="screen-note">Bundle digest: <code>{employeeOnboardingDemo.stages.artifacts.delivery_bundle_digest}</code></p>
@@ -1500,15 +1529,15 @@ export function Consultant() {
 
       <div className="consultant-group">
         <div className="consultant-group-heading">
-          <h2>Power Apps builder</h2>
-          <p className="consultant-group-note">Build a review-only app handoff from an editable local template.</p>
+          <h2>Standalone builders</h2>
+          <p className="consultant-group-note">Independent tools for preparing review artifacts outside the selected blueprint.</p>
         </div>
         <section className="panel">
         <div className="panel-heading">
           <div>
             <h2>Power Apps builder</h2>
             <p className="screen-note">Generate a local Dataverse and Canvas app handoff for review. No Microsoft write or deployment starts.</p>
-            <p>This is an independent tool with its own editable template below — it does not change based on the blueprint selected above, and its defaults (app name, tables, screens, actions) are a starting point you can replace for any project.</p>
+            <p>This builder cannot accept a blueprint because the existing backend contract accepts only an app name, tables, screens, and actions. Its editable defaults are independent of the selected blueprint.</p>
           </div>
           {powerAppsArtifact ? <StatusChip status="completed" /> : null}
         </div>
@@ -1828,7 +1857,7 @@ export function Consultant() {
                     checks={Object.entries(evaluationResult.dimensions).map(([label, value]) => ({ label, value: String(value) + "%" }))}
                   />
                 ) : null}
-                {evaluationResult ? <p className="screen-note">{evaluationResult.case_count} case{evaluationResult.case_count === 1 ? "" : "s"} · {evaluationResult.execution_mode === "controlled" ? "controlled local execution recorded" : "observation contract only"} · execution started: {evaluationResult.execution_started ? "yes" : "no"}.</p> : null}
+                {evaluationResult ? <p className="screen-note">{evaluationResult.case_count} case{evaluationResult.case_count === 1 ? "" : "s"} · {evaluationResult.execution_mode === "controlled" ? "controlled local execution recorded" : "observation contract only"}.</p> : null}
               </article>
 
               <article className="consultant-chain-card">
@@ -1855,10 +1884,20 @@ export function Consultant() {
                   <>
                     <div className="notice">
                       <strong>{deliveryResult.production_readiness === "pass" ? "Ready for review." : "More review is required."}</strong>{" "}
-                      {deliveryResult.delivery_bundle_status} handoff · deployment approval required: {deliveryResult.production_deployment_requires_approval ? "yes" : "no"} · execution started: {deliveryResult.execution_started ? "yes" : "no"}.
+                      The delivery review is {deliveryResult.production_readiness === "pass" ? "ready" : "not yet ready"} · {deliveryResult.production_deployment_requires_approval ? "approval is required before external changes" : "no additional approval is recorded"}.
                     </div>
+                    <LifecycleBar record={lifecycleRecord} />
                     <ReviewChecklist title="Delivery checklist" checks={Object.entries(deliveryResult.checks).map(([label, value]) => ({ label, value: value ? "pass" : "needs review" }))} />
-                    <p className="screen-note">Targets: {deliveryResult.deployment_targets.join(", ")}. The package remains review-only and is not a deployable solution.</p>
+                    <p className="screen-note">Targets: {deliveryResult.deployment_targets.join(", ")}.</p>
+                    <details>
+                      <summary>Technical delivery details</summary>
+                      <div className="artifact-flags">
+                        <code>package_status: {deliveryResult.deployable_source_package_status ?? deliveryResult.delivery_bundle_status}</code>
+                        <code>deployable: {String(deliveryResult.deployable_source_package_deployable)}</code>
+                        <code>execution_started: {String(deliveryResult.execution_started)}</code>
+                        <code>deployment_started: {String(deliveryResult.deployment_started)}</code>
+                      </div>
+                    </details>
                   </>
                 ) : null}
               </article>
@@ -2265,7 +2304,7 @@ function ArchitectureDecisions({ architecture }: { architecture: ConsultantArchi
     : decisions.filter((decision) => safeText(decision.status) === "needs_review").length;
   const safeguards = [
     engine?.inference_started === false ? "No inference started" : null,
-    engine?.execution_started === false ? "No execution started" : null,
+    engine?.execution_started === false ? "No live run recorded" : null,
     engine?.deployment_started === false ? "No deployment started" : null,
   ].filter((item): item is string => Boolean(item));
 
