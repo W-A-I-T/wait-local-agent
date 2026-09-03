@@ -7,18 +7,8 @@
   ],
   "surfaces": {
     "fastapi_routes": {
-      "DELETE /packs/operator-control/principals/{principal_id}": "admin",
-      "DELETE /packs/operator-control/principals/{principal_id}/client-roles/{client_id}": "admin",
       "GET /packs/operator-control/activity/runs": "exposed",
-      "GET /packs/operator-control/principals": "admin",
-      "GET /packs/operator-control/principals/{principal_id}": "admin",
-      "GET /packs/operator-control/status": "exposed",
-      "PATCH /packs/operator-control/principals/{principal_id}": "admin",
-      "POST /packs/operator-control/principals": "admin",
-      "POST /packs/operator-control/principals/{principal_id}/credentials/revoke-all": "admin",
-      "POST /packs/operator-control/principals/{principal_id}/credentials/rotate": "admin",
-      "PUT /packs/operator-control/principals/{principal_id}/client-roles/{client_id}": "admin",
-      "PUT /packs/operator-control/principals/{principal_id}/msp-admin": "admin"
+      "GET /packs/operator-control/status": "exposed"
     }
   }
 }

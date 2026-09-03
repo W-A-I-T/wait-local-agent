@@ -12,6 +12,8 @@ All notable changes to WAIT Local Agent will be documented in this file.
 
 ### Security
 
+- Principal lifecycle mutations now use one canonical Store path; deactivation
+  revokes sessions, credentials, and capability grants together (#513).
 - Production installs now fetch version-matched release assets, verify keyless
   cosign signatures by image digest by default, and persist a digest-pinned
   image reference with an explicit, recorded `--no-verify` escape hatch.
@@ -20,6 +22,8 @@ All notable changes to WAIT Local Agent will be documented in this file.
 
 ### Changed
 
+- Consolidated principal management into People & Access and removed the
+  duplicate operator-control identity routes and screen (#513).
 - Release images are smoke-tested and pushed from one loaded image artifact;
   the workflow asserts that the smoke-tested and published digests match.
 - Pull-request secret scans now inspect only the event's commit range, while a
@@ -119,6 +123,10 @@ All notable changes to WAIT Local Agent will be documented in this file.
 
 ### Security
 
+- Core connector read routes now resolve bound callers through the requested
+  client-scoped connector instance and fail closed with structured 409 errors
+  when that scope is unavailable or unsupported; appliance-wide behavior is
+  preserved for MSP administrators without a requested client.
 - Smart-action invoke now rejects caller-supplied `_approval_completed` payload
   fields to prevent approval-gate bypasses; the invoke route returns 400 for
   reserved-field and validation errors.

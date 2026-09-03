@@ -19,7 +19,6 @@ import {
   ShieldCheck,
   Sparkles,
   Stethoscope,
-  UserRoundCog,
   Users,
   Workflow
 } from "lucide-react";
@@ -96,7 +95,6 @@ const advancedNavigation: NavItem[] = [
   { to: "/collectors", label: "Collectors", icon: Database },
   { to: "/founder", label: "Launch Passport", icon: Sparkles },
   { to: "/integrations/connector-instances", label: "Connector Instances", icon: Database, adminOnly: true },
-  { to: "/system/identity-access", label: "Identity & Access", icon: UserRoundCog, adminOnly: true },
   { to: "/microsoft-admin/access", label: "Microsoft Admin Access", icon: ShieldCheck, adminOnly: true },
   { to: "/settings/access", label: "People & Access", icon: Users, mspAdminOnly: true },
   { to: "/settings", label: "Settings", icon: Activity, adminOnly: true },
