@@ -5,7 +5,10 @@ import { Connectors } from "../src/screens/Connectors";
 vi.mock("../src/app/DashboardContext", () => ({
   useDashboard: () => ({
     clients: [{ client_id: "acme", name: "Acme Support", status: "active" }],
-    connectors: [{ id: "syncro", name: "Syncro", status: "ready", message: "configured" }],
+    connectors: [
+      { id: "syncro", name: "Syncro", status: "ready", message: "configured", tier: "instance" },
+      { id: "hudu", name: "Hudu", status: "not_configured", message: "not configured", tier: "appliance-wide" }
+    ],
     haloConnector: { status: "blocked", message: "not configured" },
     huduConnector: { status: "blocked", message: "not configured" },
     writeHealth: { status: "blocked", message: "writes disabled" },
@@ -78,12 +81,18 @@ describe("Connectors screen", () => {
   it("explains the exact environment setup and safety gates for a provider", () => {
     render(<Connectors />);
 
-    fireEvent.click(screen.getByText("How to configure"));
+    fireEvent.click(screen.getAllByText("How to configure")[0]);
 
     expect(screen.getByText("WAIT_SYNCRO_BASE_URL")).toBeInTheDocument();
     expect(screen.getByText("WAIT_SYNCRO_API_TOKEN")).toBeInTheDocument();
-    expect(screen.getByText(/Set these in the server environment \(\.env\)/)).toBeInTheDocument();
-    expect(screen.getByText(/WAIT_ALLOW_HTTP_PROBING/)).toBeInTheDocument();
+    expect(screen.getAllByText(/Set these in the server environment \(\.env\)/)[0]).toBeInTheDocument();
+    expect(screen.getAllByText(/WAIT_ALLOW_HTTP_PROBING/)[0]).toBeInTheDocument();
+  });
+
+  it("labels appliance-wide connectors from the connector catalog tier", () => {
+    render(<Connectors />);
+
+    expect(screen.getByText("Appliance-wide")).toBeInTheDocument();
   });
 
   it("rejects unsafe Syncro ticket input before making a request", async () => {

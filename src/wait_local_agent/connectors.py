@@ -9,6 +9,7 @@ from uuid import UUID
 from wait_local_agent.autotask import AutotaskClient
 from wait_local_agent.config import Settings
 from wait_local_agent.confluence import ConfluenceClient
+from wait_local_agent.connector_factory import SUPPORTED_CONNECTOR_TYPES
 from wait_local_agent.connectwise import ConnectWiseClient
 from wait_local_agent.halopsa import HaloPSAClient
 from wait_local_agent.hudu import HuduClient
@@ -35,6 +36,7 @@ from wait_local_agent.models import (
     ApprovalRequest,
     ConnectorStatus,
     ConnectorStatusValue,
+    ConnectorTier,
     ConnectWiseTicketDraft,
     ConnectWiseWriteRequest,
     ConnectWiseWriteResult,
@@ -127,6 +129,9 @@ class ConnectorValidationResult:
 
 
 def list_connector_statuses(settings: Settings) -> list[ConnectorStatus]:
+    def tier(connector_id: str) -> ConnectorTier:
+        return "instance" if connector_id in SUPPORTED_CONNECTOR_TYPES else "appliance-wide"
+
     halopsa_configured = bool(
         settings.halopsa_base_url
         and settings.halopsa_client_id
@@ -388,6 +393,7 @@ def list_connector_statuses(settings: Settings) -> list[ConnectorStatus]:
                 if hudu_status == "blocked"
                 else "Set WAIT_HUDU_BASE_URL and WAIT_HUDU_API_KEY to enable documentation reads."
             ),
+            tier=tier("hudu"),
             http_probing_enabled=settings.allow_http_probing,
         ),
         ConnectorStatus(
@@ -402,6 +408,7 @@ def list_connector_statuses(settings: Settings) -> list[ConnectorStatus]:
                 if itglue_status == "blocked"
                 else "Set WAIT_ITGLUE_BASE_URL and WAIT_ITGLUE_API_KEY to enable IT Glue reads."
             ),
+            tier=tier("itglue"),
             http_probing_enabled=settings.allow_http_probing,
         ),
         ConnectorStatus(
@@ -419,6 +426,7 @@ def list_connector_statuses(settings: Settings) -> list[ConnectorStatus]:
                     "WAIT_CONFLUENCE_API_TOKEN to enable Confluence reads."
                 )
             ),
+            tier=tier("confluence"),
             http_probing_enabled=settings.allow_http_probing,
         ),
         ConnectorStatus(
@@ -436,6 +444,7 @@ def list_connector_statuses(settings: Settings) -> list[ConnectorStatus]:
                 "to enable Notion page reads."
                 )
             ),
+            tier=tier("notion"),
             write_actions_enabled=settings.allow_write_actions and notion_configured,
             http_probing_enabled=settings.allow_http_probing,
         ),
@@ -454,6 +463,7 @@ def list_connector_statuses(settings: Settings) -> list[ConnectorStatus]:
                     "to enable SharePoint reads."
                 )
             ),
+            tier=tier("sharepoint"),
             http_probing_enabled=settings.allow_http_probing,
         ),
         ConnectorStatus(
@@ -558,6 +568,7 @@ def list_connector_statuses(settings: Settings) -> list[ConnectorStatus]:
                     "WAIT_TIMEZEST_CLIENT_MAP_JSON to enable scheduling-request reads."
                 )
             ),
+            tier=tier("timezest"),
             write_actions_enabled=settings.allow_write_actions and timezest_configured,
             http_probing_enabled=settings.allow_http_probing,
         ),
@@ -576,6 +587,7 @@ def list_connector_statuses(settings: Settings) -> list[ConnectorStatus]:
                     "WAIT_SCALEPAD_CLIENT_MAP_JSON to enable client inventory reads."
                 )
             ),
+            tier=tier("scalepad"),
             http_probing_enabled=settings.allow_http_probing,
         ),
         ConnectorStatus(
@@ -584,6 +596,11 @@ def list_connector_statuses(settings: Settings) -> list[ConnectorStatus]:
             name=rmm_configured_name,
             status=rmm_status,
             message=rmm_configuration_message,
+            tier=(
+                "appliance-wide"
+                if n_sight_configured or kaseya_rmm_configured or screenconnect_configured
+                else "instance"
+            ),
             write_actions_enabled=settings.allow_write_actions
             and (
                 ninjaone_configured

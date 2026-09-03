@@ -16,6 +16,7 @@ from fastapi.testclient import TestClient
 
 import wait_local_agent.api.app as app_module
 import wait_local_agent.baseline as baseline_module
+import wait_local_agent.power_platform_deployment as deployment_module
 from tests.support import ensure_test_client, ensure_test_clients, ingest_local
 from wait_local_agent.api.app import ClientReportRequest, ScheduledJobCreateRequest, create_app
 from wait_local_agent.autotask import AutotaskReadResponse
@@ -456,7 +457,9 @@ def test_provider_health_requires_admin_role(settings, monkeypatch) -> None:
 
     assert client.get("/settings/providers/health", headers={"Authorization": "Bearer viewer-token"}).status_code == 403
     assert client.get("/settings/providers/health", headers={"Authorization": "Bearer tech-token"}).status_code == 403
-    assert client.get("/settings/providers/health", headers={"Authorization": "Bearer admin-token"}).status_code == 200
+    admin_health = client.get("/settings/providers/health", headers={"Authorization": "Bearer admin-token"})
+    assert admin_health.status_code == 200
+    assert admin_health.json()["local"]["status"] == "ready"
 
 
 def test_provider_settings_expose_operator_supplied_model_rates_without_secrets(settings) -> None:
@@ -616,6 +619,11 @@ def test_auth_role_approver_identity_and_client_filters(settings) -> None:
     assert [document["title"] for document in filtered_documents.json()] == ["Acme"]
     assert [run["ticket_id"] for run in filtered_runs.json()] == ["TCK-ACME"]
     assert ticket_approval.status_code == 200
+    assert ticket_approval.json() == {
+        "ticket_id": "TCK-ACME",
+        "status": "approved",
+        "comment": "ship it",
+    }
     assert approved.status_code == 200
     assert approved.json()["approver_id"] == expected_approver_id
     assert any(
@@ -850,10 +858,13 @@ def test_approval_requests_are_scoped_to_authenticated_tenant(settings, monkeypa
     assert foreign_execute.status_code == 404
     assert execute_calls == [acme_halopsa.id]
     assert acme_detail.status_code == 200
+    assert acme_detail.json()["id"] == acme.id
     assert acme_update.status_code == 200
+    assert acme_update.json()["status"] == "approved"
     assert legacy_detail.status_code == 404
     assert legacy_update.status_code == 404
     assert acme_execute.status_code == 200
+    assert acme_execute.json()["id"] == acme_halopsa.id
     assert admin_list.status_code == 200
     assert {request["subject_id"] for request in admin_list.json()} == {
         "TCK-ACME",
@@ -863,7 +874,9 @@ def test_approval_requests_are_scoped_to_authenticated_tenant(settings, monkeypa
     }
     assert [request["subject_id"] for request in admin_filtered.json()] == ["TCK-GLOBEX"]
     assert admin_detail.status_code == 200
+    assert admin_detail.json()["id"] == globex.id
     assert admin_update.status_code == 200
+    assert admin_update.json()["status"] == "rejected"
     assert foreign_after_technician is not None
     assert foreign_after_technician.status == "pending"
     assert foreign_after_technician.comment == ""
@@ -1645,6 +1658,50 @@ def test_approval_execution_state_covers_governed_connector_branches(settings, m
         "WAIT_PAC_PATH is configured but is not an executable regular file."
     )
 
+    empty_path = tmp_path / "empty-path"
+    empty_path.mkdir()
+    monkeypatch.setenv("PATH", str(empty_path))
+    monkeypatch.setattr(deployment_module, "resolve_pac_executable", lambda _settings: None)
+    pathless = detail(
+        "power_platform.solution_stage",
+        app_settings=replace(
+            settings,
+            demo_mode=False,
+            api_token="admin-token",
+            allow_write_actions=True,
+            allow_power_platform_deployment=True,
+            power_platform_workspace=tmp_path,
+        ),
+    )
+    assert pathless["can_execute"] is False
+    assert pathless["block_reason"] == "The pac executable is not available on the local PATH."
+
+    fake_pac = tmp_path / "pac"
+    fake_pac.write_text(
+        "#!/bin/sh\nif [ \"$1\" = help ]; then printf '%s\\n' 'Version: 2.4.1'; fi\nexit 0\n",
+        encoding="utf-8",
+    )
+    fake_pac.chmod(0o755)
+    monkeypatch.setenv("PATH", str(tmp_path))
+    monkeypatch.setattr(deployment_module, "resolve_pac_executable", lambda _settings: str(fake_pac))
+    path_settings = replace(
+        settings,
+        demo_mode=False,
+        api_token="admin-token",
+        allow_write_actions=True,
+        allow_power_platform_deployment=True,
+        power_platform_workspace=tmp_path,
+    )
+    path_store = Store(path_settings.data_path)
+    path_approval = path_store.create_approval_request("TCK-STATE", "power_platform.solution_stage", {})
+    path_store.update_approval_request(path_approval.id or 0, "approved")
+    path_response = TestClient(app_module.create_app(path_settings)).get(
+        f"/approval-requests/{path_approval.id}", headers=_auth("admin-token")
+    )
+    assert path_response.status_code == 200
+    assert path_response.json()["can_execute"] is True
+    assert path_response.json()["block_reason"] == ""
+
 
 def test_api_exposes_expired_approval_and_rejects_late_approval(settings) -> None:
     store = Store(settings.data_path)
@@ -1756,6 +1813,7 @@ def test_approval_detail_payload_edit_and_workflow_detail(settings) -> None:
     assert edited.status_code == 200
     assert edited.json()["payload"]["fields"]["note"] == "Edited"
     assert approved.status_code == 200
+    assert approved.json()["status"] == "approved"
     assert rejected_edit.status_code == 409
     assert any(event["event_type"] == "approval_request.edited" for event in events.json())
 
@@ -1929,9 +1987,11 @@ def test_approval_request_update_propagates_to_workflow_run(settings) -> None:
     rejected_runs = client.get("/workflow-runs", headers=_auth("tech-token"))
 
     assert approved.status_code == 200
+    assert approved.json()["status"] == "approved"
     approved_view = next(item for item in approved_runs.json() if item["id"] == run.json()["id"])
     assert approved_view["status"] == "approved"
     assert rejected.status_code == 200
+    assert rejected.json()["status"] == "rejected"
     rejected_view = next(
         item for item in rejected_runs.json() if item["id"] == second_run.json()["id"]
     )
@@ -2203,6 +2263,7 @@ def test_event_ingest_route_dispatches_idempotently_and_exposes_delivery_history
         },
     )
     assert agent.status_code == 200
+    assert agent.json()["id"]
 
     event = client.post(
         "/automation/events",
@@ -2344,6 +2405,7 @@ def test_manual_workflow_run_emits_completion_event(settings) -> None:
         },
     )
     assert agent.status_code == 200
+    assert agent.json()["id"]
 
     run = client.post(
         "/workflows/templates/ticket-triage/runs",
@@ -2419,6 +2481,7 @@ def test_manual_workflow_run_requires_tenant_for_authenticated_technician(settin
     )
 
     assert response.status_code == 200
+    assert response.json()["status"] == "completed"
 
 
 def test_manual_workflow_run_reports_missing_template_after_ticket_scope_check(settings) -> None:
@@ -2477,6 +2540,7 @@ def test_workflow_completion_event_filter_is_available_through_api(settings) -> 
         },
     )
     assert agent.status_code == 200
+    assert agent.json()["id"]
 
     event = client.post(
         "/automation/events",
@@ -2522,6 +2586,7 @@ def test_template_gallery_is_provenance_bearing_and_runs_only_in_scope(settings)
     listed = client.get("/workflow-templates/gallery")
     detail = client.get(f"/workflow-templates/gallery/{entry_id}")
     assert listed.status_code == 200
+    assert listed.json()[0]["id"] == entry_id
     assert detail.status_code == 200
     assert detail.json()["id"] == entry_id
 
@@ -3325,6 +3390,7 @@ def test_smart_action_runs_and_ticket_lookup_are_client_scoped(settings) -> None
     )
 
     assert acme.status_code == 200
+    assert acme.json()["run_id"]
     assert beta.status_code == 200
     assert listed.status_code == 200
     assert [run["client_id"] for run in listed.json()] == ["acme"]
@@ -4155,6 +4221,10 @@ def test_syncro_connector_read_routes_and_audit(settings, monkeypatch) -> None:
     assert customers.json()["items"][0]["name"] == "Contoso"
     assert customer.json()["items"][0]["id"] == "7"
     assert any(connector["id"] == "syncro" for connector in connectors.json())
+    connector_tiers = {connector["id"]: connector["tier"] for connector in connectors.json()}
+    assert connector_tiers["syncro"] == "instance"
+    assert connector_tiers["itglue"] == "appliance-wide"
+    assert all(connector["tier"] in {"instance", "appliance-wide"} for connector in connectors.json())
     assert any(event["event_type"] == "syncro.read" for event in audit.json())
 
 
@@ -4470,6 +4540,7 @@ def test_notion_connector_routes_are_tenant_scoped_and_audited(settings, monkeyp
     assert missing_scope.status_code == 403
     assert missing_data_source_scope.status_code == 403
     assert health.status_code == 200
+    assert health.json()["status"] == "ready"
     assert pages.json()["items"][0]["title"] == "MFA"
     assert page.json()["items"][0]["markdown"] == "token=[redacted]"
     assert data_source_pages.status_code == 200
@@ -5134,6 +5205,7 @@ def test_m365_password_and_authentication_method_routes_require_admin_approval(
         json={"status": "approved"},
     )
     assert password_approval.status_code == 200
+    assert password_approval.json()["status"] == "approved"
 
     method_draft = client.post(
         "/connectors/m365/users/authentication-method-drafts",
@@ -5151,6 +5223,7 @@ def test_m365_password_and_authentication_method_routes_require_admin_approval(
         json={"status": "approved"},
     )
     assert method_approval.status_code == 200
+    assert method_approval.json()["status"] == "approved"
     assert calls == [
         {
             "user_identity": "adele.vance@example.test",

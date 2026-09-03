@@ -2352,6 +2352,7 @@ def test_nsight_selection_status_and_helpers(settings) -> None:
     assert provider.adapter_id == "n-sight"
     assert rmm_status.name == "N-able N-sight"
     assert rmm_status.status == "configured"
+    assert rmm_status.tier == "appliance-wide"
     assert rmm_status.write_actions_enabled is False
     assert "nsight-secret-token" not in rmm_status.message
     assert "WAIT_NSIGHT_API_KEY" in secret_keys

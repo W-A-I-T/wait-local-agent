@@ -238,6 +238,9 @@ export function Connectors() {
         <div>
           <strong>{status.name}</strong>
           <span>{status.message}</span>
+          {status.tier === "appliance-wide" ? (
+            <span>Appliance-wide</span>
+          ) : null}
         </div>
         <em>{status.status}</em>
         {setup ? (

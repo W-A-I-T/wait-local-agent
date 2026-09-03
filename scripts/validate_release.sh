@@ -17,7 +17,7 @@ python3 scripts/check_release_version.py
 mypy src tests
 bandit -r src
 pip-audit --skip-editable
-"$PYTHON_BIN" -m pytest --cov=wait_local_agent --cov-report=term-missing --cov-fail-under=95
+"$PYTHON_BIN" -m pytest --cov=wait_local_agent --cov=packs --cov-report=term-missing --cov-fail-under=95
 "$PYTHON_BIN" scripts/public_surface_audit.py
 
 cd "$ROOT_DIR/ui"

@@ -6,22 +6,27 @@ mocked transport exercise the bounded contract. Live status means a real
 provider was verified in this repository; no live provider verification is
 claimed for this matrix.
 
-| ID / connector | Read surface | Approval-gated writes | Verification |
-| --- | --- | --- | --- |
-| `halopsa` / HaloPSA | tickets, notes, clients, assets, categories | ticket notes/status/assignment/allowlisted fields | fixture: covered; live: not verified |
-| `hudu` / Hudu | companies, articles, folders | none | fixture: covered; live: not verified |
-| `itglue` / IT Glue | organizations, documents, folders, bounded content | none | fixture: covered; live: not verified |
-| `confluence` / Confluence Cloud | bounded page listing and detail | none | fixture: covered; live: not verified |
-| `notion` / Notion | mapped pages, Markdown, data-source metadata/rows | bounded page comment | fixture: covered; live: not verified |
-| `sharepoint` / SharePoint | sites, document-library metadata, bounded content | none | fixture: covered; live: not verified |
-| `connectwise` / ConnectWise PSA | tickets and companies | allowlisted ticket updates | fixture: covered; live: not verified |
-| `syncro` / Syncro | tickets, comments, customers | one tenant-scoped ticket note | fixture: covered; live: not verified |
-| `servicenow` / ServiceNow | incidents and companies | work note, state, assignment, resolution metadata | fixture: covered; live: not verified |
-| `autotask` / Autotask PSA | tickets and companies | notes, time entries, status, resolution, assignment | fixture: covered; live: not verified |
-| `m365` / Microsoft 365 / Entra | users, groups, licenses, mail metadata, managed devices | allowlisted identity, mailbox, message, group, license, session, and device actions | fixture: covered; live: not verified |
-| `timezest` / TimeZest | mapped scheduling requests | documented scheduling-request create | fixture: covered; live: not verified |
-| `scalepad` / ScalePad | mapped Core, risk, compliance, lifecycle reads | none | fixture: covered; live: not verified |
-| `rmm` / configured RMM adapter | configured NinjaOne, Datto, N-central, N-sight, Kaseya, or ScreenConnect bounded surfaces | adapter-specific approved actions; local RMM remains blocked | fixture: covered; live: not verified |
+| ID / connector | Configuration scope | Read surface | Approval-gated writes | Verification |
+| --- | --- | --- | --- | --- |
+| `halopsa` / HaloPSA | connector instance or appliance-wide fallback | tickets, notes, clients, assets, categories | ticket notes/status/assignment/allowlisted fields | fixture: covered; live: not verified |
+| `hudu` / Hudu | appliance-wide (environment configured), not per-client | companies, articles, folders | none | fixture: covered; live: not verified |
+| `itglue` / IT Glue | appliance-wide (environment configured), not per-client | organizations, documents, folders, bounded content | none | fixture: covered; live: not verified |
+| `confluence` / Confluence Cloud | appliance-wide (environment configured), not per-client | bounded page listing and detail | none | fixture: covered; live: not verified |
+| `notion` / Notion | appliance-wide (environment configured), not per-client | mapped pages, Markdown, data-source metadata/rows | bounded page comment | fixture: covered; live: not verified |
+| `sharepoint` / SharePoint | appliance-wide (environment configured), not per-client | sites, document-library metadata, bounded content | none | fixture: covered; live: not verified |
+| `connectwise` / ConnectWise PSA | connector instance or appliance-wide fallback | tickets and companies | allowlisted ticket updates | fixture: covered; live: not verified |
+| `syncro` / Syncro | connector instance or appliance-wide fallback | tickets, comments, customers | one tenant-scoped ticket note | fixture: covered; live: not verified |
+| `servicenow` / ServiceNow | connector instance or appliance-wide fallback | incidents and companies | work note, state, assignment, resolution metadata | fixture: covered; live: not verified |
+| `autotask` / Autotask PSA | connector instance or appliance-wide fallback | tickets and companies | notes, time entries, status, resolution, assignment | fixture: covered; live: not verified |
+| `m365` / Microsoft 365 / Entra | connector instance or appliance-wide fallback | users, groups, licenses, mail metadata, managed devices | allowlisted identity, mailbox, message, group, license, session, and device actions | fixture: covered; live: not verified |
+| `timezest` / TimeZest | appliance-wide (environment configured), not per-client | mapped scheduling requests | documented scheduling-request create | fixture: covered; live: not verified |
+| `scalepad` / ScalePad | appliance-wide (environment configured), not per-client | mapped Core, risk, compliance, lifecycle reads | none | fixture: covered; live: not verified |
+| `rmm` / configured RMM adapter | mixed; see note below | configured NinjaOne, Datto, N-central, N-sight, Kaseya, or ScreenConnect bounded surfaces | adapter-specific approved actions; local RMM remains blocked | fixture: covered; live: not verified |
+
+The N-sight, Kaseya, and ScreenConnect RMM adapters are appliance-wide
+(environment configured), not per-client. NinjaOne, Datto RMM, and N-central
+support client-scoped Connector Instances; the aggregate `rmm` API entry can
+therefore represent either scope depending on the selected adapter.
 
 All outbound calls require `WAIT_ALLOW_HTTP_PROBING=true`. Mutations also
 require `WAIT_ALLOW_WRITE_ACTIONS=true` and the applicable approval flow.

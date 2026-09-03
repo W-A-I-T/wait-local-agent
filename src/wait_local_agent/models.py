@@ -62,6 +62,7 @@ ActionKind = Literal[
 ]
 ConnectorKind = Literal["psa", "documentation", "rmm", "m365", "marketplace", "communications"]
 ConnectorStatusValue = Literal["not_configured", "configured", "blocked", "ready", "failed"]
+ConnectorTier = Literal["instance", "appliance-wide"]
 WorkflowRunStatus = Literal["pending_approval", "approved", "rejected", "completed", "failed"]
 RiskLevel = Literal["low", "medium", "high"]
 AgentRunStatus = Literal[
@@ -294,6 +295,7 @@ class ConnectorStatus:
     name: str
     status: ConnectorStatusValue
     message: str
+    tier: ConnectorTier = "instance"
     write_actions_enabled: bool = False
     http_probing_enabled: bool = False
 

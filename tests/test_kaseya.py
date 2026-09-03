@@ -69,6 +69,7 @@ def test_kaseya_is_selected_and_reported_without_exposing_credentials(settings) 
     assert provider.adapter_id == "kaseya-vsa-x"
     assert status.name == "Kaseya VSA X"
     assert status.status == "configured"
+    assert status.tier == "appliance-wide"
     assert "token-secret" not in status.message
     assert "WAIT_KASEYA_RMM_TOKEN_SECRET" in secret_keys
 

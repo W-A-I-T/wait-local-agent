@@ -54,5 +54,8 @@ fi
 echo "Compose integration passed: authenticated API health and UI availability verified."
 
 if [[ "${WAIT_COMPOSE_RUN_BROWSER:-false}" == "true" ]]; then
-  WAIT_BROWSER_TOKEN="$TOKEN" WAIT_BROWSER_UI_URL="http://127.0.0.1:$UI_PORT" npm --prefix "$ROOT_DIR/ui" run test:e2e
+  WAIT_BROWSER_TOKEN="$TOKEN" \
+    WAIT_BROWSER_UI_URL="http://127.0.0.1:$UI_PORT" \
+    WAIT_BROWSER_API_URL="http://127.0.0.1:$API_PORT" \
+    npm --prefix "$ROOT_DIR/ui" run test:e2e
 fi
