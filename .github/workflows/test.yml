@@ -4,6 +4,8 @@ on:
   pull_request:
   push:
     branches: [main]
+  schedule:
+    - cron: "17 3 * * 0"
 
 concurrency:
   group: test-${{ github.workflow }}-${{ github.event.pull_request.number || github.sha }}
@@ -11,11 +13,12 @@ concurrency:
 
 jobs:
   backend:
+    if: github.event_name != 'schedule'
     timeout-minutes: 25
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-python@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: "3.12"
       - run: python -m pip install --upgrade pip
@@ -33,11 +36,12 @@ jobs:
       - run: python scripts/public_surface_audit.py
 
   backend-windows:
+    if: github.event_name != 'schedule'
     timeout-minutes: 15
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-python@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: "3.12"
       - run: python -m pip install -e ".[dev]"
@@ -54,14 +58,15 @@ jobs:
           tests/test_diagnostics.py
 
   ui:
+    if: github.event_name != 'schedule'
     timeout-minutes: 10
     runs-on: ubuntu-latest
     defaults:
       run:
         working-directory: ui
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-node@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: "22.22.2"
           cache: npm
@@ -71,11 +76,12 @@ jobs:
       - run: npm run build
 
   desktop-pr:
+    if: github.event_name != 'schedule'
     timeout-minutes: 20
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-node@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: "22.22.2"
           cache: npm
@@ -85,7 +91,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
-      - uses: actions/setup-python@v7
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: "3.12"
       - name: Install desktop check dependencies
@@ -122,13 +128,40 @@ jobs:
       - run: cargo clippy --manifest-path desktop/src-tauri/Cargo.toml --all-targets -- -D warnings
 
   gitleaks:
+    if: github.event_name == 'pull_request' || github.event_name == 'push'
     timeout-minutes: 10
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
       - name: Scan repository with the checked-in ignore policy
+        run: |
+          set -euo pipefail
+          if [[ "$GITHUB_EVENT_NAME" == "pull_request" ]]; then
+            scan_range="origin/${GITHUB_BASE_REF}..HEAD"
+          else
+            scan_range="HEAD~1..HEAD"
+          fi
+          docker run --rm \
+            -v "${GITHUB_WORKSPACE}:/repo:ro" \
+            zricethezav/gitleaks:latest detect \
+            --source=/repo \
+            --log-opts="$scan_range" \
+            --no-banner \
+            --redact \
+            --exit-code=1 \
+            --gitleaks-ignore-path=/repo/.gitleaksignore
+
+  gitleaks-all-refs:
+    if: github.event_name == 'schedule'
+    timeout-minutes: 10
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      - name: Scan all refs with the checked-in ignore policy
         run: >-
           docker run --rm
           -v "${GITHUB_WORKSPACE}:/repo:ro"
@@ -140,11 +173,12 @@ jobs:
           --gitleaks-ignore-path=/repo/.gitleaksignore
 
   compose-browser:
+    if: github.event_name != 'schedule'
     timeout-minutes: 25
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-node@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: "22.22.2"
           cache: npm
@@ -156,8 +190,9 @@ jobs:
       - run: WAIT_COMPOSE_RUN_BROWSER=true scripts/test_compose_integration.sh
 
   prod-compose:
+    if: github.event_name != 'schedule'
     timeout-minutes: 25
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - run: scripts/test_prod_compose.sh

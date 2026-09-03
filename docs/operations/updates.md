@@ -81,8 +81,9 @@ Updates are operator-managed. Before changing the appliance image:
    restore exercise when the recovery path must be verified.
 2. Run `wait-local-agent update check` and proceed only when the signed
    metadata is trusted and the result identifies the intended release.
-3. Pin the new immutable image by digest (or an explicitly approved immutable
-   image tag), update `WAIT_IMAGE_TAG`, and run the production `docker compose pull`.
+3. Re-run the installer from the new release tag. It verifies the release,
+   updates `WAIT_IMAGE_REF` to the new immutable digest, and preserves existing
+   credentials; do not update only `WAIT_IMAGE_TAG`.
 4. Start the appliance and allow `MigrationRunner` to apply pending database
    migrations on startup. Verify `GET /healthz` returns `{"status":"ok"}` and
    review the application health and backup status before returning service.

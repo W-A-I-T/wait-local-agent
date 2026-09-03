@@ -10,14 +10,15 @@ Follow the [production installation guide](production-install.md), or run the
 pull-based installer on a Linux host with Docker and Compose v2:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/W-A-I-T/wait-local-agent/main/scripts/install.sh \
-  | bash -s -- --version stable
+curl -fsSL https://raw.githubusercontent.com/W-A-I-T/wait-local-agent/v2.0.0/scripts/install.sh \
+  | bash -s -- --version 2.0.0
 ```
 
 The installer creates `/opt/wait-local-agent`, generates bootstrap credentials,
-downloads the production Compose file, starts the versioned image, and waits
-for `http://127.0.0.1:8788/healthz`. It prints the one-time administrator token
-once. Keep the `.env` file private.
+downloads the production Compose file from the matching release tag, verifies
+and digest-pins the image, starts it, and waits for
+`http://127.0.0.1:8788/healthz`. It prints the bootstrap administrator token;
+the token remains persisted in `.env`, which must stay private.
 
 ## 2. Development stack (source and Vite, contributors)
 
