@@ -2,11 +2,12 @@ import { FormEvent, useCallback, useEffect, useState } from "react";
 import { CheckCircle2, MessageSquare, Plus, Send, XCircle } from "lucide-react";
 import { apiFetch } from "../api/client";
 import { useDashboard } from "../app/DashboardContext";
-import { ClientIdSelect } from "../components/ClientIdSelect";
+import { ScopeBadge } from "../components/ScopeBadge";
+import { SelectClientNotice } from "../components/SelectClientNotice";
 import type { SmartActionRun, TechnicianChatResponse, TechnicianChatSession } from "../api/types";
 
 export function TechnicianChat() {
-  const { canWrite, canWriteExternally = canWrite, clients = [], selectedClientId, setSelectedClientId } = useDashboard();
+  const { canWrite, canWriteExternally = canWrite, clients = [], selectedClientId = "", isMspAdmin = false } = useDashboard();
   const [sessions, setSessions] = useState<TechnicianChatSession[]>([]);
   const [activeSession, setActiveSession] = useState<TechnicianChatSession | null>(null);
   const [ticketId, setTicketId] = useState("");
@@ -41,7 +42,7 @@ export function TechnicianChat() {
     } finally {
       setNotificationLoading(false);
     }
-  }, [canWrite]);
+  }, [canWrite, selectedClientId]);
 
   const refreshSessions = useCallback(async () => {
     if (!canWrite) {
@@ -63,7 +64,7 @@ export function TechnicianChat() {
     } finally {
       setLoading(false);
     }
-  }, [canWrite]);
+  }, [canWrite, selectedClientId]);
 
   useEffect(() => {
     void refreshSessions();
@@ -206,10 +207,10 @@ export function TechnicianChat() {
         {plan ? <div className="technician-plan" role="status"><strong>Bounded plan preview · {plan.status}</strong>{plan.blocked_reason ? <p>{plan.blocked_reason}</p> : null}{plan.steps.length ? <ol>{plan.steps.map((step) => <li key={`${step.index}-${step.tool_id}`}><strong>{step.name}</strong><span>{step.reason} · {step.approval_required ? "approval required" : "read-only or deterministic"}</span></li>)}</ol> : <p>No approved steps were selected.</p>}</div> : null}
         <form className="draft-form" onSubmit={(event) => void createSession(event)}>
           <div className="grid">
-            <ClientIdSelect label="Client ID (required)" value={selectedClientId} onChange={setSelectedClientId} clients={clients} required id="technician-client-id" />
+            <p className="screen-note">Scope: <ScopeBadge /></p>
             <label>Ticket id (optional)<input value={ticketId} onChange={(event) => setTicketId(event.target.value)} placeholder="TCK-1001" /></label>
           </div>
-          {!selectedClientId ? <p className="screen-note">Select a client from the top bar before starting a chat session.</p> : null}
+          {!selectedClientId && !isMspAdmin ? <SelectClientNotice /> : null}
           <button type="submit" disabled={busy !== null || !selectedClientId} title={!selectedClientId ? "Select a client from the top bar first" : undefined}><Plus size={17} aria-hidden="true" />{busy === "create" ? "Starting…" : "New chat session"}</button>
         </form>
         <form className="draft-form" onSubmit={(event) => void prepareNotification(event)}>

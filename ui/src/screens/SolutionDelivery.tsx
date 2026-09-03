@@ -3,7 +3,8 @@ import { AlertTriangle, CheckCircle2, Circle, FileJson, PackageOpen, PlayCircle,
 import { Link, useLocation, useNavigate } from "react-router-dom";
 import { executeEndpointFor, useDashboard } from "../app/DashboardContext";
 import { apiFetch } from "../api/client";
-import { ClientIdSelect } from "../components/ClientIdSelect";
+import { ScopeBadge } from "../components/ScopeBadge";
+import { SelectClientNotice } from "../components/SelectClientNotice";
 import type { ApprovalRequest } from "../api/types";
 import { readSolutionDeliveryHandoff } from "../lib/solutionDeliveryHandoff";
 
@@ -28,7 +29,6 @@ type PowerPlatformCliStatus = {
 };
 
 type PackageForm = {
-  clientId: string;
   solutionName: string;
   publisherName: string;
   publisherPrefix: string;
@@ -38,7 +38,6 @@ type PackageForm = {
 };
 
 type DeploymentForm = {
-  clientId: string;
   solutionName: string;
   publisherName: string;
   publisherPrefix: string;
@@ -49,7 +48,6 @@ type DeploymentForm = {
 };
 
 type RollbackForm = {
-  clientId: string;
   solutionName: string;
   publisherName: string;
   publisherPrefix: string;
@@ -85,7 +83,6 @@ const initialGates: GateState = {
 };
 
 const initialPackageForm: PackageForm = {
-  clientId: "",
   solutionName: "employee_onboarding",
   publisherName: "WAIT",
   publisherPrefix: "wait",
@@ -95,7 +92,6 @@ const initialPackageForm: PackageForm = {
 };
 
 const initialDeploymentForm: DeploymentForm = {
-  clientId: "",
   solutionName: "employee_onboarding",
   publisherName: "WAIT",
   publisherPrefix: "wait",
@@ -106,7 +102,6 @@ const initialDeploymentForm: DeploymentForm = {
 };
 
 const initialRollbackForm: RollbackForm = {
-  clientId: "",
   solutionName: "employee_onboarding",
   publisherName: "WAIT",
   publisherPrefix: "wait",
@@ -126,25 +121,26 @@ export function SolutionDelivery() {
     canWrite,
     canWriteExternally = canWrite,
     clients = [],
-    clientId: scopedClientId,
+    selectedClientId = "",
+    isMspAdmin = false,
     executeApproval,
     isAdmin,
     refresh,
   } = useDashboard();
   const location = useLocation();
   const navigate = useNavigate();
-  const defaultClientId = scopedClientId.trim();
+  const defaultClientId = selectedClientId.trim();
+  const scopeRequired = !defaultClientId;
   const handoff = useMemo(() => readSolutionDeliveryHandoff(location.state), [location.state]);
   const [handoffNotice] = useState(
     handoff ? `${handoff.artifacts.length} artifact${handoff.artifacts.length === 1 ? "" : "s"} received from Solutions Architect. Review the package contents before building.` : "",
   );
   const [packageForm, setPackageForm] = useState<PackageForm>(() => ({
     ...initialPackageForm,
-    clientId: handoff?.clientId || defaultClientId,
     artifacts: handoff ? JSON.stringify(handoff.artifacts, null, 2) : initialPackageForm.artifacts,
   }));
-  const [deploymentForm, setDeploymentForm] = useState<DeploymentForm>({ ...initialDeploymentForm, clientId: defaultClientId });
-  const [rollbackForm, setRollbackForm] = useState<RollbackForm>({ ...initialRollbackForm, clientId: defaultClientId });
+  const [deploymentForm, setDeploymentForm] = useState<DeploymentForm>(initialDeploymentForm);
+  const [rollbackForm, setRollbackForm] = useState<RollbackForm>(initialRollbackForm);
   const [packageArtifact, setPackageArtifact] = useState<PackageArtifact | null>(null);
   const [validationResult, setValidationResult] = useState<JsonRecord | null>(null);
   const [materializationResult, setMaterializationResult] = useState<JsonRecord | null>(null);
@@ -161,13 +157,6 @@ export function SolutionDelivery() {
     if (!handoff) return;
     navigate(location.pathname, { replace: true, state: null });
   }, [handoff, location.pathname, navigate]);
-
-  useEffect(() => {
-    if (!defaultClientId) return;
-    setPackageForm((current) => current.clientId ? current : { ...current, clientId: defaultClientId });
-    setDeploymentForm((current) => current.clientId ? current : { ...current, clientId: defaultClientId });
-    setRollbackForm((current) => current.clientId ? current : { ...current, clientId: defaultClientId });
-  }, [defaultClientId]);
 
   useEffect(() => {
     let cancelled = false;
@@ -203,8 +192,8 @@ export function SolutionDelivery() {
     (request) => request.action_type === deploymentAction || request.action_type === rollbackAction,
   );
 
-  function effectiveClientId(value: string): string {
-    return value.trim() || defaultClientId;
+  function effectiveClientId(): string {
+    return defaultClientId;
   }
 
   async function buildPackage(event: FormEvent<HTMLFormElement>) {
@@ -216,7 +205,7 @@ export function SolutionDelivery() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          client_id: required(effectiveClientId(packageForm.clientId), "Client workspace ID"),
+          client_id: required(effectiveClientId(), "Client workspace ID"),
           solution_name: required(packageForm.solutionName, "Solution name"),
           publisher_name: required(packageForm.publisherName, "Publisher name"),
           publisher_prefix: required(packageForm.publisherPrefix, "Publisher prefix"),
@@ -248,7 +237,7 @@ export function SolutionDelivery() {
       const result = await apiFetch<JsonRecord>("/consultant/power-platform/package/validate", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ client_id: effectiveClientId(packageForm.clientId) || undefined, package: packageArtifact }),
+        body: JSON.stringify({ client_id: effectiveClientId() || undefined, package: packageArtifact }),
       });
       setValidationResult(result);
       setMessage("Package validation passed. No execution or deployment was started.");
@@ -271,7 +260,7 @@ export function SolutionDelivery() {
       const result = await apiFetch<JsonRecord>("/consultant/power-platform/package/materialize", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ client_id: effectiveClientId(packageForm.clientId) || undefined, package: packageArtifact }),
+        body: JSON.stringify({ client_id: effectiveClientId() || undefined, package: packageArtifact }),
       });
       setMaterializationResult(result);
       observeGateResponse(result, "materialize");
@@ -292,7 +281,7 @@ export function SolutionDelivery() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          client_id: required(effectiveClientId(deploymentForm.clientId), "Client workspace ID"),
+          client_id: required(effectiveClientId(), "Client workspace ID"),
           solution_name: required(deploymentForm.solutionName, "Deployment solution name"),
           publisher_name: required(deploymentForm.publisherName, "Deployment publisher name"),
           publisher_prefix: required(deploymentForm.publisherPrefix, "Deployment publisher prefix"),
@@ -322,7 +311,7 @@ export function SolutionDelivery() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          client_id: required(effectiveClientId(rollbackForm.clientId), "Client workspace ID"),
+          client_id: required(effectiveClientId(), "Client workspace ID"),
           solution_name: required(rollbackForm.solutionName, "Rollback solution name"),
           publisher_name: required(rollbackForm.publisherName, "Rollback publisher name"),
           publisher_prefix: required(rollbackForm.publisherPrefix, "Rollback publisher prefix"),
@@ -376,7 +365,7 @@ export function SolutionDelivery() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          client_id: stringValue(payload.client_id),
+          client_id: effectiveClientId() || stringValue(payload.client_id),
           solution_name: solutionName,
           publisher_name: stringValue(payload.publisher_name),
           publisher_prefix: stringValue(payload.publisher_prefix),
@@ -436,13 +425,14 @@ export function SolutionDelivery() {
       </section>
 
       <GateBanner gates={gates} cliStatus={cliStatus} />
+      {scopeRequired && !isMspAdmin ? <SelectClientNotice /> : null}
 
       <section className="panel delivery-step-panel">
         <div className="panel-heading"><div><h2><PackageOpen size={18} aria-hidden="true" /> 1. Package</h2><p className="screen-note">Create deterministic, credential-free YAML source in memory.</p></div></div>
         {handoffNotice ? <div className="notice" role="status">{handoffNotice}</div> : null}
         <form className="draft-form" onSubmit={(event) => void buildPackage(event)}>
           <div className="grid">
-            <ClientIdSelect label="Client workspace ID" value={packageForm.clientId} onChange={(value) => setPackageForm((current) => ({ ...current, clientId: value }))} clients={clients} required id="package-client-id" />
+            <p className="screen-note">Scope: <ScopeBadge /></p>
             <TextField label="Solution name" value={packageForm.solutionName} onChange={(value) => setPackageForm((current) => ({ ...current, solutionName: value }))} />
             <TextField label="Publisher name" value={packageForm.publisherName} onChange={(value) => setPackageForm((current) => ({ ...current, publisherName: value }))} />
             <TextField label="Publisher prefix" value={packageForm.publisherPrefix} onChange={(value) => setPackageForm((current) => ({ ...current, publisherPrefix: value }))} />
@@ -450,7 +440,7 @@ export function SolutionDelivery() {
             <JsonField label="Artifacts (JSON array)" value={packageForm.artifacts} onChange={(value) => setPackageForm((current) => ({ ...current, artifacts: value }))} />
             <JsonField label="Connector artifacts (JSON array)" value={packageForm.connectorArtifacts} onChange={(value) => setPackageForm((current) => ({ ...current, connectorArtifacts: value }))} />
           </div>
-          <button type="submit" disabled={!canWrite || busy !== null}>{busy === "package" ? "Packaging…" : "Build package"}</button>
+          <button type="submit" disabled={!canWrite || scopeRequired || busy !== null}>{busy === "package" ? "Packaging…" : "Build package"}</button>
           {!canWrite ? <p className="screen-note">Technician access is required to create a package.</p> : null}
         </form>
         {packageArtifact ? <>
@@ -462,7 +452,7 @@ export function SolutionDelivery() {
       <section className="panel delivery-step-panel">
         <div className="panel-heading"><div><h2><FileJson size={18} aria-hidden="true" /> 2. Validate</h2><p className="screen-note">Re-check the digest-bound package before any local write.</p></div></div>
         <form className="row-actions" onSubmit={(event) => void validatePackage(event)}>
-          <button type="submit" disabled={!packageArtifact || busy !== null}>{busy === "validate" ? "Validating…" : "Validate package"}</button>
+          <button type="submit" disabled={!packageArtifact || scopeRequired || busy !== null}>{busy === "validate" ? "Validating…" : "Validate package"}</button>
         </form>
         {validationResult ? <ResultSummary title="Validation passed" value={validationResult} detail={packageTruthDetail(validationResult)} /> : null}
       </section>
@@ -470,7 +460,7 @@ export function SolutionDelivery() {
       <section className="panel delivery-step-panel">
         <div className="panel-heading"><div><h2><ShieldCheck size={18} aria-hidden="true" /> 3. Materialize</h2><p className="screen-note">Write source files only after the admin-gated endpoint accepts the package.</p></div></div>
         <form className="row-actions" onSubmit={(event) => void materializePackage(event)}>
-          <button type="submit" disabled={!packageArtifact || !isAdmin || busy !== null}>{busy === "materialize" ? "Materializing…" : "Materialize source"}</button>
+          <button type="submit" disabled={!packageArtifact || scopeRequired || !isAdmin || busy !== null}>{busy === "materialize" ? "Materializing…" : "Materialize source"}</button>
         </form>
         {!isAdmin ? <p className="screen-note">Administrator access is required to materialize source files.</p> : null}
         {materializationResult ? <ResultSummary title="Materialization response" value={materializationResult} detail={stringValue(materializationResult.message)} /> : null}
@@ -480,7 +470,7 @@ export function SolutionDelivery() {
         <div className="panel-heading"><div><h2><PlayCircle size={18} aria-hidden="true" /> 4. Deployment approvals</h2><p className="screen-note">Request one approval per ordered build, DEV, TEST, or PROD stage.</p></div></div>
         <form className="draft-form" onSubmit={(event) => void requestDeploymentApproval(event)}>
           <div className="grid">
-            <ClientIdSelect label="Deployment client workspace ID" value={deploymentForm.clientId} onChange={(value) => setDeploymentForm((current) => ({ ...current, clientId: value }))} clients={clients} required id="deployment-client-id" />
+            <p className="screen-note">Scope: <ScopeBadge /></p>
             <TextField label="Deployment solution name" value={deploymentForm.solutionName} onChange={(value) => setDeploymentForm((current) => ({ ...current, solutionName: value }))} />
             <TextField label="Deployment publisher name" value={deploymentForm.publisherName} onChange={(value) => setDeploymentForm((current) => ({ ...current, publisherName: value }))} />
             <TextField label="Deployment publisher prefix" value={deploymentForm.publisherPrefix} onChange={(value) => setDeploymentForm((current) => ({ ...current, publisherPrefix: value }))} />
@@ -489,7 +479,7 @@ export function SolutionDelivery() {
             <JsonField label="Deployment targets (JSON array)" value={deploymentForm.deploymentTargets} onChange={(value) => setDeploymentForm((current) => ({ ...current, deploymentTargets: value }))} />
             <JsonField label="Promotion evidence (JSON object)" value={deploymentForm.promotionEvidence} onChange={(value) => setDeploymentForm((current) => ({ ...current, promotionEvidence: value }))} />
           </div>
-          <button type="submit" disabled={!canWrite || busy !== null}>{busy === "deployment" ? "Requesting…" : "Request stage approval"}</button>
+          <button type="submit" disabled={!canWrite || scopeRequired || busy !== null}>{busy === "deployment" ? "Requesting…" : "Request stage approval"}</button>
         </form>
         {deploymentPlan ? <ResultSummary title="Deployment plan" value={deploymentPlan} detail="Planning is metadata-only; deployment_started: false." /> : null}
       </section>
@@ -498,7 +488,7 @@ export function SolutionDelivery() {
         <div className="panel-heading"><div><h2><RotateCcw size={18} aria-hidden="true" /> 5. Rollback approval</h2><p className="screen-note">Choose the prior ZIP explicitly; WAIT never selects a rollback artifact automatically.</p></div></div>
         <form className="draft-form" onSubmit={(event) => void requestRollbackApproval(event)}>
           <div className="grid">
-            <ClientIdSelect label="Rollback client workspace ID" value={rollbackForm.clientId} onChange={(value) => setRollbackForm((current) => ({ ...current, clientId: value }))} clients={clients} required id="rollback-client-id" />
+            <p className="screen-note">Scope: <ScopeBadge /></p>
             <TextField label="Rollback solution name" value={rollbackForm.solutionName} onChange={(value) => setRollbackForm((current) => ({ ...current, solutionName: value }))} />
             <TextField label="Rollback publisher name" value={rollbackForm.publisherName} onChange={(value) => setRollbackForm((current) => ({ ...current, publisherName: value }))} />
             <TextField label="Rollback publisher prefix" value={rollbackForm.publisherPrefix} onChange={(value) => setRollbackForm((current) => ({ ...current, publisherPrefix: value }))} />
@@ -508,7 +498,7 @@ export function SolutionDelivery() {
             <JsonField label="Rollback deployment targets (JSON array)" value={rollbackForm.deploymentTargets} onChange={(value) => setRollbackForm((current) => ({ ...current, deploymentTargets: value }))} />
             <JsonField label="Rollback evidence (JSON object)" value={rollbackForm.rollbackEvidence} onChange={(value) => setRollbackForm((current) => ({ ...current, rollbackEvidence: value }))} />
           </div>
-          <button type="submit" disabled={!canWrite || busy !== null}>{busy === "rollback" ? "Requesting…" : "Request rollback approval"}</button>
+          <button type="submit" disabled={!canWrite || scopeRequired || busy !== null}>{busy === "rollback" ? "Requesting…" : "Request rollback approval"}</button>
         </form>
         {rollbackApproval ? <ResultSummary title="Rollback approval" value={rollbackApproval} detail={`Approval #${rollbackApproval.id} · ${rollbackApproval.status}`} /> : null}
       </section>

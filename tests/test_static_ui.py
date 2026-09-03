@@ -192,7 +192,7 @@ def test_spa_route_manifest_matches_ui_routes_and_reserved_namespaces() -> None:
     assert re.search(r"<Route\s+index(?:\s|>)", source)
     ui_paths = explicit_paths | {"/"}
 
-    assert len(SPA_ROUTE_PATHS) == 43
+    assert len(SPA_ROUTE_PATHS) == 44
     assert ui_paths == SPA_ROUTE_PATHS
     reserved_prefixes = ("/api", "/docs", "/packs", "/openapi.json", "/healthz", "/auth")
     assert not any(

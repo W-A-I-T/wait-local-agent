@@ -3,7 +3,8 @@ import { useDashboard } from "../app/DashboardContext";
 import { apiFetch, shouldSuppressClientScopeError } from "../api/client";
 import { EmptyState } from "../components/EmptyState";
 import { LoadingState } from "../components/LoadingState";
-import { ClientIdSelect } from "../components/ClientIdSelect";
+import { SelectClientNotice } from "../components/SelectClientNotice";
+import { ScopeBadge } from "../components/ScopeBadge";
 import type { AgentBackfill, AgentBackfillPreview, AgentDefinition } from "../api/types";
 
 function parseEntityIds(value: string): string[] {
@@ -21,7 +22,7 @@ function scopeAwareErrorMessage(
 }
 
 export function Backfills() {
-  const { canWrite, clients = [], clientScopeIds, isMspAdmin } = useDashboard();
+  const { canWrite, selectedClientId = "", clients = [], clientScopeIds, isMspAdmin = false } = useDashboard();
   const [agents, setAgents] = useState<AgentDefinition[]>([]);
   const [backfills, setBackfills] = useState<AgentBackfill[]>([]);
   const [loading, setLoading] = useState(true);
@@ -30,7 +31,6 @@ export function Backfills() {
   const [entityText, setEntityText] = useState("");
   const [inputText, setInputText] = useState("{}");
   const [maxConcurrency, setMaxConcurrency] = useState("1");
-  const [clientId, setClientId] = useState("");
   const [preview, setPreview] = useState<AgentBackfillPreview | null>(null);
   const [message, setMessage] = useState("");
 
@@ -50,7 +50,7 @@ export function Backfills() {
       hasLoadedRef.current = true;
       setLoading(false);
     }
-  }, [agentId, clientScopeIds, isMspAdmin]);
+  }, [agentId, clientScopeIds, isMspAdmin, selectedClientId]);
 
   useEffect(() => {
     void refresh();
@@ -75,7 +75,7 @@ export function Backfills() {
       entity_ids: entityIds,
       input,
       max_concurrency: Number(maxConcurrency),
-      client_id: clientId.trim() || undefined
+      client_id: selectedClientId.trim() || undefined
     };
   }
 
@@ -127,12 +127,13 @@ export function Backfills() {
         <form id="backfill-form" className="draft-form" onSubmit={createBackfill}>
           <div className="grid">
             <label>Agent<select value={agentId} onChange={(event) => setAgentId(event.target.value)}><option value="">Choose agent</option>{agents.map((agent) => <option key={agent.id} value={agent.id}>{agent.name}</option>)}</select></label>
-            <ClientIdSelect label="Client id (optional)" value={clientId} onChange={setClientId} clients={clients} id="backfill-client-id" />
+            <p className="screen-note">Scope: <ScopeBadge /></p>
             <label>Max concurrency<select value={maxConcurrency} onChange={(event) => setMaxConcurrency(event.target.value)}><option value="1">1 · sequential</option><option value="2">2</option><option value="3">3</option><option value="4">4</option></select></label>
           </div>
           <label>Ticket IDs<textarea rows={5} value={entityText} onChange={(event) => setEntityText(event.target.value)} placeholder="One ticket ID per line" /></label>
           <label>Input JSON<textarea rows={3} value={inputText} onChange={(event) => setInputText(event.target.value)} /></label>
-          <div className="template-actions"><button type="button" disabled={!canWrite} title={!canWrite ? "Requires technician access" : undefined} onClick={() => void previewBackfill()}>Preview</button><button type="submit" disabled={!canWrite} title={!canWrite ? "Requires technician access" : undefined}>Queue backfill</button></div>
+          {!selectedClientId && !isMspAdmin ? <SelectClientNotice /> : null}
+          <div className="template-actions"><button type="button" disabled={!canWrite || (!selectedClientId && !isMspAdmin)} title={!canWrite ? "Requires technician access" : !selectedClientId ? "Choose a client in the top bar first" : undefined} onClick={() => void previewBackfill()}>Preview</button><button type="submit" disabled={!canWrite || (!selectedClientId && !isMspAdmin)} title={!canWrite ? "Requires technician access" : !selectedClientId ? "Choose a client in the top bar first" : undefined}>Queue backfill</button></div>
         </form>
         {preview ? <div className="notice">Preview: {preview.entity_count} entities, {preview.execution_mode.replace("_", " ")}, no data persisted.</div> : null}
         {message ? <div className="notice" role="status">{message}</div> : null}

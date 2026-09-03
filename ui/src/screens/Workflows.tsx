@@ -3,14 +3,15 @@ import { useDashboard } from "../app/DashboardContext";
 import { apiFetch } from "../api/client";
 import { EmptyState } from "../components/EmptyState";
 import { LoadingState } from "../components/LoadingState";
-import { ClientIdSelect } from "../components/ClientIdSelect";
+import { ScopeBadge } from "../components/ScopeBadge";
+import { SelectClientNotice } from "../components/SelectClientNotice";
 import { SchemaForm, validateRequiredFields, type SchemaFormValue } from "../components/SchemaForm";
 import { Link } from "react-router-dom";
 import { type WorkflowRun, type WorkflowRunComparison, type WorkflowTemplate } from "../api/types";
 import { workflowPayloadFields } from "../lib/structured-inputs";
 
 export function Workflows() {
-  const { isAdmin, canWrite, clients = [] } = useDashboard();
+  const { isAdmin, canWrite, clients = [], selectedClientId = "", isMspAdmin = false } = useDashboard();
   const [templates, setTemplates] = useState<WorkflowTemplate[]>([]);
   const [runs, setRuns] = useState<WorkflowRun[]>([]);
   const [runsLoading, setRunsLoading] = useState(false);
@@ -20,7 +21,6 @@ export function Workflows() {
   const [comparison, setComparison] = useState<WorkflowRunComparison | null>(null);
   const [templateId, setTemplateId] = useState("");
   const [ticketId, setTicketId] = useState("");
-  const [clientId, setClientId] = useState("");
   const [payload, setPayload] = useState<SchemaFormValue>({});
   const [payloadErrors, setPayloadErrors] = useState<Record<string, string>>({});
   const [payloadJsonValid, setPayloadJsonValid] = useState(true);
@@ -42,7 +42,7 @@ export function Workflows() {
     } finally {
       setRunsLoading(false);
     }
-  }, []);
+  }, [selectedClientId]);
 
   useEffect(() => {
     void refreshRuns();
@@ -69,7 +69,7 @@ export function Workflows() {
       const requestPayload = {
         template_id: templateId,
         ticket_id: ticketId,
-        client_id: clientId || undefined,
+        client_id: selectedClientId || undefined,
         payload
       };
       await apiFetch<WorkflowRun>(`/workflows/templates/${encodeURIComponent(templateId)}/runs`, {
@@ -140,7 +140,7 @@ export function Workflows() {
               Ticket id
               <input value={ticketId} onChange={(event) => setTicketId(event.target.value)} placeholder="HALO-1001" />
             </label>
-            <ClientIdSelect label="Client id (optional)" value={clientId} onChange={setClientId} clients={clients} id="workflow-client-id" />
+            <p className="screen-note">Scope: <ScopeBadge /></p>
           </div>
           <SchemaForm
             key={selectedTemplate?.id ?? "workflow-inputs"}
@@ -160,7 +160,8 @@ export function Workflows() {
               : "No additional fields are required. "}
             Use a bounded JSON object; the server validates the selected template schema.
           </p>
-          <button type="submit" disabled={!canWrite || !templateId || !ticketId}>
+          {!selectedClientId && !isMspAdmin ? <SelectClientNotice /> : null}
+          <button type="submit" disabled={!canWrite || !templateId || !ticketId || (!selectedClientId && !isMspAdmin)}>
             Start Workflow
           </button>
         </form>

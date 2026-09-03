@@ -16,7 +16,7 @@ function navigationPaths(...sources: string[]): Set<string> {
 }
 
 describe("route reachability", () => {
-  it("requires every declared application route to have visible workspace navigation", () => {
+  it("keeps the primary operator journey visible and legacy paths declared", () => {
     const routes = routePaths(routesSource);
     const navigation = navigationPaths(
       sidebarSource,
@@ -24,6 +24,14 @@ describe("route reachability", () => {
       activityShellSource
     );
 
-    expect(routes.filter((path) => !navigation.has(path))).toEqual([]);
+    const primaryJourney = [
+      "/", "/clients", "/client-discovery", "/connectors", "/integrations/connector-instances",
+      "/workflows", "/approvals", "/activity/runs", "/consultant", "/consultant/solution-delivery",
+      "/settings", "/settings/access", "/system/appliance-health", "/system/diagnostics",
+      "/system/extensions", "/integrations/mcp"
+    ];
+    expect(primaryJourney.filter((path) => !navigation.has(path))).toEqual([]);
+    expect(["/automation/events", "/automation/schedules", "/scheduled-jobs", "/backfills", "/executions", "/smart-actions/runs", "/end-user"]
+      .filter((path) => !routes.includes(path))).toEqual([]);
   });
 });

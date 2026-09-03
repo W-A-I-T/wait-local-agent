@@ -4,13 +4,17 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { Consultant } from "../src/screens/Consultant";
 
 const dashboard = vi.hoisted(() => ({
-  clientId: "acme",
-  selectedClientId: "",
+  selectedClientId: "acme",
   clients: [{ client_id: "acme", name: "Acme Support", status: "active" }]
 }));
 
 vi.mock("../src/app/DashboardContext", () => ({
-  useDashboard: () => ({ canWrite: true, clientId: dashboard.clientId, selectedClientId: dashboard.selectedClientId })
+  useDashboard: () => ({
+    canWrite: true,
+    clients: dashboard.clients,
+    selectedClientId: dashboard.selectedClientId,
+    isMspAdmin: false
+  })
 }));
 
 function HandoffProbe() {
@@ -24,8 +28,7 @@ describe("Consultant", () => {
   beforeEach(() => {
     noBlueprints = false;
     blueprintListCalls = 0;
-    dashboard.clientId = "acme";
-    dashboard.selectedClientId = "";
+    dashboard.selectedClientId = "acme";
     vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
       const path = String(input);
       if (path === "/consultant/blueprints") {
@@ -480,22 +483,17 @@ describe("Consultant", () => {
     expect(await screen.findByRole("list", { name: "Guided discovery transcript" })).toHaveTextContent("We want to automate employee onboarding");
   });
 
-  it("uses the entered workspace when the local demo has no authenticated tenant scope", async () => {
+  it("requires the shell client scope before submitting discovery", async () => {
     noBlueprints = true;
-    dashboard.clientId = "";
+    dashboard.selectedClientId = "";
     render(<MemoryRouter><Consultant /></MemoryRouter>);
 
     expect(await screen.findByText("No solution blueprints are available for this tenant.")).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "Enter a new workspace ID" }));
-    fireEvent.change(screen.getByRole("textbox", { name: "Customer workspace ID" }), { target: { value: "acme-browser" } });
     fireEvent.change(screen.getByLabelText("Business goal"), { target: { value: "We want to automate employee onboarding" } });
-    fireEvent.click(screen.getByRole("button", { name: "Assess discovery" }));
-
-    expect(await screen.findByText(/Ready for architecture review/i)).toBeInTheDocument();
-    const discoveryCall = vi.mocked(fetch).mock.calls.find(([input]) => String(input) === "/consultant/discovery");
-    expect(discoveryCall?.[1]).toMatchObject({
-      body: expect.stringContaining('"client_id":"acme-browser"'),
-    });
+    expect(screen.getByRole("button", { name: "Assess discovery" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Start guided discovery" })).toBeDisabled();
+    expect(screen.getByText("Choose a client in the top bar to continue.")).toBeInTheDocument();
+    expect(vi.mocked(fetch).mock.calls.some(([input]) => String(input) === "/consultant/discovery")).toBe(false);
   });
 
   it("does not reload the blueprint list when saving selects a new blueprint", async () => {

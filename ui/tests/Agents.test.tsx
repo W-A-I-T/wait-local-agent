@@ -7,6 +7,8 @@ vi.mock("../src/app/DashboardContext", () => ({
   useDashboard: () => ({
     canWrite: true,
     selectedClientId: "acme",
+    clients: [{ client_id: "acme", name: "Acme Support", status: "active" }],
+    isMspAdmin: false,
     connectors: [{ id: "timezest", name: "TimeZest", status: "not_configured", message: "not configured" }]
   })
 }));

@@ -4,7 +4,8 @@ import { apiFetch } from "../api/client";
 import { EmptyState } from "../components/EmptyState";
 import { LoadingState } from "../components/LoadingState";
 import { AgentToolPicker } from "../components/AgentToolPicker";
-import { ClientIdSelect } from "../components/ClientIdSelect";
+import { ScopeBadge } from "../components/ScopeBadge";
+import { SelectClientNotice } from "../components/SelectClientNotice";
 import type { AgentApprovalRule, AgentDefinition, AgentFailurePolicy, AgentPlan, AgentRevision, AgentRevisionDiff, AgentRunDetail, AgentTool } from "../api/types";
 
 type RevisionSelection = {
@@ -41,13 +42,12 @@ function renderDiffValue(value: unknown): string {
 }
 
 export function Agents() {
-  const { canWrite, clients = [], connectors = [], selectedClientId } = useDashboard();
+  const { canWrite, clients = [], connectors = [], selectedClientId = "", isMspAdmin = false } = useDashboard();
   const [agents, setAgents] = useState<AgentDefinition[]>([]);
   const [tools, setTools] = useState<AgentTool[]>([]);
   const [loading, setLoading] = useState(true);
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
-  const [clientId, setClientId] = useState("");
   const [selectedTools, setSelectedTools] = useState<string[]>([]);
   const [stepPayloads, setStepPayloads] = useState<Record<string, string>>({});
   const [failurePolicyDrafts, setFailurePolicyDrafts] = useState<Record<string, AgentFailurePolicy>>({});
@@ -68,10 +68,6 @@ export function Agents() {
   const [revisionSelections, setRevisionSelections] = useState<Record<string, RevisionSelection>>({});
   const [confirmingRestore, setConfirmingRestore] = useState<RestoreRequest | null>(null);
 
-  useEffect(() => {
-    if (!editingAgentId) setClientId(selectedClientId);
-  }, [editingAgentId, selectedClientId]);
-
   const refresh = useCallback(async () => {
     setLoading(true);
     try {
@@ -86,7 +82,7 @@ export function Agents() {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [selectedClientId]);
 
   useEffect(() => {
     void refresh();
@@ -100,7 +96,6 @@ export function Agents() {
     setEditingAgentId(null);
     setName("");
     setDescription("");
-    setClientId("");
     setSelectedTools([]);
     setStepPayloads({});
     setFailurePolicyDrafts({});
@@ -115,7 +110,6 @@ export function Agents() {
     setEditingAgentId(agent.id);
     setName(agent.name);
     setDescription(agent.description);
-    setClientId(agent.client_id ?? "");
     setSelectedTools(agent.enabled_tools.slice(0, 8));
     setStepPayloads(Object.fromEntries(agent.steps.map((step) => [step.tool_id, JSON.stringify(step.payload, null, 2)])));
     setFailurePolicyDrafts(Object.fromEntries(agent.steps.map((step) => [step.tool_id, step.failure_policy ?? { mode: "stop" }] )));
@@ -188,7 +182,7 @@ export function Agents() {
       approval_required_tools: approvalRequiredTools.filter((tool_id) => boundedTools.includes(tool_id)),
       approval_rules,
       result_aware: resultAware,
-      client_id: clientId || undefined,
+      client_id: selectedClientId || undefined,
       run_once_per_entity: agent?.run_once_per_entity ?? true,
       depends_on_agent_ids: agent?.depends_on_agent_ids ?? [],
       execution_window_start: agent?.execution_window_start,
@@ -386,7 +380,7 @@ export function Agents() {
         <form id="agent-form" className="draft-form" onSubmit={createAgent}>
           <div className="grid">
             <label>Name<input value={name} onChange={(event) => setName(event.target.value)} placeholder="MFA triage" /></label>
-            <ClientIdSelect label="Client id (optional)" value={clientId} onChange={setClientId} clients={clients} id="agent-client-id" />
+            <p className="screen-note">Scope: <ScopeBadge /></p>
           </div>
           <label>Description<textarea rows={2} value={description} onChange={(event) => setDescription(event.target.value)} /></label>
           <label>Approval deadline (hours, optional)<input type="number" min="1" max="720" step="1" value={approvalExpiryHours} onChange={(event) => setApprovalExpiryHours(event.target.value)} placeholder="Tool default" /></label>
@@ -424,7 +418,8 @@ export function Agents() {
             return <div className="agent-rule-row" key={`conditional-${tool.id}`}><strong>{tool.name}</strong><label>Priority values<input aria-label={`${tool.name} priority conditions`} value={draft.priority} onChange={(event) => setApprovalRuleDrafts((current) => ({ ...current, [tool.id]: { ...draft, priority: event.target.value } }))} placeholder="urgent, high" /></label><label>Status values<input aria-label={`${tool.name} status conditions`} value={draft.status} onChange={(event) => setApprovalRuleDrafts((current) => ({ ...current, [tool.id]: { ...draft, status: event.target.value } }))} placeholder="new, open" /></label><label>Requester roles<input aria-label={`${tool.name} requester role conditions`} value={draft.actor_role} onChange={(event) => setApprovalRuleDrafts((current) => ({ ...current, [tool.id]: { ...draft, actor_role: event.target.value } }))} placeholder="technician, viewer" /></label></div>;
           })}</fieldset>
           <div className="row-actions">
-            <button type="submit" disabled={!canWrite} title={!canWrite ? "Requires technician access" : undefined}>{editingAgentId ? "Save agent revision" : "Create agent"}</button>
+            {!selectedClientId && !isMspAdmin ? <SelectClientNotice /> : null}
+            <button type="submit" disabled={!canWrite || (!selectedClientId && !isMspAdmin)} title={!canWrite ? "Requires technician access" : !selectedClientId ? "Choose a client in the top bar first" : undefined}>{editingAgentId ? "Save agent revision" : "Create agent"}</button>
             {editingAgentId ? <button type="button" className="secondary-button" onClick={resetAgentForm}>Cancel edit</button> : null}
           </div>
         </form>

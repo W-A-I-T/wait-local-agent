@@ -71,13 +71,13 @@ describe("client-scoped activity screens", () => {
     expect(screen.getByText("Scoped to Alpha Support")).toBeInTheDocument();
   });
 
-  it("shows All clients and omits the scope header when the selector is cleared", async () => {
-    mockedUseDashboard.mockReturnValue({ selectedClientId: "", clients } as never);
+  it("shows the empty scope state and omits the scope header when the selector is cleared", async () => {
+    mockedUseDashboard.mockReturnValue({ selectedClientId: "", clients, isMspAdmin: false } as never);
     window.localStorage.clear();
 
     renderScreen(<Audit />);
 
-    expect(await screen.findByText("All clients")).toBeInTheDocument();
+    expect(await screen.findByText("No client selected")).toBeInTheDocument();
     expect(requests[0]?.headers.has("X-WAIT-Client-ID")).toBe(false);
   });
 });

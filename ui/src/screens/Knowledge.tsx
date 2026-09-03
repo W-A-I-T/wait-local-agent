@@ -2,7 +2,8 @@ import { FormEvent, useCallback, useEffect, useState } from "react";
 import { useDashboard } from "../app/DashboardContext";
 import { apiFetch } from "../api/client";
 import { type KnowledgeChunk, type KnowledgeDocument } from "../api/types";
-import { ClientIdSelect } from "../components/ClientIdSelect";
+import { ScopeBadge } from "../components/ScopeBadge";
+import { SelectClientNotice } from "../components/SelectClientNotice";
 import { RoleGate } from "../components/RoleGate";
 
 export type KnowledgeParser = "auto" | "plain" | "markdown" | "pdf";
@@ -22,7 +23,7 @@ export function parserPayload(parser: KnowledgeParser): "" | "basic" | "pypdf" {
 }
 
 export function Knowledge() {
-  const { clients = [], isAdmin, canWrite, role, roleResolved, selectedClientId, setSelectedClientId } = useDashboard();
+  const { clients = [], isAdmin, canWrite, role, roleResolved, selectedClientId = "", isMspAdmin = false } = useDashboard();
   const [documents, setDocuments] = useState<KnowledgeDocument[]>([]);
   const [chunks, setChunks] = useState<KnowledgeChunk[]>([]);
   const [path, setPath] = useState("");
@@ -31,7 +32,6 @@ export function Knowledge() {
   const [searchText, setSearchText] = useState("");
   const [searchLimit, setSearchLimit] = useState(3);
   const [searchBackend, setSearchBackend] = useState("");
-  const [searchClientId, setSearchClientId] = useState("");
   const [statusMessage, setStatusMessage] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const [authorityDocumentId, setAuthorityDocumentId] = useState<number | null>(null);
@@ -45,7 +45,7 @@ export function Knowledge() {
     } catch (error) {
       setStatusMessage(error instanceof Error ? error.message : "Failed to load knowledge documents.");
     }
-  }, []);
+  }, [selectedClientId]);
 
   useEffect(() => {
     void loadDocuments();
@@ -92,7 +92,7 @@ export function Knowledge() {
     try {
       const params = new URLSearchParams({ q: searchText, limit: String(searchLimit) });
       if (searchBackend) params.set("backend", searchBackend);
-      if (searchClientId.trim()) params.set("client_id", searchClientId.trim());
+      if (selectedClientId.trim()) params.set("client_id", selectedClientId.trim());
       const found = await apiFetch<KnowledgeChunk[]>(`/knowledge/search?${params.toString()}`);
       setChunks(found);
       setStatusMessage(`${found.length} results found.`);
@@ -136,7 +136,7 @@ export function Knowledge() {
       <section className="panel knowledge-panel">
         <div className="panel-heading">
           <h2>Knowledge</h2>
-          <span>{documents.length} documents indexed</span>
+          <span><ScopeBadge /> · {documents.length} documents indexed</span>
         </div>
         <form className="draft-form" onSubmit={handleIngest}>
           <div className="grid">
@@ -161,9 +161,8 @@ export function Knowledge() {
               />
               OCR documents
             </label>
-            <ClientIdSelect label="Client ID" value={selectedClientId} onChange={setSelectedClientId} clients={clients} required id="knowledge-ingest-client-id" />
           </div>
-          {!selectedClientId ? <p className="screen-note">Select a client from the top bar before running ingest.</p> : null}
+          {!selectedClientId && !isMspAdmin ? <SelectClientNotice /> : null}
           <button type="submit" disabled={isLoading || !path || !canWrite || !selectedClientId} title={!selectedClientId ? "Select a client from the top bar first" : undefined}>
             {isLoading ? "Ingesting..." : "Run ingest"}
           </button>
@@ -239,7 +238,7 @@ export function Knowledge() {
               Search backend
               <input value={searchBackend} onChange={(event) => setSearchBackend(event.target.value)} placeholder="sqlite, fts, or qdrant" />
             </label>
-            <ClientIdSelect label="Client ID" value={searchClientId} onChange={setSearchClientId} clients={clients} id="knowledge-search-client-id" />
+            <p className="screen-note">Search scope: <ScopeBadge /></p>
           </div>
         </details>
         <div className="source-results">

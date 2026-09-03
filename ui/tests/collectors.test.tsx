@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Collectors } from "../src/screens/Collectors";
 
 vi.mock("../src/app/DashboardContext", () => ({
-  useDashboard: () => ({ canWrite: true })
+  useDashboard: () => ({ canWrite: true, selectedClientId: "", clients: [], isMspAdmin: true })
 }));
 
 const moduleFixture = {

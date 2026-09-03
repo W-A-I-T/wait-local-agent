@@ -1,13 +1,19 @@
-import type { ClientDirectoryEntry } from "../api/types";
+import { useDashboard } from "../app/DashboardContext";
 
-type ScopeBadgeProps = {
-  selectedClientId: string;
-  clients: ClientDirectoryEntry[];
-};
+export function ScopeBadge() {
+  const {
+    selectedClientId = "",
+    clients = [],
+    clientScopeIds = null,
+    isMspAdmin = false,
+    role
+  } = useDashboard();
 
-export function ScopeBadge({ selectedClientId, clients }: ScopeBadgeProps) {
   if (!selectedClientId) {
-    return <span className="scope-badge">All clients</span>;
+    // Bootstrap administrators are appliance-wide even when their auth response
+    // reports no bound client IDs. Ordinary principals remain explicitly scoped.
+    const applianceWide = isMspAdmin || (role === "admin" && clientScopeIds?.length === 0);
+    return <span className="scope-badge">{applianceWide ? "All clients" : "No client selected"}</span>;
   }
   const client = clients.find((entry) => entry.client_id === selectedClientId);
   return <span className="scope-badge">Scoped to {client?.name ?? selectedClientId}</span>;

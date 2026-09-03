@@ -91,7 +91,7 @@ export function Overview() {
         <div className="panel-heading">
           <h2>Operations Overview</h2>
           <div>
-            <ScopeBadge selectedClientId={selectedClientId} clients={clients} /> {" "}
+            <ScopeBadge /> {" "}
             <span>
               {configurationLoading
                 ? "checking configuration"

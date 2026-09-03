@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ExtensionsPacks } from "../src/screens/ExtensionsPacks";
@@ -59,7 +59,8 @@ describe("Extensions / Packs wiring", () => {
     expect(screen.getByText("router unavailable")).toBeInTheDocument();
     expect(screen.getByText("CLI mounted").parentElement).toHaveTextContent("Yes");
     expect(screen.getByText("Router mounted").parentElement).toHaveTextContent("No");
-    expect(screen.getByRole("link", { name: "Extensions / Packs" })).toHaveAttribute("href", "/system/extensions");
+    fireEvent.click(screen.getByText("Advanced"));
+    expect(screen.getByRole("link", { name: "Extensions" })).toHaveAttribute("href", "/system/extensions");
     expect(fetchMock.mock.calls.map(([input]) => String(input))).toEqual(
       expect.arrayContaining(["/packs", "/packs/status"])
     );
@@ -104,7 +105,7 @@ describe("Extensions / Packs wiring", () => {
     );
 
     expect(await screen.findByText("Administrator role required to view installed extensions and packs.")).toBeInTheDocument();
-    expect(screen.queryByRole("link", { name: "Extensions / Packs" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "Extensions" })).not.toBeInTheDocument();
     expect(fetchMock).not.toHaveBeenCalled();
   });
 });

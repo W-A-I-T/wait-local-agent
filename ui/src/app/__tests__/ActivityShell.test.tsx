@@ -4,37 +4,15 @@ import { describe, expect, it } from "vitest";
 import { ActivityShell, activityTabs } from "../ActivityShell";
 
 describe("ActivityShell", () => {
-  it("renders every activity surface and keeps the active tab on the current route", () => {
-    render(
-      <MemoryRouter initialEntries={["/smart-actions/runs"]}>
-        <ActivityShell><div>Existing screen content</div></ActivityShell>
-      </MemoryRouter>
-    );
+  it("renders exactly Runs, Approvals, and Audit", () => {
+    render(<MemoryRouter initialEntries={["/activity/runs"]}><ActivityShell><div>Existing screen content</div></ActivityShell></MemoryRouter>);
 
-    const smartActionTab = activityTabs.find((tab) => tab.to === "/smart-actions/runs");
-    expect(smartActionTab).toBeDefined();
-    if (!smartActionTab) throw new Error("Missing Smart Action Runs activity tab");
-
-    expect(screen.getByRole("heading", { name: "Activity & scheduling" })).toBeInTheDocument();
-    expect(screen.getByText("Smart Action Runs", { selector: ".automations-subtitle" })).toBeInTheDocument();
-    expect(screen.getByText(smartActionTab.description)).toBeInTheDocument();
+    expect(activityTabs.map((tab) => tab.label)).toEqual(["Runs", "Approvals", "Audit"]);
+    expect(screen.getByRole("heading", { name: "Activity" })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Runs" })).toHaveAttribute("href", "/activity/runs");
+    expect(screen.getByRole("link", { name: "Approvals" })).toHaveAttribute("href", "/approvals");
+    expect(screen.getByRole("link", { name: "Audit" })).toHaveAttribute("href", "/audit");
+    expect(screen.getByRole("link", { name: "Runs" })).toHaveAttribute("aria-current", "page");
     expect(screen.getByText("Existing screen content")).toBeInTheDocument();
-
-    for (const tab of activityTabs) {
-      expect(screen.getByRole("link", { name: tab.label })).toHaveAttribute("href", tab.to);
-    }
-    expect(screen.getByRole("link", { name: "Smart Action Runs" })).toHaveAttribute("aria-current", "page");
-    expect(screen.getByRole("link", { name: "Events" })).not.toHaveAttribute("aria-current", "page");
-  });
-
-  it.each(activityTabs)("shows the $label description when its route is active", (tab) => {
-    render(
-      <MemoryRouter initialEntries={[tab.to]}>
-        <ActivityShell><div /></ActivityShell>
-      </MemoryRouter>
-    );
-
-    expect(screen.getByText(tab.description)).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: tab.label })).toHaveAttribute("aria-current", "page");
   });
 });

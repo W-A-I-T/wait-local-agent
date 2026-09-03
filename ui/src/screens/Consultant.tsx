@@ -2,7 +2,8 @@ import { FormEvent, useCallback, useEffect, useState } from "react";
 import { AlertTriangle, Compass, RefreshCw } from "lucide-react";
 import { Link, useNavigate } from "react-router-dom";
 import { useDashboard } from "../app/DashboardContext";
-import { ClientIdSelect } from "../components/ClientIdSelect";
+import { ScopeBadge } from "../components/ScopeBadge";
+import { SelectClientNotice } from "../components/SelectClientNotice";
 import {
   ApiRequestError,
   CLIENT_SCOPE_ERROR_MESSAGE,
@@ -209,12 +210,11 @@ export function Consultant() {
   const {
     canWrite,
     clients = [],
-    clientId: scopedClientId,
-    selectedClientId,
+    selectedClientId = "",
+    isMspAdmin = false,
     authState,
     writeHealth,
     clientScopeIds,
-    isMspAdmin,
   } = useDashboard();
   const navigate = useNavigate();
   const [blueprints, setBlueprints] = useState<ConsultantBlueprint[]>([]);
@@ -251,7 +251,7 @@ export function Consultant() {
   const [connectorLastAction, setConnectorLastAction] = useState<"validate" | "generate">("validate");
   const [flowLoading, setFlowLoading] = useState(false);
   const [discoveryGoal, setDiscoveryGoal] = useState("");
-  const [discoveryClientId, setDiscoveryClientId] = useState("");
+
   const [discoverySolutionName, setDiscoverySolutionName] = useState("");
   const [discoveryRisk, setDiscoveryRisk] = useState<"low" | "medium" | "high">("medium");
   const [discoveryUsers, setDiscoveryUsers] = useState("");
@@ -321,7 +321,7 @@ export function Consultant() {
     } catch (error) {
       setSectionState("blueprints", sectionStateForError(error, clientScopeIds, isMspAdmin));
     }
-  }, [clientScopeIds, isMspAdmin, setSectionState]);
+  }, [clientScopeIds, isMspAdmin, selectedClientId, setSectionState]);
 
   const loadUseCases = useCallback(async () => {
     setSectionState("useCases", { status: "loading" });
@@ -333,7 +333,7 @@ export function Consultant() {
     } catch (error) {
       setSectionState("useCases", sectionStateForError(error, clientScopeIds, isMspAdmin));
     }
-  }, [clientScopeIds, isMspAdmin, setSectionState]);
+  }, [clientScopeIds, isMspAdmin, selectedClientId, setSectionState]);
 
   const loadMonitoring = useCallback(async () => {
     setSectionState("monitoring", { status: "loading" });
@@ -344,7 +344,7 @@ export function Consultant() {
     } catch (error) {
       setSectionState("monitoring", sectionStateForError(error, clientScopeIds, isMspAdmin));
     }
-  }, [clientScopeIds, isMspAdmin, setSectionState]);
+  }, [clientScopeIds, isMspAdmin, selectedClientId, setSectionState]);
 
   const loadDiscoverySessions = useCallback(async () => {
     setSectionState("discoverySessions", { status: "loading" });
@@ -356,7 +356,7 @@ export function Consultant() {
     } catch (error) {
       setSectionState("discoverySessions", sectionStateForError(error, clientScopeIds, isMspAdmin));
     }
-  }, [clientScopeIds, isMspAdmin, setSectionState]);
+  }, [clientScopeIds, isMspAdmin, selectedClientId, setSectionState]);
 
   const refresh = useCallback(async () => {
     setLoading(true);
@@ -861,7 +861,7 @@ export function Consultant() {
   }
 
   async function promoteDiscovery() {
-    const clientId = resolveClientId(selected?.client_id, scopedClientId, selectedClientId, discoveryClientId || blueprints[0]?.client_id);
+    const clientId = currentClientId();
     if (!clientId || !discoveryResult || discoveryResult.readiness !== "ready_for_architecture") {
       setMessage("Complete the required discovery evidence before saving a solution blueprint.");
       return;
@@ -1122,7 +1122,7 @@ export function Consultant() {
   }
 
   async function runEmployeeOnboardingDemo() {
-    const clientId = resolveClientId(selected?.client_id, scopedClientId, selectedClientId, discoveryClientId || blueprints[0]?.client_id);
+    const clientId = currentClientId();
     if (!selected || !clientId || !employeeOnboardingEntityId.trim()) {
       setMessage("Select a saved blueprint and provide an existing tenant-scoped ticket before running the local walkthrough.");
       return;
@@ -1151,7 +1151,7 @@ export function Consultant() {
   const workflowComponents = architecture?.components.filter((component) => component.kind === "workflow") ?? [];
 
   function currentClientId() {
-    return selected?.client_id?.trim() || scopedClientId.trim() || selectedClientId?.trim() || discoveryClientId.trim() || blueprints[0]?.client_id?.trim() || "";
+    return selectedClientId.trim();
   }
 
   return (
@@ -1161,6 +1161,8 @@ export function Consultant() {
           <div>
             <h2>Solutions Architect</h2>
             <p className="screen-note consultant-page-intro">This page bundles related but distinct tools for designing and reviewing automation solutions — read each section's heading before acting.</p>
+            <p className="screen-note">Scope: <ScopeBadge /></p>
+            {!selectedClientId && !isMspAdmin ? <SelectClientNotice /> : null}
           </div>
         </div>
       </section>
@@ -1311,15 +1313,7 @@ export function Consultant() {
         </div>
         <form className="draft-form" onSubmit={(event) => void assessDiscovery(event)}>
           <div className="grid">
-            <ClientIdSelect
-              label="Customer workspace ID"
-              value={discoveryClientId || selected?.client_id || scopedClientId || selectedClientId || blueprints[0]?.client_id || ""}
-              onChange={setDiscoveryClientId}
-              clients={clients}
-              required
-              allowFreeform
-              id="discovery-client-id"
-            />
+            <p className="screen-note">Scope: <ScopeBadge /></p>
             <label>
               Solution name
               <input
@@ -1373,7 +1367,7 @@ export function Consultant() {
               Information may leave the tenant
             </label>
           </div>
-          <button type="submit" disabled={!canWrite || discoveryLoading || !discoveryGoal.trim()}>
+          <button type="submit" disabled={!canWrite || discoveryLoading || !discoveryGoal.trim() || !currentClientId()}>
             {discoveryLoading ? "Assessing…" : "Assess discovery"}
           </button>
           {!canWrite ? <p className="screen-note">Technician access is required to submit discovery evidence.</p> : null}
@@ -1419,7 +1413,7 @@ export function Consultant() {
           ) : null}
           {!discoverySession ? (
             <div>
-              <button type="button" onClick={() => void startGuidedDiscovery()} disabled={!canWrite || guidedLoading || !discoveryGoal.trim()}>
+              <button type="button" onClick={() => void startGuidedDiscovery()} disabled={!canWrite || guidedLoading || !discoveryGoal.trim() || !currentClientId()}>
                 {guidedLoading ? "Starting…" : "Start guided discovery"}
               </button>
             </div>
@@ -2390,17 +2384,6 @@ function uniqueCopilotIdentifiers(values: string[], prefix: string): string[] {
 
 function utf8ByteLength(value: string): number {
   return new TextEncoder().encode(value).byteLength;
-}
-
-function resolveClientId(
-  selectedClientId: string | undefined,
-  scopedClientId: string,
-  enteredClientId: string,
-  fallbackClientId: string | undefined,
-): string {
-  return [selectedClientId, scopedClientId, enteredClientId, fallbackClientId]
-    .map((value) => value?.trim() ?? "")
-    .find(Boolean) ?? "";
 }
 
 function powerAutomateIdentifier(value: string): string {

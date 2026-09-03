@@ -1,31 +1,22 @@
 import type { LucideIcon } from "lucide-react";
 import {
   Activity,
-  ListChecks,
-  Bot,
-  BarChart3,
-  BookOpenText,
   ClipboardCheck,
-  ClipboardList,
   Compass,
   Database,
-  FileSearch,
   GitBranch,
-  LifeBuoy,
   LayoutDashboard,
-  MessageSquare,
   Network,
   PackageOpen,
   ShieldCheck,
-  Sparkles,
   Stethoscope,
+  Settings as SettingsIcon,
   Users,
   Workflow
 } from "lucide-react";
 import { Link, NavLink } from "react-router-dom";
 import { useDashboard } from "./DashboardContext";
 import { RoleGate } from "../components/RoleGate";
-import { useMicrosoftAdminAccess } from "../hooks/useMicrosoftAdminAccess";
 
 type NavItem = {
   to: string;
@@ -33,8 +24,6 @@ type NavItem = {
   icon: LucideIcon;
   adminOnly?: boolean;
   mspAdminOnly?: boolean;
-  microsoftAdminCapability?: boolean;
-  endUserSupport?: boolean;
 };
 
 type NavigationGroup = {
@@ -44,64 +33,55 @@ type NavigationGroup = {
 
 const primaryNavigation: NavigationGroup[] = [
   {
+    label: "Overview",
+    items: [{ to: "/", label: "Overview", icon: LayoutDashboard }]
+  },
+  {
+    label: "Clients",
     items: [
-      { to: "/", label: "Overview", icon: LayoutDashboard },
       { to: "/clients", label: "Clients", icon: Users },
       { to: "/client-discovery", label: "Client discovery", icon: Compass }
     ]
   },
   {
-    label: "Operations",
-    items: [
-      { to: "/tickets", label: "Tickets", icon: ClipboardList },
-      { to: "/technician-chat", label: "Technician Chat", icon: MessageSquare },
-      { to: "/technician-path", label: "Technician Path", icon: ListChecks },
-      { to: "/end-user", label: "End-user support", icon: LifeBuoy, endUserSupport: true },
-      { to: "/microsoft-admin", label: "Microsoft Admin", icon: ShieldCheck, microsoftAdminCapability: true }
-    ]
-  },
-  {
-    label: "Control",
+    label: "Connect",
     items: [
       { to: "/connectors", label: "Connectors", icon: GitBranch },
-      { to: "/workflows", label: "Automations", icon: Workflow },
-      { to: "/agent-platform", label: "Agent Platform", icon: Bot },
-      { to: "/approvals", label: "Approvals", icon: ClipboardCheck },
-      { to: "/activity/runs", label: "Activity", icon: Activity },
-      { to: "/audit", label: "Audit", icon: FileSearch },
-      { to: "/reports", label: "Reports", icon: BarChart3 }
+      { to: "/integrations/connector-instances", label: "Connector instances", icon: Database, adminOnly: true }
     ]
   },
   {
-    label: "Workspace",
-    items: [
-      { to: "/knowledge", label: "Knowledge", icon: BookOpenText },
-      { to: "/agents", label: "Agents", icon: Bot }
-    ]
+    label: "Automate",
+    items: [{ to: "/workflows", label: "Automations", icon: Workflow }]
+  },
+  {
+    label: "Approve",
+    items: [{ to: "/approvals", label: "Approvals", icon: ClipboardCheck }]
+  },
+  {
+    label: "Activity",
+    items: [{ to: "/activity/runs", label: "Activity", icon: Activity }]
   },
   {
     label: "Solutions",
     items: [
-      { to: "/m365-actions", label: "M365 Actions", icon: ShieldCheck },
-      { to: "/microsoft-admin/azure-lighthouse", label: "Azure Lighthouse", icon: ShieldCheck, microsoftAdminCapability: true },
       { to: "/consultant", label: "Solutions Architect", icon: Compass },
       { to: "/consultant/solution-delivery", label: "Solution delivery", icon: PackageOpen }
+    ]
+  },
+  {
+    label: "Settings",
+    items: [
+      { to: "/settings", label: "Settings", icon: SettingsIcon, adminOnly: true },
+      { to: "/settings/access", label: "People & Access", icon: Users, mspAdminOnly: true },
+      { to: "/system/appliance-health", label: "Appliance health", icon: ShieldCheck, adminOnly: true },
+      { to: "/system/diagnostics", label: "Diagnostics", icon: Stethoscope, adminOnly: true }
     ]
   }
 ];
 
 const advancedNavigation: NavItem[] = [
-  { to: "/analytics", label: "Analytics", icon: BarChart3 },
-  { to: "/collectors", label: "Collectors", icon: Database },
-  { to: "/founder", label: "Launch Passport", icon: Sparkles },
-  { to: "/integrations/connector-instances", label: "Connector Instances", icon: Database, adminOnly: true },
-  { to: "/microsoft-admin/access", label: "Microsoft Admin Access", icon: ShieldCheck, adminOnly: true },
-  { to: "/settings/access", label: "People & Access", icon: Users, mspAdminOnly: true },
-  { to: "/settings", label: "Settings", icon: Activity, adminOnly: true },
-  { to: "/operations/reconciliation", label: "Sync / Reconciliation", icon: Database, adminOnly: true },
-  { to: "/system/appliance-health", label: "Appliance Health", icon: ShieldCheck, adminOnly: true },
-  { to: "/system/diagnostics", label: "Diagnostics & Support", icon: Stethoscope, adminOnly: true },
-  { to: "/system/extensions", label: "Extensions / Packs", icon: PackageOpen, adminOnly: true },
+  { to: "/system/extensions", label: "Extensions", icon: PackageOpen, adminOnly: true },
   { to: "/integrations/mcp", label: "MCP", icon: Network, adminOnly: true }
 ];
 
@@ -111,20 +91,16 @@ function SidebarLink({ item }: { item: NavItem }) {
     <NavLink
       end={to === "/"}
       to={to}
-      target={item.endUserSupport ? "_blank" : undefined}
-      rel={item.endUserSupport ? "noopener" : undefined}
       className={({ isActive }) => isActive ? "active" : undefined}
     >
       <Icon size={18} aria-hidden="true" />
       {label}
-      {item.endUserSupport ? <small aria-hidden="true">Customer portal — separate sign-in</small> : null}
     </NavLink>
   );
 }
 
 export function Sidebar() {
-  const { role, roleResolved, isMspAdmin, endUserSupportEnabled, configurationSteps, configurationLoading, isConfigured } = useDashboard();
-  const microsoftAdmin = useMicrosoftAdminAccess();
+  const { role, roleResolved, isMspAdmin, configurationSteps, configurationLoading, isConfigured } = useDashboard();
   const requiredSteps = (configurationSteps ?? []).filter((step) => step.required);
   const completedSteps = requiredSteps.filter((step) => step.status === "done").length;
   const setupIndicator = requiredSteps.length > 0 && (configurationLoading || !isConfigured)
@@ -132,12 +108,6 @@ export function Sidebar() {
     : null;
 
   const renderItem = (item: NavItem) => {
-    if (item.endUserSupport && !endUserSupportEnabled) {
-      return null;
-    }
-    if (item.microsoftAdminCapability && (!microsoftAdmin.resolved || !microsoftAdmin.navAllowed)) {
-      return null;
-    }
     if (item.mspAdminOnly && (!roleResolved || !isMspAdmin)) {
       return null;
     }
@@ -168,8 +138,8 @@ export function Sidebar() {
         ))}
       </nav>
       <details className="sidebar-advanced">
-        <summary className="sidebar-section-label">System / Advanced</summary>
-        <nav aria-label="System and advanced navigation">
+        <summary className="sidebar-section-label">Advanced</summary>
+        <nav aria-label="Advanced navigation">
           {advancedNavigation.map(renderItem)}
         </nav>
       </details>

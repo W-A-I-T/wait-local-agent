@@ -71,7 +71,7 @@ export function Audit() {
       <section className="panel">
         <div className="panel-heading">
           <h2>Audit</h2>
-          <div><ScopeBadge selectedClientId={selectedClientId} clients={clients} /> <span>{events.length} events</span></div>
+          <div><ScopeBadge /> <span>{events.length} events</span></div>
         </div>
 
         <div className="notice" role="note">

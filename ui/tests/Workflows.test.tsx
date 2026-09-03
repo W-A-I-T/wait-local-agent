@@ -4,7 +4,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { Workflows } from "../src/screens/Workflows";
 
 vi.mock("../src/app/DashboardContext", () => ({
-  useDashboard: () => ({ canWrite: true, isAdmin: true })
+  useDashboard: () => ({ canWrite: true, isAdmin: true, selectedClientId: "acme", clients: [], isMspAdmin: false })
 }));
 
 describe("Workflows", () => {
@@ -94,7 +94,7 @@ describe("Workflows", () => {
         body: JSON.stringify({
           template_id: "stale-ticket-sweep-review",
           ticket_id: "TCK-1",
-          client_id: undefined,
+          client_id: "acme",
           payload: { stale_after_minutes: 30 }
         })
       })
