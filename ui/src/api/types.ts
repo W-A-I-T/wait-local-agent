@@ -857,6 +857,10 @@ export type ConsultantDeliveryPlan = {
   deployable_source_package?: Record<string, unknown> | null;
   deployable_source_package_generated: boolean;
   deployable_source_package_digest?: string | null;
+  deployable_source_package_deployable?: boolean;
+  deployable_source_package_status?: string;
+  deployable_source_package_design_only_components?: Array<Record<string, unknown>>;
+  deployable_source_package_unsupported_components?: Array<Record<string, unknown>>;
   deployment_package_generated: boolean;
   deployment_package_status: string;
   production_deployment_requires_approval: boolean;
@@ -948,6 +952,8 @@ export type ConsultantEmployeeOnboardingDemo = {
     delivery_bundle_generated?: boolean;
     delivery_bundle_status?: string;
     deployable_package_generated: boolean;
+    deployable_package_deployable?: boolean;
+    deployable_package_status?: string;
     deployment_started: boolean;
     production_deployment_requires_approval: boolean;
     external_systems_require_environment_verification: boolean;
@@ -2051,11 +2057,12 @@ export type MicrosoftAdminRunbookPlan = {
 };
 
 export type AuthRoleResponse = {
-  role: "admin" | "technician" | "viewer";
+  role: "admin" | "technician" | "viewer" | "end_user";
   client_id?: string | null;
   client_ids?: string[];
   api_auth_required: boolean;
   demo_mode: boolean;
+  allow_write_actions?: boolean;
   end_user_support_enabled: boolean;
   is_msp_admin?: boolean;
   principal_id?: string | null;

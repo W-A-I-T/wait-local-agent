@@ -31,6 +31,13 @@ All notable changes to WAIT Local Agent will be documented in this file.
 
 ### Fixed
 
+- Power Platform package validation, delivery plans, the employee demo, and
+  Solution Delivery now report computed deployability, package status, and
+  design-only or unsupported components; dropped entities and relationships
+  degrade source readiness instead of disappearing from the result.
+- Dashboard write controls now honor the server write-action flag and exclude
+  end-user roles, and the deployment stage/docs now describe the pack-only
+  build plan.
 - Dual-served UI routes now vary JSON and HTML responses correctly, authenticated
   JSON responses are never stored by intermediaries, and dashboard write-health
   checks are cached per connector for one minute with an explicit Settings

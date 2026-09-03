@@ -47,15 +47,18 @@ its `power_automate` section is rejected rather than packaged with empty flow
 metadata.
 
 Package readiness is reported per component class. `deployable_source` means
-every emitted component class is import-complete. `partial_source` means the
-package contains a usable import-complete component but also contains a
-design-only emitted component, including a partially mapped entity. `deployable`
-is true only when the package contains at least one import-complete artifact
-component; a package containing only design-only or unsupported artifacts is
-not deployable. Unsupported artifacts are not emitted into the source and
-remain separately listed below. `design_only_components` lists design-only
-components, including each component path, format, and reason, and is also
-written to `design_only/components.json`. `unsupported_components` and
+the input contains at least one artifact component and every emitted component
+class is import-complete. `partial_source` means any design-only, partially
+mapped, or withheld component is present, including a wholly dropped entity or
+relationship, or the package has no import-complete artifact component.
+Unsupported artifacts are not emitted into the source and remain separately
+listed below; an unsupported artifact alongside a complete source component
+does not reduce the completeness of the emitted XML source. `deployable` is
+true only when the package contains at least one import-complete artifact
+component.
+`design_only_components` lists design-only components, including each component
+path, format, and reason, and is also written to
+`design_only/components.json`. `unsupported_components` and
 `unsupported/components.json` remain the separate record for artifact formats
 with no supported XML source mapping.
 

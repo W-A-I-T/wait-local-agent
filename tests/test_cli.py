@@ -160,7 +160,32 @@ def test_microsoft_power_platform_package_cli_build_validate_and_materialize(mon
                 "publisher_name": "WAITConsulting",
                 "publisher_prefix": "wait",
                 "output_directory": str(workspace / "source"),
-                "artifacts": [],
+                "artifacts": [
+                    {
+                        "format": "wait-local-agent.power-apps-artifact",
+                        "format_version": 1,
+                        "client_id": "acme",
+                        "app_name": "Dataverse entities",
+                        "dataverse": {
+                            "tables": [
+                                {
+                                    "logical_name": "wait_employee",
+                                    "display_name": "Employee",
+                                    "primary_name_column": "wait_display_name",
+                                    "columns": [
+                                        {
+                                            "logical_name": "wait_display_name",
+                                            "display_name": "Display name",
+                                        }
+                                    ],
+                                }
+                            ]
+                        },
+                        "credentials_included": False,
+                        "execution_started": False,
+                        "deployment_started": False,
+                    }
+                ],
             }
         ),
         encoding="utf-8",
@@ -169,12 +194,17 @@ def test_microsoft_power_platform_package_cli_build_validate_and_materialize(mon
     built = runner.invoke(app, ["microsoft", "package", "build", str(source)])
     assert built.exit_code == 0, built.output
     package = json.loads(built.output)
+    assert package["deployable"] is True
+    assert package["package_status"] == "deployable_source"
     package_source = tmp_path / "package.json"
     package_source.write_text(json.dumps(package), encoding="utf-8")
 
     validated = runner.invoke(app, ["microsoft", "package", "validate", str(package_source)])
     assert validated.exit_code == 0, validated.output
-    assert json.loads(validated.output)["valid"] is True
+    validation = json.loads(validated.output)
+    assert validation["valid"] is True
+    assert validation["deployable"] == package["deployable"]
+    assert validation["package_status"] == package["package_status"]
 
     blocked = runner.invoke(app, ["microsoft", "package", "materialize", str(package_source)])
     assert blocked.exit_code == 0, blocked.output
@@ -184,6 +214,54 @@ def test_microsoft_power_platform_package_cli_build_validate_and_materialize(mon
     materialized = runner.invoke(app, ["microsoft", "package", "materialize", str(package_source)])
     assert materialized.exit_code == 0, materialized.output
     assert json.loads(materialized.output)["status"] == "succeeded"
+
+    design_only_source = tmp_path / "design-only-input.json"
+    design_only_source.write_text(
+        json.dumps(
+            {
+                "client_id": "acme",
+                "solution_name": "onboarding_design_only",
+                "publisher_name": "WAITConsulting",
+                "publisher_prefix": "wait",
+                "output_directory": str(workspace / "design-only"),
+                "artifacts": [
+                    {
+                        "format": "wait-local-agent.power-platform.custom-connector",
+                        "format_version": 1,
+                        "client_id": "acme",
+                        "connector_id": "hr_api",
+                        "display_name": "HR API",
+                        "host": "api.example.invalid",
+                        "base_path": "/v1",
+                        "actions": [{"id": "health", "method": "GET"}],
+                        "credentials_included": False,
+                        "deployment_started": False,
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    design_only_built = runner.invoke(app, ["microsoft", "package", "build", str(design_only_source)])
+    assert design_only_built.exit_code == 0, design_only_built.output
+    design_only_package = json.loads(design_only_built.output)
+    assert design_only_package["deployable"] is False
+    assert design_only_package["package_status"] == "partial_source"
+    design_only_package_source = tmp_path / "design-only-package.json"
+    design_only_package_source.write_text(json.dumps(design_only_package), encoding="utf-8")
+
+    refused = runner.invoke(
+        app,
+        ["microsoft", "package", "validate", str(design_only_package_source)],
+        env={"NO_COLOR": "1", "TERM": "dumb", "COLUMNS": "200"},
+    )
+    assert refused.exit_code != 0
+    normalized_refusal = re.sub(
+        r"[^a-z0-9]+",
+        " ",
+        ANSI_CSI_SEQUENCE.sub("", refused.output.casefold()),
+    ).strip()
+    assert "cannot be deployed" in normalized_refusal
 
 
 def test_microsoft_power_platform_package_cli_rejects_foreign_tenant(monkeypatch, tmp_path) -> None:

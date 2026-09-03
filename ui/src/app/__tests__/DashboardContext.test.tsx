@@ -28,6 +28,8 @@ function DashboardHarness() {
     capabilityError,
     capabilityGrants,
     capabilityResolved,
+    canWrite,
+    canWriteExternally,
     clientId,
     clients,
     endUserSupportEnabled,
@@ -52,6 +54,8 @@ function DashboardHarness() {
       <button type="button" onClick={() => setSelectedClientId("client-a")}>Select client A</button>
       <output>{roleResolved ? "access resolved" : "access unresolved"}</output>
       <output data-testid="auth-state">{authState ?? "unresolved"}</output>
+      <output data-testid="can-write">{canWrite ? "yes" : "no"}</output>
+      <output data-testid="can-write-externally">{canWriteExternally ? "yes" : "no"}</output>
       <output data-testid="legacy-client-id">{clientId}</output>
       <output data-testid="end-user-support-enabled">{endUserSupportEnabled ? "enabled" : "disabled"}</output>
       <output data-testid="selected-client-id">{selectedClientId}</output>
@@ -97,6 +101,37 @@ describe("DashboardContext role refresh", () => {
     render(<DashboardProvider><DashboardHarness /></DashboardProvider>);
 
     await waitFor(() => expect(screen.getByTestId("auth-state")).toHaveTextContent(expectedState));
+  });
+
+  it.each([
+    ["admin with writes disabled", { role: "admin", allow_write_actions: false }, "yes"],
+    ["end user with writes enabled", { role: "end_user", allow_write_actions: true }, "no"],
+    ["technician with writes enabled", { role: "technician", allow_write_actions: true }, "yes"],
+  ] as const)("derives canWrite for %s", async (_caseName, response, expected) => {
+    mockedApiFetch.mockImplementation((path: string) => {
+      if (path === "/auth/role") {
+        return Promise.resolve(response) as ReturnType<typeof apiFetch>;
+      }
+      return Promise.resolve(defaultResponse(path)) as ReturnType<typeof apiFetch>;
+    });
+
+    render(<DashboardProvider><DashboardHarness /></DashboardProvider>);
+
+    await waitFor(() => expect(screen.getByTestId("can-write")).toHaveTextContent(expected));
+  });
+
+  it("derives canWriteExternally from the role capability and global write flag", async () => {
+    mockedApiFetch.mockImplementation((path: string) => {
+      if (path === "/auth/role") {
+        return Promise.resolve({ role: "admin", allow_write_actions: false }) as ReturnType<typeof apiFetch>;
+      }
+      return Promise.resolve(defaultResponse(path)) as ReturnType<typeof apiFetch>;
+    });
+
+    render(<DashboardProvider><DashboardHarness /></DashboardProvider>);
+
+    await waitFor(() => expect(screen.getByTestId("can-write")).toHaveTextContent("yes"));
+    expect(screen.getByTestId("can-write-externally")).toHaveTextContent("no");
   });
 
   it("prefers an authenticated browser session and clears a stale bearer token", async () => {

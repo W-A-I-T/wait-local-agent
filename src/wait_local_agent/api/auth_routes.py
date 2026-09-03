@@ -829,6 +829,7 @@ def _auth_view(
         "expires_at": expires_at,
         "api_auth_required": not settings.demo_mode,
         "demo_mode": settings.demo_mode,
+        "allow_write_actions": settings.allow_write_actions,
         "end_user_support_enabled": settings.end_user_support_enabled,
     }
 

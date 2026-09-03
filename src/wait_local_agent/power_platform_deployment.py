@@ -83,7 +83,7 @@ def build_power_platform_deployment_plan(
     stages: list[dict[str, object]] = [
         {
             "id": "build",
-            "name": "Build and solution checker",
+            "name": "Build (pac solution pack)",
             "commands": commands,
             "approval_required": True,
             "deployment_started": False,

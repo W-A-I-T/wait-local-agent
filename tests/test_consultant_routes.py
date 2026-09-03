@@ -511,10 +511,40 @@ def test_power_platform_package_routes_scope_roles_and_preserve_local_boundaries
             publisher_name="WAITConsulting",
             publisher_prefix="wait",
             output_directory="/tmp/wait-onboarding-source",
+            artifacts=[
+                {
+                    "format": "wait-local-agent.power-apps-artifact",
+                    "format_version": 1,
+                    "client_id": "acme",
+                    "app_name": "Onboarding",
+                    "dataverse": {
+                        "tables": [
+                            {
+                                "logical_name": "wait_employee",
+                                "display_name": "Employee",
+                                "primary_name_column": "wait_display_name",
+                                "columns": [
+                                    {
+                                        "logical_name": "wait_display_name",
+                                        "display_name": "Display name",
+                                        "type": "String",
+                                        "required": True,
+                                    }
+                                ],
+                            }
+                        ]
+                    },
+                    "canvas_app": {"screens": []},
+                    "credentials_included": False,
+                    "execution_started": False,
+                    "deployment_started": False,
+                }
+            ],
         ),
         _technician(),
     )
     assert package["deployable"] is True
+    assert package["package_status"] == "deployable_source"
     assert package["execution_started"] is False
     assert package["deployment_started"] is False
 
@@ -1594,7 +1624,9 @@ def test_employee_onboarding_demo_endpoint_composes_existing_local_fixture(setti
     assert result["boundaries"]["live_provider_execution"] is False
     assert result["boundaries"]["artifact_generation_status"] == "review_only"
     assert result["boundaries"]["deployable_package_generated"] is True
-    assert result["boundaries"]["deployable_package_status"] == "deployable_source"
+    assert result["boundaries"]["deployable_package_status"] == result["stages"]["artifacts"][
+        "deployable_source_package"
+    ]["package_status"]
     assert result["boundaries"]["deployable_package_digest"].startswith("sha256:")
     assert result["boundaries"]["deployment_started"] is False
 
