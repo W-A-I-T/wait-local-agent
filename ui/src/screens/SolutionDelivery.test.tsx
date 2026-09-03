@@ -4,6 +4,7 @@ import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { SolutionDelivery } from "./SolutionDelivery";
 import { useDashboard } from "../app/DashboardContext";
 import type { ApprovalRequest } from "../api/types";
+import { solutionDeliveryHandoffStorageKey } from "../lib/solutionDeliveryHandoff";
 
 vi.mock("../app/DashboardContext", async () => {
   const actual = await vi.importActual<typeof import("../app/DashboardContext")>("../app/DashboardContext");
@@ -32,6 +33,7 @@ function baseDashboard() {
 beforeEach(() => {
   mockedUseDashboard.mockReset();
   vi.unstubAllGlobals();
+  window.sessionStorage.clear();
 });
 
 describe("SolutionDelivery", () => {
@@ -83,7 +85,7 @@ describe("SolutionDelivery", () => {
     expect(screen.getByText(/Deploys via your locally-authenticated pac CLI/)).toBeInTheDocument();
     expect(screen.getByText("Package")).toBeInTheDocument();
     expect(screen.getByText("Validate")).toBeInTheDocument();
-    expect(screen.getByText("Materialize")).toBeInTheDocument();
+    expect(screen.getAllByText("Materialized").length).toBeGreaterThan(0);
     expect(screen.getByText("Deploy stages")).toBeInTheDocument();
     expect(screen.getByText("Rollback")).toBeInTheDocument();
     expect(screen.getByText("pac version")).toBeInTheDocument();
@@ -110,7 +112,7 @@ describe("SolutionDelivery", () => {
     expect(screen.getAllByText(new RegExp(`Package status: ${packageStatus}`))).toHaveLength(2);
     expect(JSON.parse(fetchMock.mock.calls[2][1].body)).toEqual({ client_id: "acme", package: packageArtifact });
 
-    fireEvent.click(screen.getByRole("button", { name: "Materialize source" }));
+    fireEvent.click(screen.getByRole("button", { name: "Create source files" }));
     await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(4));
     expect(JSON.parse(fetchMock.mock.calls[3][1].body)).toEqual({ client_id: "acme", package: packageArtifact });
     const writeGate = screen.getByText("WAIT_ALLOW_WRITE_ACTIONS", { exact: true }).closest(".solution-gate");
@@ -200,10 +202,12 @@ describe("SolutionDelivery", () => {
       .mockResolvedValueOnce(new Response(JSON.stringify({}), { status: 200 }))
       .mockResolvedValue(new Response(JSON.stringify(packageArtifact), { status: 200 }));
     vi.stubGlobal("fetch", fetchMock);
+    const handoffKey = solutionDeliveryHandoffStorageKey("acme");
+    window.sessionStorage.setItem(handoffKey, JSON.stringify({ source: "solutions-architect", clientId: "acme", artifacts: [artifact], blueprint: { id: "bp-acme", name: "Employee onboarding" }, generatedAt: "2026-09-03T18:00:00.000Z" }));
     render(
       <MemoryRouter initialEntries={[{
         pathname: "/consultant/solution-delivery",
-        state: { source: "solutions-architect", clientId: "acme", artifacts: [artifact] },
+        search: `?handoff=${encodeURIComponent(handoffKey)}`,
       }]}>
         <Routes>
           <Route path="/consultant/solution-delivery" element={<SolutionDelivery />} />
@@ -211,6 +215,7 @@ describe("SolutionDelivery", () => {
       </MemoryRouter>,
     );
 
+    expect(screen.getByText(/Source: Employee onboarding · 1 artifacts · generated/)).toBeInTheDocument();
     expect(screen.getByRole("status")).toHaveTextContent(/1 artifact received from Solutions Architect/);
     const artifacts = screen.getByLabelText("Artifacts (JSON array)");
     expect(artifacts).toHaveValue(JSON.stringify([artifact], null, 2));
@@ -228,10 +233,12 @@ describe("SolutionDelivery", () => {
   it("ignores malformed handoff state without weakening materialization gates", () => {
     mockedUseDashboard.mockReturnValue(dashboard({ isAdmin: false }) as never);
     vi.stubGlobal("fetch", vi.fn());
+    const handoffKey = solutionDeliveryHandoffStorageKey("acme");
+    window.sessionStorage.setItem(handoffKey, JSON.stringify({ source: "solutions-architect", clientId: "acme", artifacts: [null] }));
     render(
       <MemoryRouter initialEntries={[{
         pathname: "/consultant/solution-delivery",
-        state: { source: "solutions-architect", clientId: "acme", artifacts: [null] },
+        search: `?handoff=${encodeURIComponent(handoffKey)}`,
       }]}>
         <Routes>
           <Route path="/consultant/solution-delivery" element={<SolutionDelivery />} />
@@ -241,7 +248,39 @@ describe("SolutionDelivery", () => {
 
     expect(screen.getByLabelText("Artifacts (JSON array)")).toHaveValue("[]");
     expect(screen.queryByText(/received from Solutions Architect/)).not.toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Materialize source" })).toBeDisabled();
-    expect(screen.getByText("Administrator access is required to materialize source files.")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Create source files" })).toBeDisabled();
+    expect(screen.getByText("Administrator access is required to create source files.")).toBeInTheDocument();
+  });
+
+  it("restores the stored handoff after remount and clears it on start over", () => {
+    mockedUseDashboard.mockReturnValue(dashboard() as never);
+    const handoffKey = solutionDeliveryHandoffStorageKey("acme");
+    const handoff = {
+      source: "solutions-architect",
+      clientId: "acme",
+      blueprint: { id: "bp-acme", name: "Employee onboarding" },
+      artifacts: [{ format: "wait-local-agent.power-apps-artifact", artifact_digest: "sha256:app" }],
+      artifactMetadata: [{ id: "power-apps", digest: "sha256:app" }],
+      generatedAt: "2026-09-03T18:00:00.000Z",
+    };
+    window.sessionStorage.setItem(handoffKey, JSON.stringify(handoff));
+    const view = render(
+      <MemoryRouter initialEntries={[`/consultant/solution-delivery?handoff=${encodeURIComponent(handoffKey)}`]}>
+        <Routes><Route path="/consultant/solution-delivery" element={<SolutionDelivery />} /></Routes>
+      </MemoryRouter>,
+    );
+
+    expect(screen.getByText(/Source: Employee onboarding/)).toBeInTheDocument();
+    view.unmount();
+    render(
+      <MemoryRouter initialEntries={[`/consultant/solution-delivery?handoff=${encodeURIComponent(handoffKey)}`]}>
+        <Routes><Route path="/consultant/solution-delivery" element={<SolutionDelivery />} /></Routes>
+      </MemoryRouter>,
+    );
+    expect(screen.getByText(/Source: Employee onboarding/)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Start over" }));
+    expect(window.sessionStorage.getItem(handoffKey)).toBeNull();
+    expect(screen.queryByText(/Source: Employee onboarding/)).not.toBeInTheDocument();
+    expect(screen.getByLabelText("Artifacts (JSON array)")).toHaveValue("[]");
   });
 });
