@@ -36,7 +36,10 @@ async function apiJson(
 
 test("shows the local sign-in screen without a stored credential", async ({ page }) => {
   await page.goto("/");
-  await page.evaluate(() => localStorage.clear());
+  await page.evaluate(() => {
+    localStorage.clear();
+    sessionStorage.clear();
+  });
   await page.reload();
 
   await expect(page.getByRole("heading", { name: "Sign in to the appliance", exact: true })).toBeVisible();

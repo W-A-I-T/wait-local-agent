@@ -17,6 +17,9 @@ services:
       WAIT_TRUSTED_HOSTS: 127.0.0.1,localhost,api
       # Keep session cookies secure by default; local plain-HTTP development may override this.
       WAIT_SESSION_COOKIE_SECURE: ${WAIT_SESSION_COOKIE_SECURE:-true}
+      # Rate limits are per source IP; integration runs raise them because every browser test shares one IP.
+      WAIT_RATE_LIMIT_GENERAL: ${WAIT_RATE_LIMIT_GENERAL:-100/minute}
+      WAIT_RATE_LIMIT_CONNECTOR: ${WAIT_RATE_LIMIT_CONNECTOR:-10/minute}
     command: ["wait-local-agent", "serve", "--host", "0.0.0.0", "--port", "8788"]
     ports:
       - "127.0.0.1:${WAIT_COMPOSE_API_PORT:-8788}:8788"

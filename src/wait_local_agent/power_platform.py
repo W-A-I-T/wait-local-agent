@@ -257,6 +257,7 @@ def pac_cli_version(
             check=False,
             shell=False,
             timeout=PAC_VERSION_PROBE_TIMEOUT_SECONDS,
+            env=pac_child_environment(),
         )
     except (OSError, subprocess.TimeoutExpired):
         return None
@@ -266,6 +267,18 @@ def pac_cli_version(
         value for value in (completed.stdout, completed.stderr) if isinstance(value, str)
     )
     return parse_pac_version(output)
+
+
+def pac_child_environment() -> dict[str, str]:
+    """Return the non-secret environment needed by PAC and its .NET runtime."""
+    allowed_names = {"PATH", "HOME", "TMPDIR", "LANG", "WAIT_PAC_SHIM_ARGV_LOG"}
+    if os.name == "nt":
+        allowed_names.update({"SystemRoot", "USERPROFILE", "APPDATA", "LOCALAPPDATA", "COMSPEC", "TEMP", "TMP"})
+    return {
+        name: value
+        for name, value in os.environ.items()
+        if name in allowed_names or name.startswith(("LC_", "PAC_", "DOTNET_"))
+    }
 
 
 def power_platform_cli_status(settings: Settings | None = None) -> dict[str, Any]:

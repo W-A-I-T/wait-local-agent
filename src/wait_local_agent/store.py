@@ -5993,6 +5993,32 @@ class Store:
             raise RuntimeError("approval request was not persisted")
         return request
 
+    def claim_approval_execution(self, request_id: int) -> bool:
+        """Atomically reserve an approved request before starting an external command."""
+        now = utc_now()
+        terminal_statuses = ("succeeded", "verified", "unverified", "submitted", "running")
+        with self._connect() as connection:
+            row = connection.execute("select * from approval_requests where id = ?", (request_id,)).fetchone()
+            if row is None:
+                raise KeyError(request_id)
+            approval_ticket_id = _ticket_id_from_payload(_json_object_or_empty(str(row["payload_json"])))
+            if approval_ticket_id is not None:
+                self._require_ticket_not_quarantined(connection, approval_ticket_id)
+            row = self._expire_approval_request(connection, row)
+            if str(row["status"]) == "expired":
+                raise PermissionError("approval request has expired")
+            cursor = connection.execute(
+                """
+                update approval_requests
+                set execution_status = 'running', execution_message = '',
+                    executed_at = '', execution_result_json = '{}', updated_at = ?
+                where id = ? and status = 'approved'
+                  and execution_status not in (?, ?, ?, ?, ?)
+                """,
+                (now, request_id, *terminal_statuses),
+            )
+            return cursor.rowcount == 1
+
     def get_approval_request(self, request_id: int) -> ApprovalRequest | None:
         with self._connect() as connection:
             row = connection.execute("select * from approval_requests where id = ?", (request_id,)).fetchone()

@@ -1,7 +1,7 @@
 import { useEffect, useState, type FormEvent } from "react";
 import { useLocation } from "react-router-dom";
 import { apiFetch } from "../api/client";
-import { persistApiToken } from "../api/headers";
+import { clearInMemoryApiToken, persistApiToken, setSessionApiToken } from "../api/headers";
 import { useDashboard } from "../app/DashboardContext";
 import { apiUrl } from "../lib/config";
 
@@ -17,6 +17,7 @@ export function Login() {
   const [token, setToken] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const [breakGlassSession, setBreakGlassSession] = useState(false);
   const [oidcEnabled, setOidcEnabled] = useState(false);
 
   useEffect(() => {
@@ -52,15 +53,21 @@ export function Login() {
         body: JSON.stringify({ token: candidate })
       });
       if (result.session_created) {
+        clearInMemoryApiToken();
         persistApiToken("");
+        setBreakGlassSession(false);
       } else {
         // Break-glass bootstrap tokens remain bearer-only by design.
-        persistApiToken(candidate);
+        persistApiToken("");
+        setSessionApiToken(candidate);
+        setBreakGlassSession(true);
       }
       setToken("");
       const auth = await refresh();
       if (!auth?.role) {
+        clearInMemoryApiToken();
         persistApiToken("");
+        setBreakGlassSession(false);
         setError("That token was not accepted for dashboard access.");
       } else {
         if (typeof setStatusMessage === "function") setStatusMessage("Signed in.");
@@ -104,6 +111,7 @@ export function Login() {
           </>
         ) : null}
         {error ? <p className="notice danger" role="alert">{error}</p> : null}
+        {breakGlassSession ? <p className="screen-note" role="status">Break-glass access is active; this session is not persisted.</p> : null}
       </section>
     </main>
   );

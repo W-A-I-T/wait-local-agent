@@ -85,11 +85,12 @@ def _warn_weak_bootstrap_tokens(settings: Settings) -> None:
         ("WAIT_ADMIN_TOKEN", settings.admin_token),
         ("WAIT_TECH_TOKEN", settings.tech_token),
         ("WAIT_VIEWER_TOKEN", settings.viewer_token),
+        ("WAIT_END_USER_TOKEN", settings.end_user_token),
         ("WAIT_API_TOKEN", settings.api_token),
     ):
-        if token and len(token) < 16:
+        if token and len(token) < 32:
             LOGGER.warning(
-                "%s is shorter than 16 characters; use at least 32 random characters",
+                "%s is shorter than 32 characters; use at least 32 random characters",
                 variable,
             )
 

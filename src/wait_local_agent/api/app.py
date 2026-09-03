@@ -94,6 +94,7 @@ from wait_local_agent.config import (
 )
 from wait_local_agent.confluence import ConfluenceClient, ConfluenceReadResponse
 from wait_local_agent.connector_factory import (
+    SUPPORTED_CONNECTOR_TYPES,
     ConnectorFactoryError,
     build_read_client_for_client,
     validate_connector_instance,
@@ -424,6 +425,7 @@ def _connector_read_client(
 LOGGER = logging.getLogger(__name__)
 CORRELATION_HEADER = "X-Correlation-ID"
 _TERMINAL_EXECUTION_STATUSES = frozenset({"succeeded", "verified", "unverified", "submitted"})
+_EXECUTING_EXECUTION_STATUS = "running"
 
 
 class CorrelationIdMiddleware:
@@ -2184,6 +2186,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     ) -> dict[str, object]:
         _require_msp_operator(context)
         connector_type = payload.connector_type.strip().casefold()
+        if not connector_type:
+            raise HTTPException(status_code=400, detail="connector_type must be non-empty")
+        if connector_type not in SUPPORTED_CONNECTOR_TYPES:
+            accepted_types = ", ".join(sorted(SUPPORTED_CONNECTOR_TYPES))
+            raise HTTPException(
+                status_code=422,
+                detail=f"unsupported connector_type; accepted types: {accepted_types}",
+            )
         if payload.credential_ref and connector_type in {
             "autotask",
             "syncro",
@@ -6489,9 +6499,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
 
     @app.get("/consultant/power-platform/cli-status")
+    @limiter.limit(active_settings.rate_limit_connector)
     def consultant_power_platform_cli_status(
+        request: Request,
         _: TechnicianAccess,
     ) -> dict[str, object]:
+        del request
         cli_status = power_platform_cli_status(active_settings)
         version = cli_status.get("version")
         try:
@@ -6501,8 +6514,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             )
         except ValueError:
             version_compatible = False
+        raw_path = cli_status.get("path")
+        path_name = None
+        if isinstance(raw_path, str) and raw_path:
+            path_name = raw_path.replace("\\", "/").rsplit("/", 1)[-1]
         return {
             **cli_status,
+            "path": path_name,
+            "path_configured": isinstance(raw_path, str) and bool(raw_path),
             "minimum_version": PAC_XML_MINIMUM_VERSION,
             "version_compatible": version_compatible,
             "allow_write_actions": active_settings.allow_write_actions,
@@ -7071,6 +7090,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     source_approval=_power_platform_source_record(source_approval),
                     current_payload=payload,
                 )
+            if not store.claim_approval_execution(request_id):
+                raise HTTPException(status_code=409, detail="deployment approval request has already executed")
             result = execute_power_platform_stage(
                 plan,
                 stage_id,
@@ -7172,6 +7193,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             if not isinstance(artifact_path, str):
                 raise PowerPlatformDeploymentError("rollback approval artifact path is invalid")
             normalized_evidence = validate_rollback_evidence(rollback_evidence)
+            if not store.claim_approval_execution(request_id):
+                raise HTTPException(status_code=409, detail="rollback approval request has already executed")
             result = execute_power_platform_rollback(
                 plan,
                 stage_id,
@@ -8416,6 +8439,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         if request.action_type == "power_platform.solution_stage":
             if request.status != "approved":
                 return False, "Approval must be approved before execution."
+            if request.execution_status == _EXECUTING_EXECUTION_STATUS:
+                return False, "Approval request is currently executing."
             if request.execution_status in _TERMINAL_EXECUTION_STATUSES:
                 return False, "Approval request has already executed successfully."
             if not active_settings.allow_write_actions:

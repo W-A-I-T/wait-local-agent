@@ -217,9 +217,11 @@ describe("App", () => {
   });
 
   it("reports the resolved role after saving a token", async () => {
-    vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL) => {
-      if (String(input) === "/auth/role" && !window.localStorage.getItem("wait-local-agent-api-token")) {
-        return new Response(JSON.stringify({ detail: "missing token" }), { status: 401 });
+    vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      if (String(input) === "/auth/role") {
+        if (new Headers(init?.headers).get("Authorization") !== "Bearer new-token") {
+          return new Response(JSON.stringify({ detail: "missing token" }), { status: 401 });
+        }
       }
       return mockFetch(input);
     }));

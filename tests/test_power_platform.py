@@ -14,6 +14,7 @@ from wait_local_agent.power_platform import (
     compare_pac_versions,
     definition_size_bytes,
     generate_power_platform_connector,
+    pac_child_environment,
     pac_cli_version,
     power_platform_cli_status,
     resolve_pac_executable,
@@ -309,6 +310,22 @@ def test_pac_cli_version_fails_closed_for_bad_probe_results() -> None:
         raise subprocess.TimeoutExpired(["/fake/pac", "help"], 5)
 
     assert pac_cli_version("/fake/pac", run=timeout_runner) is None
+
+
+def test_pac_child_environment_is_allowlisted(monkeypatch) -> None:
+    monkeypatch.setenv("PATH", "/safe/bin")
+    monkeypatch.setenv("PAC_CACHE", "/safe/cache")
+    monkeypatch.setenv("DOTNET_ROOT", "/safe/dotnet")
+    monkeypatch.setenv("LC_ALL", "C.UTF-8")
+    monkeypatch.setenv("WAIT_ADMIN_TOKEN", "must-not-reach-pac")
+
+    environment = pac_child_environment()
+
+    assert environment["PATH"] == "/safe/bin"
+    assert environment["PAC_CACHE"] == "/safe/cache"
+    assert environment["DOTNET_ROOT"] == "/safe/dotnet"
+    assert environment["LC_ALL"] == "C.UTF-8"
+    assert "WAIT_ADMIN_TOKEN" not in environment
 
 
 def test_pac_versions_use_integer_tuple_comparison() -> None:

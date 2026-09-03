@@ -12,6 +12,8 @@ All notable changes to WAIT Local Agent will be documented in this file.
 
 ### Security
 
+- Weak-token startup warnings now cover end-user credentials and all bootstrap
+  tokens shorter than 32 characters.
 - Principal lifecycle mutations now use one canonical Store path; deactivation
   revokes sessions, credentials, and capability grants together (#513).
 - Production installs now fetch version-matched release assets, verify keyless
@@ -36,6 +38,13 @@ All notable changes to WAIT Local Agent will be documented in this file.
   weekly scheduled job retains the all-history scan.
 
 ### Fixed
+
+- Connector instance creation now rejects unknown connector types, diagnostics
+  bundle digests remain stable across volatile system uptime, and approved
+  Power Platform executions are reserved atomically before PAC starts.
+- Bootstrap bearer tokens remain in memory for the tab only, PAC subprocesses
+  receive a minimal environment, and CLI status exposes only a configured
+  flag plus the executable basename.
 
 - Power Platform package validation, delivery plans, the employee demo, and
   Solution Delivery now report computed deployability, package status, and
