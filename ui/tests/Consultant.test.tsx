@@ -401,6 +401,7 @@ describe("Consultant", () => {
     expect(walkthroughView.getByRole("heading", { name: "Delivery handoff" })).toBeInTheDocument();
     expect(walkthroughView.getByText("Review-only.")).toBeInTheDocument();
     expect(walkthroughView.getByText(/1 files · Teams, Power Automate/)).toBeInTheDocument();
+    expect(walkthroughView.getByText("sha256:delivery")).toBeInTheDocument();
     fireEvent.click(walkthroughView.getByText("Review bundle files and open items"));
     expect(walkthroughView.getByText(/Operator evidence is required before deployment/)).toBeInTheDocument();
     const onboardingCall = vi.mocked(fetch).mock.calls.find(([input]) => String(input) === "/consultant/demos/employee-onboarding");

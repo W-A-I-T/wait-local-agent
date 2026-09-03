@@ -49,6 +49,8 @@ def _expected_default_api_service() -> dict[str, object]:
             "WAIT_TRUSTED_HOSTS": "127.0.0.1,localhost,api",
             "WAIT_VAULT_PATH": "/data/vault",
             "WAIT_SESSION_COOKIE_SECURE": "true",
+            "WAIT_RATE_LIMIT_GENERAL": "100/minute",
+            "WAIT_RATE_LIMIT_CONNECTOR": "10/minute",
         },
         "healthcheck": {
             "test": [

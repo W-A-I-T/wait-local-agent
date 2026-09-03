@@ -5,6 +5,7 @@ from dataclasses import replace
 from pathlib import Path
 
 import pytest
+from fastapi.routing import APIRoute
 from fastapi.testclient import TestClient
 
 import wait_local_agent.api.app as app_module
@@ -185,6 +186,26 @@ def test_client_and_connector_api_smoke_and_conflict(settings) -> None:
     assert client.get("/clients/missing").status_code == 404
     assert client.get("/connector-instances/missing").status_code == 404
     assert client.post("/clients", json={"client_id": "client-a", "name": "Duplicate"}).status_code == 409
+
+
+def test_connector_api_rejects_unknown_types_with_canonical_accepted_types(settings) -> None:
+    application = create_app(settings)
+    route = next(
+        route for route in application.routes
+        if isinstance(route, APIRoute) and route.path == "/connector-instances" and "POST" in (route.methods or set())
+    )
+    request = app_module.ConnectorInstanceCreateRequest(
+        connector_type="unknown-provider",
+        display_name="Unknown",
+    )
+    context = AuthContext(role=Role.ADMIN, presented_token=None, client_id="demo", demo_mode=True)
+
+    with pytest.raises(app_module.HTTPException) as exc_info:
+        route.endpoint(request, context)
+
+    assert exc_info.value.status_code == 422
+    assert "accepted types" in str(exc_info.value.detail)
+    assert "m365" in str(exc_info.value.detail)
 
 
 def test_bound_admin_is_not_an_operator_and_cannot_cross_clients(settings) -> None:
@@ -438,7 +459,7 @@ def test_p1_api_scope_and_operator_guards(settings) -> None:
     assert client.post(
         "/connector-instances",
         headers=headers,
-        json={"connector_type": "hudu", "display_name": "Hudu"},
+        json={"connector_type": "syncro", "display_name": "Hudu"},
     ).status_code == 403
     out_of_scope_mapping = client.post(
         "/client-connector-mappings",
@@ -540,7 +561,7 @@ def test_p1_api_route_error_branches_and_empty_results(settings, monkeypatch, tm
         assert invalid_connector_update.json()["detail"] == "connector_type must be non-empty"
 
         second_connector = client.post(
-            "/connector-instances", json={"connector_type": "hudu", "display_name": "Secondary"}
+            "/connector-instances", json={"connector_type": "syncro", "display_name": "Secondary"}
         )
         assert second_connector.status_code == 200
         duplicate_update = client.patch(
@@ -642,7 +663,7 @@ def test_p1_api_non_msp_admin_is_denied_mutations_and_scoped_verify(settings, mo
         assert client.post(
             "/connector-instances",
             headers=headers,
-            json={"connector_type": "hudu", "display_name": "Hudu"},
+            json={"connector_type": "syncro", "display_name": "Hudu"},
         ).status_code == 403
         assert client.patch(
             "/clients/client-a", headers=headers, json={"status": "archived"}

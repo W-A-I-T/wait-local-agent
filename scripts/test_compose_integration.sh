@@ -20,7 +20,8 @@ if ! command -v docker >/dev/null 2>&1; then
   exit 2
 fi
 
-env WAIT_ADMIN_TOKEN="$TOKEN" WAIT_CLIENT_ID="$CLIENT_ID" WAIT_VAULT_KEY="$VAULT_KEY" WAIT_DEMO_MODE=false "${COMPOSE[@]}" up --build --detach
+env WAIT_ADMIN_TOKEN="$TOKEN" WAIT_CLIENT_ID="$CLIENT_ID" WAIT_VAULT_KEY="$VAULT_KEY" WAIT_DEMO_MODE=false \
+  WAIT_RATE_LIMIT_GENERAL=2000/minute WAIT_RATE_LIMIT_CONNECTOR=200/minute "${COMPOSE[@]}" up --build --detach
 
 for attempt in $(seq 1 60); do
   if curl --fail --silent --show-error \

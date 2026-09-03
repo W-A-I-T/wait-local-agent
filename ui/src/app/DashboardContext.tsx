@@ -1,7 +1,8 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { apiFetch } from "../api/client";
 import {
-  loadStoredApiToken,
+  clearInMemoryApiToken,
+  loadApiToken,
   loadStoredSelectedClientId,
   persistApiToken,
   persistSelectedClientId
@@ -203,7 +204,7 @@ export function executeEndpointFor(actionType: string): string | null {
 const DashboardContext = createContext<DashboardContextValue | undefined>(undefined);
 
 export function DashboardProvider({ children }: { children: ReactNode }) {
-  const [apiToken, setApiToken] = useState(() => loadStoredApiToken());
+  const [apiToken, setApiToken] = useState(() => loadApiToken());
   const [role, setRole] = useState<AuthRoleResponse["role"]>("viewer");
   const [allowWriteActions, setAllowWriteActions] = useState(false);
   const [isMspAdmin, setIsMspAdmin] = useState(false);
@@ -329,7 +330,7 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
       if (roleRequestId !== roleRequestIdRef.current) {
         return null;
       }
-      const nextAuthState = deriveAuthState(auth, loadStoredApiToken());
+      const nextAuthState = deriveAuthState(auth, loadApiToken());
       setRole(auth.role);
       // Older appliances do not publish this field; retain their established
       // role gate while honoring an explicit server-side false value.
@@ -394,7 +395,7 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
       setPrincipalId(null);
       setAuthMethod("bearer");
       setExpiresAt(null);
-      const nextAuthState = hasStoredApiToken() && isUnauthorized(error) ? "invalid-token" : null;
+      const nextAuthState = hasApiToken() && isUnauthorized(error) ? "invalid-token" : null;
       setAuthState(nextAuthState);
       setCapabilityGrants([]);
       setCapabilityResolved(false);
@@ -447,6 +448,7 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
   }, [refresh]);
 
   const saveApiToken = useCallback(async () => {
+    clearInMemoryApiToken();
     persistApiToken(apiToken);
     const result = await refresh();
     if (result?.authState === "invalid-token") {
@@ -462,6 +464,7 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
 
   const clearApiToken = useCallback(async () => {
     setApiToken("");
+    clearInMemoryApiToken();
     persistApiToken("");
     setStatusMessage("API token cleared.");
     await refresh();
@@ -475,6 +478,7 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
       return;
     }
     setApiToken("");
+    clearInMemoryApiToken();
     persistApiToken("");
     setStatusMessage("Signed out.");
     await refresh();
@@ -728,8 +732,8 @@ function asArray<T>(value: T[] | unknown): T[] {
   return Array.isArray(value) ? value : [];
 }
 
-function hasStoredApiToken(): boolean {
-  return loadStoredApiToken().trim().length > 0;
+function hasApiToken(): boolean {
+  return loadApiToken().trim().length > 0;
 }
 
 function isUnauthorized(error: unknown): boolean {

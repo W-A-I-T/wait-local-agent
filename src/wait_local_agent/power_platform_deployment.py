@@ -26,6 +26,7 @@ from wait_local_agent.power_platform import (
     OpenApiDefinitionError,
     build_solution_command_plan,
     compare_pac_versions,
+    pac_child_environment,
     pac_cli_version,
     resolve_pac_executable,
 )
@@ -619,6 +620,7 @@ def _run_command(command: list[str], cwd: Path, timeout: float) -> subprocess.Co
         timeout=timeout,
         check=False,
         shell=False,
+        env=pac_child_environment(),
     )
 
 

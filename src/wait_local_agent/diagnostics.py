@@ -201,7 +201,11 @@ def build_support_bundle(
         {"name": name, "sha256": hashlib.sha256(content).hexdigest(), "size_bytes": len(content)}
         for name, content in sorted(entries.items())
     ]
-    digest_input = "".join(f"{item['name']}\0{item['sha256']}\n" for item in entry_manifest).encode("ascii")
+    digest_input = "".join(
+        f"{item['name']}\0{item['sha256']}\n"
+        for item in entry_manifest
+        if item["name"] != "system.json"
+    ).encode("ascii")
     overall_digest = hashlib.sha256(digest_input).hexdigest()
     manifest: dict[str, object] = {
         "format_version": 1,
