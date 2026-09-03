@@ -11,7 +11,11 @@ function displayValue(value: unknown): string {
   return typeof value === "string" ? value : JSON.stringify(value ?? {}, null, 2);
 }
 
-export function Executions() {
+type ExecutionsProps = {
+  initialExecutionId?: string;
+};
+
+export function Executions({ initialExecutionId }: ExecutionsProps = {}) {
   const { selectedClientId } = useDashboard();
   const [executions, setExecutions] = useState<ExecutionRun[]>([]);
   const [selected, setSelected] = useState<ExecutionDetail | null>(null);
@@ -20,6 +24,7 @@ export function Executions() {
   const [kind, setKind] = useState("");
   const [status, setStatus] = useState("");
   const [message, setMessage] = useState("");
+  const initialExecutionIdNumber = parseExecutionId(initialExecutionId);
 
   const refresh = useCallback(async () => {
     setLoading(true);
@@ -41,16 +46,20 @@ export function Executions() {
     void refresh();
   }, [refresh]);
 
-  async function showDetail(execution: ExecutionRun) {
+  const showDetail = useCallback(async (executionId: number) => {
     setDetailLoading(true);
     try {
-      setSelected(await apiFetch<ExecutionDetail>(`/executions/${execution.id}`));
+      setSelected(await apiFetch<ExecutionDetail>(`/executions/${executionId}`));
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "Unable to load execution detail.");
     } finally {
       setDetailLoading(false);
     }
-  }
+  }, []);
+
+  useEffect(() => {
+    if (initialExecutionIdNumber !== null) void showDetail(initialExecutionIdNumber);
+  }, [initialExecutionIdNumber, showDetail]);
 
   async function downloadArtifact(artifact: ExecutionDetail["artifacts"][number]) {
     if (!selected) return;
@@ -89,7 +98,7 @@ export function Executions() {
             origin={executionOrigin(execution)}
             status={execution.status}
             timestamp={execution.started_at}
-            onOpen={() => void showDetail(execution)}
+            onOpen={() => void showDetail(execution.id)}
           />
         ))}
       </section>
@@ -118,4 +127,10 @@ function executionOrigin(execution: ExecutionRun): string {
     ? "Source run unavailable"
     : `Source run ${execution.source_run_id}`;
   return `${source} · ${execution.run_kind} · ${execution.trigger_source} · ${execution.actor}`;
+}
+
+function parseExecutionId(value: string | undefined): number | null {
+  if (!value || !/^\d+$/.test(value)) return null;
+  const parsed = Number(value);
+  return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : null;
 }

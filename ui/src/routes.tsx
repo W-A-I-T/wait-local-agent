@@ -36,6 +36,7 @@ import { TechnicianPath } from "./screens/TechnicianPath";
 import { MicrosoftAdmin } from "./screens/MicrosoftAdmin";
 import { MicrosoftAdminAccess } from "./screens/MicrosoftAdminAccess";
 import { EndUserSupport } from "./screens/EndUserSupport";
+import { Executions } from "./screens/Executions";
 import { PrincipalsAdmin } from "./screens/PrincipalsAdmin";
 import { MicrosoftAdminCapabilityGate } from "./components/MicrosoftAdminCapabilityGate";
 import { RoleGate } from "./components/RoleGate";
@@ -94,7 +95,7 @@ function SettingsRoute() {
 
 function ExecutionDeepLink() {
   const { executionId } = useParams();
-  return <Navigate to={`/activity/runs?kind=execution&execution_id=${encodeURIComponent(executionId ?? "")}`} replace />;
+  return <Executions initialExecutionId={executionId} />;
 }
 
 function PrincipalsAdminRoute() {

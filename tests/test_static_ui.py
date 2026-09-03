@@ -190,10 +190,17 @@ def test_spa_route_manifest_matches_ui_routes_and_reserved_namespaces() -> None:
         if path != "*"
     }
     assert re.search(r"<Route\s+index(?:\s|>)", source)
-    ui_paths = explicit_paths | {"/"}
+    parameterized_paths = {path for path in explicit_paths if ":" in path}
+    static_ui_paths = (explicit_paths - parameterized_paths) | {"/"}
 
+    assert len(static_ui_paths) == 44
     assert len(SPA_ROUTE_PATHS) == 44
-    assert ui_paths == SPA_ROUTE_PATHS
+    assert static_ui_paths == SPA_ROUTE_PATHS
+    # The server manifest contains concrete SPA entry points; parameterized
+    # browser routes still fall back through their static parent.
+    for parameterized_path in parameterized_paths:
+        parent_path = parameterized_path.rsplit("/:", 1)[0]
+        assert parent_path in SPA_ROUTE_PATHS
     reserved_prefixes = ("/api", "/docs", "/packs", "/openapi.json", "/healthz", "/auth")
     assert not any(
         route == reserved or route.startswith(f"{reserved}/")
