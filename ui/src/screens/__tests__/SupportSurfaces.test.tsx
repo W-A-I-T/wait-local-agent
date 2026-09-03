@@ -46,7 +46,7 @@ describe("support surfaces", () => {
 
   it("keeps the local audit privacy notice visible", async () => {
     vi.stubGlobal("fetch", vi.fn(async () => jsonResponse([])));
-    render(<Audit />);
+    render(<MemoryRouter><Audit /></MemoryRouter>);
 
     expect(await screen.findByRole("note")).toHaveTextContent("Audit data stays on this appliance");
     expect(screen.getByRole("note")).toHaveTextContent("never transmitted to WAIT");

@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { Link } from "react-router-dom";
 import { AlertTriangle, CheckCircle2, FileJson, PlayCircle, Save, Workflow, XCircle } from "lucide-react";
 import { executeEndpointFor, useDashboard } from "../app/DashboardContext";
 import { apiFetch } from "../api/client";
@@ -31,7 +32,7 @@ export function Approvals() {
     refresh,
     loading,
     selectedClientId,
-    clients
+    isMspAdmin
   } = useDashboard();
   const [draftPayloadFields, setDraftPayloadFields] = useState<Record<number, string>>({});
   const [runbookBusyId, setRunbookBusyId] = useState<number | null>(null);
@@ -70,7 +71,7 @@ export function Approvals() {
         ...current,
         [request.id]: {
           kind: "danger",
-          message: error instanceof Error ? error.message : "PowerShell runbook execution failed."
+          message: error instanceof Error ? error.message : "Admin runbook execution failed."
         }
       }));
     } finally {
@@ -90,6 +91,8 @@ export function Approvals() {
             busy={busyId === request.id || runbookBusyId === request.id}
             canWrite={canWrite}
             canWriteExternally={canWriteExternally}
+            selectedClientId={selectedClientId}
+            isMspAdmin={isMspAdmin}
             liveWritesReady={liveWritesReady}
             isAdmin={isAdmin}
             draftPayloadFields={draftPayloadFields}
@@ -114,6 +117,8 @@ type ApprovalCardProps = {
   busy: boolean;
   canWrite: boolean;
   canWriteExternally: boolean;
+  selectedClientId?: string;
+  isMspAdmin?: boolean;
   liveWritesReady: boolean;
   isAdmin: boolean;
   draftPayloadFields: Record<number, string>;
@@ -130,6 +135,8 @@ function ApprovalCard({
   busy,
   canWrite,
   canWriteExternally,
+  selectedClientId,
+  isMspAdmin,
   liveWritesReady,
   isAdmin,
   draftPayloadFields,
@@ -150,21 +157,31 @@ function ApprovalCard({
   );
   const hasExecuteEndpoint = isRunbook || executeEndpointFor(request.action_type) !== null;
   const roleCanExecute = !isRunbook || isAdmin;
+  const hasClientScope = Boolean(selectedClientId || request.client_id || isMspAdmin);
   const visibleBlockReason = isRunbook ? "" : request.block_reason;
   const executionCompleted = ["succeeded", "verified", "unverified", "submitted"].includes(request.execution_status);
-  const executeHint = request.block_reason || (!canWrite
+  const executeHint = !canWrite
     ? "Requires technician access"
     : !canWriteExternally
-      ? "External writes are disabled in Safe Mode"
-    : !roleCanExecute
-      ? "Requires administrator access"
-      : request.action_type.startsWith("halopsa.") &&
-          request.status === "approved" &&
-          !executionCompleted &&
-          !canExecute &&
-          !liveWritesReady
-        ? "Writes are in Safe Mode — see the write-gate indicator"
-        : undefined);
+      ? "Live writes are off on this appliance"
+      : !hasClientScope
+        ? "Choose a client"
+        : request.block_reason || request.status !== "approved"
+          ? request.block_reason || "Approval must be approved before execution."
+          : !roleCanExecute
+            ? "Requires administrator access"
+            : request.action_type.startsWith("halopsa.") &&
+                request.status === "approved" &&
+                !executionCompleted &&
+                !canExecute &&
+                !liveWritesReady
+              ? "Ticketing write check failed"
+              : undefined;
+  const isExecutionRecorded = Boolean(request.executed_at) || (request.execution_status !== "not_started" && request.execution_status !== "");
+  const executionId = typeof request.execution_id === "number" && Number.isInteger(request.execution_id) && request.execution_id > 0
+    ? request.execution_id
+    : null;
+  const auditHref = `/audit?subject=${encodeURIComponent(request.subject_id)}`;
 
   return (
     <div className="approval-card">
@@ -176,6 +193,20 @@ function ApprovalCard({
         <em>{request.status} / {request.execution_status}</em>
       </div>
       <p>{request.execution_message || request.comment || "Waiting for review"}</p>
+      <div className="approval-result" aria-label="Result">
+        <strong>Result</strong>
+        {isExecutionRecorded ? (
+          <>
+            {executionId ? <Link to={`/executions/${executionId}?kind=execution`}>Open run #{executionId}</Link> : <span>Recorded in Audit · {request.subject_id}</span>}
+            <Link to={auditHref}>View Audit</Link>
+          </>
+        ) : (
+          <>
+            <span>Awaiting execution</span>
+            {executeHint ? <span className="screen-note">{executeHint}</span> : null}
+          </>
+        )}
+      </div>
       {request.expires_at ? <p className="screen-note">Approval deadline: {request.expires_at}</p> : null}
       {visibleBlockReason ? (
         <div className="blocked-reason">
@@ -222,7 +253,7 @@ function ApprovalCard({
         ) : <span>No workflow run linked</span>}
       </div>
       {isRunbook && !isAdmin ? (
-        <p className="screen-note">PowerShell runbook execution requires administrator access.</p>
+        <p className="screen-note">Admin runbook execution requires administrator access.</p>
       ) : null}
       <div className="row-actions">
         {canWrite ? (
@@ -258,7 +289,7 @@ function ApprovalCard({
         ) : null}
         {hasExecuteEndpoint ? (
           <button
-            disabled={busy || !canWriteExternally || !canExecute || !hasExecuteEndpoint || !roleCanExecute}
+            disabled={busy || !canWriteExternally || !canExecute || !hasExecuteEndpoint || !roleCanExecute || !hasClientScope}
             title={executeHint}
             type="button"
             onClick={() => void executeRequest(request)}

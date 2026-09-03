@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { ApiRequestError, apiFetch } from "../api/client";
 import { useDashboard } from "../app/DashboardContext";
+import { RunRow } from "../components/RunRow";
 import { StatusChip } from "../components/StatusChip";
 
 type SmartActionRun = {
@@ -145,9 +146,20 @@ export function SmartActionRuns() {
         <p className="screen-note">Read-only history of smart actions that have run in the current client scope.</p>
         {listError ? <div className="notice danger" role="alert">{listError}</div> : null}
         {listLoading ? <p className="screen-note" aria-busy="true">Loading smart action runs…</p> : runs.length === 0 ? <div className="empty-state"><h3>No smart action runs yet.</h3></div> : (
-          <div className="clients-table-wrap"><table className="clients-table"><thead><tr><th scope="col">Action</th><th scope="col">Actor</th><th scope="col">Status</th><th scope="col">Client</th><th scope="col">Created</th></tr></thead><tbody>
-            {runs.map((run) => <tr key={run.id} className={run.id === selectedRunId ? "selected" : undefined}><td><button type="button" className="table-link" onClick={() => setSelectedRunId(run.id)}>{run.action_id || "Unknown action"}</button><div className="screen-note">Run {run.id}</div></td><td>{run.actor || "Not recorded"}</td><td><StatusChip status={run.status} /></td><td>{run.client_id || "All clients"}</td><td>{formatDate(run.created_at)}</td></tr>)}
-          </tbody></table></div>
+          <div className="run-list">
+            {runs.map((run) => (
+              <RunRow
+                key={run.id}
+                title={run.action_id || `Run ${run.id}`}
+                kind="smart_action"
+                clientId={run.client_id}
+                origin={smartActionOrigin(run)}
+                status={run.status}
+                timestamp={formatDate(run.created_at)}
+                onOpen={() => setSelectedRunId(run.id)}
+              />
+            ))}
+          </div>
         )}
       </section>
 
@@ -162,4 +174,9 @@ export function SmartActionRuns() {
       </section> : null}
     </div>
   );
+}
+
+function smartActionOrigin(run: SmartActionRun): string {
+  const approval = run.approval_id === null ? "Approval unavailable" : `Approval ${run.approval_id}`;
+  return `${approval} · ${run.actor || "Actor unavailable"}`;
 }

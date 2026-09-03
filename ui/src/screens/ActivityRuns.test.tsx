@@ -54,8 +54,8 @@ describe("ActivityRuns", () => {
 
     expect(await screen.findByText("Agent 10")).toBeInTheDocument();
     expect(screen.getByText("triage-agent")).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: "Execution #1" })).toHaveAttribute("href", "/executions");
-    expect(screen.getByRole("link", { name: "Open source" })).toHaveAttribute("href", "/backfills");
+    expect(screen.getAllByRole("link", { name: "Open" })[0]).toHaveAttribute("href", "/executions/1?kind=execution");
+    expect(screen.getAllByRole("link", { name: "Open" })[1]).toHaveAttribute("href", "/backfills");
   });
 
   it("pushes run kind filtering into the unified API", async () => {
