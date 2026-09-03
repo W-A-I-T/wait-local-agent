@@ -30,11 +30,15 @@ from wait_local_agent.power_platform_deployment import (
     validate_promotion_source,
 )
 
+_REAL_PAC_CLI_VERSION = deployment.pac_cli_version
+
 _REAL_PAC_SHIM_TESTS = frozenset(
     {
         "test_stage_executes_real_pac_shim_and_verifies_artifact",
         "test_stage_enforces_version_floor_from_real_pac_shim",
         "test_stage_reports_real_pac_shim_failure_and_redacts_output",
+        "test_dev_stage_executes_real_pac_shim_import_and_redacts_output",
+        "test_rollback_executes_real_pac_shim_import_and_redacts_output",
     }
 )
 
@@ -438,6 +442,7 @@ def test_stage_blocks_when_pac_version_cannot_be_determined_before_runner(
 
 
 def test_stage_executes_real_pac_shim_and_verifies_artifact(settings, tmp_path: Path, monkeypatch) -> None:
+    assert deployment.pac_cli_version is _REAL_PAC_CLI_VERSION
     workspace = tmp_path / "workspace"
     workspace.mkdir()
     shim = write_pac_shim(tmp_path)
@@ -476,6 +481,7 @@ def test_stage_executes_real_pac_shim_and_verifies_artifact(settings, tmp_path: 
 
 
 def test_stage_enforces_version_floor_from_real_pac_shim(settings, tmp_path: Path, monkeypatch) -> None:
+    assert deployment.pac_cli_version is _REAL_PAC_CLI_VERSION
     workspace = tmp_path / "workspace"
     workspace.mkdir()
     shim = write_pac_shim(tmp_path)
@@ -562,6 +568,7 @@ def test_batch_shim_metacharacters_fail_closed_for_stage_and_rollback(
 
 
 def test_stage_reports_real_pac_shim_failure_and_redacts_output(settings, tmp_path: Path, monkeypatch) -> None:
+    assert deployment.pac_cli_version is _REAL_PAC_CLI_VERSION
     workspace = tmp_path / "workspace"
     workspace.mkdir()
     plan = _plan(str(workspace / "solution"))
@@ -602,6 +609,42 @@ def test_stage_reports_real_pac_shim_failure_and_redacts_output(settings, tmp_pa
     assert Path(version_probe_cwd).is_dir()
     assert stage_command == {
         "argv": [*commands[0], shim.failure_trigger][1:],
+        "cwd": str(workspace.resolve()),
+    }
+
+
+def test_dev_stage_executes_real_pac_shim_import_and_redacts_output(settings, tmp_path: Path, monkeypatch) -> None:
+    assert deployment.pac_cli_version is _REAL_PAC_CLI_VERSION
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    output_directory = workspace / "solution"
+    output_directory.mkdir()
+    artifact = output_directory / "onboarding_review.zip"
+    with zipfile.ZipFile(artifact, "w") as archive:
+        archive.writestr("solution.xml", "<ImportExportXml />")
+    shim = write_pac_shim(tmp_path)
+    configured = _configured_with_pac_shim(settings, workspace, shim, monkeypatch)
+
+    result = execute_power_platform_stage(_plan(str(output_directory)), "dev", configured, approved=True)
+
+    assert result["status"] == "succeeded"
+    assert result["deployment_started"] is True
+    command_result = cast(list[dict[str, object]], result["commands"])[0]
+    assert command_result["stdout"] == "token=[redacted]\n"
+    assert command_result["stderr"] == "authorization=[redacted]\n"
+    records = _pac_shim_records(shim)
+    assert len(records) == 2
+    version_probe, import_command = records
+    assert version_probe["argv"] == ["help"]
+    assert import_command == {
+        "argv": [
+            "solution",
+            "import",
+            "--path",
+            str(artifact),
+            "--environment",
+            "https://dev.crm.dynamics.com",
+        ],
         "cwd": str(workspace.resolve()),
     }
 
@@ -828,6 +871,47 @@ def test_rollback_reimports_only_a_verified_prior_package(settings, tmp_path: Pa
         "--environment",
         "https://test.crm.dynamics.com",
     ]
+
+
+def test_rollback_executes_real_pac_shim_import_and_redacts_output(settings, tmp_path: Path, monkeypatch) -> None:
+    assert deployment.pac_cli_version is _REAL_PAC_CLI_VERSION
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    previous = workspace / "previous.zip"
+    with zipfile.ZipFile(previous, "w") as archive:
+        archive.writestr("solution.xml", "<ImportExportXml />")
+    digest = validate_power_platform_solution_package(previous, workspace)
+    shim = write_pac_shim(tmp_path)
+    configured = _configured_with_pac_shim(settings, workspace, shim, monkeypatch)
+
+    result = execute_power_platform_rollback(
+        _plan(str(workspace / "solution")),
+        "dev",
+        configured,
+        rollback_artifact_path=previous,
+        rollback_evidence=_rollback_evidence(digest),
+        approved=True,
+    )
+
+    assert result["status"] == "succeeded"
+    command_result = cast(list[dict[str, object]], result["commands"])[0]
+    assert command_result["stdout"] == "token=[redacted]\n"
+    assert command_result["stderr"] == "authorization=[redacted]\n"
+    records = _pac_shim_records(shim)
+    assert len(records) == 2
+    version_probe, import_command = records
+    assert version_probe["argv"] == ["help"]
+    assert import_command == {
+        "argv": [
+            "solution",
+            "import",
+            "--path",
+            str(previous.resolve()),
+            "--environment",
+            "https://dev.crm.dynamics.com",
+        ],
+        "cwd": str(workspace.resolve()),
+    }
 
 
 def test_rollback_blocks_below_minimum_pac_version_before_runner(

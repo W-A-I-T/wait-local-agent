@@ -5,6 +5,9 @@ from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import cast
 
+import pytest
+
+import tests.power_platform_support as power_platform_support
 from tests.power_platform_support import CANONICAL_INPUT_ARTIFACT, assert_matches_golden
 from wait_local_agent.power_platform_package import build_power_platform_package
 
@@ -73,3 +76,42 @@ def test_emitted_xml_covers_every_element_the_proven_reference_carries() -> None
 def test_every_emitted_xml_file_is_well_formed() -> None:
     for xml in _xml_files(_emitted_files()).values():
         ET.fromstring(xml)
+
+
+def test_golden_regeneration_prints_diff_before_overwriting(tmp_path: Path, monkeypatch, capsys) -> None:
+    golden_root = tmp_path / "golden"
+    golden_file = golden_root / "fixture" / "Other" / "Solution.xml"
+    golden_file.parent.mkdir(parents=True)
+    golden_file.write_text("old\n", encoding="utf-8")
+    monkeypatch.setattr(power_platform_support, "_GOLDEN_ROOT", golden_root)
+    monkeypatch.setenv("WAIT_REGENERATE_GOLDEN", "1")
+
+    assert_matches_golden(
+        [{"path": "Other/Solution.xml", "content": "new\n"}],
+        "fixture",
+    )
+
+    output = capsys.readouterr().out
+    assert "--- golden/Other/Solution.xml" in output
+    assert "+++ generated/Other/Solution.xml" in output
+    assert "-old" in output
+    assert "+new" in output
+    assert golden_file.read_text(encoding="utf-8") == "new\n"
+
+
+def test_golden_regeneration_refuses_ci_without_mutating_fixture(tmp_path: Path, monkeypatch) -> None:
+    golden_root = tmp_path / "golden"
+    golden_file = golden_root / "fixture" / "Other" / "Solution.xml"
+    golden_file.parent.mkdir(parents=True)
+    golden_file.write_text("old\n", encoding="utf-8")
+    monkeypatch.setattr(power_platform_support, "_GOLDEN_ROOT", golden_root)
+    monkeypatch.setenv("WAIT_REGENERATE_GOLDEN", "1")
+    monkeypatch.setenv("CI", "1")
+
+    with pytest.raises(RuntimeError, match="disabled when CI is set"):
+        assert_matches_golden(
+            [{"path": "Other/Solution.xml", "content": "new\n"}],
+            "fixture",
+        )
+
+    assert golden_file.read_text(encoding="utf-8") == "old\n"

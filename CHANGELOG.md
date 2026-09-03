@@ -24,6 +24,12 @@ All notable changes to WAIT Local Agent will be documented in this file.
 
 - Consolidated principal management into People & Access and removed the
   duplicate operator-control identity routes and screen (#513).
+- Power Platform deployment tests now execute DEV and rollback imports through
+  a real PAC process, including exact arguments, workspace confinement, and
+  redacted output; golden regeneration prints its diff and is blocked in CI.
+- Documentation now states the unauthenticated administrator boundary and
+  localhost-only requirement for demo mode, the mapped `DateOnly` package type,
+  and the digest-pinned, cosign-verified installer upgrade flow.
 - Release images are smoke-tested and pushed from one loaded image artifact;
   the workflow asserts that the smoke-tested and published digests match.
 - Pull-request secret scans now inspect only the event's commit range, while a

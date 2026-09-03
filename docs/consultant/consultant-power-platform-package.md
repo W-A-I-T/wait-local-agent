@@ -25,6 +25,8 @@ The primary name can be declared as the table's `primary_name_column` or as
 `primary: true` on exactly one column. A string column's declared `max_length`
 must be 1-4000; when it is absent, the package uses the documented default of
 100 for both `MaxLength` and `Length`.
+`DateOnly` is mapped to the verified Dataverse datetime representation with
+`Format` set to `date` and `Behavior` set to `1`; `DateTime` remains unmapped.
 Modern flows remain design-only because the package does not contain a Logic
 Apps `clientdata` definition. Custom connectors remain design-only because
 the emitted WAIT connector metadata is not the Power Platform custom connector
@@ -50,7 +52,9 @@ Package readiness is reported per component class. `deployable_source` means
 the input contains at least one artifact component and every emitted component
 class is import-complete. `partial_source` means any design-only, partially
 mapped, or withheld component is present, including a wholly dropped entity or
-relationship, or the package has no import-complete artifact component.
+relationship. A package with no import-complete artifact component, such as an
+artifact-less or unsupported-only package, is not deployable; `deployable` is
+false in that case.
 Unsupported artifacts are not emitted into the source and remain separately
 listed below; an unsupported artifact alongside a complete source component
 does not reduce the completeness of the emitted XML source. `deployable` is
