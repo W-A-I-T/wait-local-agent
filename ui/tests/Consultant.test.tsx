@@ -56,7 +56,75 @@ describe("Consultant", () => {
           open_items: [{ kind: "workflow_template", component_id: "onboarding-flow", detail: "review" }],
           readiness: "needs_review",
           execution_started: false,
-          deployment_started: false
+          deployment_started: false,
+          supervisor: {
+            mode: "supervisor",
+            children: [
+              { id: "identity", kind: "child_agent", purpose: "Review identity setup", tool_ids: ["ticket-triage"], context_policy: "tenant_scoped_structured_result_only" },
+              { id: "security", kind: "child_agent", purpose: "Review security controls", tool_ids: ["ticket-triage"], context_policy: "tenant_scoped_structured_result_only" },
+            ],
+            context_policy: "pass only bounded structured results within the blueprint tenant",
+            execution_started: false,
+          },
+        }), { status: 200 }));
+      }
+      if (path === "/consultant/supervisor/plan") {
+        return Promise.resolve(new Response(JSON.stringify({
+          format: "wait-local-agent.supervisor-delegation-plan",
+          format_version: 1,
+          client_id: "acme",
+          supervisor: {
+            id: "consultant-supervisor",
+            mode: "supervisor",
+            max_depth: 1,
+            recursion: "disabled",
+            task: "Employee onboarding",
+            children: [
+              { id: "identity", name: "Identity review", enabled: true, tool_ids: ["ticket-triage"], depends_on_agent_ids: [], context_policy: "tenant_scoped_task_and_structured_prior_results", result_contract: {} },
+              { id: "security", name: "Security review", enabled: true, tool_ids: ["ticket-triage"], depends_on_agent_ids: ["identity"], context_policy: "tenant_scoped_task_and_structured_prior_results", result_contract: {} },
+            ],
+            selection: "explicit_child_agent_ids",
+          },
+          assignments: [
+            { sequence: 1, child_agent_id: "identity", input_contract: {} },
+            { sequence: 2, child_agent_id: "security", input_contract: {} },
+          ],
+          context_policy: "pass only bounded structured results within the blueprint tenant",
+          retry_policy: { max_retries_per_child: 0, retryable_statuses: ["failed"], attempts_are_lineage_bound: true },
+          cancellation_policy: { supported: true, target: "queued_or_approval_paused_child_run_id", stops_before_next_child: true },
+          delegation_started: false,
+          execution_started: false,
+          approval_requests_created: false,
+          cross_tenant_context: false,
+        }), { status: 200 }));
+      }
+      if (path === "/consultant/supervisor/run") {
+        return Promise.resolve(new Response(JSON.stringify({
+          format: "wait-local-agent.supervisor-execution",
+          format_version: 1,
+          client_id: "acme",
+          entity_id: "TCK-1001",
+          status: "completed",
+          supervisor: {
+            id: "consultant-supervisor",
+            mode: "supervisor",
+            max_depth: 1,
+            recursion: "disabled",
+            task: "Employee onboarding",
+            ordered_child_agent_ids: ["identity", "security"],
+            lineage_contract: "supervisor_id, child_agent_id, sequence, attempt, and retry_of_run_id",
+          },
+          children: [
+            { agent_id: "identity", run_id: 41, sequence: 1, status: "completed", attempt: 1, retry_count: 0 },
+            { agent_id: "security", run_id: 42, sequence: 2, status: "completed", attempt: 1, retry_count: 0 },
+          ],
+          resumption: { completed_run_ids: [41, 42], pending_run_id: null, next_child_agent_id: null },
+          delegation_started: true,
+          execution_started: true,
+          approval_requests_created: false,
+          retry_policy: { max_retries_per_child: 0, retryable_statuses: ["failed"] },
+          cancellation: { requested_run_id: null, applied: false },
+          cross_tenant_context: false,
         }), { status: 200 }));
       }
       if (path === "/consultant/blueprints/bp-acme") {
@@ -295,6 +363,17 @@ describe("Consultant", () => {
     expect(blueprintPanel).not.toBeNull();
     if (!blueprintPanel) throw new Error("Missing selected blueprint panel");
     const blueprintView = within(blueprintPanel);
+    expect(blueprintView.getByRole("heading", { name: "Supervisor delegation" })).toBeInTheDocument();
+    fireEvent.click(blueprintView.getByRole("button", { name: "Plan delegation" }));
+    expect(await blueprintView.findByText("1. Identity review")).toBeInTheDocument();
+    expect(blueprintView.getByText("2. Security review")).toBeInTheDocument();
+    fireEvent.click(blueprintView.getByRole("button", { name: "Run delegation" }));
+    expect(await blueprintView.findByText("Delegation completed")).toBeInTheDocument();
+    expect(blueprintView.getAllByRole("link", { name: "Follow up in Activity" })).toHaveLength(2);
+    const supervisorRunCall = vi.mocked(fetch).mock.calls.find(([input]) => String(input) === "/consultant/supervisor/run");
+    expect(supervisorRunCall?.[1]).toMatchObject({
+      body: expect.stringContaining('"entity_id":"TCK-1001"'),
+    });
     expect(blueprintView.getByText(/Edit a bounded local draft before preparing the Power Automate review artifact/)).toBeInTheDocument();
     expect(blueprintView.getByText("Validate manager")).toBeInTheDocument();
     expect(blueprintView.getByText(/no execution or deployment is started/i)).toBeInTheDocument();
