@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState, type FormEvent } from "react";
 import { useDashboard } from "../app/DashboardContext";
 import { apiFetch } from "../api/client";
 import { type ConnectorStatus } from "../api/types";
+import { EmptyState } from "../components/EmptyState";
 import { ConnectorExplorer } from "../components/ConnectorExplorer";
 import { ScopeBadge } from "../components/ScopeBadge";
 import { connectorSetup } from "../lib/connectorSetup";
@@ -45,12 +46,19 @@ type ScreenConnectActionResponse = {
 type NotionCommentActionResponse = ScreenConnectActionResponse;
 
 export function Connectors() {
-  const { clients = [], connectors, haloConnector, huduConnector, writeHealth, loading, canWrite, selectedClientId = "", isMspAdmin = false } = useDashboard();
-  const [halopsaHealth, setHalopsaHealth] = useState<HealthState | null>(null);
-  const [connectwiseHealth, setConnectwiseHealth] = useState<HealthState | null>(null);
-  const [connectwiseWriteHealth, setConnectwiseWriteHealth] = useState<HealthState | null>(null);
-  const [huduHealth, setHuduHealth] = useState<HealthState | null>(null);
+  const {
+    connectors,
+    writeHealth,
+    writeHealthByConnector = {},
+    writeHealthResolved = false,
+    recheckWriteHealth,
+    loading,
+    canWrite,
+    selectedClientId = "",
+    isMspAdmin = false
+  } = useDashboard();
   const [huduData, setHuduData] = useState<HuduSnapshot>({ companies: [], articles: [] });
+  const [showBrowseData, setShowBrowseData] = useState(false);
   const [syncroTicketId, setSyncroTicketId] = useState("");
   const [syncroPage, setSyncroPage] = useState("1");
   const [syncroComments, setSyncroComments] = useState<SyncroComment[]>([]);
@@ -70,28 +78,11 @@ export function Connectors() {
 
   const refreshConnectivity = useCallback(async () => {
     const results = await Promise.allSettled([
-      apiFetch<HealthState>("/connectors/halopsa/health"),
-      apiFetch<HealthState>("/connectors/halopsa/write-health"),
-      apiFetch<HealthState>("/connectors/connectwise/health"),
-      apiFetch<HealthState>("/connectors/connectwise/write-health"),
-      apiFetch<HealthState>("/connectors/hudu/health"),
       apiFetch<{ result: { count: number }; items: CompanyRow[] }>("/connectors/hudu/companies"),
       apiFetch<{ result: { count: number }; items: CompanyRow[] }>("/connectors/hudu/articles")
     ]);
 
-    if (results[0].status === "fulfilled") {
-      setHalopsaHealth(results[0].value);
-    }
-    if (results[2].status === "fulfilled") {
-      setConnectwiseHealth(results[2].value);
-    }
-    if (results[3].status === "fulfilled") {
-      setConnectwiseWriteHealth(results[3].value);
-    }
-    if (results[4].status === "fulfilled") {
-      setHuduHealth(results[4].value);
-    }
-    const companiesResult = results[5];
+    const companiesResult = results[0];
     if (companiesResult.status === "fulfilled") {
       setHuduData((current) => ({
         ...current,
@@ -100,7 +91,7 @@ export function Connectors() {
           : []
       }));
     }
-    const articlesResult = results[6];
+    const articlesResult = results[1];
     if (articlesResult.status === "fulfilled") {
       setHuduData((current) => ({
         ...current,
@@ -109,7 +100,8 @@ export function Connectors() {
           : []
       }));
     }
-  }, []);
+    await recheckWriteHealth?.();
+  }, [recheckWriteHealth]);
 
   useEffect(() => {
     void refreshConnectivity();
@@ -224,42 +216,49 @@ export function Connectors() {
     }
   };
 
-  const rows = connectors.length > 0 ? connectors : [
+  const rows: ConnectorStatus[] = connectors.length > 0 ? connectors : [
     { id: "halopsa", name: "HaloPSA", status: "loading", message: "Waiting for connector status" },
     { id: "hudu", name: "Hudu", status: "loading", message: "Waiting for connector status" }
   ];
 
   function renderConnector(status: ConnectorStatus) {
     const setup = connectorSetup[status.id as keyof typeof connectorSetup];
+    const readiness = deriveConnectorReadiness(status.status, writeHealthByConnector[status.id], writeHealthResolved);
+    const tier = setup?.tier ?? (status.tier === "appliance-wide" ? "env" : "instance");
+    const action = tier === "env"
+      ? {
+          label: readiness === "Not set up" ? "Add appliance-wide settings" : "Review appliance-wide settings",
+          href: "/settings"
+        }
+      : {
+          label: "Add a client connection",
+          href: `/integrations/connector-instances?provider=${encodeURIComponent(status.id)}`
+        };
     return (
-      <article className="connector-row" key={status.id}>
-        <div>
-          <strong>{status.name}</strong>
-          <span>{status.message}</span>
-          {status.tier === "appliance-wide" ? (
-            <span>Appliance-wide</span>
-          ) : null}
+      <article className="connector-card" key={status.id}>
+        <div className="connector-card-header">
+          <div>
+            <strong>{friendlyProviderName(status.name)}</strong>
+            <span>{tier === "env" ? "Appliance-wide settings" : "Client connection"}</span>
+          </div>
+          <em className={`connector-readiness connector-readiness-${readiness.toLowerCase().replaceAll(" ", "-")}`}>{readiness}</em>
         </div>
-        <em>{status.status}</em>
+        <p>{friendlyConnectorMessage(status.status, status.message)}</p>
+        <div className="connector-card-actions">
+          <a className="secondary-button" href={action.href}>{action.label}</a>
+        </div>
         {setup ? (
-          <details className="connector-setup">
-            <summary>How to configure</summary>
+          <details className="technical-details connector-setup">
+            <summary>Technical details</summary>
             <div className="connector-setup-content">
               <p>{setup.docsNote}</p>
-              {setup.tier === "instance" ? (
-                <p>
-                  <a className="inline-link" href="/integrations/connector-instances">
-                    Or connect per-client from Connector Instances
-                  </a>
-                </p>
-              ) : null}
-              <p>For appliance-wide setup, use these exact environment variable names:</p>
+              <p>These are the exact environment variable names for the appliance-wide fallback:</p>
               <ul className="connector-setup-env-vars">
                 {setup.envVars.map((envVar) => <li key={envVar}><code>{envVar}</code></li>)}
               </ul>
               <p>
-                Set these in the server environment (.env) and restart the appliance. The Vault only feeds these when
-                <code> WAIT_SECRETS_BACKEND=fernet</code> — then the vault key is the exact variable name.
+                Set these in the server environment (.env) and restart the appliance. The secure store can provide
+                them when <code>WAIT_SECRETS_BACKEND=fernet</code>.
               </p>
               <p>
                 Reads and writes stay gated by <code>WAIT_ALLOW_HTTP_PROBING</code> / <code>WAIT_ALLOW_WRITE_ACTIONS</code>.
@@ -275,57 +274,21 @@ export function Connectors() {
     <div className="screen-stack">
       <section className="panel">
         <div className="panel-heading">
-          <h2>Connectors</h2>
-          <span>{loading ? "loading" : "live"}</span>
-        </div>
-        <div className="connector-summary">
           <div>
-            <strong>HaloPSA</strong>
-            <span>{haloConnector?.message || "Connector status unavailable."}</span>
+            <h2>Connectors</h2>
+            <span>{loading ? "Checking setup" : "Setup readiness"}</span>
           </div>
-          <em>{haloConnector?.status || "unknown"}</em>
+          <button className="secondary-button" type="button" onClick={() => setShowBrowseData((current) => !current)}>
+            {showBrowseData ? "Hide browse data" : "Browse data"}
+          </button>
         </div>
-        <div className="flag-grid">
-          <span>HTTP probing: {haloConnector?.http_probing_enabled ? "enabled" : "disabled"}</span>
-          <span>Write actions: {haloConnector?.write_actions_enabled ? "enabled" : "disabled"}</span>
-          <span>Health: {halopsaHealth ? `${halopsaHealth.status} · ${halopsaHealth.message}` : "unknown"}</span>
-        </div>
-        <div className="connector-summary secondary">
-          <div>
-            <strong>ConnectWise PSA</strong>
-            <span>{connectwiseHealth ? `${connectwiseHealth.status} · ${connectwiseHealth.message}` : "Health unknown."}</span>
-          </div>
-          <em>{connectwiseWriteHealth?.status || "unknown"}</em>
-        </div>
-        <div className="flag-grid">
-          <span>Ticket updates: {connectwiseWriteHealth?.status === "ready" ? "ready after approval" : "gated"}</span>
-          <span>Write health: {connectwiseWriteHealth ? connectwiseWriteHealth.message : "unknown"}</span>
-        </div>
-        <div className="connector-summary secondary">
-          <div>
-            <strong>Hudu</strong>
-            <span>{huduConnector?.message || "Hudu connector status unavailable."}</span>
-          </div>
-          <em>{huduConnector?.status || "unknown"}</em>
-        </div>
-        <div className="flag-grid">
-          <span>HTTP probing: {huduConnector?.http_probing_enabled ? "enabled" : "disabled"}</span>
-          <span>Companies: {huduData.companies.length}</span>
-          <span>Health: {huduHealth ? `${huduHealth.status} · ${huduHealth.message}` : "unknown"}</span>
+        <div className="connector-readiness-grid">
+          {rows.map((row) => renderConnector(row))}
         </div>
         <button type="button" className="icon-button" onClick={() => void refreshConnectivity()}>Refresh checks</button>
       </section>
 
-      <section className="panel knowledge-panel">
-        <div className="panel-heading">
-          <h2>Live readout</h2>
-          <span>read-only probe snapshot</span>
-        </div>
-        <div className="table-list">
-          {rows.map((row) => renderConnector(row))}
-        </div>
-      </section>
-
+      {showBrowseData ? <>
       <ConnectorExplorer connectors={connectors} />
 
       <section className="panel settings-panel">
@@ -340,7 +303,7 @@ export function Connectors() {
               <em>{company.archived ? "archived" : "active"}</em>
             </div>
           ))}
-          {huduData.companies.length === 0 ? <p>No Hudu companies returned.</p> : null}
+          {huduData.companies.length === 0 ? <EmptyState title="No Hudu companies returned." why="The connector returned no company data. Check its appliance-wide settings, then refresh the checks." action={{ label: "Open Settings", to: "/settings" }} /> : null}
         </div>
       </section>
 
@@ -389,7 +352,7 @@ export function Connectors() {
           <span>read-only history</span>
         </div>
         <p className="screen-note">Review bounded comment history from the configured Syncro account. This does not post or modify comments.</p>
-        <form className="inline-form" onSubmit={(event) => void loadSyncroComments(event)}>
+        <form id="syncro-comments-form" className="inline-form" onSubmit={(event) => void loadSyncroComments(event)}>
           <label>Ticket ID<input inputMode="numeric" required value={syncroTicketId} onChange={(event) => setSyncroTicketId(event.target.value)} placeholder="42" /></label>
           <label>Page<input type="number" min="1" step="1" required value={syncroPage} onChange={(event) => setSyncroPage(event.target.value)} /></label>
           <button type="submit" disabled={syncroLoading || !syncroTicketId.trim()}>{syncroLoading ? "Loading…" : "Load comments"}</button>
@@ -405,17 +368,52 @@ export function Connectors() {
               </article>
             ))}
           </div>
-        ) : syncroStatus?.status === "ready" ? <p>No comments returned for this page.</p> : null}
+        ) : syncroStatus?.status === "ready" ? <EmptyState title="No comments returned." why="This ticket page has no comments." action={{ label: "Load another ticket page", to: "#syncro-comments-form" }} /> : null}
         {syncroMeta.total_pages && syncroMeta.total_pages > 1 ? <p className="screen-note">Page {syncroMeta.page ?? syncroPage} of {syncroMeta.total_pages}.</p> : null}
       </section>
+      </> : null}
 
       <section className="panel">
         <div className="panel-heading">
-          <h2>Write health detail</h2>
+          <h2>Write access detail</h2>
           <span>{writeHealth.status}</span>
         </div>
-        <p>{writeHealth.message}</p>
+        <p>{friendlyConnectorMessage(writeHealth.status, writeHealth.message)}</p>
       </section>
     </div>
   );
+}
+
+export type ConnectorReadiness = "Not set up" | "Read access ready" | "Approval drafting ready" | "Live writes ready";
+
+export function deriveConnectorReadiness(
+  connectorStatus: string,
+  writeHealth: Pick<HealthState, "status"> | undefined,
+  writeHealthResolved = true
+): ConnectorReadiness {
+  if (connectorStatus === "not_configured" || connectorStatus === "loading" || connectorStatus === "failed") {
+    return "Not set up";
+  }
+  if (connectorStatus !== "configured" && connectorStatus !== "ready") {
+    return "Not set up";
+  }
+  if (!writeHealthResolved || !writeHealth) {
+    return "Read access ready";
+  }
+  return writeHealth.status === "ready" ? "Live writes ready" : "Approval drafting ready";
+}
+
+function friendlyProviderName(name: string): string {
+  return name.replace(/\sPSA\b/g, "");
+}
+
+function friendlyConnectorMessage(status: string, message: string): string {
+  if (status === "not_configured") {
+    return "Credentials are not configured yet. Use the setup action to continue.";
+  }
+  return message
+    .replace(/\bPSA\b/g, "ticketing system")
+    .replace(/WAIT_[A-Z0-9_]+/g, "the required settings")
+    .replace(/\bVault\b/g, "secure store")
+    .replace(/\bvault\b/g, "secure store");
 }

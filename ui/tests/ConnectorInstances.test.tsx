@@ -168,18 +168,24 @@ describe("Connector Instances screen", () => {
 
     render(<ConnectorInstances />);
     await screen.findByText("No connector instances are configured.");
-    const provider = screen.getByLabelText("Provider");
-
-    fireEvent.change(provider, { target: { value: "autotask" } });
+    fireEvent.change(screen.getByLabelText("Provider"), { target: { value: "autotask" } });
+    fireEvent.change(screen.getByLabelText("Display name"), { target: { value: "Autotask" } });
+    fireEvent.click(screen.getByRole("button", { name: "Continue to credentials" }));
     expect(screen.getByLabelText("API integration code")).toBeInTheDocument();
     expect(screen.getByLabelText("Username")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Back" }));
 
-    fireEvent.change(provider, { target: { value: "syncro" } });
+    fireEvent.change(screen.getByLabelText("Provider"), { target: { value: "syncro" } });
+    fireEvent.change(screen.getByLabelText("Display name"), { target: { value: "Syncro" } });
+    fireEvent.click(screen.getByRole("button", { name: "Continue to credentials" }));
     expect(screen.getByLabelText(/Syncro subdomain/)).toBeInTheDocument();
     expect(screen.getByLabelText("API key")).toBeInTheDocument();
-    expect(screen.queryByLabelText("Base URL")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Service address")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Back" }));
 
-    fireEvent.change(provider, { target: { value: "servicenow" } });
+    fireEvent.change(screen.getByLabelText("Provider"), { target: { value: "servicenow" } });
+    fireEvent.change(screen.getByLabelText("Display name"), { target: { value: "ServiceNow" } });
+    fireEvent.click(screen.getByRole("button", { name: "Continue to credentials" }));
     expect(screen.getByLabelText("ServiceNow instance URL")).toBeInTheDocument();
     expect(screen.getByLabelText("Password")).toBeInTheDocument();
     expect(screen.getByLabelText(/API version/)).toBeInTheDocument();
@@ -195,18 +201,24 @@ describe("Connector Instances screen", () => {
 
     render(<ConnectorInstances />);
     await screen.findByText("No connector instances are configured.");
-    const provider = screen.getByLabelText("Provider");
-
-    fireEvent.change(provider, { target: { value: "ninjaone" } });
+    fireEvent.change(screen.getByLabelText("Provider"), { target: { value: "ninjaone" } });
+    fireEvent.change(screen.getByLabelText("Display name"), { target: { value: "Ninja" } });
+    fireEvent.click(screen.getByRole("button", { name: "Continue to credentials" }));
     expect(screen.getByLabelText("Access token")).toHaveAttribute("type", "password");
     expect(screen.getByLabelText("NinjaOne organization map JSON")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Back" }));
 
-    fireEvent.change(provider, { target: { value: "dattormm" } });
+    fireEvent.change(screen.getByLabelText("Provider"), { target: { value: "dattormm" } });
+    fireEvent.change(screen.getByLabelText("Display name"), { target: { value: "Datto" } });
+    fireEvent.click(screen.getByRole("button", { name: "Continue to credentials" }));
     expect(screen.getByLabelText("Datto RMM site map JSON")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Back" }));
 
-    fireEvent.change(provider, { target: { value: "ncentral" } });
+    fireEvent.change(screen.getByLabelText("Provider"), { target: { value: "ncentral" } });
+    fireEvent.change(screen.getByLabelText("Display name"), { target: { value: "N-central" } });
+    fireEvent.click(screen.getByRole("button", { name: "Continue to credentials" }));
     expect(screen.getByLabelText("N-central organization-unit map JSON")).toBeInTheDocument();
-    expect(screen.getByLabelText("Provider base URL")).toBeInTheDocument();
+    expect(screen.getByLabelText("Provider service address")).toBeInTheDocument();
   });
 
   it("supports Microsoft 365 client-credential and static-token profile modes", async () => {
@@ -238,15 +250,17 @@ describe("Connector Instances screen", () => {
 
     render(<ConnectorInstances />);
     fireEvent.change(await screen.findByLabelText("Provider"), { target: { value: "m365" } });
-    expect(screen.queryByLabelText("Base URL")).not.toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText("Display name"), { target: { value: "Acme Microsoft 365" } });
+    fireEvent.click(screen.getByRole("button", { name: "Continue to credentials" }));
+    expect(screen.queryByLabelText("Service address")).not.toBeInTheDocument();
     expect(screen.getByLabelText("Tenant ID")).toBeInTheDocument();
     fireEvent.change(screen.getByLabelText("Credential mode"), { target: { value: "static_token" } });
     expect(screen.getByLabelText("Access token")).toHaveAttribute("type", "password");
     fireEvent.change(screen.getByLabelText("Credential mode"), { target: { value: "client_credentials" } });
-    fireEvent.change(screen.getByLabelText("Display name"), { target: { value: "Acme Microsoft 365" } });
     fireEvent.change(screen.getByLabelText("Tenant ID"), { target: { value: "tenant-value" } });
     fireEvent.change(screen.getByLabelText("Client ID"), { target: { value: "application-value" } });
     fireEvent.change(screen.getByLabelText("Client secret"), { target: { value: "credential-value" } });
+    fireEvent.click(screen.getByRole("button", { name: "Continue to verify and map" }));
     fireEvent.click(screen.getByRole("button", { name: "Connect system" }));
 
     expect(await screen.findByRole("status")).toHaveTextContent("Connected Acme Microsoft 365.");

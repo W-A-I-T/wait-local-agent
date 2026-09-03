@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { apiFetch } from "../api/client";
 import type { ConnectorStatus } from "../api/types";
+import { EmptyState } from "./EmptyState";
 import { connectorSetup } from "../lib/connectorSetup";
 import {
   connectorResourceHealthPaths,
@@ -264,7 +265,7 @@ function ResourceTable({ resource, values, healthReady, scalePad = false }: Reso
       {!loading && !error && missingRequired.length > 0 ? <p className="screen-note">Enter {missingRequired.join(" and ")} to browse these records.</p> : null}
       {loading ? <p className="screen-note" aria-busy="true">Loading {resource.label.toLowerCase()}…</p> : null}
       {error ? <div className="notice danger" role="alert">{error}</div> : null}
-      {!loading && !error && missingRequired.length === 0 && items.length === 0 ? <p className="screen-note">No records returned.</p> : null}
+      {!loading && !error && missingRequired.length === 0 && items.length === 0 ? <EmptyState title="No records returned." why="The provider returned no data for this request." action={{ label: "Review connector setup", to: "#connector-setup" }} /> : null}
       {!loading && !error && items.length > 0 ? (
         <div className="clients-table-wrap">
           <table className="clients-table connector-resource-table-grid">
@@ -426,15 +427,15 @@ export function ConnectorExplorer({ connectors }: ConnectorExplorerProps) {
           </div>
           <div className="connector-explorer-posture">
             <span className={`status-chip ${postureBlocked ? "warn" : "neutral"}`}>{healthLoading ? "Checking health…" : healthStatus ?? "unknown"}</span>
-            <span>{healthMessage ?? selectedStatus?.message ?? "Connector status unavailable."}</span>
+            <span>{safeConnectorMessage(healthMessage ?? selectedStatus?.message ?? "Connector status unavailable.")}</span>
           </div>
           {postureBlocked ? <div className="notice warning" aria-live="polite">
             <strong>{selectedStatus?.name ?? labelForConnector(connectorId)} is unavailable or not configured.</strong>
             <p>Configure the connector before browsing records. <a className="inline-link" href="#connector-setup">View configuration guidance</a></p>
             {connectorSetup[connectorId as keyof typeof connectorSetup] ? <details className="connector-explorer-setup" id="connector-setup">
-              <summary>Configuration guidance</summary>
+              <summary>Technical details</summary>
               <p>{connectorSetup[connectorId as keyof typeof connectorSetup].docsNote}</p>
-              <p>For appliance-wide setup, use these exact environment variable names:</p>
+              <p>These are the exact environment variable names for appliance-wide setup:</p>
               <ul className="connector-setup-env-vars">
                 {connectorSetup[connectorId as keyof typeof connectorSetup].envVars.map((envVar) => <li key={envVar}><code>{envVar}</code></li>)}
               </ul>
@@ -481,11 +482,11 @@ function ScalePadQbr({
       </div>
       {postureBlocked ? <div className="notice warning" aria-live="polite">
         <strong>ScalePad is unavailable or not configured.</strong>
-        <p>{healthMessage ?? "Configure ScalePad before browsing QBR data."}</p>
+        <p>{safeConnectorMessage(healthMessage ?? "Configure ScalePad before browsing QBR data.")}</p>
         <details className="connector-explorer-setup">
-          <summary>Configuration guidance</summary>
+          <summary>Technical details</summary>
           <p>{connectorSetup.scalepad.docsNote}</p>
-          <p>For appliance-wide setup, use these exact environment variable names:</p>
+          <p>These are the exact environment variable names for appliance-wide setup:</p>
           <ul className="connector-setup-env-vars">
             {connectorSetup.scalepad.envVars.map((envVar) => <li key={envVar}><code>{envVar}</code></li>)}
           </ul>
@@ -497,4 +498,11 @@ function ScalePadQbr({
       </div> : null}
     </div>
   );
+}
+
+function safeConnectorMessage(message: string): string {
+  return message
+    .replace(/\bPSA\b/g, "ticketing system")
+    .replace(/WAIT_[A-Z0-9_]+/g, "the required settings")
+    .replace(/\bVault\b/gi, "secure store");
 }

@@ -139,7 +139,8 @@ describe("ConnectorInstances company mappings", () => {
     fireEvent.click(await screen.findByRole("button", { name: /Acme Halo/ }));
     fireEvent.click(await screen.findByRole("button", { name: "Discover companies" }));
 
-    expect(await screen.findByText("No companies returned — the provider may not be configured yet; you can enter a company ID manually below.")).toBeInTheDocument();
+    expect(await screen.findByText("No companies returned.")).toBeInTheDocument();
+    expect(screen.getByText("the provider returned no data; you can enter a company ID manually below.")).toBeInTheDocument();
     expect(mockedApiFetch).toHaveBeenCalledWith("/connectors/halopsa/clients?page=1&page_size=50");
   });
 
@@ -311,7 +312,8 @@ describe("ConnectorInstances connect flow", () => {
   function fillConnectWiseForm(apiVersion = "2024.1") {
     fireEvent.change(screen.getByLabelText("Display name"), { target: { value: "Acme ConnectWise" } });
     fireEvent.change(screen.getByLabelText("WAIT client (optional)"), { target: { value: "acme" } });
-    fireEvent.change(screen.getByLabelText("Base URL"), { target: { value: "https://cw.example.test" } });
+    fireEvent.click(screen.getByRole("button", { name: "Continue to credentials" }));
+    fireEvent.change(screen.getByLabelText("Service address"), { target: { value: "https://cw.example.test" } });
     fireEvent.change(screen.getByLabelText(/^API version/), { target: { value: apiVersion } });
     fireEvent.change(screen.getByLabelText("Company"), { target: { value: "  acme-company  " } });
     fireEvent.change(screen.getByLabelText("Public key"), { target: { value: "  public-key  " } });
@@ -322,13 +324,21 @@ describe("ConnectorInstances connect flow", () => {
   it("shows only the selected provider's fields and masks provider secrets", async () => {
     render(<ConnectorInstances />);
 
-    expect(await screen.findByLabelText("Client secret")).toHaveAttribute("type", "password");
-    expect(screen.getAllByText("The value entered here is the credential. It is stored encrypted and never displayed again.")).toHaveLength(3);
-    expect(screen.getByLabelText("Base URL")).toBeInTheDocument();
+    expect(await screen.findByLabelText("Display name")).toBeInTheDocument();
+    expect(screen.queryByLabelText("Client secret")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Service address")).not.toBeInTheDocument();
     expect(screen.queryByLabelText(/^API version/)).not.toBeInTheDocument();
     expect(screen.queryByLabelText("Private key")).not.toBeInTheDocument();
 
+    fireEvent.change(screen.getByLabelText("Display name"), { target: { value: "Halo" } });
+    fireEvent.click(screen.getByRole("button", { name: "Continue to credentials" }));
+    expect(screen.getByLabelText("Client secret")).toHaveAttribute("type", "password");
+    expect(screen.getAllByText("The value entered here is the credential. It is stored encrypted and never displayed again.")).toHaveLength(3);
+    fireEvent.click(screen.getByRole("button", { name: "Back" }));
+
     await selectConnectWise();
+    fireEvent.change(screen.getByLabelText("Display name"), { target: { value: "ConnectWise" } });
+    fireEvent.click(screen.getByRole("button", { name: "Continue to credentials" }));
 
     expect(screen.getByLabelText(/^API version/)).toBeInTheDocument();
     expect(screen.getByLabelText("Private key")).toHaveAttribute("type", "password");
@@ -369,6 +379,7 @@ describe("ConnectorInstances connect flow", () => {
     render(<ConnectorInstances />);
     await selectConnectWise();
     fillConnectWiseForm();
+    fireEvent.click(screen.getByRole("button", { name: "Continue to verify and map" }));
     fireEvent.click(screen.getByRole("button", { name: "Connect system" }));
 
     expect(await screen.findByRole("status")).toHaveTextContent("Connected Acme ConnectWise.");
@@ -398,7 +409,7 @@ describe("ConnectorInstances connect flow", () => {
     expect(JSON.stringify(instancePayload)).not.toContain("connectwise-client-id");
   });
 
-  it("shows the demo vault notice and does not create an instance after a secret 403", async () => {
+  it("shows the demo secure-store notice and does not create an instance after a secret 403", async () => {
     mockedApiFetch.mockImplementation((path, init) => {
       if (path === "/clients") return Promise.resolve([]) as ReturnType<typeof apiFetch>;
       if (path === "/connector-instances") return Promise.resolve([]) as ReturnType<typeof apiFetch>;
@@ -410,19 +421,20 @@ describe("ConnectorInstances connect flow", () => {
     });
 
     render(<ConnectorInstances />);
-    await screen.findByLabelText("Client secret");
     fireEvent.change(screen.getByLabelText("Display name"), { target: { value: "Demo Halo" } });
-    fireEvent.change(screen.getByLabelText("Base URL"), { target: { value: "https://halo.example.test" } });
+    fireEvent.click(screen.getByRole("button", { name: "Continue to credentials" }));
+    fireEvent.change(screen.getByLabelText("Service address"), { target: { value: "https://halo.example.test" } });
     fireEvent.change(screen.getByLabelText("Client ID"), { target: { value: "halo-client-id" } });
     fireEvent.change(screen.getByLabelText("Client secret"), { target: { value: "halo-secret" } });
     fireEvent.change(screen.getByLabelText("Tenant"), { target: { value: "halo-tenant" } });
+    fireEvent.click(screen.getByRole("button", { name: "Continue to verify and map" }));
     fireEvent.click(screen.getByRole("button", { name: "Connect system" }));
 
-    expect(await screen.findByRole("alert")).toHaveTextContent("Secret storage is unavailable in demo mode");
+    expect(await screen.findByRole("alert")).toHaveTextContent("Secure credential storage is unavailable in demo mode");
     expect(mockedApiFetch.mock.calls.some(([path, init]) => path === "/connector-instances" && init?.method === "POST")).toBe(false);
   });
 
-  it("surfaces an orphaned-vault warning when instance creation fails", async () => {
+  it("surfaces an orphaned-secure-store warning when instance creation fails", async () => {
     vi.spyOn(crypto, "randomUUID").mockReturnValue("123e4567-e89b-12d3-a456-426614174001");
     const instanceError = new Error("instance creation failed");
     mockedApiFetch.mockImplementation((path, init) => {
@@ -435,16 +447,17 @@ describe("ConnectorInstances connect flow", () => {
     });
 
     render(<ConnectorInstances />);
-    await screen.findByLabelText("Client secret");
     fireEvent.change(screen.getByLabelText("Display name"), { target: { value: "Orphan Halo" } });
-    fireEvent.change(screen.getByLabelText("Base URL"), { target: { value: "https://halo.example.test" } });
+    fireEvent.click(screen.getByRole("button", { name: "Continue to credentials" }));
+    fireEvent.change(screen.getByLabelText("Service address"), { target: { value: "https://halo.example.test" } });
     fireEvent.change(screen.getByLabelText("Client ID"), { target: { value: "halo-client-id" } });
     fireEvent.change(screen.getByLabelText("Client secret"), { target: { value: "halo-secret" } });
     fireEvent.change(screen.getByLabelText("Tenant"), { target: { value: "halo-tenant" } });
+    fireEvent.click(screen.getByRole("button", { name: "Continue to verify and map" }));
     fireEvent.click(screen.getByRole("button", { name: "Connect system" }));
 
     expect(await screen.findByRole("alert")).toHaveTextContent(
-      "The credential was stored in the vault but the connector instance could not be created: instance creation failed. Stored under reference connector:halopsa:orphan-halo:123e4567-e89b-12d3-a456-426614174001; it is unused until an instance references it. Retry to create it (a new credential will be stored)."
+      "The credential was stored in the secure store but the connector instance could not be created: instance creation failed. Stored under reference connector:halopsa:orphan-halo:123e4567-e89b-12d3-a456-426614174001; it is unused until an instance references it. Retry to create it (a new credential will be stored)."
     );
     expect(mockedApiFetch.mock.calls.filter(([path, init]) => path === "/secrets" && init?.method === "POST")).toHaveLength(1);
     expect(mockedApiFetch.mock.calls.filter(([path, init]) => path === "/connector-instances" && init?.method === "POST")).toHaveLength(1);
@@ -455,7 +468,7 @@ describe("ConnectorInstances connect flow", () => {
     await selectConnectWise();
     fillConnectWiseForm("not-a-version");
 
-    expect(screen.getByRole("button", { name: "Connect system" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Continue to verify and map" })).toBeDisabled();
     expect(mockedApiFetch.mock.calls.some(([path, init]) => path === "/secrets" && init?.method === "POST")).toBe(false);
   });
 
@@ -472,15 +485,23 @@ describe("ConnectorInstances connect flow", () => {
     const provider = screen.getByLabelText("Provider");
 
     fireEvent.change(provider, { target: { value: "ninjaone" } });
+    fireEvent.change(screen.getByLabelText("Display name"), { target: { value: "Ninja" } });
+    fireEvent.click(screen.getByRole("button", { name: "Continue to credentials" }));
     expect(screen.getByLabelText("Access token")).toHaveAttribute("type", "password");
     expect(screen.getByLabelText("NinjaOne organization map JSON")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Back" }));
 
-    fireEvent.change(provider, { target: { value: "dattormm" } });
+    fireEvent.change(screen.getByLabelText("Provider"), { target: { value: "dattormm" } });
+    fireEvent.change(screen.getByLabelText("Display name"), { target: { value: "Datto" } });
+    fireEvent.click(screen.getByRole("button", { name: "Continue to credentials" }));
     expect(screen.getByLabelText("Datto RMM site map JSON")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Back" }));
 
-    fireEvent.change(provider, { target: { value: "ncentral" } });
+    fireEvent.change(screen.getByLabelText("Provider"), { target: { value: "ncentral" } });
+    fireEvent.change(screen.getByLabelText("Display name"), { target: { value: "N-central" } });
+    fireEvent.click(screen.getByRole("button", { name: "Continue to credentials" }));
     expect(screen.getByLabelText("N-central organization-unit map JSON")).toBeInTheDocument();
-    expect(screen.getByLabelText("Provider base URL")).toBeInTheDocument();
+    expect(screen.getByLabelText("Provider service address")).toBeInTheDocument();
   });
 
   it("supports Microsoft 365 client-credential and static-token profile modes", async () => {
@@ -510,15 +531,17 @@ describe("ConnectorInstances connect flow", () => {
 
     render(<ConnectorInstances />);
     fireEvent.change(await screen.findByLabelText("Provider"), { target: { value: "m365" } });
-    expect(screen.queryByLabelText("Base URL")).not.toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText("Display name"), { target: { value: "Acme Microsoft 365" } });
+    fireEvent.click(screen.getByRole("button", { name: "Continue to credentials" }));
+    expect(screen.queryByLabelText("Service address")).not.toBeInTheDocument();
     expect(screen.getByLabelText("Tenant ID")).toBeInTheDocument();
     fireEvent.change(screen.getByLabelText("Credential mode"), { target: { value: "static_token" } });
     expect(screen.getByLabelText("Access token")).toHaveAttribute("type", "password");
     fireEvent.change(screen.getByLabelText("Credential mode"), { target: { value: "client_credentials" } });
-    fireEvent.change(screen.getByLabelText("Display name"), { target: { value: "Acme Microsoft 365" } });
     fireEvent.change(screen.getByLabelText("Tenant ID"), { target: { value: "tenant-value" } });
     fireEvent.change(screen.getByLabelText("Client ID"), { target: { value: "application-value" } });
     fireEvent.change(screen.getByLabelText("Client secret"), { target: { value: "credential-value" } });
+    fireEvent.click(screen.getByRole("button", { name: "Continue to verify and map" }));
     fireEvent.click(screen.getByRole("button", { name: "Connect system" }));
 
     expect(await screen.findByRole("status")).toHaveTextContent("Connected Acme Microsoft 365.");

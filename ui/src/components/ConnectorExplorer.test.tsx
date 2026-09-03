@@ -39,7 +39,7 @@ describe("ConnectorExplorer", () => {
     render(<ConnectorExplorer connectors={[{ id: "hudu", name: "Hudu", status: "blocked", message: "not configured" }]} />);
 
     expect(await screen.findByText(/Hudu is unavailable or not configured/)).toBeInTheDocument();
-    fireEvent.click(screen.getByText("Configuration guidance"));
+    fireEvent.click(screen.getByText("Technical details"));
     expect(screen.getByText("WAIT_HUDU_BASE_URL")).toBeInTheDocument();
     expect(screen.queryByText("No records returned.")).not.toBeInTheDocument();
     expect(mockedApiFetch).not.toHaveBeenCalled();

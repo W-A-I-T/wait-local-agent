@@ -24,6 +24,7 @@ All notable changes to WAIT Local Agent will be documented in this file.
 
 ### Changed
 
+- Connector setup now separates appliance-wide settings from client connections, shows plain-language readiness states, guides connector instances through provider, credential, and mapping steps, and links empty states to the action that populates them.
 - Dashboard navigation now follows the operator journey from Overview through Clients, Connect, Automate, Approve, Activity, Solutions, and Settings; Connector instances are directly reachable and activity history is consolidated into Runs, Approvals, and Audit.
 - Scoped screens now consume the shell's persisted client selection, with shared empty-scope guidance and compatibility redirects for legacy activity paths; the end-user route is included in the SPA manifest.
 - Consolidated principal management into People & Access and removed the

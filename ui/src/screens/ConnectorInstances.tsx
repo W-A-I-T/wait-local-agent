@@ -6,9 +6,22 @@ import { RoleGate } from "../components/RoleGate";
 import { StatusChip } from "../components/StatusChip";
 import { EmptyState } from "../components/EmptyState";
 import { LoadingState } from "../components/LoadingState";
+import { connectorSetup } from "../lib/connectorSetup";
 
 type ConnectorType = "halopsa" | "connectwise" | "autotask" | "syncro" | "servicenow" | "ninjaone" | "dattormm" | "ncentral" | "m365";
 type M365CredentialMode = "client_credentials" | "static_token";
+
+const connectorTypeOptions: readonly { value: ConnectorType; label: string }[] = [
+  { value: "halopsa", label: connectorSetup.halopsa.label },
+  { value: "connectwise", label: friendlyProviderName(connectorSetup.connectwise.label) },
+  { value: "autotask", label: friendlyProviderName(connectorSetup.autotask.label) },
+  { value: "syncro", label: connectorSetup.syncro.label },
+  { value: "servicenow", label: connectorSetup.servicenow.label },
+  { value: "ninjaone", label: "NinjaOne" },
+  { value: "dattormm", label: "Datto RMM" },
+  { value: "ncentral", label: "N-able N-central" },
+  { value: "m365", label: connectorSetup.m365.label }
+];
 
 type DiscoveredCompany = {
   externalCompanyId: string;
@@ -91,9 +104,9 @@ const initialConnectForm: ConnectForm = {
   ncentralOrgUnitMap: ""
 };
 
-const demoSecretStorageNotice = "Secret storage is unavailable in demo mode — credentials can't be saved here. In a real deployment this stores the credential in the local vault.";
+const demoSecretStorageNotice = "Secure credential storage is unavailable in demo mode — credentials can't be saved here. In a real deployment this stores the credential in the secure store.";
 const credentialFieldHelp = "The value entered here is the credential. It is stored encrypted and never displayed again.";
-const noCompaniesNotice = "No companies returned — the provider may not be configured yet; you can enter a company ID manually below.";
+const noCompaniesNotice = "No companies returned — the provider returned no data; you can enter a company ID manually below.";
 
 const initialMappingForm: MappingForm = {
   externalCompanyId: "",
@@ -123,7 +136,11 @@ export function ConnectorInstances() {
   const [syncingId, setSyncingId] = useState<string | null>(null);
   const [syncResults, setSyncResults] = useState<Record<string, PollSummary>>({});
   const [syncErrors, setSyncErrors] = useState<Record<string, string>>({});
-  const [connectForm, setConnectForm] = useState<ConnectForm>(initialConnectForm);
+  const [connectForm, setConnectForm] = useState<ConnectForm>(() => ({
+    ...initialConnectForm,
+    connectorType: connectorTypeFromLocation()
+  }));
+  const [connectStep, setConnectStep] = useState<1 | 2 | 3>(1);
   const [connectBusy, setConnectBusy] = useState(false);
   const [connectError, setConnectError] = useState("");
   const [connectNotice, setConnectNotice] = useState("");
@@ -459,6 +476,29 @@ export function ConnectorInstances() {
       && apiVersionValid
       && hasProviderCredentials
   );
+  const providerAndClientReady = Boolean(connectForm.displayName.trim());
+
+  const advanceConnectStep = () => {
+    if (connectStep === 1) {
+      if (!providerAndClientReady) {
+        setConnectError("Display name is required before adding credentials.");
+        return;
+      }
+      setConnectError("");
+      setConnectStep(2);
+      return;
+    }
+    if (connectStep === 2) {
+      if (!connectFormReady) {
+        setConnectError(!apiVersionValid
+          ? "ConnectWise API version must use the format YYYY.N, such as 2024.1."
+          : "Complete the required credential fields before continuing.");
+        return;
+      }
+      setConnectError("");
+      setConnectStep(3);
+    }
+  };
 
   const updateConnectForm = (field: keyof ConnectForm, value: string) => {
     setConnectForm((current) => ({ ...current, [field]: value }));
@@ -573,7 +613,7 @@ export function ConnectorInstances() {
       });
     } catch (requestError) {
       const message = requestError instanceof Error ? requestError.message : "Unable to create the connector instance.";
-      setConnectError(`The credential was stored in the vault but the connector instance could not be created: ${message}. Stored under reference ${credentialRef}; it is unused until an instance references it. Retry to create it (a new credential will be stored).`);
+      setConnectError(`The credential was stored in the secure store but the connector instance could not be created: ${message}. Stored under reference ${credentialRef}; it is unused until an instance references it. Retry to create it (a new credential will be stored).`);
       connectBusyRef.current = false;
       setConnectBusy(false);
       return;
@@ -628,17 +668,34 @@ export function ConnectorInstances() {
         <section className="panel" aria-labelledby="connect-system-heading">
           <div className="panel-heading">
             <div>
-              <h2 id="connect-system-heading">Connect a system (credentials are encrypted into the local vault under a generated reference)</h2>
+              <h2 id="connect-system-heading">Connect a system</h2>
               <span>Administrator setup</span>
             </div>
-            <span>Client or MSP-wide instance</span>
+            <span>Client or workspace-wide connection</span>
           </div>
-          <p className="screen-note">Connect a supported PSA, ticketing, or RMM system. Appliance-wide environment configuration remains available as a bootstrap fallback.</p>
+          <p className="screen-note">Connect a supported ticketing or RMM system. Appliance-wide environment configuration remains available as a bootstrap fallback.</p>
           {connectNotice ? <div className="notice" role="status">{connectNotice}</div> : null}
           {connectError ? <div className="notice danger" role="alert">{connectError}</div> : null}
-          <form className="draft-form" onSubmit={(event) => void connect(event)}>
+          <ol className="guided-step-list" aria-label="Connector setup steps">
+            {([1, 2, 3] as const).map((step) => (
+              <li key={step} className={connectStep === step ? "current" : connectStep > step ? "complete" : ""}>
+                <span>{step}</span>
+                <strong>{step === 1 ? "Provider & client" : step === 2 ? "Credentials" : "Verify & map"}</strong>
+              </li>
+            ))}
+          </ol>
+          <form id="connect-system-form" className="draft-form" onSubmit={(event) => {
+            if (connectStep === 3) {
+              void connect(event);
+            } else {
+              event.preventDefault();
+              advanceConnectStep();
+            }
+          }}>
+            {connectStep === 1 ? <>
+            <p className="step-prerequisite">Choose the provider and, if this connection belongs to one customer, select that WAIT client. A display name is required.</p>
             <fieldset>
-              <legend>PSA / RMM</legend>
+              <legend>Ticketing / RMM</legend>
               <label htmlFor="connector-provider">Provider</label>
               <select
                 id="connector-provider"
@@ -651,19 +708,12 @@ export function ConnectorInstances() {
                     apiVersion: connectorType === "servicenow" ? "v1" : connectorType === "connectwise" ? "2024.1" : current.apiVersion,
                     m365CredentialMode: connectorType === "m365" ? "client_credentials" : current.m365CredentialMode
                   }));
+                  setConnectStep(1);
                   setConnectError("");
                   setConnectNotice("");
                 }}
               >
-                <option value="halopsa">HaloPSA</option>
-                <option value="connectwise">ConnectWise</option>
-                <option value="autotask">Autotask PSA</option>
-                <option value="syncro">Syncro</option>
-                <option value="servicenow">ServiceNow</option>
-                <option value="ninjaone">NinjaOne</option>
-                <option value="dattormm">Datto RMM</option>
-                <option value="ncentral">N-able N-central</option>
-                <option value="m365">Microsoft 365 / Entra</option>
+                {connectorTypeOptions.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
               </select>
             </fieldset>
 
@@ -678,7 +728,11 @@ export function ConnectorInstances() {
               </select>
             </label>
             {clientsError ? <p className="field-error">{clientsError} You can still connect without a WAIT client association.</p> : null}
+            <p className="field-help">Supported providers: {connectorTypeOptions.map((option) => option.label).join(", ")}.</p>
+            </> : null}
 
+            {connectStep === 2 ? <>
+            <p className="step-prerequisite">Add the provider credentials and connection details. Required values are checked here before anything is saved to the secure store.</p>
             {connectForm.connectorType === "m365" ? (
               <p className="screen-note">Microsoft Graph uses the fixed Microsoft origin; choose how this profile acquires its token.</p>
             ) : connectForm.connectorType === "syncro" ? (
@@ -687,7 +741,7 @@ export function ConnectorInstances() {
                 <span id="syncro-subdomain-help" className="field-help">The subdomain from your Syncro address, for example acme in acme.syncromsp.com.</span>
               </label>
             ) : (
-            <label htmlFor="connector-base-url">{connectForm.connectorType === "servicenow" ? "ServiceNow instance URL" : connectForm.connectorType === "ninjaone" || connectForm.connectorType === "dattormm" || connectForm.connectorType === "ncentral" ? "Provider base URL" : "Base URL"}
+            <label htmlFor="connector-base-url">{connectForm.connectorType === "servicenow" ? "ServiceNow instance URL" : connectForm.connectorType === "ninjaone" || connectForm.connectorType === "dattormm" || connectForm.connectorType === "ncentral" ? "Provider service address" : "Service address"}
                 <input id="connector-base-url" value={connectForm.baseUrl} onChange={(event) => updateConnectForm("baseUrl", event.target.value)} required />
               </label>
             )}
@@ -840,8 +894,23 @@ export function ConnectorInstances() {
                 <span id="ncentral-org-unit-map-help" className="field-help">Map WAIT client IDs to N-central organization-unit IDs, for example {`{"acme":[100]}`}.</span>
               </>
             )}
+            </> : null}
 
-            <button type="submit" disabled={connectBusy || !connectFormReady}>{connectBusy ? "Connecting…" : "Connect system"}</button>
+            {connectStep === 3 ? <>
+              <p className="step-prerequisite">Confirm the connection summary, then save the credentials to the secure store and create the connection. Afterward, discover an external company and verify its client mapping below.</p>
+              <div className="connection-state" aria-label="Connection summary">
+                <strong>{connectorTypeOptions.find((option) => option.value === connectForm.connectorType)?.label ?? connectForm.connectorType}</strong>
+                <span>{connectForm.displayName.trim()}</span>
+                <span>{connectForm.waitClientId ? `Mapped to WAIT client ${connectForm.waitClientId}` : "No WAIT client association"}</span>
+              </div>
+            </> : null}
+
+            <div className="guided-step-actions">
+              {connectStep > 1 ? <button type="button" className="secondary-button" onClick={() => { setConnectError(""); setConnectStep((current) => (current - 1) as 1 | 2 | 3); }} disabled={connectBusy}>Back</button> : null}
+              <button type="submit" disabled={connectBusy || (connectStep === 1 ? !providerAndClientReady : connectStep === 2 ? !connectFormReady : false)}>
+                {connectStep === 1 ? "Continue to credentials" : connectStep === 2 ? "Continue to verify and map" : connectBusy ? "Connecting…" : "Connect system"}
+              </button>
+            </div>
           </form>
         </section>
 
@@ -852,7 +921,7 @@ export function ConnectorInstances() {
           </div>
         ) : null}
 
-        {loading ? <LoadingState label="Loading Connector Instances…" /> : instances.length === 0 ? <EmptyState title="No connector instances are configured." why="Configured connector instances will appear here for administrator review." /> : (
+        {loading ? <LoadingState label="Loading Connector Instances…" /> : instances.length === 0 ? <EmptyState title="No connector instances are configured." why="No client connection has been added yet. Start with the guided setup above." action={{ label: "Connect a system", to: "#connect-system-form" }} /> : (
           <section className="panel" aria-labelledby="connector-instances-heading">
             <div className="panel-heading">
               <div>
@@ -1004,7 +1073,7 @@ export function ConnectorInstances() {
                     {discoverLoading ? "Discovering…" : "Discover companies"}
                   </button>
                   {discoverError ? <div className="notice danger" role="alert">{discoverError}</div> : null}
-                  {discoverAttempted && discoveredCompanies.length === 0 ? <p className="screen-note">{noCompaniesNotice}</p> : null}
+                  {discoverAttempted && discoveredCompanies.length === 0 ? <EmptyState title="No companies returned." why={noCompaniesNotice.replace("No companies returned — ", "")} action={{ label: "Enter a company ID", to: "#external-company-id" }} /> : null}
                   {discoveredCompanies.length > 0 ? (
                     <div className="connector-instances-table-wrap">
                       <table className="connector-instances-table">
@@ -1076,10 +1145,7 @@ export function ConnectorInstances() {
                   <button className="secondary-button" type="button" onClick={() => void selectInstance(selectedInstance)} disabled={mappingsLoading}>Try again</button>
                 </div>
               ) : mappings.length === 0 ? (
-                <div className="empty-state">
-                  <h3>No mappings are configured.</h3>
-                  <p>No external companies are mapped to this connector instance.</p>
-                </div>
+                <EmptyState title="No mappings are configured." why="No external company is connected to this WAIT client yet." action={{ label: "Map an external company", to: "#external-company-id" }} />
               ) : (
                 <div className="connector-instances-table-wrap">
                   <table className="connector-instances-table">
@@ -1230,4 +1296,18 @@ function syncErrorMessage(error: unknown): string {
     }
   }
   return error.message;
+}
+
+function connectorTypeFromLocation(): ConnectorType {
+  if (typeof window !== "undefined") {
+    const provider = new URLSearchParams(window.location.search).get("provider");
+    if (provider && connectorTypeOptions.some((option) => option.value === provider)) {
+      return provider as ConnectorType;
+    }
+  }
+  return initialConnectForm.connectorType;
+}
+
+function friendlyProviderName(name: string): string {
+  return name.replace(/\sPSA\b/g, "");
 }

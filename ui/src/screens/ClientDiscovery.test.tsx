@@ -7,7 +7,11 @@ import type { DiscoveryResponse } from "../api/types";
 
 vi.mock("../api/client", () => ({ apiFetch: vi.fn() }));
 vi.mock("../app/DashboardContext", () => ({
-  useDashboard: () => ({ role: "admin", roleResolved: true })
+  useDashboard: () => ({
+    role: "admin",
+    roleResolved: true,
+    connectors: [{ id: "connectwise", name: "ConnectWise", status: "ready", message: "configured" }]
+  })
 }));
 
 const response: DiscoveryResponse = {
