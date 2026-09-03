@@ -156,8 +156,7 @@ test("settings update check reports an unknown status without a configured chann
   await page.goto("/settings");
   await page.getByRole("button", { name: "Check for updates" }).click();
   await expect(page.getByText("Update check complete.")).toBeVisible();
-  await expect(page.getByText("Update check").locator(".."))
-    .toContainText("unknown");
+  await expect(page.locator('dt:has-text("Update check") + dd')).toHaveText("unknown");
 });
 
 test("collectors exports text from a locally created run", async ({ page }) => {
@@ -165,7 +164,12 @@ test("collectors exports text from a locally created run", async ({ page }) => {
   await page.goto("/collectors");
 
   await expect(page.getByRole("heading", { name: "Collectors", exact: true })).toBeVisible();
-  await page.getByRole("button", { name: "Run now" }).click();
+  const collector = page.getByRole("combobox", { name: "Collector", exact: true });
+  await expect(collector).toBeVisible();
+  await expect(collector).toHaveValue(/.+/);
+  const runNow = page.getByRole("button", { name: "Run now", exact: true });
+  await expect(runNow).toBeEnabled();
+  await runNow.click();
   await page.getByRole("button", { name: "Yes, run it" }).click();
   await expect(page.getByText("Run started.")).toBeVisible();
   await page.getByRole("button", { name: "Export" }).first().click();
@@ -176,20 +180,22 @@ test("the approvals workspace exposes selected-client and all-client scope", asy
   await signIn(page);
   const suffix = `${testInfo.retry}-${testInfo.repeatEachIndex}-${randomUUID()}`;
   const clientId = `approval-scope-${suffix}`;
+  const clientName = `Approval Scope ${suffix}`;
   const created = await apiJson(page, "/clients", "POST", {
     client_id: clientId,
-    name: `Approval Scope ${suffix}`,
+    name: clientName,
   });
   expect(created.client_id).toBe(clientId);
 
   await page.goto("/approvals");
-  const scope = page.getByLabel("Client");
-  await expect(scope).toBeVisible();
-  await scope.selectOption(clientId);
-  await expect(scope).toHaveValue(clientId);
-  await scope.selectOption("");
-  await expect(scope).toHaveValue("");
-  await expect(scope.locator("option:checked")).toHaveText("All clients");
+  const approvalsScope = page.locator(".approvals-panel .scope-badge");
+  await expect(approvalsScope).toHaveText("All clients");
+
+  await page.locator("#app-client-selector").selectOption(clientId);
+  await expect(approvalsScope).toHaveText(`Scoped to ${clientName}`);
+
+  await page.locator("#app-client-selector").selectOption("");
+  await expect(approvalsScope).toHaveText("All clients");
 });
 
 test("audit export downloads a non-empty local file", async ({ page }) => {
