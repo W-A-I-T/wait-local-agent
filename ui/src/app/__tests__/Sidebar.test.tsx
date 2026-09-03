@@ -16,7 +16,7 @@ const mockedUseDashboard = vi.mocked(useDashboard);
 const mockedMicrosoftAdminAccess = vi.mocked(useMicrosoftAdminAccess);
 
 const destinations = [
-  ["Overview", "/"], ["Clients", "/clients"],
+  ["Overview", "/"], ["Clients", "/clients"], ["Client discovery", "/client-discovery"],
   ["Tickets", "/tickets"], ["Approvals", "/approvals"], ["Technician Chat", "/technician-chat"], ["Technician Path", "/technician-path"], ["Microsoft Admin", "/microsoft-admin"], ["M365 Actions", "/m365-actions"], ["Azure Lighthouse", "/microsoft-admin/azure-lighthouse"],
   ["Automations", "/workflows"], ["Agents", "/agents"], ["Activity", "/activity/runs"],
   ["Solutions Architect", "/consultant"],
@@ -107,6 +107,13 @@ describe("Sidebar navigation IA", () => {
 
     expect(screen.getByRole("link", { name: "Solutions Architect" })).toHaveAttribute("href", "/consultant");
     expect(screen.queryByRole("link", { name: "Consultant" })).not.toBeInTheDocument();
+  });
+
+  it("keeps Client discovery in the Clients navigation group", () => {
+    renderSidebar("admin");
+
+    const group = screen.getByRole("navigation", { name: "Overview and clients" });
+    expect(within(group).getByRole("link", { name: "Client discovery" })).toHaveAttribute("href", "/client-discovery");
   });
 
   it("hides Microsoft Admin until the selected client is explicitly granted", () => {

@@ -4,6 +4,7 @@ import { executeEndpointFor, useDashboard } from "../app/DashboardContext";
 import { apiFetch } from "../api/client";
 import { EmptyState } from "../components/EmptyState";
 import { LoadingState } from "../components/LoadingState";
+import { ScopeBadge } from "../components/ScopeBadge";
 import type { ApprovalRequest } from "../api/types";
 import { fieldsToText, formatPayload, parseFields } from "../lib/fields";
 
@@ -27,7 +28,9 @@ export function Approvals() {
     savePayloadFields,
     workflowFor,
     refresh,
-    loading
+    loading,
+    selectedClientId,
+    clients
   } = useDashboard();
   const [draftPayloadFields, setDraftPayloadFields] = useState<Record<number, string>>({});
   const [runbookBusyId, setRunbookBusyId] = useState<number | null>(null);
@@ -78,7 +81,7 @@ export function Approvals() {
     <section className="panel approvals-panel">
       <div className="panel-heading">
         <h2>Approval Queue</h2>
-        <span>{pendingApprovals.length} pending</span>
+        <div><ScopeBadge selectedClientId={selectedClientId} clients={clients} /> <span>{pendingApprovals.length} pending</span></div>
       </div>
       <div className="stack-list">
         {loading ? <LoadingState label="Loading approval requests…" /> : approvalRequests.map((request) => (

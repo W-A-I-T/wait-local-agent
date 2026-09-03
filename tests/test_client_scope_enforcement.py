@@ -10,7 +10,9 @@ import pytest
 from fastapi import HTTPException
 from fastapi.routing import APIRoute
 from fastapi.testclient import TestClient
+from starlette.requests import Request
 
+import wait_local_agent.api.app as app_module
 from tests.support import ensure_test_clients
 from wait_local_agent.api.app import (
     EndUserMessageRequest,
@@ -20,7 +22,8 @@ from wait_local_agent.api.app import (
     _resolve_detail_scope,
     create_app,
 )
-from wait_local_agent.client_scope import AllClients, BoundClients, resolve_client_scope
+from wait_local_agent.client_scope import AllClients, BoundClients, requested_client_from, resolve_client_scope
+from wait_local_agent.models import HaloReadResponse, HaloReadResult, HaloTicket
 from wait_local_agent.rbac import AuthContext, Role, resolve_auth_context
 from wait_local_agent.store import Store
 
@@ -200,6 +203,156 @@ def test_client_scope_resolver_covers_empty_bound_and_tenantless_principals() ->
     with pytest.raises(HTTPException) as missing_tenant:
         resolve_client_scope(tenantless)
     assert missing_tenant.value.status_code == 403
+
+
+def test_requested_client_header_is_one_shared_precedence_boundary() -> None:
+    request = Request({
+        "type": "http",
+        "method": "GET",
+        "path": "/approval-requests",
+        "headers": [(b"x-wait-client-id", b"alpha")],
+    })
+
+    assert requested_client_from(request) == "alpha"
+    assert requested_client_from(request, "alpha") == "alpha"
+    with pytest.raises(HTTPException, match="conflicting client scopes"):
+        requested_client_from(request, "beta")
+
+
+def test_halopsa_selected_scope_validates_without_filtering_provider_rows(settings, monkeypatch) -> None:
+    secure_settings = replace(
+        settings,
+        demo_mode=False,
+        client_id="alpha",
+        admin_token="admin-token",
+    )
+    store = Store(secure_settings.data_path)
+    ensure_test_clients(store, "alpha", "beta")
+    store.create_principal("alpha-viewer", kind="staff")
+    store.add_principal_credential("alpha-viewer", "alpha-viewer-token")
+    store.add_principal_client_role("alpha-viewer", "alpha", "viewer")
+
+    class FakeHaloClient:
+        def __init__(self, _settings) -> None:
+            pass
+
+        def list_tickets(self, page: int = 1, page_size: int = 50) -> HaloReadResponse:
+            return HaloReadResponse(
+                HaloReadResult("ready", f"page {page}, size {page_size}", 1),
+                [HaloTicket("HALO-1", "Provider ticket", "Open", "High", "provider-customer", "Provider")],
+            )
+
+    monkeypatch.setattr(app_module, "HaloPSAClient", FakeHaloClient)
+    app = create_app(secure_settings)
+    context = resolve_auth_context(secure_settings, "Bearer alpha-viewer-token", app.state.store)
+    endpoint = next(
+        route.endpoint
+        for route in app.routes
+        if isinstance(route, APIRoute) and route.path == "/connectors/halopsa/tickets"
+    )
+
+    def scoped_request() -> Request:
+        return Request({
+            "type": "http",
+            "method": "GET",
+            "path": "/connectors/halopsa/tickets",
+            "headers": [(b"x-wait-client-id", b"alpha")],
+        })
+
+    selected = endpoint(request=scoped_request(), context=context, page=1, page_size=50, client_id=None)
+
+    assert selected["items"][0]["id"] == "HALO-1"
+    with pytest.raises(HTTPException, match="conflicting"):
+        endpoint(request=scoped_request(), context=context, page=1, page_size=50, client_id="beta")
+
+
+def test_collection_routes_honor_selected_client_header(settings) -> None:
+    secure_settings = replace(
+        settings,
+        demo_mode=False,
+        client_id="alpha",
+        admin_token="admin-token",
+        tech_token="tech-token",
+        viewer_token="viewer-token",
+    )
+    store = Store(secure_settings.data_path)
+    store.create_principal("alpha-viewer", kind="staff")
+    store.add_principal_credential("alpha-viewer", "alpha-viewer-token")
+    store.add_principal_client_role("alpha-viewer", "alpha", "viewer")
+    _seed_cross_client_state(store)
+    alpha_approval = store.create_approval_request(
+        "TCK-ALPHA", "ticket.assign", {"ticket_id": "TCK-ALPHA"}, client_id="alpha"
+    )
+    store.add_audit_event("cross-client.alpha", "TCK-ALPHA", "alpha event", client_id="alpha")
+    store.create_event_delivery(
+        idempotency_key="scope-alpha",
+        event_type="ticket.updated",
+        entity_type="ticket",
+        entity_id="TCK-ALPHA",
+        payload={},
+        client_id="alpha",
+    )
+    store.create_workflow_run(
+        "documentation-assisted-response", "TCK-ALPHA", "completed", "alpha workflow", client_id="alpha"
+    )
+    store.create_agent_run("scope-agent", "TCK-ALPHA", "tester", "completed", 1, {}, client_id="alpha")
+    store.create_execution_run(
+        "workflow",
+        1,
+        "tester",
+        "completed",
+        "2026-09-01T00:00:00+00:00",
+        "2026-09-01T00:01:00+00:00",
+        "test",
+        client_id="alpha",
+    )
+    headers = {"Authorization": "Bearer alpha-viewer-token", "X-WAIT-Client-ID": "alpha"}
+    assert alpha_approval.id is not None
+    app = create_app(secure_settings)
+    context = resolve_auth_context(secure_settings, "Bearer alpha-viewer-token", store)
+
+    def request_for(path: str) -> Request:
+        return Request({
+            "type": "http",
+            "method": "GET",
+            "path": path,
+            "headers": [(b"authorization", headers["Authorization"].encode()), (b"x-wait-client-id", b"alpha")],
+        })
+
+    def endpoint_for(path: str):
+        return next(route.endpoint for route in app.routes if isinstance(route, APIRoute) and route.path == path)
+
+    responses = {
+        "approval_requests": endpoint_for("/approval-requests")(
+            request=request_for("/approval-requests"), context=context, client_id=None
+        ),
+        "executions": endpoint_for("/executions")(
+            request=request_for("/executions"), context=context, client_id=None
+        ),
+        "agent_runs": endpoint_for("/agent-runs")(
+            request=request_for("/agent-runs"), context=context, client_id=None
+        ),
+        "workflow_runs": endpoint_for("/workflow-runs")(
+            request=request_for("/workflow-runs"), context=context, client_id=None
+        ),
+        "audit": endpoint_for("/audit")(
+            request=request_for("/audit"), context=context, client_id=None
+        ),
+        "event_history": endpoint_for("/event-history")(
+            request=request_for("/event-history"), context=context, client_id=None
+        ),
+        "event_deliveries": endpoint_for("/automation/event-deliveries")(
+            request=request_for("/automation/event-deliveries"), context=context, client_id=None
+        ),
+    }
+
+    for rows in responses.values():
+        assert all(row.get("client_id") == "alpha" for row in rows)
+
+    with pytest.raises(HTTPException, match="conflicting"):
+        endpoint_for("/approval-requests")(
+            request=request_for("/approval-requests"), context=context, client_id="beta"
+        )
 
 
 def test_cross_client_negative_matrix(settings) -> None:

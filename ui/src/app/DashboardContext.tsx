@@ -205,6 +205,7 @@ export function DashboardProvider({ children, activePath = "" }: { children: Rea
   const [refreshNonce, setRefreshNonce] = useState(0);
   const [busyId, setBusyId] = useState<number | "draft" | null>(null);
   const selectedTicketIdRef = useRef(selectedTicketId);
+  const selectedClientIdRef = useRef(selectedClientId);
   const roleRequestIdRef = useRef(0);
   const activePathRef = useRef(activePath);
   const configuration = useConfiguredState({ role });
@@ -219,6 +220,7 @@ export function DashboardProvider({ children, activePath = "" }: { children: Rea
 
   const setSelectedClientId = useCallback((nextClientId: string) => {
     const normalized = nextClientId.trim();
+    if (selectedClientIdRef.current === normalized) return;
     setSelectedClientIdState(normalized);
     persistSelectedClientId(normalized);
   }, []);
@@ -398,6 +400,12 @@ export function DashboardProvider({ children, activePath = "" }: { children: Rea
       }
     }
   }, [configuration.refresh]);
+
+  useEffect(() => {
+    if (!roleResolved || selectedClientIdRef.current === selectedClientId) return;
+    selectedClientIdRef.current = selectedClientId;
+    void refresh();
+  }, [refresh, roleResolved, selectedClientId]);
 
   useEffect(() => {
     void refresh();

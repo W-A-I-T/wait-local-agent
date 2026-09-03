@@ -4,6 +4,7 @@ import { Link, useSearchParams } from "react-router-dom";
 import { apiFetch } from "../api/client";
 import type { BackupStatusResponse } from "../api/types";
 import { useDashboard } from "../app/DashboardContext";
+import { ScopeBadge } from "../components/ScopeBadge";
 import { SetupStatus } from "../components/SetupStatus";
 import { OnboardingWizard } from "../surfaces/onboarding/OnboardingWizard";
 
@@ -23,7 +24,9 @@ export function Overview() {
     configurationLoading,
     roleResolved,
     isAdmin,
-    isMspAdmin
+    isMspAdmin,
+    selectedClientId,
+    clients
   } = useDashboard();
   const [backupStatus, setBackupStatus] = useState<BackupStatusResponse | null>(null);
   const [searchParams, setSearchParams] = useSearchParams();
@@ -87,15 +90,18 @@ export function Overview() {
       <section className="panel">
         <div className="panel-heading">
           <h2>Operations Overview</h2>
-          <span>
-            {configurationLoading
-              ? "checking configuration"
-              : !roleResolved
-                ? "access unavailable"
-                : isConfigured
-                  ? "configured"
-                  : "demo-ready"}
-          </span>
+          <div>
+            <ScopeBadge selectedClientId={selectedClientId} clients={clients} /> {" "}
+            <span>
+              {configurationLoading
+                ? "checking configuration"
+                : !roleResolved
+                  ? "access unavailable"
+                  : isConfigured
+                    ? "configured"
+                    : "demo-ready"}
+            </span>
+          </div>
         </div>
         {latestBackup ? (
           <div className="event-row" aria-label="Last backup status">

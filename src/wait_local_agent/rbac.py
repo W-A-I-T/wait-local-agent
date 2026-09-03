@@ -10,7 +10,13 @@ from typing import TYPE_CHECKING, Annotated, Literal
 from fastapi import Header, HTTPException, Request, status
 
 from wait_local_agent.capabilities import MICROSOFT_ADMIN_CAPABILITY, active_capability_grants
-from wait_local_agent.client_scope import AllClients, BoundClients, ClientScope, resolve_client_scope
+from wait_local_agent.client_scope import (
+    AllClients,
+    BoundClients,
+    ClientScope,
+    requested_client_from,
+    resolve_client_scope,
+)
 from wait_local_agent.config import Settings
 from wait_local_agent.sessions import CSRF_HEADER, SESSION_COOKIE_NAME, hash_session_token, session_expiries
 
@@ -22,6 +28,7 @@ __all__ = [
     "Role",
     "require_capability",
     "require_capability_scope",
+    "requested_client_from",
     "resolve_client_scope",
 ]
 
@@ -251,7 +258,6 @@ def require_capability(capability_key: str, minimum: Role = Role.VIEWER):
     def dependency(
         request: Request,
         authorization: Annotated[str | None, Header()] = None,
-        selected_client_id: Annotated[str | None, Header(alias="X-WAIT-Client-ID")] = None,
     ) -> AuthContext:
         settings = request.app.state.settings
         context = resolve_auth_context(
@@ -265,9 +271,11 @@ def require_capability(capability_key: str, minimum: Role = Role.VIEWER):
         if context.role < minimum:
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="insufficient role")
         query_client_id = request.query_params.get("client_id")
-        if query_client_id and selected_client_id and query_client_id != selected_client_id:
-            raise HTTPException(status_code=400, detail="conflicting Microsoft Admin client scopes")
-        requested_client_id = query_client_id or selected_client_id
+        requested_client_id = requested_client_from(
+            request,
+            query_client_id,
+            conflict_detail="conflicting Microsoft Admin client scopes",
+        )
         client_id = context.client_id
         if (
             requested_client_id

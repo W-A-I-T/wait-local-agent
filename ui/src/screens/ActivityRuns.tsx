@@ -3,6 +3,8 @@ import { Link } from "react-router-dom";
 import { apiFetch } from "../api/client";
 import { EmptyState } from "../components/EmptyState";
 import { LoadingState } from "../components/LoadingState";
+import { ScopeBadge } from "../components/ScopeBadge";
+import { useDashboard } from "../app/DashboardContext";
 
 type ActivityItem = {
   activity_id: string;
@@ -23,6 +25,7 @@ type ActivityItem = {
 const kindOptions = ["", "workflow", "agent", "smart_action", "collector", "backfill"];
 
 export function ActivityRuns() {
+  const { selectedClientId, clients } = useDashboard();
   const [rows, setRows] = useState<ActivityItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [message, setMessage] = useState("");
@@ -34,7 +37,7 @@ export function ActivityRuns() {
     if (kind) params.set("kinds", kind);
     if (status.trim()) params.set("status", status.trim());
     return params.toString();
-  }, [kind, status]);
+  }, [kind, selectedClientId, status]);
 
   const refresh = useCallback(async () => {
     setLoading(true);
@@ -48,7 +51,7 @@ export function ActivityRuns() {
     } finally {
       setLoading(false);
     }
-  }, [query]);
+  }, [query, selectedClientId]);
 
   useEffect(() => {
     void refresh();
@@ -62,7 +65,7 @@ export function ActivityRuns() {
             <h2>All runs</h2>
             <p className="screen-note">One tenant-scoped timeline for canonical executions plus legacy workflow, agent, Smart Action, collector, and backfill runs that are not already represented by an execution record.</p>
           </div>
-          <button type="button" onClick={() => void refresh()} disabled={loading}>{loading ? "Refreshing…" : "Refresh"}</button>
+          <div><ScopeBadge selectedClientId={selectedClientId} clients={clients} /> <button type="button" onClick={() => void refresh()} disabled={loading}>{loading ? "Refreshing…" : "Refresh"}</button></div>
         </div>
         <div className="grid">
           <label>Run type<select value={kind} onChange={(event) => setKind(event.target.value)}>
