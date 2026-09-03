@@ -1,7 +1,9 @@
 import { randomUUID } from "node:crypto";
+import { stat } from "node:fs/promises";
 import { expect, test, type Page } from "@playwright/test";
 
 const token = process.env.WAIT_BROWSER_TOKEN ?? "integration-admin-token";
+const apiUrl = process.env.WAIT_BROWSER_API_URL ?? "http://127.0.0.1:8788";
 
 test.beforeEach(async ({ page }) => {
   await page.addInitScript(() => {
@@ -15,6 +17,21 @@ async function signIn(page: Page): Promise<void> {
   await page.getByLabel("Access token").fill(token);
   await page.getByRole("button", { name: "Sign in", exact: true }).click();
   await expect(page.getByRole("heading", { name: "WAIT AI Solutions Architect", exact: true })).toBeVisible();
+}
+
+async function apiJson(
+  page: Page,
+  path: string,
+  method = "GET",
+  data?: Record<string, unknown>,
+): Promise<Record<string, unknown>> {
+  const response = await page.request.fetch(`${apiUrl}${path}`, {
+    method,
+    headers: { Authorization: `Bearer ${token}` },
+    data,
+  });
+  expect(response.ok(), `${method} ${path}`).toBeTruthy();
+  return await response.json() as Record<string, unknown>;
 }
 
 test("shows the local sign-in screen without a stored credential", async ({ page }) => {
@@ -103,4 +120,88 @@ test("completes the safe local setup journey and exercises primary UI surfaces",
   await page.goto("/integrations/mcp");
   await expect(page.getByRole("heading", { name: "MCP server", exact: true })).toBeVisible();
   await expect(page.getByText("Published tool catalog")).toBeVisible();
+});
+
+test("diagnostics shows the local support boundary and correlation inventory", async ({ page }) => {
+  await signIn(page);
+
+  const summary = await apiJson(page, "/diagnostics/summary");
+  expect(summary.support_upload).toEqual(expect.objectContaining({ available: false }));
+  expect(Array.isArray(summary.correlation_ids)).toBeTruthy();
+
+  await page.goto("/system/diagnostics");
+  await expect(page.getByRole("heading", { name: "Diagnostics & Support", exact: true })).toBeVisible();
+  await expect(page.getByText("Support upload is not available in this edition. Download remains available.")).toBeVisible();
+});
+
+test("client discovery loads and displays the persisted deployment mode", async ({ page }) => {
+  await signIn(page);
+
+  const mode = await apiJson(page, "/setup/mode", "PUT", { mode: "msp" });
+  expect(mode.mode).toBe("msp");
+
+  await page.goto("/client-discovery");
+  await expect(page.getByRole("heading", { name: "Client discovery", exact: true })).toBeVisible();
+  await expect(page.getByText("MSP mode", { exact: true })).toBeVisible();
+  await expect(page.getByText("No candidates match this filter. Run discovery after connecting an active PSA provider.")).toBeVisible();
+});
+
+test("settings update check reports an unknown status without a configured channel", async ({ page }) => {
+  await signIn(page);
+
+  const update = await apiJson(page, "/update-check", "POST");
+  expect(update.status).toBe("unknown");
+  expect(update.detail).toBe("disabled");
+
+  await page.goto("/settings");
+  await page.getByRole("button", { name: "Check for updates" }).click();
+  await expect(page.getByText("Update check complete.")).toBeVisible();
+  await expect(page.getByText("Update check").locator(".."))
+    .toContainText("unknown");
+});
+
+test("collectors exports text from a locally created run", async ({ page }) => {
+  await signIn(page);
+  await page.goto("/collectors");
+
+  await expect(page.getByRole("heading", { name: "Collectors", exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "Run now" }).click();
+  await page.getByRole("button", { name: "Yes, run it" }).click();
+  await expect(page.getByText("Run started.")).toBeVisible();
+  await page.getByRole("button", { name: "Export" }).first().click();
+  await expect(page.locator("pre.code-panel").last()).not.toHaveText("");
+});
+
+test("the approvals workspace exposes selected-client and all-client scope", async ({ page }, testInfo) => {
+  await signIn(page);
+  const suffix = `${testInfo.retry}-${testInfo.repeatEachIndex}-${randomUUID()}`;
+  const clientId = `approval-scope-${suffix}`;
+  const created = await apiJson(page, "/clients", "POST", {
+    client_id: clientId,
+    name: `Approval Scope ${suffix}`,
+  });
+  expect(created.client_id).toBe(clientId);
+
+  await page.goto("/approvals");
+  const scope = page.getByLabel("Client");
+  await expect(scope).toBeVisible();
+  await scope.selectOption(clientId);
+  await expect(scope).toHaveValue(clientId);
+  await scope.selectOption("");
+  await expect(scope).toHaveValue("");
+  await expect(scope.locator("option:checked")).toHaveText("All clients");
+});
+
+test("audit export downloads a non-empty local file", async ({ page }) => {
+  await signIn(page);
+  await page.goto("/audit");
+  await expect(page.getByRole("heading", { name: "Audit", exact: true })).toBeVisible();
+
+  const [download] = await Promise.all([
+    page.waitForEvent("download"),
+    page.getByRole("button", { name: "Export Events JSON" }).click(),
+  ]);
+  const downloadPath = await download.path();
+  expect(downloadPath).not.toBeNull();
+  expect((await stat(downloadPath!)).size).toBeGreaterThan(0);
 });

@@ -4,6 +4,7 @@ export type ConnectorStatus = {
   status: string;
   message: string;
   kind?: string;
+  tier?: "instance" | "appliance-wide";
   write_actions_enabled?: boolean;
   http_probing_enabled?: boolean;
 };

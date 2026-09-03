@@ -46,7 +46,8 @@ All notable changes to WAIT Local Agent will be documented in this file.
 - Microsoft Graph reads now use bounded throttling retries with `Retry-After`,
   early client-credential token refresh, typed provider error responses, and
   loud pagination-cursor failures; Graph writes remain single-attempt.
-
+- Test and release validation now exercise non-demo authentication boundaries,
+  assert response bodies, and keep local coverage sources aligned with CI.
 - Microsoft 365 and RMM connector resolution now reports its selected tier and
   keeps explicit client-scoped requests from falling back to MSP-wide or
   environment credentials.

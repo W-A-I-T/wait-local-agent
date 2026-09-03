@@ -78,6 +78,7 @@ def test_screenconnect_is_selected_and_reported_without_exposing_credentials(set
     assert provider.adapter_id == "screenconnect"
     assert status.name == "ScreenConnect"
     assert status.status == "configured"
+    assert status.tier == "appliance-wide"
     assert AUTH_SECRET not in status.message
     assert records["WAIT_SCREENCONNECT_AUTH_SECRET"].configured is True
     assert records["WAIT_SCREENCONNECT_CLIENT_SESSIONS_MAP_JSON"].configured is True

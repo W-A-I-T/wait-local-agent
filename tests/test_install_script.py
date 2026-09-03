@@ -5,6 +5,8 @@ import subprocess
 from pathlib import Path
 
 SCRIPT = Path(__file__).parents[1] / "scripts/install.sh"
+RELEASE_VALIDATION = Path(__file__).parents[1] / "scripts/validate_release.sh"
+CI_WORKFLOW = Path(__file__).parents[1] / ".github/workflows/test.yml"
 
 
 def _stub(tmp_path: Path, name: str, contents: str) -> None:
@@ -65,3 +67,13 @@ fi
     assert f"Install directory: {install_dir}" in result.stdout
     assert "Setup URL: http://127.0.0.1:8788" in result.stdout
     assert not install_dir.exists()
+
+
+def test_release_validation_and_ci_measure_the_same_python_coverage_sources() -> None:
+    release_script = RELEASE_VALIDATION.read_text(encoding="utf-8")
+    workflow = CI_WORKFLOW.read_text(encoding="utf-8")
+
+    expected_flags = ("--cov=wait_local_agent", "--cov=packs", "--cov-fail-under=95")
+    for flag in expected_flags:
+        assert flag in release_script
+        assert flag in workflow

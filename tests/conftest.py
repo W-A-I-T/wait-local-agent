@@ -5,13 +5,25 @@ from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
+from fastapi.testclient import TestClient
 
+from wait_local_agent.api.app import create_app
 from wait_local_agent.collectors import CollectorRegistry
 from wait_local_agent.config import Settings
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
+
+
+class LiveTestClient(TestClient):
+    """TestClient helper that makes the bearer credential explicit per request set."""
+
+    def set_authorization(self, token: str | None) -> None:
+        if token is None:
+            self.headers.pop("Authorization", None)
+        else:
+            self.headers["Authorization"] = f"Bearer {token}"
 
 
 @pytest.fixture()
@@ -63,6 +75,34 @@ def settings(tmp_path: Path) -> Settings:
         demo_mode=True,
         api_token="",
     )
+
+
+@pytest.fixture()
+def live_settings(settings: Settings) -> Settings:
+    """Non-demo settings for API tests that must exercise real auth and scopes."""
+
+    return settings.__class__(
+        **{
+            **settings.__dict__,
+            "demo_mode": False,
+            "admin_token": "test-admin-token",
+            "tech_token": "test-tech-token",
+            "viewer_token": "test-viewer-token",
+            # The live fixture uses an HTTP TestClient; production keeps the
+            # secure-cookie default, while this local transport must retain
+            # the browser session for CSRF tests.
+            "session_cookie_secure": False,
+        }
+    )
+
+
+@pytest.fixture()
+def live_client(live_settings: Settings) -> Iterator[LiveTestClient]:
+    """Live-auth TestClient with an explicit helper for selecting a bearer role."""
+
+    client = LiveTestClient(create_app(live_settings))
+    yield client
+    client.close()
 
 
 @pytest.fixture()

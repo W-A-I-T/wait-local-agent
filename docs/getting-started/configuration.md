@@ -45,6 +45,14 @@ principal model supports per-client roles and a global `msp_admin` role;
 principal credentials are stored as SHA-256 hashes. End-user support has a
 separate fixed-scope token and client/user mapping.
 
+### Bootstrap token scope
+
+The `WAIT_VIEWER_TOKEN` and `WAIT_TECH_TOKEN` bootstrap credentials authenticate
+their role but retain appliance-wide read scope, including reads across all
+clients. Use database principals with explicit client roles when access must be
+limited to particular clients; do not treat a bootstrap viewer or technician
+token as a per-client credential.
+
 Outbound connector calls require `WAIT_ALLOW_HTTP_PROBING=true`. Live
 mutations also require `WAIT_ALLOW_WRITE_ACTIONS=true`, a supported action, and
 the relevant approval gate.

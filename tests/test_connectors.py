@@ -389,6 +389,7 @@ def test_rmm_write_status_includes_screenconnect(settings) -> None:
     statuses = {status.id: status for status in list_connector_statuses(active)}
 
     assert statuses["rmm"].write_actions_enabled is True
+    assert statuses["rmm"].tier == "appliance-wide"
 
 
 def test_m365_user_creation_approval_resolves_vault_secret_without_persisting_it(settings, tmp_path) -> None:
