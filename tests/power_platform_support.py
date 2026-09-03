@@ -35,7 +35,12 @@ CANONICAL_INPUT_ARTIFACT: dict[str, object] = {
                         "display_name": "Display name",
                         "type": "String",
                         "required": True,
-                    }
+                    },
+                    {
+                        "logical_name": "wait_start_date",
+                        "display_name": "Start date",
+                        "type": "DateOnly",
+                    },
                 ],
             }
         ],

@@ -674,14 +674,27 @@ def _xml_entity(entity: dict[str, object]) -> list[str]:
 def _xml_attribute_block(attribute: dict[str, object], primary: bool) -> list[str]:
     logical = cast(str, attribute["logical_name"])
     display_name = cast(str, attribute["display_name"])
+    field_type = cast(str, attribute["type"])
     display_mask = (
         "PrimaryName|ValidForAdvancedFind|ValidForForm|ValidForGrid"
         if primary
         else "ValidForAdvancedFind|ValidForForm|ValidForGrid"
     )
+    # DateOnly is verified against a real Dataverse round-trip; DateTime remains
+    # unmapped because its Format and Behavior values have not been verified.
+    if field_type == "dateonly":
+        type_line = "              <Type>datetime</Type>"
+        format_line = "              <IsRenameable>1</IsRenameable><Format>date</Format><Behavior>1</Behavior>"
+    else:
+        max_length = attribute["max_length"]
+        type_line = "              <Type>nvarchar</Type>"
+        format_line = (
+            f"              <IsRenameable>1</IsRenameable><MaxLength>{max_length}</MaxLength>"
+            f"<Length>{max_length}</Length><Format>text</Format>"
+        )
     return [
         f'            <attribute PhysicalName="{_xml_attribute(logical)}">',
-        "              <Type>nvarchar</Type>",
+        type_line,
         f"              <Name>{_xml_text(logical)}</Name><LogicalName>{_xml_text(logical)}</LogicalName>",
         "              <RequiredLevel>none</RequiredLevel>",
         f"              <DisplayMask>{display_mask}</DisplayMask>",
@@ -697,10 +710,7 @@ def _xml_attribute_block(attribute: dict[str, object], primary: bool) -> list[st
             "              <IsSecured>0</IsSecured><IntroducedVersion>1.0</IntroducedVersion>"
             "<IsCustomizable>1</IsCustomizable>"
         ),
-        (
-            f"              <IsRenameable>1</IsRenameable><MaxLength>{attribute['max_length']}</MaxLength>"
-            f"<Length>{attribute['max_length']}</Length><Format>text</Format>"
-        ),
+        format_line,
         (
             f'              <displaynames><displayname description="{_xml_attribute(display_name)}" '
             'languagecode="1033" /></displaynames>'
@@ -787,7 +797,8 @@ def _emit_power_apps_artifact(
                 marked_primary.append(field_name)
             column_names.add(field_name)
             field_type = str(field.get("type", "String"))
-            if field_type.casefold() != "string":
+            normalized_field_type = field_type.casefold()
+            if normalized_field_type not in {"string", "dateonly"}:
                 unmapped_fields.append(field_name)
                 unmapped_types[field_name] = field_type
                 design_only.append(
@@ -802,27 +813,28 @@ def _emit_power_apps_artifact(
                     }
                 )
                 continue
-            max_length = field.get("max_length", DEFAULT_STRING_MAX_LENGTH)
-            if (
-                not isinstance(max_length, int)
-                or isinstance(max_length, bool)
-                or not 1 <= max_length <= MAX_STRING_MAX_LENGTH
-            ):
-                raise PowerPlatformPackageError(
-                    f"{logical}.{field_name}.max_length must be an integer from 1-{MAX_STRING_MAX_LENGTH}"
-                )
-            attributes.append(
-                {
-                    "logical_name": field_name,
-                    "display_name": _text(
-                        field.get("display_name", field_name),
-                        f"{logical}.{field_name}.display_name",
-                        MAX_TEXT_LENGTH,
-                    ),
-                    "required": field.get("required") is True,
-                    "max_length": max_length,
-                }
-            )
+            attribute = {
+                "logical_name": field_name,
+                "display_name": _text(
+                    field.get("display_name", field_name),
+                    f"{logical}.{field_name}.display_name",
+                    MAX_TEXT_LENGTH,
+                ),
+                "type": normalized_field_type,
+                "required": field.get("required") is True,
+            }
+            if normalized_field_type == "string":
+                max_length = field.get("max_length", DEFAULT_STRING_MAX_LENGTH)
+                if (
+                    not isinstance(max_length, int)
+                    or isinstance(max_length, bool)
+                    or not 1 <= max_length <= MAX_STRING_MAX_LENGTH
+                ):
+                    raise PowerPlatformPackageError(
+                        f"{logical}.{field_name}.max_length must be an integer from 1-{MAX_STRING_MAX_LENGTH}"
+                    )
+                attribute["max_length"] = max_length
+            attributes.append(attribute)
         if declared_primary is None:
             if len(marked_primary) == 1:
                 declared_primary = marked_primary[0]
