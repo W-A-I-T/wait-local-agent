@@ -12,6 +12,19 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
+  base-branch-guard:
+    if: ${{ github.event_name == 'pull_request' }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require pull requests to target main
+        env:
+          BASE_REF: ${{ github.event.pull_request.base.ref }}
+        run: |
+          if [ "$BASE_REF" != "main" ]; then
+            echo "Stacked pull requests are not mergeable here; retarget this pull request to main before merge." >&2
+            exit 1
+          fi
+
   backend:
     if: github.event_name != 'schedule'
     timeout-minutes: 25

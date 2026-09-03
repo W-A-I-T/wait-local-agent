@@ -15,9 +15,12 @@ wait-local-agent microsoft supervisor plan examples/consultant/supervisor-run.js
 wait-local-agent microsoft supervisor run examples/consultant/supervisor-run.json --token "$WAIT_CLI_TOKEN"
 ```
 
-The supervisor planner and runner are API/CLI only — not available in the
-dashboard. Use the commands above to produce or execute an explicitly bounded
-supervisor handoff.
+The Solutions Architect dashboard includes the same planner and runner. Open a
+selected blueprint's architecture view to inspect the dependency order and
+bounded child context, then use **Plan delegation** before **Run delegation**.
+The run control is disabled until a plan exists and requires an existing,
+tenant-scoped ticket or entity ID. The API/CLI commands above remain available
+for scripted handoffs.
 
 The caller must name the child agents explicitly. WAIT revalidates that each
 definition belongs to the requested tenant, preserves only dependencies among

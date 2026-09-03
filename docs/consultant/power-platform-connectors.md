@@ -18,9 +18,10 @@ wait-local-agent microsoft connector generate openapi.json halo > halo-connector
 wait-local-agent microsoft connector package openapi.json halo > halo-package.json
 ```
 
-Connector validation and generation are API/CLI only — not available in the
-dashboard. Use the `validate` and `generate` commands above for the
-review-only preparation flow.
+Connector validation and generation are also available in the Solutions
+Architect dashboard's **Custom connector** section. The dashboard and the
+`validate` and `generate` commands above use the same review-only preparation
+flow.
 
 The authenticated technician API exposes the same preparation boundary:
 
