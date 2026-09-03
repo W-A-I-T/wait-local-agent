@@ -16,6 +16,15 @@ WAIT Local Agent is designed to be safe by default. Potentially dangerous capabi
 | `WAIT_ALLOW_OCR` | `false` | OCR processing of scanned documents |
 | `WAIT_END_USER_SUPPORT_ENABLED` | `false` | Optional scoped end-user ticket routes |
 
+## Demo mode
+
+With `WAIT_DEMO_MODE=true`, every request is treated as an administrator. MSP
+operator endpoints, including principal listing and support-bundle download,
+are therefore reachable without credentials. Write paths are blocked, including
+principal management, provider mutations, backups, and Power Platform
+deployment. The only protections in this mode are the loopback bind and
+`TrustedHostMiddleware`; demo mode must never be exposed beyond localhost.
+
 ## SSRF containment for connector instances
 
 Operator-configured connector instance origins are accepted only when their

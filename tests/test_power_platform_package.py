@@ -972,7 +972,11 @@ def test_mixed_emitted_and_withheld_entities_report_partial_source(tmp_path: Pat
     assert package["deployable"] is True
     assert package["package_status"] == "partial_source"
     design_only = cast(list[dict[str, object]], package["design_only_components"])
-    assert any(item["path"] == "entities/external_employee" for item in design_only)
+    assert any(
+        item["path"] == "entities/external_employee"
+        and "does not use the expected publisher prefix" in str(item["reason"])
+        for item in design_only
+    )
 
 
 def test_artifactless_package_is_not_deployable(tmp_path: Path) -> None:
