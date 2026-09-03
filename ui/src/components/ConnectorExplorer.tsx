@@ -23,6 +23,7 @@ type ResourceTableProps = {
   resource: ConnectorResource;
   values: Record<string, string>;
   healthReady: boolean;
+  setupAction: { label: string; to: string };
   scalePad?: boolean;
 };
 
@@ -125,7 +126,7 @@ function initialValues(resource: ConnectorResource): Record<string, string> {
   return Object.fromEntries(resource.params.map((param) => [param.name, ""]));
 }
 
-function ResourceTable({ resource, values, healthReady, scalePad = false }: ResourceTableProps) {
+function ResourceTable({ resource, values, healthReady, setupAction, scalePad = false }: ResourceTableProps) {
   const [items, setItems] = useState<JsonRecord[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -265,7 +266,7 @@ function ResourceTable({ resource, values, healthReady, scalePad = false }: Reso
       {!loading && !error && missingRequired.length > 0 ? <p className="screen-note">Enter {missingRequired.join(" and ")} to browse these records.</p> : null}
       {loading ? <p className="screen-note" aria-busy="true">Loading {resource.label.toLowerCase()}…</p> : null}
       {error ? <div className="notice danger" role="alert">{error}</div> : null}
-      {!loading && !error && missingRequired.length === 0 && items.length === 0 ? <EmptyState title="No records returned." why="The provider returned no data for this request." action={{ label: "Review connector setup", to: "#connector-setup" }} /> : null}
+      {!loading && !error && missingRequired.length === 0 && items.length === 0 ? <EmptyState title="No records returned." why="The provider returned no data for this request." action={setupAction} /> : null}
       {!loading && !error && items.length > 0 ? (
         <div className="clients-table-wrap">
           <table className="clients-table connector-resource-table-grid">
@@ -338,6 +339,10 @@ export function ConnectorExplorer({ connectors }: ConnectorExplorerProps) {
   const resources = connectorResources[connectorId] ?? [];
   const selectedResource = resources.find((resource) => resource.id === resourceId) ?? resources[0];
   const scalePadResources = connectorResources.scalepad ?? [];
+  const selectedSetup = connectorSetup[connectorId as keyof typeof connectorSetup];
+  const setupAction = selectedSetup?.tier === "instance"
+    ? { label: "Add a client connection", to: `/integrations/connector-instances?provider=${encodeURIComponent(connectorId)}` }
+    : { label: "Open Settings", to: "/settings" };
 
   useEffect(() => {
     if (!statuses.some((status) => status.id === connectorId)) {
@@ -449,7 +454,7 @@ export function ConnectorExplorer({ connectors }: ConnectorExplorerProps) {
                   <input value={selectedValues[param.name] ?? ""} placeholder={param.placeholder} maxLength={256} required={param.required} onChange={(event) => setValues((current) => ({ ...current, [param.name]: event.target.value }))} />
                 </label>)}
               </div> : null}
-              <ResourceTable resource={selectedResource} values={selectedValues} healthReady={healthReady} />
+              <ResourceTable resource={selectedResource} values={selectedValues} healthReady={healthReady} setupAction={setupAction} />
             </>
           ) : null}
         </>
@@ -494,7 +499,7 @@ function ScalePadQbr({
         </details>
       </div> : null}
       {!postureBlocked && healthReady ? <div className="scalepad-qbr-grid">
-        {resources.filter((resource) => resource.id !== "clients").map((resource) => <ResourceTable key={resource.id} resource={resource} values={values} healthReady={healthReady} scalePad />)}
+        {resources.filter((resource) => resource.id !== "clients").map((resource) => <ResourceTable key={resource.id} resource={resource} values={values} healthReady={healthReady} setupAction={{ label: "Open Settings", to: "/settings" }} scalePad />)}
       </div> : null}
     </div>
   );

@@ -45,6 +45,21 @@ describe("ConnectorExplorer", () => {
     expect(mockedApiFetch).not.toHaveBeenCalled();
   });
 
+  it("links an empty healthy resource to the selected provider setup", async () => {
+    mockedApiFetch.mockImplementation((path) => {
+      if (path === "/connectors/servicenow/health") return Promise.resolve({ status: "ready", message: "healthy" }) as ReturnType<typeof apiFetch>;
+      return Promise.resolve({ items: [] }) as ReturnType<typeof apiFetch>;
+    });
+
+    render(<ConnectorExplorer connectors={[{ id: "servicenow", name: "ServiceNow", status: "ready", message: "configured" }]} />);
+
+    expect(await screen.findByText("No records returned.")).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Add a client connection" })).toHaveAttribute(
+      "href",
+      "/integrations/connector-instances?provider=servicenow"
+    );
+  });
+
   it("renders ScalePad QBR fixture tables", async () => {
     mockedApiFetch.mockImplementation((path) => {
       if (path === "/connectors/scalepad/health") return Promise.resolve({ status: "ready", message: "healthy" }) as ReturnType<typeof apiFetch>;
