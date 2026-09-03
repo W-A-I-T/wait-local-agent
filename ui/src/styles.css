@@ -428,6 +428,96 @@ a {
 
 .prerequisite-list li.missing strong {
   color: #8a2f1d;
+
+.settings-group {
+  display: grid;
+  gap: 14px;
+}
+
+.settings-group-heading {
+  border-bottom: 1px solid #dce5e1;
+  padding: 10px 2px 4px;
+}
+
+.settings-group-heading h2,
+.settings-group-heading p {
+  margin-top: 0;
+}
+
+.settings-group-heading h2 {
+  margin-bottom: 6px;
+}
+
+.settings-group-heading .screen-note {
+  margin-bottom: 0;
+}
+
+.settings-link-grid {
+  display: grid;
+  gap: 12px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.settings-link-card {
+  background: #f7faf8;
+  border: 1px solid #dce5e1;
+  border-radius: 8px;
+  display: grid;
+  gap: 5px;
+  padding: 14px;
+}
+
+.settings-link-card strong {
+  color: #1f6f55;
+}
+
+.settings-link-card span {
+  color: #60706a;
+  font-size: 0.9rem;
+}
+
+.settings-link-panel {
+  display: grid;
+  gap: 12px;
+}
+
+.settings-link-panel .panel-heading,
+.settings-link-panel p {
+  margin-bottom: 0;
+}
+
+.access-explainer {
+  display: grid;
+  gap: 14px;
+}
+
+.access-explainer .panel-heading,
+.access-explainer .panel-heading p {
+  margin-bottom: 0;
+}
+
+.access-concepts {
+  display: grid;
+  gap: 10px 14px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  margin: 0;
+}
+
+.access-concepts > div {
+  background: #f7faf8;
+  border: 1px solid #e4ebe8;
+  border-radius: 8px;
+  padding: 12px;
+}
+
+.access-concepts dt {
+  color: #1f6f55;
+  font-weight: 800;
+}
+
+.access-concepts dd {
+  color: #60706a;
+  margin: 5px 0 0;
 }
 
 .copyable-command {

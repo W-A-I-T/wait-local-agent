@@ -48,7 +48,7 @@ describe("Extensions/Packs install", () => {
       throw new Error(`Unexpected request: ${path}`);
     });
     render(<ExtensionsPacks />);
-    await screen.findByText("No packs are installed on this appliance.");
+    await screen.findByRole("heading", { name: "No packs installed" });
     fireEvent.change(screen.getByLabelText("Tarball path"), { target: { value: "/tmp/bad.tar.gz" } });
     fireEvent.click(screen.getByRole("button", { name: "Install pack" }));
     await waitFor(() => expect(screen.getByRole("alert")).toHaveTextContent("Pack signature invalid."));
