@@ -161,7 +161,7 @@ export function ApplianceHealth() {
                 status={health ? (health[key] ? "enabled" : "disabled") : undefined}
               />
             ))}
-            <StatusRow label="Secrets backend" value={health?.secrets_backend} />
+            <StatusRow label="Secure store" value={health?.secrets_backend} />
           </div>
         </section>
 
@@ -200,7 +200,7 @@ export function ApplianceHealth() {
 
         <section className="panel">
           <div className="panel-heading">
-            <h2>Latest hardening run</h2>
+            <h2>Latest security checks</h2>
             <span>Read-only evidence</span>
           </div>
           {latestHardeningRun ? (
@@ -210,7 +210,7 @@ export function ApplianceHealth() {
               <span>{latestHardeningRun.result_count} of {latestHardeningRun.expected_check_count} checks recorded</span>
               <span>Completed: {latestHardeningRun.completed_at || "in progress"}</span>
             </div>
-          ) : <p className="screen-note">No hardening runs have been recorded yet.</p>}
+          ) : <p className="screen-note">No security check runs have been recorded yet.</p>}
         </section>
 
         <section className="panel" aria-labelledby="backup-run-heading">

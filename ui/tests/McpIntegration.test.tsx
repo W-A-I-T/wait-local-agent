@@ -82,6 +82,19 @@ describe("MCP integration screen", () => {
     expect(screen.getByText("2025-11-25")).toBeInTheDocument();
   });
 
+  it("links an empty catalog to the surface that publishes tools", async () => {
+    vi.mocked(fetch).mockImplementation((input: RequestInfo | URL) => {
+      if (String(input) === "/mcp") return Promise.resolve(json(null, 503));
+      if (String(input) === "/tools") return Promise.resolve(json([]));
+      throw new Error(`Unexpected request: ${String(input)}`);
+    });
+
+    render(<McpIntegration />);
+
+    expect(await screen.findByRole("heading", { name: "No tools published" })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Open Extensions" })).toHaveAttribute("href", "/system/extensions");
+  });
+
   it("does not fetch MCP details for a non-admin", () => {
     dashboard.role = "viewer";
 

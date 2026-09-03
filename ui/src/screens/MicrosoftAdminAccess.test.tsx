@@ -72,7 +72,7 @@ describe("MicrosoftAdminAccess", () => {
     render(<MicrosoftAdminAccess />);
 
     await screen.findByRole("heading", { name: "Grant access" });
-    await waitFor(() => expect(screen.getByLabelText("Principal")).toHaveValue("tech-alpha"));
+    await waitFor(() => expect(screen.getByLabelText("Operator account")).toHaveValue("tech-alpha"));
     await waitFor(() => expect(screen.getByLabelText("Client")).toHaveTextContent("Alpha"));
     expect(screen.getByText("No active Microsoft Admin grants.")).toBeInTheDocument();
 
@@ -98,11 +98,11 @@ describe("MicrosoftAdminAccess", () => {
     render(<MicrosoftAdminAccess />);
 
     await screen.findByText("Client: alpha");
-    await waitFor(() => expect(screen.getByLabelText("Principal")).toHaveValue("tech-alpha"));
+    await waitFor(() => expect(screen.getByLabelText("Operator account")).toHaveValue("tech-alpha"));
     const globalCheckbox = screen.getByLabelText(/Global Microsoft Admin access/);
     expect(globalCheckbox).toBeDisabled();
 
-    fireEvent.change(screen.getByLabelText("Principal"), { target: { value: "msp-admin" } });
+    fireEvent.change(screen.getByLabelText("Operator account"), { target: { value: "msp-admin" } });
     await waitFor(() => expect(screen.getByLabelText(/Global Microsoft Admin access/)).toBeEnabled(), { timeout: 5000 });
     fireEvent.click(screen.getByLabelText(/Global Microsoft Admin access/));
     expect(screen.queryByLabelText("Client")).not.toBeInTheDocument();
@@ -133,10 +133,19 @@ describe("MicrosoftAdminAccess", () => {
     installApi([], []);
     render(<MicrosoftAdminAccess />);
 
-    expect(await screen.findByRole("heading", { name: "No principals are available" })).toBeInTheDocument();
-    expect(screen.getByText(/configured technician tokens or database principals/)).toBeInTheDocument();
-    expect(screen.getByText(/A fresh install has none/)).toBeInTheDocument();
-    expect(screen.queryByLabelText("Principal")).not.toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "No operator accounts available" })).toBeInTheDocument();
+    expect(screen.getByText(/Operator accounts are managed in People & Access/)).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Open People & Access" })).toHaveAttribute("href", "/settings/access");
+    expect(screen.queryByLabelText("Operator account")).not.toBeInTheDocument();
     expect(screen.queryByLabelText("Client")).not.toBeInTheDocument();
+  });
+
+  it("links an operator account with no matching client role back to People & Access", async () => {
+    installApi([], [{ ...principals[0], client_roles: [] }]);
+    render(<MicrosoftAdminAccess />);
+
+    expect(await screen.findByRole("heading", { name: "No client role is available" })).toBeInTheDocument();
+    expect(screen.getByText(/no client role that matches a configured client/)).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Manage People & Access" })).toHaveAttribute("href", "/settings/access");
   });
 });

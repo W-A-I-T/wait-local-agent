@@ -47,6 +47,6 @@
     {"file": "src/screens/Tickets.tsx", "match": "?? \"add_note\"", "count": 2, "reason": "Local action form default."},
     {"file": "src/screens/Workflows.tsx", "match": "?? \"workflow-inputs\"", "count": 1, "reason": "Stable local form DOM key."},
     {"file": "src/screens/Workflows.tsx", "match": "?? \"input\"", "count": 1, "reason": "Stable local form DOM key."},
-    {"file": "src/screens/PrincipalsAdmin.tsx", "match": "?? \"Principal created.\"", "count": 1, "reason": "UI-owned success-message fallback when the principal creation response omits a notice."}
+    {"file": "src/screens/PrincipalsAdmin.tsx", "match": "?? \"Operator account created.\"", "count": 1, "reason": "UI-owned success-message fallback when the operator account response omits a notice."}
   ]
 }
