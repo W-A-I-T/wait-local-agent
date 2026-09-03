@@ -11,7 +11,7 @@ export function App() {
     return <EndUserSupport />;
   }
   return (
-    <DashboardProvider activePath={location.pathname}>
+    <DashboardProvider>
       <DashboardRouteRefresh />
     </DashboardProvider>
   );
@@ -29,20 +29,6 @@ function DashboardRouteRefresh() {
     previousLocationKey.current = location.key;
     void refreshConfiguration();
   }, [location.key, refreshConfiguration]);
-
-  useEffect(() => {
-    const refreshWhenVisible = () => {
-      if (document.visibilityState === "visible") {
-        void refreshConfiguration();
-      }
-    };
-    window.addEventListener("focus", refreshWhenVisible);
-    document.addEventListener("visibilitychange", refreshWhenVisible);
-    return () => {
-      window.removeEventListener("focus", refreshWhenVisible);
-      document.removeEventListener("visibilitychange", refreshWhenVisible);
-    };
-  }, [refreshConfiguration]);
 
   if (!loading && (authState === null || authState === "invalid-token")) {
     return <Login />;

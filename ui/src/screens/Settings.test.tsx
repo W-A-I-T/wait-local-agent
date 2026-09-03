@@ -7,7 +7,8 @@ const dashboardState = vi.hoisted(() => ({
   authState: "demo" as "demo" | "authenticated",
   isAdmin: true,
   loading: false,
-  role: "admin" as "admin" | "viewer"
+  role: "admin" as "admin" | "viewer",
+  recheckWriteHealth: vi.fn(async () => {})
 }));
 
 vi.mock("../app/DashboardContext", () => ({
@@ -19,6 +20,7 @@ afterEach(() => {
   dashboardState.isAdmin = true;
   dashboardState.loading = false;
   dashboardState.role = "admin";
+  dashboardState.recheckWriteHealth.mockReset();
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
 });
@@ -92,6 +94,17 @@ describe("Settings demo mode explanation", () => {
 });
 
 describe("Settings loading", () => {
+  it("provides an explicit write health re-check action", async () => {
+    installSettingsResponses(false);
+    render(<MemoryRouter><Settings /></MemoryRouter>);
+
+    await screen.findByText("Settings loaded.");
+    fireEvent.click(screen.getByRole("button", { name: "Re-check" }));
+
+    await waitFor(() => expect(dashboardState.recheckWriteHealth).toHaveBeenCalledOnce());
+    expect(await screen.findByText("Write health re-check complete.")).toBeInTheDocument();
+  });
+
   it("checks for updates with the backend POST contract and renders the returned status", async () => {
     const fetchMock = installSettingsResponses(false);
     render(<MemoryRouter><Settings /></MemoryRouter>);

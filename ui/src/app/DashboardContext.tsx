@@ -16,9 +16,7 @@ import type {
   EventDelivery,
   EventHistory,
   HaloReadResult,
-  HaloTicket,
   AuthSessionResponse,
-  HaloTicketsResponse,
   ReadinessStep,
   WorkflowRun
 } from "../api/types";
@@ -39,6 +37,38 @@ const defaultWriteHealth: HaloReadResult = {
   message: "Loading PSA write health.",
   count: 0
 };
+const WRITE_HEALTH_CACHE_TTL_MS = 60_000;
+const writeHealthCache = new Map<string, { value: ConnectorHealth; expiresAt: number }>();
+const writeHealthInFlight = new Map<string, Promise<ConnectorHealth>>();
+
+function fetchWriteHealth(connectorId: string, force = false): Promise<ConnectorHealth> {
+  if (force) {
+    writeHealthCache.delete(connectorId);
+  }
+  const cached = writeHealthCache.get(connectorId);
+  if (cached && cached.expiresAt > Date.now()) {
+    return Promise.resolve(cached.value);
+  }
+  const inFlight = writeHealthInFlight.get(connectorId);
+  if (inFlight) {
+    return inFlight;
+  }
+  const request = apiFetch<ConnectorHealth>(`/connectors/${encodeURIComponent(connectorId)}/write-health`)
+    .catch(() => ({
+      status: "failed",
+      message: "Unable to verify this PSA write path.",
+      count: 0
+    }))
+    .then((value) => {
+      writeHealthCache.set(connectorId, { value, expiresAt: Date.now() + WRITE_HEALTH_CACHE_TTL_MS });
+      return value;
+    })
+    .finally(() => {
+      writeHealthInFlight.delete(connectorId);
+    });
+  writeHealthInFlight.set(connectorId, request);
+  return request;
+}
 
 export type WriteHealthPosture = {
   label: string;
@@ -110,7 +140,6 @@ type DashboardContextValue = {
   writeHealthByConnector: Record<string, ConnectorHealth>;
   writeHealthResolved: boolean;
   liveWritesReady: boolean;
-  haloTickets: HaloTicket[];
   approvalRequests: ApprovalRequest[];
   pendingApprovals: ApprovalRequest[];
   eventDeliveries: EventDelivery[];
@@ -136,6 +165,7 @@ type DashboardContextValue = {
   setSelectedClientId: (clientId: string) => void;
   refresh: () => Promise<AuthRefreshResult | null>;
   refreshConfiguration: () => Promise<void>;
+  recheckWriteHealth: () => Promise<void>;
   saveApiToken: () => Promise<void>;
   clearApiToken: () => Promise<void>;
   logout: () => Promise<void>;
@@ -172,7 +202,7 @@ export function executeEndpointFor(actionType: string): string | null {
 
 const DashboardContext = createContext<DashboardContextValue | undefined>(undefined);
 
-export function DashboardProvider({ children, activePath = "" }: { children: ReactNode; activePath?: string }) {
+export function DashboardProvider({ children }: { children: ReactNode }) {
   const [apiToken, setApiToken] = useState(() => loadStoredApiToken());
   const [role, setRole] = useState<AuthRoleResponse["role"]>("viewer");
   const [allowWriteActions, setAllowWriteActions] = useState(false);
@@ -195,7 +225,6 @@ export function DashboardProvider({ children, activePath = "" }: { children: Rea
   const [writeHealthByConnector, setWriteHealthByConnector] = useState<Record<string, ConnectorHealth>>({});
   const [writeHealthResolved, setWriteHealthResolved] = useState(false);
   const [clientScopeIds, setClientScopeIds] = useState<string[] | null>(null);
-  const [haloTickets, setHaloTickets] = useState<HaloTicket[]>([]);
   const [approvalRequests, setApprovalRequests] = useState<ApprovalRequest[]>([]);
   const [eventDeliveries, setEventDeliveries] = useState<EventDelivery[]>([]);
   const [eventHistory, setEventHistory] = useState<EventHistory[]>([]);
@@ -206,25 +235,31 @@ export function DashboardProvider({ children, activePath = "" }: { children: Rea
   const [loading, setLoading] = useState(true);
   const [refreshNonce, setRefreshNonce] = useState(0);
   const [busyId, setBusyId] = useState<number | "draft" | null>(null);
-  const selectedTicketIdRef = useRef(selectedTicketId);
   const selectedClientIdRef = useRef(selectedClientId);
   const roleRequestIdRef = useRef(0);
-  const activePathRef = useRef(activePath);
   const configuration = useConfiguredState({ role });
-
-  useEffect(() => {
-    selectedTicketIdRef.current = selectedTicketId;
-  }, [selectedTicketId]);
-
-  useEffect(() => {
-    activePathRef.current = activePath;
-  }, [activePath]);
 
   const setSelectedClientId = useCallback((nextClientId: string) => {
     const normalized = nextClientId.trim();
     if (selectedClientIdRef.current === normalized) return;
     setSelectedClientIdState(normalized);
     persistSelectedClientId(normalized);
+  }, []);
+
+  const resolveWriteHealth = useCallback(async (connectorRows: ConnectorStatus[], force = false) => {
+    const configuredPsaConnectors = connectorRows.filter((connector) =>
+      PSA_CONNECTOR_IDS.includes(connector.id as typeof PSA_CONNECTOR_IDS[number])
+      && connector.status !== "not_configured"
+    );
+    const results = await Promise.all(
+      configuredPsaConnectors.map((connector) => fetchWriteHealth(connector.id, force))
+    );
+    return {
+      configuredPsaConnectors,
+      byConnector: Object.fromEntries(
+        configuredPsaConnectors.map((connector, index) => [connector.id, results[index]])
+      ) as Record<string, ConnectorHealth>
+    };
   }, []);
 
   const refresh = useCallback(async (): Promise<AuthRefreshResult | null> => {
@@ -267,12 +302,6 @@ export function DashboardProvider({ children, activePath = "" }: { children: Rea
       }
       const results = await Promise.allSettled([
         apiFetch<ConnectorStatus[]>("/connectors"),
-        activePathRef.current === "/tickets"
-          ? apiFetch<HaloTicketsResponse>("/connectors/halopsa/tickets")
-          : Promise.resolve<HaloTicketsResponse>({
-            result: { status: "blocked", message: "Tickets are loaded on the Tickets screen.", count: 0 },
-            items: []
-          }),
         apiFetch<ApprovalRequest[]>("/approval-requests"),
         apiFetch<EventDelivery[]>("/automation/event-deliveries"),
         apiFetch<EventHistory[]>("/event-history"),
@@ -282,42 +311,20 @@ export function DashboardProvider({ children, activePath = "" }: { children: Rea
         apiFetch<EntitlementResponse>("/entitlement")
       ]);
       const errors = results
-        .slice(0, 7)
+        .slice(0, 6)
         .filter((result): result is PromiseRejectedResult => result.status === "rejected")
         .map((result) => result.reason instanceof Error ? result.reason.message : "Dashboard data unavailable.");
       const connectorRows = settledValue(results[0] as PromiseSettledResult<ConnectorStatus[]>, []);
-      const configuredPsaConnectors = connectorRows.filter((connector) =>
-        PSA_CONNECTOR_IDS.includes(connector.id as typeof PSA_CONNECTOR_IDS[number])
-        && connector.status !== "not_configured"
-      );
-      const writeHealthResults = await Promise.allSettled(
-        configuredPsaConnectors.map((connector) =>
-          apiFetch<ConnectorHealth>(`/connectors/${encodeURIComponent(connector.id)}/write-health`)
-        )
-      );
-      const nextWriteHealthByConnector = Object.fromEntries(
-        configuredPsaConnectors.map((connector, index) => {
-          const result = writeHealthResults[index];
-          return [connector.id, result.status === "fulfilled" ? result.value : {
-            status: "failed",
-            message: "Unable to verify this PSA write path.",
-            count: 0
-          }];
-        })
-      );
+      const { configuredPsaConnectors, byConnector: nextWriteHealthByConnector } = await resolveWriteHealth(connectorRows);
       const firstWriteHealth = nextWriteHealthByConnector[configuredPsaConnectors[0]?.id ?? ""];
       const writeState: HaloReadResult = {
         status: firstWriteHealth?.status ?? "not_configured",
         message: firstWriteHealth?.message ?? "No PSA connector is configured.",
         count: firstWriteHealth?.count ?? 0
       };
-      const ticketResponse = settledValue(results[1] as PromiseSettledResult<HaloTicketsResponse>, {
-        result: { status: "blocked", message: "Tickets unavailable.", count: 0 },
-        items: []
-      });
-      const clientRows = settledValue(results[6] as PromiseSettledResult<ClientDirectoryEntry[]>, []);
-      const capabilityResult = results[7] as PromiseSettledResult<EffectiveCapabilityResponse>;
-      const entitlementResult = results[8] as PromiseSettledResult<EntitlementResponse>;
+      const clientRows = settledValue(results[5] as PromiseSettledResult<ClientDirectoryEntry[]>, []);
+      const capabilityResult = results[6] as PromiseSettledResult<EffectiveCapabilityResponse>;
+      const entitlementResult = results[7] as PromiseSettledResult<EntitlementResponse>;
 
       if (roleRequestId !== roleRequestIdRef.current) {
         return null;
@@ -367,17 +374,13 @@ export function DashboardProvider({ children, activePath = "" }: { children: Rea
       setWriteHealthByConnector(nextWriteHealthByConnector);
       setWriteHealth(writeState);
       setWriteHealthResolved(true);
-      setHaloTickets(asArray(ticketResponse.items));
-      setApprovalRequests(asArray(settledValue(results[2] as PromiseSettledResult<ApprovalRequest[]>, [])));
-      setEventDeliveries(asArray(settledValue(results[3] as PromiseSettledResult<EventDelivery[]>, [])));
-      setEventHistory(asArray(settledValue(results[4] as PromiseSettledResult<EventHistory[]>, [])));
-      setWorkflowRuns(asArray(settledValue(results[5] as PromiseSettledResult<WorkflowRun[]>, [])));
+      setApprovalRequests(asArray(settledValue(results[1] as PromiseSettledResult<ApprovalRequest[]>, [])));
+      setEventDeliveries(asArray(settledValue(results[2] as PromiseSettledResult<EventDelivery[]>, [])));
+      setEventHistory(asArray(settledValue(results[3] as PromiseSettledResult<EventHistory[]>, [])));
+      setWorkflowRuns(asArray(settledValue(results[4] as PromiseSettledResult<WorkflowRun[]>, [])));
       setClients(asArray<ClientDirectoryEntry>(clientRows).filter((client) => client.client_id !== "__quarantine__"));
       setRefreshErrors(errors);
       await configuration.refresh();
-      if (!selectedTicketIdRef.current && ticketResponse.items[0]) {
-        setSelectedTicketId(ticketResponse.items[0].id);
-      }
       return { authState: nextAuthState, role: auth.role };
     } catch (error) {
       if (roleRequestId !== roleRequestIdRef.current) {
@@ -406,7 +409,32 @@ export function DashboardProvider({ children, activePath = "" }: { children: Rea
         setLoading(false);
       }
     }
-  }, [configuration.refresh]);
+  }, [configuration.refresh, resolveWriteHealth]);
+
+  const refreshConfiguration = useCallback(async () => {
+    await configuration.refresh();
+    const { configuredPsaConnectors, byConnector } = await resolveWriteHealth(connectors);
+    const firstWriteHealth = byConnector[configuredPsaConnectors[0]?.id ?? ""];
+    setWriteHealthByConnector(byConnector);
+    setWriteHealth({
+      status: firstWriteHealth?.status ?? "not_configured",
+      message: firstWriteHealth?.message ?? "No PSA connector is configured.",
+      count: firstWriteHealth?.count ?? 0
+    });
+    setWriteHealthResolved(true);
+  }, [configuration.refresh, connectors, resolveWriteHealth]);
+
+  const recheckWriteHealth = useCallback(async () => {
+    const { configuredPsaConnectors, byConnector } = await resolveWriteHealth(connectors, true);
+    const firstWriteHealth = byConnector[configuredPsaConnectors[0]?.id ?? ""];
+    setWriteHealthByConnector(byConnector);
+    setWriteHealth({
+      status: firstWriteHealth?.status ?? "not_configured",
+      message: firstWriteHealth?.message ?? "No PSA connector is configured.",
+      count: firstWriteHealth?.count ?? 0
+    });
+    setWriteHealthResolved(true);
+  }, [connectors, resolveWriteHealth]);
 
   useEffect(() => {
     if (!roleResolved || selectedClientIdRef.current === selectedClientId) return;
@@ -589,7 +617,6 @@ export function DashboardProvider({ children, activePath = "" }: { children: Rea
           && connector.status !== "not_configured"
         )
         .every((connector) => writeHealthByConnector[connector.id]?.status === "ready"),
-      haloTickets,
       approvalRequests,
       pendingApprovals: approvalRequests.filter((request) => request.status === "pending"),
       eventDeliveries,
@@ -614,7 +641,8 @@ export function DashboardProvider({ children, activePath = "" }: { children: Rea
       setApiToken,
       setSelectedClientId,
       refresh,
-      refreshConfiguration: configuration.refresh,
+      refreshConfiguration,
+      recheckWriteHealth,
       saveApiToken,
       clearApiToken,
       logout,
@@ -658,11 +686,12 @@ export function DashboardProvider({ children, activePath = "" }: { children: Rea
     executeApproval,
     eventDeliveries,
     endUserSupportEnabled,
-    haloTickets,
     loading,
     refreshNonce,
     roleResolved,
     refresh,
+    refreshConfiguration,
+    recheckWriteHealth,
     refreshErrors,
     retryEventDelivery,
     role,

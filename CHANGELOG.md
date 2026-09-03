@@ -38,6 +38,11 @@ All notable changes to WAIT Local Agent will be documented in this file.
 - Dashboard write controls now honor the server write-action flag and exclude
   end-user roles, and the deployment stage/docs now describe the pack-only
   build plan.
+- Dual-served UI routes now vary JSON and HTML responses correctly, authenticated
+  JSON responses are never stored by intermediaries, and dashboard write-health
+  checks are cached per connector for one minute with an explicit Settings
+  re-check; the checks use the connector rate limit and no longer bootstrap Halo
+  tickets.
 - Backup failures now emit sanitized structured logs with a correlation ID,
   and Appliance Health loads scheduled backup history when the screen opens.
 - Re-landed the reviewed Solutions Architect live supervisor delegation panel
