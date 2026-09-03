@@ -9,11 +9,14 @@ vi.mock("../src/app/DashboardContext", () => ({
     isMspAdmin: false,
     connectors: [
       { id: "syncro", name: "Syncro", status: "ready", message: "configured", tier: "instance" },
+      { id: "connectwise", name: "ConnectWise", status: "configured", message: "configured", tier: "instance" },
       { id: "hudu", name: "Hudu", status: "not_configured", message: "not configured", tier: "appliance-wide" }
     ],
     haloConnector: { status: "blocked", message: "not configured" },
     huduConnector: { status: "blocked", message: "not configured" },
     writeHealth: { status: "blocked", message: "writes disabled" },
+    writeHealthByConnector: { connectwise: { status: "ready", message: "write health ready" } },
+    writeHealthResolved: true,
     canWrite: true,
     loading: false
   })
@@ -66,6 +69,7 @@ describe("Connectors screen", () => {
 
   it("loads bounded Syncro comment history through the dashboard", async () => {
     render(<Connectors />);
+    fireEvent.click(screen.getByRole("button", { name: "Browse data" }));
 
     fireEvent.change(screen.getByLabelText("Ticket ID"), { target: { value: "42" } });
     fireEvent.change(screen.getByLabelText("Page"), { target: { value: "2" } });
@@ -83,7 +87,7 @@ describe("Connectors screen", () => {
   it("explains the exact environment setup and safety gates for a provider", () => {
     render(<Connectors />);
 
-    fireEvent.click(screen.getAllByText("How to configure")[0]);
+    fireEvent.click(screen.getAllByText("Technical details")[0]);
 
     expect(screen.getByText("WAIT_SYNCRO_BASE_URL")).toBeInTheDocument();
     expect(screen.getByText("WAIT_SYNCRO_API_TOKEN")).toBeInTheDocument();
@@ -94,11 +98,24 @@ describe("Connectors screen", () => {
   it("labels appliance-wide connectors from the connector catalog tier", () => {
     render(<Connectors />);
 
-    expect(screen.getByText("Appliance-wide")).toBeInTheDocument();
+    expect(screen.getByText("Appliance-wide settings")).toBeInTheDocument();
+  });
+
+  it("derives readiness states and setup actions from connector and write health data", () => {
+    render(<Connectors />);
+
+    expect(screen.getByText("Not set up")).toBeInTheDocument();
+    expect(screen.getByText("Read access ready")).toBeInTheDocument();
+    expect(screen.getByText("Live writes ready")).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Add appliance-wide settings" })).toHaveAttribute("href", "/settings");
+    const clientConnectionLinks = screen.getAllByRole("link", { name: "Add a client connection" });
+    expect(clientConnectionLinks[0]).toHaveAttribute("href", "/integrations/connector-instances?provider=syncro");
+    expect(clientConnectionLinks[1]).toHaveAttribute("href", "/integrations/connector-instances?provider=connectwise");
   });
 
   it("rejects unsafe Syncro ticket input before making a request", async () => {
     render(<Connectors />);
+    fireEvent.click(screen.getByRole("button", { name: "Browse data" }));
 
     fireEvent.change(screen.getByLabelText("Ticket ID"), { target: { value: "abc" } });
     fireEvent.click(screen.getByRole("button", { name: "Load comments" }));
@@ -109,6 +126,7 @@ describe("Connectors screen", () => {
 
   it("prepares a ScreenConnect note through the approval API", async () => {
     render(<Connectors />);
+    fireEvent.click(screen.getByRole("button", { name: "Browse data" }));
 
     fireEvent.change(screen.getByLabelText("ScreenConnect session UUID"), { target: { value: "11111111-2222-3333-4444-555555555555" } });
     fireEvent.change(screen.getByLabelText("ScreenConnect session note"), { target: { value: "Reviewed with customer." } });
@@ -125,6 +143,7 @@ describe("Connectors screen", () => {
 
   it("rejects an unmapped ScreenConnect session before making a request", async () => {
     render(<Connectors />);
+    fireEvent.click(screen.getByRole("button", { name: "Browse data" }));
 
     fireEvent.change(screen.getByLabelText("ScreenConnect session UUID"), { target: { value: "not-a-session" } });
     fireEvent.change(screen.getByLabelText("ScreenConnect session note"), { target: { value: "Do not send" } });
@@ -136,6 +155,7 @@ describe("Connectors screen", () => {
 
   it("prepares a Notion page comment through the approval API", async () => {
     render(<Connectors />);
+    fireEvent.click(screen.getByRole("button", { name: "Browse data" }));
 
     fireEvent.change(screen.getByLabelText("Notion page UUID"), { target: { value: "11111111-2222-3333-4444-555555555555" } });
     fireEvent.change(screen.getByLabelText("Notion Markdown comment"), { target: { value: "Reviewed **locally**." } });
@@ -152,6 +172,7 @@ describe("Connectors screen", () => {
 
   it("rejects an invalid Notion page UUID before making a request", async () => {
     render(<Connectors />);
+    fireEvent.click(screen.getByRole("button", { name: "Browse data" }));
 
     fireEvent.change(screen.getByLabelText("Notion page UUID"), { target: { value: "not-a-page" } });
     fireEvent.change(screen.getByLabelText("Notion Markdown comment"), { target: { value: "Do not send" } });

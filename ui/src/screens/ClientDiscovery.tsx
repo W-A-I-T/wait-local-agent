@@ -3,6 +3,7 @@ import { Link } from "react-router-dom";
 import { apiFetch } from "../api/client";
 import type { ClientCandidate, DeploymentMode, DiscoveryResponse } from "../api/types";
 import { useDashboard } from "../app/DashboardContext";
+import { EmptyState } from "../components/EmptyState";
 import { LoadingState } from "../components/LoadingState";
 import { RoleGate } from "../components/RoleGate";
 import { StatusChip } from "../components/StatusChip";
@@ -15,7 +16,7 @@ function stateLabel(value: string): string {
 }
 
 export function ClientDiscovery() {
-  const { role, roleResolved } = useDashboard();
+  const { role, roleResolved, connectors = [] } = useDashboard();
   const [mode, setMode] = useState<DeploymentMode | null>(null);
   const [modeLoading, setModeLoading] = useState(true);
   const [modeBusy, setModeBusy] = useState(false);
@@ -129,19 +130,55 @@ export function ClientDiscovery() {
 
   const summary = data?.summary;
   const visibleItems = useMemo(() => data?.items ?? [], [data]);
+  const hasActiveTicketingConnector = connectors.some((connector) =>
+    ["halopsa", "connectwise", "servicenow", "autotask", "syncro"].includes(connector.id)
+      && ["configured", "ready"].includes(connector.status)
+  );
+  const prerequisitesReady = mode === "msp" && roleResolved && role === "admin" && hasActiveTicketingConnector;
+  const prerequisiteBanner = (
+    <section className="panel discovery-prerequisites" aria-labelledby="discovery-prerequisites-heading">
+      <div className="panel-heading">
+        <div>
+          <h2 id="discovery-prerequisites-heading">Before you run discovery</h2>
+          <span>All three checks are required</span>
+        </div>
+      </div>
+      <ul className="prerequisite-list">
+        <li className={mode === "msp" ? "ready" : "missing"}>
+          <strong>{mode === "msp" ? "Ready" : "Needs attention"}</strong>
+          <span>MSP mode</span>
+          {mode !== "msp" ? <Link className="inline-link" to="/settings">Set MSP mode in Settings</Link> : null}
+        </li>
+        <li className={roleResolved && role === "admin" ? "ready" : "missing"}>
+          <strong>{roleResolved && role === "admin" ? "Ready" : "Needs attention"}</strong>
+          <span>Administrator access</span>
+          {!(roleResolved && role === "admin") ? <Link className="inline-link" to="/settings/access">Open People & Access</Link> : null}
+        </li>
+        <li className={hasActiveTicketingConnector ? "ready" : "missing"}>
+          <strong>{hasActiveTicketingConnector ? "Ready" : "Needs attention"}</strong>
+          <span>Active ticketing connector</span>
+          {!hasActiveTicketingConnector ? <Link className="inline-link" to="/integrations/connector-instances">Connect a ticketing system</Link> : null}
+        </li>
+      </ul>
+    </section>
+  );
 
   return (
     <RoleGate role={role} resolved={roleResolved} allowed={["admin"]} fallback={<section className="panel" role="alert"><h2>Administrator access required</h2><p className="screen-note">Only administrators can reconcile provider organizations into the client directory.</p></section>}>
       {modeLoading ? <LoadingState label="Loading workspace mode…" /> : mode === "smb" ? (
-        <section className="panel"><p className="eyebrow">Directory</p><h2>Client discovery is disabled</h2><p className="screen-note">SMB mode keeps client setup manual. Change the workspace mode below if this appliance serves multiple customers.</p><label>Workspace mode<select value={mode} disabled={modeBusy} onChange={(event) => void updateMode(event.target.value as DeploymentMode)}><option value="smb">SMB</option><option value="msp">MSP</option></select></label></section>
+        <div className="screen-stack">
+          {prerequisiteBanner}
+          <section className="panel"><p className="eyebrow">Directory</p><h2>Client discovery is disabled</h2><p className="screen-note">SMB mode keeps client setup manual. Change the workspace mode below if this appliance serves multiple customers.</p><label>Workspace mode<select value={mode} disabled={modeBusy} onChange={(event) => void updateMode(event.target.value as DeploymentMode)}><option value="smb">SMB</option><option value="msp">MSP</option></select></label></section>
+        </div>
       ) : (
         <div className="screen-stack">
-          <section className="panel clients-hero"><div><p className="eyebrow">Directory</p><h2>Client discovery</h2><p className="screen-note">Bring provider organizations into a review queue. WAIT never creates or links a client without an administrator action.</p></div><div className="analytics-filter-actions"><Link className="secondary-button" to="/clients">Back to Clients</Link><button type="button" onClick={() => void runDiscovery()} disabled={busyId !== null}>{busyId === "run" ? "Discovering…" : "Run discovery"}</button></div></section>
-          <section className="panel"><div className="panel-heading"><div><h2>Workspace mode</h2><span>First-run setting</span></div><span>{mode ? `${mode.toUpperCase()} mode` : "Not selected"}</span></div><label>Deployment mode<select value={mode ?? ""} disabled={modeBusy} onChange={(event) => event.target.value && void updateMode(event.target.value as DeploymentMode)}><option value="">Choose a mode</option><option value="msp">MSP — reconcile provider organizations</option><option value="smb">SMB — manual client setup</option></select></label></section>
+          {prerequisiteBanner}
+          <section className="panel clients-hero"><div><p className="eyebrow">Directory</p><h2>Client discovery</h2><p className="screen-note">Bring provider organizations into a review queue. WAIT never creates or links a client without an administrator action.</p></div><div className="analytics-filter-actions"><Link className="secondary-button" to="/clients">Back to Clients</Link><button id="discovery-run" type="button" onClick={() => void runDiscovery()} disabled={busyId !== null || !prerequisitesReady}>{busyId === "run" ? "Discovering…" : "Run discovery"}</button></div></section>
+          <section className="panel"><div className="panel-heading"><div><h2>Workspace mode</h2><span>First-run setting</span></div><span aria-label="Workspace mode summary">{mode ? `${mode.toUpperCase()} mode` : "Not selected"}</span></div><label>Deployment mode<select value={mode ?? ""} disabled={modeBusy} onChange={(event) => event.target.value && void updateMode(event.target.value as DeploymentMode)}><option value="">Choose a mode</option><option value="msp">MSP — reconcile provider organizations</option><option value="smb">SMB — manual client setup</option></select></label></section>
           {summary ? <section className="analytics-summary" aria-label="Discovery summary"><span><strong>{summary.discovered}</strong> discovered</span><span><strong>{summary.reconciled}</strong> reconciled</span><span><strong>{summary.need_confirmation}</strong> need confirmation</span><span><strong>{summary.unmatched}</strong> unmatched</span><span><strong>{summary.conflicts}</strong> conflicts</span></section> : null}
           {notice ? <div className="notice success" role="status">{notice}</div> : null}
           {error ? <div className="notice danger" role="alert">{error}</div> : null}
-          <section className="panel"><div className="panel-heading"><div><h2>Review queue</h2><span>Exact matches are suggestions; ambiguous and conflicting rows stay blocked.</span></div><div className="analytics-filter-actions"><label>Filter<select value={filter} onChange={(event) => setFilter(event.target.value as FilterState)}>{states.map((state) => <option key={state} value={state}>{state === "all" ? "All candidates" : stateLabel(state)}</option>)}</select></label><button className="secondary-button" type="button" onClick={() => void acceptProposed()} disabled={busyId !== null || !(data?.items.some((candidate) => candidate.match_state === "proposed"))}>Accept proposed</button></div></div>{loading ? <LoadingState label="Loading candidates…" /> : visibleItems.length === 0 ? <p className="screen-note">No candidates match this filter. Run discovery after connecting an active PSA provider.</p> : <div className="clients-table-wrap"><table className="clients-table"><thead><tr><th scope="col">Provider organization</th><th scope="col">Provider</th><th scope="col">Review status</th><th scope="col">Reason</th><th scope="col">Action</th></tr></thead><tbody>{visibleItems.map((candidate) => <tr key={candidate.candidate_id}><td><strong>{candidate.display_name}</strong><br /><code>{candidate.external_id}</code></td><td>{candidate.provenance}</td><td><StatusChip status={stateLabel(candidate.match_state)} /></td><td>{candidate.match_reason || "No exact match"}{candidate.matched_client_id ? ` · ${candidate.matched_client_id}` : ""}</td><td><div className="analytics-filter-actions">{candidate.match_state === "proposed" ? <button type="button" onClick={() => void action(candidate, "accept")} disabled={busyId !== null}>Accept</button> : null}<button className="secondary-button" type="button" onClick={() => void action(candidate, "create-client")} disabled={busyId !== null || candidate.match_state === "verified" || candidate.match_state === "dismissed"}>Create client</button>{candidate.match_state !== "verified" && candidate.match_state !== "dismissed" ? <button className="secondary-button" type="button" onClick={() => void action(candidate, "dismiss")} disabled={busyId !== null}>Dismiss</button> : null}</div></td></tr>)}</tbody></table></div>}</section>
+          <section className="panel"><div className="panel-heading"><div><h2>Review queue</h2><span>Exact matches are suggestions; ambiguous and conflicting rows stay blocked.</span></div><div className="analytics-filter-actions"><label>Filter<select value={filter} onChange={(event) => setFilter(event.target.value as FilterState)}>{states.map((state) => <option key={state} value={state}>{state === "all" ? "All candidates" : stateLabel(state)}</option>)}</select></label><button className="secondary-button" type="button" onClick={() => void acceptProposed()} disabled={busyId !== null || !(data?.items.some((candidate) => candidate.match_state === "proposed"))}>Accept proposed</button></div></div>{loading ? <LoadingState label="Loading candidates…" /> : visibleItems.length === 0 ? <EmptyState title="No discovery candidates yet." why={hasActiveTicketingConnector ? "No provider organizations match this filter." : "No ticketing connector is active, so there is no provider data to review."} action={hasActiveTicketingConnector ? { label: "Run discovery", to: "#discovery-run" } : { label: "Connect a ticketing system", to: "/integrations/connector-instances" }} /> : <div className="clients-table-wrap"><table className="clients-table"><thead><tr><th scope="col">Provider organization</th><th scope="col">Provider</th><th scope="col">Review status</th><th scope="col">Reason</th><th scope="col">Action</th></tr></thead><tbody>{visibleItems.map((candidate) => <tr key={candidate.candidate_id}><td><strong>{candidate.display_name}</strong><br /><code>{candidate.external_id}</code></td><td>{candidate.provenance}</td><td><StatusChip status={stateLabel(candidate.match_state)} /></td><td>{candidate.match_reason || "No exact match"}{candidate.matched_client_id ? ` · ${candidate.matched_client_id}` : ""}</td><td><div className="analytics-filter-actions">{candidate.match_state === "proposed" ? <button type="button" onClick={() => void action(candidate, "accept")} disabled={busyId !== null}>Accept</button> : null}<button className="secondary-button" type="button" onClick={() => void action(candidate, "create-client")} disabled={busyId !== null || candidate.match_state === "verified" || candidate.match_state === "dismissed"}>Create client</button>{candidate.match_state !== "verified" && candidate.match_state !== "dismissed" ? <button className="secondary-button" type="button" onClick={() => void action(candidate, "dismiss")} disabled={busyId !== null}>Dismiss</button> : null}</div></td></tr>)}</tbody></table></div>}</section>
         </div>
       )}
     </RoleGate>

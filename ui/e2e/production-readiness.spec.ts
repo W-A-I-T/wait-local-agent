@@ -76,6 +76,10 @@ test("completes the safe local setup journey and exercises primary UI surfaces",
     await expect(page.getByRole("heading", { name: heading, exact: true })).toBeVisible();
   }
 
+  await page.goto("/connectors");
+  await expect(page.getByRole("button", { name: "Browse data", exact: true })).toBeVisible();
+  await expect(page.locator(".connector-card").first()).toBeVisible();
+
   await page.goto("/clients");
   await page.getByRole("button", { name: "New client" }).click();
   await page.getByLabel("Client ID").fill(clientId);
@@ -84,12 +88,15 @@ test("completes the safe local setup journey and exercises primary UI surfaces",
   await expect(page.getByRole("status")).toContainText("Client created.");
 
   await page.goto("/integrations/connector-instances");
+  await page.getByLabel("Provider").selectOption("halopsa");
   await page.getByLabel("Display name").fill(connectorName);
   await page.getByLabel("WAIT client (optional)").selectOption(clientId);
-  await page.getByLabel("Base URL").fill("https://provider.invalid");
+  await page.getByRole("button", { name: "Continue to credentials", exact: true }).click();
+  await page.getByLabel("Service address").fill("https://provider.invalid");
   await page.getByLabel("Client ID", { exact: true }).fill("browser-client-id");
   await page.getByLabel("Client secret").fill("browser-client-secret");
   await page.getByLabel("Tenant").fill("browser-tenant");
+  await page.getByRole("button", { name: "Continue to verify and map", exact: true }).click();
   await page.getByRole("button", { name: "Connect system" }).click();
   await expect(page.getByRole("status")).toContainText(`Connected ${connectorName}`);
   await page.goto("/integrations/connector-instances");
@@ -147,8 +154,12 @@ test("client discovery loads and displays the persisted deployment mode", async 
 
   await page.goto("/client-discovery");
   await expect(page.getByRole("heading", { name: "Client discovery", exact: true })).toBeVisible();
-  await expect(page.getByText("MSP mode", { exact: true })).toBeVisible();
-  await expect(page.getByText("No candidates match this filter. Run discovery after connecting an active PSA provider.")).toBeVisible();
+  await expect(page.getByLabel("Workspace mode summary")).toHaveText("MSP mode");
+  await expect(page.getByRole("heading", { name: "Before you run discovery", exact: true })).toBeVisible();
+  await expect(page.getByText("No discovery candidates yet.", { exact: true })).toBeVisible();
+  await expect(page.getByText("No ticketing connector is active, so there is no provider data to review.", { exact: true })).toBeVisible();
+  // The prerequisite banner and the empty state both link to connector setup.
+  await expect(page.getByRole("link", { name: "Connect a ticketing system", exact: true }).first()).toBeVisible();
 });
 
 test("settings update check reports an unknown status without a configured channel", async ({ page }) => {

@@ -24,6 +24,7 @@ All notable changes to WAIT Local Agent will be documented in this file.
 
 ### Changed
 
+- Connector setup now separates appliance-wide settings from client connections, shows plain-language readiness states, guides connector instances through provider, credential, and mapping steps, and links empty states to the action that populates them.
 - Approval, run, and audit activity now share explicit record kinds, origins, result links, and related-run actions so an approved action can be followed through execution evidence.
 - Solutions Architect handoffs to Solution delivery are now client-keyed in the browser session, named with their source blueprint, and shown through one plain-language lifecycle; standalone Power Apps builders are clearly separated.
 - Settings now groups appliance, access, integration, and advanced controls with operator-facing labels, explains the People & Access model, and gives admin-only empty states a clear next step.
