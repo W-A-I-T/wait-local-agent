@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState, type FormEvent } from "react";
+import { Link } from "react-router-dom";
 import { apiFetch } from "../api/client";
 import { useDashboard } from "../app/DashboardContext";
 import { EmptyState } from "../components/EmptyState";
@@ -160,7 +161,7 @@ export function MicrosoftAdminAccess() {
             <p className="eyebrow">Authorization</p>
             <h2>Microsoft Admin Access</h2>
             <p className="screen-note">
-              Assign the Microsoft Admin capability to an existing principal for an exact client. Roles and provider permissions remain separate controls.
+              Assign the Microsoft Admin capability to an existing operator account for an exact client. Client roles and capabilities remain separate controls.
             </p>
           </div>
           <button type="button" onClick={() => void refresh()} disabled={loading || busy}>
@@ -173,8 +174,8 @@ export function MicrosoftAdminAccess() {
 
       <section className="panel" aria-labelledby="capability-grant-heading">
         <h3 id="capability-grant-heading">Grant access</h3>
-        {loading ? <LoadingState label="Loading principals and clients…" /> : principals.length === 0 ? <EmptyState title="No principals are available" why="Principals come from configured technician tokens or database principals. A fresh install has none, so configure a technician access identity before granting Microsoft Admin access." /> : <form onSubmit={(event) => void submitGrant(event)}>
-          <label htmlFor="capability-principal">Principal</label>
+        {loading ? <LoadingState label="Loading operator accounts and clients…" /> : principals.length === 0 ? <EmptyState title="No operator accounts available" why="Operator accounts are managed in People & Access. A fresh install has none, so create an operator account before granting Microsoft Admin access." action={{ label: "Open People & Access", to: "/settings/access" }} /> : <form onSubmit={(event) => void submitGrant(event)}>
+          <label htmlFor="capability-principal">Operator account</label>
           <select
             id="capability-principal"
             value={principalId}
@@ -198,10 +199,10 @@ export function MicrosoftAdminAccess() {
               disabled={busy || !selectedPrincipal?.global_roles.includes("msp_admin")}
               onChange={(event) => setGlobalScope(event.target.checked)}
             />
-            Global Microsoft Admin access (MSP admin principals only)
+            Global Microsoft Admin access (MSP administrator accounts only)
           </label>
 
-          {!globalScope && eligibleClients.length === 0 ? <EmptyState title="No eligible clients are available" why="The selected principal has no client role that matches a configured client. Add the client role or choose another principal." /> : !globalScope ? (
+          {!globalScope && eligibleClients.length === 0 ? <EmptyState title="No client role is available" why="This operator account has no client role that matches a configured client. Add a client role in People & Access or choose another operator account." action={{ label: "Manage People & Access", to: "/settings/access" }} /> : !globalScope ? (
             <>
               <label htmlFor="capability-client">Client</label>
               <select

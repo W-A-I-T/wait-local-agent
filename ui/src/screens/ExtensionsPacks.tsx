@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState, type FormEvent } from "react
 import { apiFetch } from "../api/client";
 import type { PackInfo, PackStatus } from "../api/types";
 import { useDashboard } from "../app/DashboardContext";
+import { EmptyState } from "../components/EmptyState";
 import { RoleGate } from "../components/RoleGate";
 import { StatusChip } from "../components/StatusChip";
 
@@ -120,7 +121,13 @@ function ExtensionsPacksContent({ canView }: { canView: boolean }) {
         {error ? <div className="notice danger" role="alert">{error}</div> : null}
         {installStatus ? <div className={`notice ${installStatus.kind === "error" ? "danger" : "success"}`} role={installStatus.kind === "error" ? "alert" : "status"}>{installStatus.message}</div> : null}
         {loading ? <p className="screen-note">Loading installed extension and pack details…</p> : null}
-        {!loading && !error && rows.length === 0 ? <p className="screen-note">No packs are installed on this appliance.</p> : null}
+        {!loading && !error && rows.length === 0 ? (
+          <EmptyState
+            title="No packs installed"
+            why={<><span>A pack is a signed extension supplied by WAIT or an approved pack publisher.</span><span>Choose its local tarball below to install it on this appliance.</span></>}
+            action={{ label: "Go to install control", to: "#pack-install-form" }}
+          />
+        ) : null}
       </section>
 
       <section className="panel" aria-labelledby="pack-install-heading">
@@ -130,7 +137,7 @@ function ExtensionsPacksContent({ canView }: { canView: boolean }) {
             <span>Administrator action</span>
           </div>
         </div>
-        <form className="draft-form" onSubmit={(event) => void installPack(event)}>
+        <form id="pack-install-form" className="draft-form" onSubmit={(event) => void installPack(event)}>
           <label>
             Tarball path
             <input value={packPath} disabled={installing} onChange={(event) => setPackPath(event.target.value)} />

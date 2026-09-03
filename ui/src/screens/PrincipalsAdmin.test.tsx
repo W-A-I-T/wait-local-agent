@@ -47,6 +47,9 @@ describe("PrincipalsAdmin", () => {
     renderScreen();
 
     expect(await screen.findByRole("heading", { name: "People & Access" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "How access fits together" })).toBeInTheDocument();
+    expect(screen.getByText("Operator account").parentElement).toHaveTextContent("managed on this screen");
+    expect(screen.getByText("Access credential").parentElement).toHaveTextContent("issue, rotate, or revoke");
     expect(screen.getAllByText("Tech Alpha").length).toBeGreaterThan(0);
     fireEvent.click(screen.getByRole("button", { name: "Selected" }));
     fireEvent.click(await screen.findByRole("button", { name: "Issue credential" }));
