@@ -1,12 +1,10 @@
 import { lazy, Suspense } from "react";
-import { Route, Routes } from "react-router-dom";
+import { Navigate, Route, Routes } from "react-router-dom";
 import { Approvals } from "./screens/Approvals";
 import { Analytics } from "./screens/Analytics";
 import { Agents } from "./screens/Agents";
 import { AgentPlatform } from "./screens/AgentPlatform";
 import { ActivityRuns } from "./screens/ActivityRuns";
-import { Backfills } from "./screens/Backfills";
-import { Executions } from "./screens/Executions";
 import { Connectors } from "./screens/Connectors";
 import { Consultant } from "./screens/Consultant";
 import { SolutionDelivery } from "./screens/SolutionDelivery";
@@ -16,7 +14,6 @@ import { Knowledge } from "./screens/Knowledge";
 import { Overview } from "./screens/Overview";
 import { Audit } from "./screens/Audit";
 import { Reports } from "./screens/Reports";
-import { ScheduledJobs } from "./screens/ScheduledJobs";
 import { Workflows } from "./screens/Workflows";
 import { WorkflowDesigner } from "./screens/WorkflowDesigner";
 import { Tickets } from "./screens/Tickets";
@@ -28,9 +25,6 @@ import { TechnicianChat } from "./screens/TechnicianChat";
 import { McpIntegration } from "./screens/McpIntegration";
 import { ExtensionsPacks } from "./screens/ExtensionsPacks";
 import { SmartActionCatalog } from "./screens/SmartActionCatalog";
-import { SmartActionRuns } from "./screens/SmartActionRuns";
-import { Events } from "./screens/Events";
-import { Schedules } from "./screens/Schedules";
 import { ConnectorInstances } from "./screens/ConnectorInstances";
 import { SyncReconciliation } from "./screens/SyncReconciliation";
 import { Clients } from "./screens/Clients";
@@ -41,6 +35,7 @@ import { DiagnosticsSupport } from "./screens/DiagnosticsSupport";
 import { TechnicianPath } from "./screens/TechnicianPath";
 import { MicrosoftAdmin } from "./screens/MicrosoftAdmin";
 import { MicrosoftAdminAccess } from "./screens/MicrosoftAdminAccess";
+import { EndUserSupport } from "./screens/EndUserSupport";
 import { PrincipalsAdmin } from "./screens/PrincipalsAdmin";
 import { MicrosoftAdminCapabilityGate } from "./components/MicrosoftAdminCapabilityGate";
 import { RoleGate } from "./components/RoleGate";
@@ -148,8 +143,8 @@ export function AppRoutes() {
       <Route path="settings/access" element={<PrincipalsAdminRoute />} />
       <Route path="knowledge" element={<Knowledge />} />
       <Route path="workflows" element={<AutomationsShell><Workflows /></AutomationsShell>} />
-      <Route path="automation/events" element={<ActivityShell><Events /></ActivityShell>} />
-      <Route path="automation/schedules" element={<ActivityShell><Schedules /></ActivityShell>} />
+      <Route path="automation/events" element={<Navigate to="/activity/runs" replace />} />
+      <Route path="automation/schedules" element={<Navigate to="/activity/runs?kind=scheduled" replace />} />
       <Route path="activity/runs" element={<ActivityShell><ActivityRuns /></ActivityShell>} />
       <Route path="workflow-designer" element={<AutomationsShell><WorkflowDesigner /></AutomationsShell>} />
       <Route path="templates" element={<AutomationsShell><Templates /></AutomationsShell>} />
@@ -158,18 +153,18 @@ export function AppRoutes() {
       <Route path="consultant/solution-delivery" element={<SolutionDelivery />} />
       <Route path="collectors" element={<Collectors />} />
       <Route path="reports" element={<Reports />} />
-      <Route path="audit" element={<Audit />} />
-      <Route path="scheduled-jobs" element={<ActivityShell><ScheduledJobs /></ActivityShell>} />
+      <Route path="audit" element={<ActivityShell><Audit /></ActivityShell>} />
+      <Route path="scheduled-jobs" element={<Navigate to="/activity/runs?kind=scheduled" replace />} />
       <Route path="founder" element={<FounderJourney />} />
       <Route path="tickets" element={<Tickets />} />
-      <Route path="approvals" element={<Approvals />} />
+      <Route path="approvals" element={<ActivityShell><Approvals /></ActivityShell>} />
       <Route path="analytics" element={<Analytics />} />
       <Route path="agents" element={<Agents />} />
       <Route path="agent-platform" element={<AgentPlatform />} />
       <Route path="technician-chat" element={<TechnicianChat />} />
       <Route path="technician-path" element={<TechnicianPath />} />
-      <Route path="backfills" element={<ActivityShell><Backfills /></ActivityShell>} />
-      <Route path="executions" element={<ActivityShell><Executions /></ActivityShell>} />
+      <Route path="backfills" element={<Navigate to="/activity/runs?kind=backfill" replace />} />
+      <Route path="executions" element={<Navigate to="/activity/runs?kind=execution" replace />} />
       <Route path="settings" element={<SettingsRoute />} />
       <Route path="system/appliance-health" element={<ApplianceHealth />} />
       <Route path="system/diagnostics" element={<DiagnosticsSupport />} />
@@ -177,8 +172,9 @@ export function AppRoutes() {
       <Route path="integrations/mcp" element={<McpIntegration />} />
       <Route path="integrations/connector-instances" element={<ConnectorInstances />} />
       <Route path="integrations/smart-actions" element={<AutomationsShell><SmartActionCatalog /></AutomationsShell>} />
-      <Route path="smart-actions/runs" element={<ActivityShell><SmartActionRuns /></ActivityShell>} />
+      <Route path="smart-actions/runs" element={<Navigate to="/activity/runs?kind=smart_action" replace />} />
       <Route path="operations/reconciliation" element={<SyncReconciliation />} />
+      <Route path="end-user" element={<EndUserSupport />} />
       <Route
         path="*"
         element={(

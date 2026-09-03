@@ -1,7 +1,8 @@
 import { FormEvent, useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import { useDashboard } from "../app/DashboardContext";
 import { ApiRequestError, apiFetch, apiFetchBlob } from "../api/client";
-import { ClientIdSelect } from "../components/ClientIdSelect";
+import { ScopeBadge } from "../components/ScopeBadge";
+import { SelectClientNotice } from "../components/SelectClientNotice";
 import {
   type EvidenceReport,
   type EvidenceStatus,
@@ -55,12 +56,11 @@ const CHECK_SCOPES: Record<string, string> = {
 };
 
 export function Reports() {
-  const { clients = [], role, roleResolved } = useDashboard();
+  const { clients = [], role, roleResolved, selectedClientId = "", isMspAdmin = false } = useDashboard();
   const [reports, setReports] = useState<EvidenceReport[]>([]);
   const [hardeningRuns, setHardeningRuns] = useState<HardeningRun[]>([]);
   const [restoreExercises, setRestoreExercises] = useState<RestoreExercise[]>([]);
   const [reportType, setReportType] = useState("");
-  const [clientId, setClientId] = useState("");
   const [projectId, setProjectId] = useState("");
   const [selectedReport, setSelectedReport] = useState<EvidenceReport | null>(null);
   const [selectedDetail, setSelectedDetail] = useState<ReportDetail | null>(null);
@@ -94,7 +94,7 @@ export function Reports() {
       setLoadState("unavailable");
       showError(error, "Unable to load evidence reports.", setStatusMessage, setTechnicalError);
     }
-  }, []);
+  }, [selectedClientId]);
 
   useEffect(() => {
     void refresh();
@@ -103,10 +103,10 @@ export function Reports() {
   const visibleReports = useMemo(
     () => reports.filter((report) => (
       (!reportType || report.report_type === reportType)
-      && (!clientId || report.client_id === clientId)
+      && (!selectedClientId || report.client_id === selectedClientId)
       && (!projectId || report.project_id === projectId)
     )),
-    [clientId, projectId, reportType, reports]
+    [projectId, reportType, reports, selectedClientId]
   );
   const latestHardeningReport = latestReport(reports, "appliance_hardening");
   const latestRestoreReport = latestReport(reports, "restore_evidence");
@@ -205,7 +205,7 @@ export function Reports() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          client_id: clientId.trim() || undefined,
+          client_id: selectedClientId.trim() || undefined,
           period_start: reportPeriodStart,
           period_end: reportPeriodEnd
         })
@@ -295,7 +295,7 @@ export function Reports() {
       <section className="panel">
         <div className="panel-heading">
           <h2>All reports</h2>
-          <span>{visibleReports.length} reports</span>
+          <span><ScopeBadge /> · {visibleReports.length} reports</span>
         </div>
         <div className="report-generation panel-subsection">
           <div>
@@ -314,9 +314,10 @@ export function Reports() {
             </label>
           </div>
           <div className="row-actions">
-            <button type="button" disabled={reportGeneration !== null} onClick={() => void generateClientReport("qbr")}>{reportGeneration === "qbr" ? "Generating…" : "Generate QBR"}</button>
-            <button type="button" className="icon-button" disabled={reportGeneration !== null} onClick={() => void generateClientReport("automation-opportunity")}>{reportGeneration === "automation-opportunity" ? "Generating…" : "Find automation opportunities"}</button>
-            <button type="button" className="icon-button" disabled={reportGeneration !== null} onClick={() => void generateClientReport("recurring-service-review")}>{reportGeneration === "recurring-service-review" ? "Generating…" : "Generate service review"}</button>
+            {!selectedClientId && !isMspAdmin ? <SelectClientNotice /> : null}
+            <button type="button" disabled={reportGeneration !== null || !selectedClientId} onClick={() => void generateClientReport("qbr")}>{reportGeneration === "qbr" ? "Generating…" : "Generate QBR"}</button>
+            <button type="button" className="icon-button" disabled={reportGeneration !== null || !selectedClientId} onClick={() => void generateClientReport("automation-opportunity")}>{reportGeneration === "automation-opportunity" ? "Generating…" : "Find automation opportunities"}</button>
+            <button type="button" className="icon-button" disabled={reportGeneration !== null || !selectedClientId} onClick={() => void generateClientReport("recurring-service-review")}>{reportGeneration === "recurring-service-review" ? "Generating…" : "Generate service review"}</button>
           </div>
         </div>
         <form className="draft-form" onSubmit={openReport}>
@@ -325,7 +326,7 @@ export function Reports() {
               Report type
               <input value={reportType} onChange={(event) => setReportType(event.target.value)} placeholder="Filter reports" />
             </label>
-            <ClientIdSelect label="Client scope (admin only; others are bound)" value={clientId} onChange={setClientId} clients={clients} id="report-client-id" />
+            <p className="screen-note">Scope: <ScopeBadge /></p>
             <label>
               Project
               <input value={projectId} onChange={(event) => setProjectId(event.target.value)} />

@@ -4,11 +4,10 @@ import type {
   AutomationDiscoveryCategory,
   AutomationDiscoveryStatus,
   AutomationMappingReadiness,
-  AutomationTimeEntryImportResponse,
-  ClientDirectoryEntry
+  AutomationTimeEntryImportResponse
 } from "../api/types";
 import { useDashboard } from "../app/DashboardContext";
-import { ClientIdSelect } from "./ClientIdSelect";
+import { ScopeBadge } from "./ScopeBadge";
 import { RoleGate } from "./RoleGate";
 
 type WorkflowMatch = {
@@ -63,9 +62,8 @@ type DiscoveryResult = {
   next_step: string;
 };
 
-export function AutomationDiscoveryPanel({ clients = [] }: { clients?: ClientDirectoryEntry[] }) {
-  const { isAdmin, role, roleResolved } = useDashboard();
-  const [clientId, setClientId] = useState("");
+export function AutomationDiscoveryPanel() {
+  const { isAdmin, role, roleResolved, clients = [], selectedClientId = "", isMspAdmin = false } = useDashboard();
   const [days, setDays] = useState(60);
   const [minTickets, setMinTickets] = useState(3);
   const [result, setResult] = useState<DiscoveryResult | null>(null);
@@ -101,7 +99,7 @@ export function AutomationDiscoveryPanel({ clients = [] }: { clients?: ClientDir
   }, []);
 
   useEffect(() => {
-    const normalizedClient = clientId.trim();
+    const normalizedClient = selectedClientId.trim();
     if (!normalizedClient || !clients.some((client) => client.client_id === normalizedClient)) {
       setReadiness(null);
       setReadinessMessage("");
@@ -128,10 +126,10 @@ export function AutomationDiscoveryPanel({ clients = [] }: { clients?: ClientDir
     return () => {
       active = false;
     };
-  }, [clientId, clients]);
+  }, [selectedClientId, clients]);
 
   const runDiscovery = () => {
-    const normalizedClient = clientId.trim();
+    const normalizedClient = selectedClientId.trim();
     if (!normalizedClient || !clients.some((client) => client.client_id === normalizedClient)) {
       setMessage("Select a client before analyzing historical tickets.");
       return;
@@ -158,7 +156,7 @@ export function AutomationDiscoveryPanel({ clients = [] }: { clients?: ClientDir
 
   const importTimeEntries = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    const normalizedClient = clientId.trim();
+    const normalizedClient = selectedClientId.trim();
     if (!normalizedClient || !clients.some((client) => client.client_id === normalizedClient)) {
       setImportError("Select a client before importing time entries.");
       return;
@@ -200,7 +198,7 @@ export function AutomationDiscoveryPanel({ clients = [] }: { clients?: ClientDir
             Discovery never enables or runs an automation.
           </p>
         </div>
-        <span>{result ? `${result.opportunity_count} opportunities` : "read-only analysis"}</span>
+        <span><ScopeBadge /> · {result ? `${result.opportunity_count} opportunities` : "read-only analysis"}</span>
       </div>
 
       {discoveryStatus ? (
@@ -220,21 +218,6 @@ export function AutomationDiscoveryPanel({ clients = [] }: { clients?: ClientDir
       ) : null}
 
       <div className="analytics-filters">
-        <ClientIdSelect
-          label="Discovery client"
-          value={clientId}
-          onChange={(value) => {
-            setClientId(value);
-            setResult(null);
-            setMessage("");
-            setImportError("");
-            setImportMessage("");
-            setImportResult(null);
-          }}
-          clients={clients}
-          required
-          id="automation-discovery-client"
-        />
         <label>
           History window
           <select value={days} onChange={(event) => setDays(Number(event.target.value))}>
@@ -255,12 +238,13 @@ export function AutomationDiscoveryPanel({ clients = [] }: { clients?: ClientDir
           />
         </label>
         <div className="analytics-filter-actions">
-          <button type="button" disabled={loading} onClick={runDiscovery}>
+          <button type="button" disabled={loading || !selectedClientId} onClick={runDiscovery}>
             {loading ? "Analyzing…" : "Analyze ticket history"}
           </button>
         </div>
       </div>
 
+      {!selectedClientId && !isMspAdmin ? <div className="notice" role="status">Choose a client in the top bar to continue.</div> : null}
       {message ? <div className="notice" role="alert">{message}</div> : null}
       {readinessLoading ? <p className="screen-note" aria-busy="true">Loading mapping readiness…</p> : null}
       {readinessMessage ? <div className="notice danger" role="alert">{readinessMessage}</div> : null}
@@ -271,11 +255,11 @@ export function AutomationDiscoveryPanel({ clients = [] }: { clients?: ClientDir
             <h3 id="automation-readiness-heading">Mapping readiness</h3>
             <span>{readiness.verified_count} verified · {readiness.unverified_count} needs review</span>
           </div>
-          {Object.keys(readiness.families).length === 0 ? (
+          {Object.keys(readiness.families ?? {}).length === 0 ? (
             <p className="screen-note">No connector mappings are recorded for this client.</p>
           ) : (
             <div className="table-list settings-list">
-              {Object.entries(readiness.families).map(([family, counts]) => (
+              {Object.entries(readiness.families ?? {}).map(([family, counts]) => (
                 <div key={family}>
                   <dt>{family}</dt>
                   <dd>{counts.verified} verified · {counts.unverified} unverified</dd>
@@ -385,7 +369,7 @@ export function AutomationDiscoveryPanel({ clients = [] }: { clients?: ClientDir
               placeholder='[{"ticket_id":"T-100","connector_instance_id":"psa-acme","external_time_entry_id":"entry-1","minutes":30,"work_type":"remote support","occurred_at":"2026-08-30T18:00:00Z","source_system":"psa"}]'
               spellCheck={false}
             />
-            <button type="submit" disabled={importLoading}>
+            <button type="submit" disabled={importLoading || !selectedClientId}>
               {importLoading ? "Importing…" : "Import time entries"}
             </button>
           </form>

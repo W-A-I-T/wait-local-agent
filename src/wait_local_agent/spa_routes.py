@@ -51,5 +51,6 @@ SPA_ROUTE_PATHS: Final[frozenset[str]] = frozenset(
         "/integrations/smart-actions",
         "/smart-actions/runs",
         "/operations/reconciliation",
+        "/end-user",
     }
 )

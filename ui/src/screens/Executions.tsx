@@ -69,7 +69,7 @@ export function Executions() {
   return (
     <div className="screen-stack">
       <section className="panel">
-        <div className="panel-heading"><h2>Execution History</h2><div><ScopeBadge selectedClientId={selectedClientId} clients={clients} /> <span>{executions.length} runs</span></div></div>
+        <div className="panel-heading"><h2>Execution History</h2><div><ScopeBadge /> <span>{executions.length} runs</span></div></div>
         <p className="screen-note">Review persisted run status, trigger context, redacted steps, and generated artifact metadata.</p>
         <div className="grid">
           <label>Run kind<select value={kind} onChange={(event) => setKind(event.target.value)}><option value="">All kinds</option><option value="agent">Agent</option><option value="workflow">Workflow</option><option value="smart_action">Smart action</option></select></label>

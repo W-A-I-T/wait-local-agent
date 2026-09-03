@@ -5,6 +5,8 @@ import { Connectors } from "../src/screens/Connectors";
 vi.mock("../src/app/DashboardContext", () => ({
   useDashboard: () => ({
     clients: [{ client_id: "acme", name: "Acme Support", status: "active" }],
+    selectedClientId: "acme",
+    isMspAdmin: false,
     connectors: [
       { id: "syncro", name: "Syncro", status: "ready", message: "configured", tier: "instance" },
       { id: "hudu", name: "Hudu", status: "not_configured", message: "not configured", tier: "appliance-wide" }
@@ -108,7 +110,6 @@ describe("Connectors screen", () => {
   it("prepares a ScreenConnect note through the approval API", async () => {
     render(<Connectors />);
 
-    fireEvent.change(screen.getByLabelText("ScreenConnect client ID"), { target: { value: "acme" } });
     fireEvent.change(screen.getByLabelText("ScreenConnect session UUID"), { target: { value: "11111111-2222-3333-4444-555555555555" } });
     fireEvent.change(screen.getByLabelText("ScreenConnect session note"), { target: { value: "Reviewed with customer." } });
     fireEvent.click(screen.getByRole("button", { name: "Prepare note approval" }));
@@ -125,7 +126,6 @@ describe("Connectors screen", () => {
   it("rejects an unmapped ScreenConnect session before making a request", async () => {
     render(<Connectors />);
 
-    fireEvent.change(screen.getByLabelText("ScreenConnect client ID"), { target: { value: "acme" } });
     fireEvent.change(screen.getByLabelText("ScreenConnect session UUID"), { target: { value: "not-a-session" } });
     fireEvent.change(screen.getByLabelText("ScreenConnect session note"), { target: { value: "Do not send" } });
     fireEvent.click(screen.getByRole("button", { name: "Prepare note approval" }));
@@ -137,7 +137,6 @@ describe("Connectors screen", () => {
   it("prepares a Notion page comment through the approval API", async () => {
     render(<Connectors />);
 
-    fireEvent.change(screen.getByLabelText("Notion client ID"), { target: { value: "acme" } });
     fireEvent.change(screen.getByLabelText("Notion page UUID"), { target: { value: "11111111-2222-3333-4444-555555555555" } });
     fireEvent.change(screen.getByLabelText("Notion Markdown comment"), { target: { value: "Reviewed **locally**." } });
     fireEvent.click(screen.getByRole("button", { name: "Prepare comment approval" }));
@@ -154,7 +153,6 @@ describe("Connectors screen", () => {
   it("rejects an invalid Notion page UUID before making a request", async () => {
     render(<Connectors />);
 
-    fireEvent.change(screen.getByLabelText("Notion client ID"), { target: { value: "acme" } });
     fireEvent.change(screen.getByLabelText("Notion page UUID"), { target: { value: "not-a-page" } });
     fireEvent.change(screen.getByLabelText("Notion Markdown comment"), { target: { value: "Do not send" } });
     fireEvent.click(screen.getByRole("button", { name: "Prepare comment approval" }));

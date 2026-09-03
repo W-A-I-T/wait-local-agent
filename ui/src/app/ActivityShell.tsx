@@ -4,38 +4,18 @@ import { Link, useLocation } from "react-router-dom";
 export const activityTabs = [
   {
     to: "/activity/runs",
-    label: "All Runs",
-    description: "Unified tenant-scoped history across executions and source run stores."
+    label: "Runs",
+    description: "Unified client-scoped history across workflow, execution, smart action, scheduled, and backfill records."
   },
   {
-    to: "/automation/events",
-    label: "Events",
-    description: "Inbound events and their delivery to subscriptions."
+    to: "/approvals",
+    label: "Approvals",
+    description: "Review and decide actions that are waiting for operator approval."
   },
   {
-    to: "/automation/schedules",
-    label: "Schedules",
-    description: "Recurring automation subscriptions and their status."
-  },
-  {
-    to: "/scheduled-jobs",
-    label: "Scheduled Jobs",
-    description: "Cron / interval / one-time jobs that run templates, agents, or reports."
-  },
-  {
-    to: "/smart-actions/runs",
-    label: "Smart Action Runs",
-    description: "History of individual bounded action invocations."
-  },
-  {
-    to: "/executions",
-    label: "Executions",
-    description: "Canonical workflow and agent execution records with step and artifact detail."
-  },
-  {
-    to: "/backfills",
-    label: "Backfills",
-    description: "Bulk re-runs of an agent across historical tickets."
+    to: "/audit",
+    label: "Audit",
+    description: "Review the tamper-evident record of operator and automation activity."
   }
 ] as const;
 
@@ -49,7 +29,7 @@ export function ActivityShell({ children }: { children: ReactNode }) {
         <div className="automations-heading">
           <div>
             <p className="eyebrow">Activity workspace</p>
-            <h1>Activity &amp; scheduling</h1>
+            <h1>Activity</h1>
             <p className="automations-subtitle">{activeTab.label}</p>
           </div>
         </div>

@@ -2,7 +2,7 @@ import { Activity, CheckCircle2, Clock3, ShieldCheck, TicketCheck } from "lucide
 import { useEffect, useState, type ReactNode } from "react";
 import { apiFetch } from "../api/client";
 import { useDashboard } from "../app/DashboardContext";
-import { ClientIdSelect } from "../components/ClientIdSelect";
+import { ScopeBadge } from "../components/ScopeBadge";
 import { type AnalyticsSummary } from "../api/types";
 import { AutomationDiscoveryPanel } from "../components/AutomationDiscoveryPanel";
 
@@ -52,12 +52,11 @@ const EMPTY_SUMMARY: AnalyticsSummary = {
 };
 
 export function Analytics() {
-  const { clients = [] } = useDashboard();
+  const { selectedClientId = "", clients = [], isMspAdmin = false } = useDashboard();
   const [summary, setSummary] = useState<AnalyticsSummary>(EMPTY_SUMMARY);
   const [startedFrom, setStartedFrom] = useState("");
   const [startedTo, setStartedTo] = useState("");
-  const [clientId, setClientId] = useState("");
-  const [filters, setFilters] = useState({ startedFrom: "", startedTo: "", clientId: "" });
+  const [filters, setFilters] = useState({ startedFrom: "", startedTo: "" });
   const [loading, setLoading] = useState(true);
   const [message, setMessage] = useState("");
 
@@ -66,7 +65,7 @@ export function Analytics() {
     const query = new URLSearchParams();
     if (filters.startedFrom) query.set("from", filters.startedFrom);
     if (filters.startedTo) query.set("to", filters.startedTo);
-    if (filters.clientId) query.set("client_id", filters.clientId);
+    if (selectedClientId) query.set("client_id", selectedClientId);
     const queryString = query.toString();
     void apiFetch<AnalyticsSummary>(`/analytics/summary${queryString ? `?${queryString}` : ""}`)
       .then((data) => {
@@ -86,7 +85,7 @@ export function Analytics() {
     return () => {
       active = false;
     };
-  }, [filters]);
+  }, [filters, selectedClientId]);
 
   const successRate = formatPercent(summary.success_rate.rate);
   const approvalRate = formatPercent(summary.approval_rate.rate);
@@ -109,7 +108,7 @@ export function Analytics() {
             <h2>Analytics</h2>
             <p className="screen-note">Local execution activity for the current role and tenant scope.</p>
           </div>
-          <span>{loading ? "loading" : "current range"}</span>
+          <span>{loading ? "loading" : "current range"} · <ScopeBadge /></span>
         </div>
         {message ? <div className="notice" role="alert">{message}</div> : null}
         <div className="analytics-metrics">
@@ -123,7 +122,7 @@ export function Analytics() {
         <p className="screen-note">Model cost is an estimate from provider-reported tokens and rates configured by the operator. Missing pricing or usage stays unpriced.</p>
       </section>
 
-      <AutomationDiscoveryPanel clients={clients} />
+      <AutomationDiscoveryPanel />
 
       <section className="panel analytics-filter-panel">
         <div className="panel-heading">
@@ -131,7 +130,7 @@ export function Analytics() {
             <h2>Filter analytics</h2>
             <p className="screen-note">Filters are applied server-side within your permitted tenant scope.</p>
           </div>
-          <span>{summary.client_id ? `Client: ${summary.client_id}` : "All permitted clients"}</span>
+          <span><ScopeBadge /></span>
         </div>
         <div className="analytics-filters">
           <label>
@@ -142,14 +141,12 @@ export function Analytics() {
             To date
             <input type="date" value={startedTo} onChange={(event) => setStartedTo(event.target.value)} />
           </label>
-          <ClientIdSelect label="Client ID" value={clientId} onChange={setClientId} clients={clients} id="analytics-client-id" />
           <div className="analytics-filter-actions">
-            <button type="button" onClick={() => setFilters({ startedFrom, startedTo, clientId })}>Apply filters</button>
+            <button type="button" onClick={() => setFilters({ startedFrom, startedTo })}>Apply filters</button>
             <button type="button" className="secondary-button" onClick={() => {
               setStartedFrom("");
               setStartedTo("");
-              setClientId("");
-              setFilters({ startedFrom: "", startedTo: "", clientId: "" });
+              setFilters({ startedFrom: "", startedTo: "" });
             }}>Clear filters</button>
           </div>
         </div>

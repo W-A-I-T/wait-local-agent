@@ -5,11 +5,19 @@ import { Reports } from "../src/screens/Reports";
 const dashboard = vi.hoisted(() => ({
   role: "admin" as "admin" | "viewer",
   roleResolved: true,
-  clients: [{ client_id: "acme", name: "Acme Support", status: "active" }]
+  clients: [{ client_id: "acme", name: "Acme Support", status: "active" }],
+  selectedClientId: "acme",
+  isMspAdmin: false
 }));
 
 vi.mock("../src/app/DashboardContext", () => ({
-  useDashboard: () => ({ role: dashboard.role, roleResolved: dashboard.roleResolved, clients: dashboard.clients })
+  useDashboard: () => ({
+    role: dashboard.role,
+    roleResolved: dashboard.roleResolved,
+    clients: dashboard.clients,
+    selectedClientId: dashboard.selectedClientId,
+    isMspAdmin: dashboard.isMspAdmin
+  })
 }));
 
 const stateCopy = {
@@ -175,8 +183,6 @@ describe("Reports evidence views", () => {
 
     render(<Reports />);
     await screen.findByText("Client reports");
-    fireEvent.change(screen.getByLabelText("Client scope (admin only; others are bound)"), { target: { value: "acme" } });
-    expect(screen.getByLabelText("Client scope (admin only; others are bound)")).toHaveValue("acme");
     fireEvent.change(screen.getByLabelText("Period start"), { target: { value: "2026-08-01" } });
     fireEvent.change(screen.getByLabelText("Period end"), { target: { value: "2026-08-31" } });
     fireEvent.click(screen.getByRole("button", { name: "Generate QBR" }));
@@ -212,8 +218,6 @@ describe("Reports evidence views", () => {
 
     render(<Reports />);
     await screen.findByText("Client reports");
-    fireEvent.change(screen.getByLabelText("Client scope (admin only; others are bound)"), { target: { value: "acme" } });
-    expect(screen.getByLabelText("Client scope (admin only; others are bound)")).toHaveValue("acme");
     fireEvent.change(screen.getByLabelText("Period start"), { target: { value: "2026-08-01" } });
     fireEvent.change(screen.getByLabelText("Period end"), { target: { value: "2026-08-31" } });
     fireEvent.click(screen.getByRole("button", { name: "Generate service review" }));

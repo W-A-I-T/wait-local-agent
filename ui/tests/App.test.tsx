@@ -74,7 +74,7 @@ describe("App", () => {
     expect(screen.getByText("Local-first solution design, governed execution, and MSP operations.")).toBeInTheDocument();
     expect((await screen.findAllByText("HALO-1")).length).toBeGreaterThan(0);
     expect(screen.getByRole("heading", { name: "Approval Queue" })).toBeInTheDocument();
-    expect(screen.getByRole("heading", { name: "Connector Readiness" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Connectors" })).toBeInTheDocument();
     expect(screen.getAllByText("Hudu connector").length).toBeGreaterThan(0);
     expect(screen.getAllByRole("heading", { name: "Payload Preview" }).length).toBeGreaterThan(0);
     expect(screen.getByText(/Workflow run run-1: running/)).toBeInTheDocument();
@@ -231,7 +231,7 @@ describe("App", () => {
     fireEvent.change(tokenInput, { target: { value: "new-token" } });
     fireEvent.click(screen.getByRole("button", { name: "Sign in" }));
 
-    expect(await screen.findByRole("status")).toHaveTextContent("Signed in.");
+    expect(await screen.findByText("Signed in.", { exact: true })).toBeInTheDocument();
   });
 });
 

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Link } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
 import { apiFetch } from "../api/client";
 import { EmptyState } from "../components/EmptyState";
 import { LoadingState } from "../components/LoadingState";
@@ -22,22 +22,37 @@ type ActivityItem = {
   trigger_source: string;
 };
 
-const kindOptions = ["", "workflow", "agent", "smart_action", "collector", "backfill"];
+const kindOptions = [
+  ["", "All"],
+  ["workflow", "Workflow"],
+  ["execution", "Execution"],
+  ["smart_action", "Smart action"],
+  ["scheduled", "Scheduled"],
+  ["backfill", "Backfill"]
+] as const;
 
 export function ActivityRuns() {
-  const { selectedClientId, clients } = useDashboard();
+  const { selectedClientId = "", clients = [], isMspAdmin = false } = useDashboard();
+  const [searchParams, setSearchParams] = useSearchParams();
   const [rows, setRows] = useState<ActivityItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [message, setMessage] = useState("");
-  const [kind, setKind] = useState("");
+  const [kind, setKind] = useState(() => searchParams.get("kind") ?? "");
   const [status, setStatus] = useState("");
 
   const query = useMemo(() => {
     const params = new URLSearchParams({ limit: "200" });
-    if (kind) params.set("kinds", kind);
+    if (kind && kind !== "execution" && kind !== "scheduled") params.set("kinds", kind);
     if (status.trim()) params.set("status", status.trim());
     return params.toString();
   }, [kind, selectedClientId, status]);
+
+  const visibleRows = rows.filter((row) => (
+    !kind || (
+      (kind === "execution" ? row.canonical_execution_id !== null : true)
+      && (kind !== "scheduled" || row.trigger_source === "scheduled")
+    )
+  ));
 
   const refresh = useCallback(async () => {
     setLoading(true);
@@ -57,30 +72,39 @@ export function ActivityRuns() {
     void refresh();
   }, [refresh]);
 
+  function selectKind(nextKind: string) {
+    setKind(nextKind);
+    const nextParams = new URLSearchParams(searchParams);
+    if (nextKind) nextParams.set("kind", nextKind);
+    else nextParams.delete("kind");
+    setSearchParams(nextParams, { replace: true });
+  }
+
   return (
     <div className="screen-stack">
       <section className="panel">
         <div className="panel-heading">
           <div>
-            <h2>All runs</h2>
-            <p className="screen-note">One tenant-scoped timeline for canonical executions plus legacy workflow, agent, Smart Action, collector, and backfill runs that are not already represented by an execution record.</p>
+            <h2>Runs</h2>
+            <p className="screen-note">One client-scoped timeline for workflow, execution, smart action, scheduled, and backfill records.</p>
           </div>
-          <div><ScopeBadge selectedClientId={selectedClientId} clients={clients} /> <button type="button" onClick={() => void refresh()} disabled={loading}>{loading ? "Refreshing…" : "Refresh"}</button></div>
+          <div><ScopeBadge /> <button type="button" onClick={() => void refresh()} disabled={loading}>{loading ? "Refreshing…" : "Refresh"}</button></div>
         </div>
         <div className="grid">
-          <label>Run type<select value={kind} onChange={(event) => setKind(event.target.value)}>
-            {kindOptions.map((option) => <option key={option || "all"} value={option}>{option ? option.replace("_", " ") : "All run types"}</option>)}
-          </select></label>
+          <div className="filter-chips" aria-label="Run record kind">
+            <span className="screen-note">Record kind</span>
+            {kindOptions.map(([value, label]) => <button key={value || "all"} type="button" className={kind === value ? "selected" : "secondary-button"} aria-pressed={kind === value} onClick={() => selectKind(value)}>{label}</button>)}
+          </div>
           <label>Status<input value={status} onChange={(event) => setStatus(event.target.value)} placeholder="completed" /></label>
         </div>
         {message ? <div className="notice" role="alert">{message}</div> : null}
       </section>
 
       <section className="panel">
-        <div className="panel-heading"><h2>Run history</h2><span>{rows.length} shown</span></div>
-        {loading ? <LoadingState label="Loading run history…" /> : rows.length === 0 ? <EmptyState title="No matching runs" why="No recorded activity matches the current tenant and filters." /> : (
+        <div className="panel-heading"><h2>Run history</h2><span>{visibleRows.length} shown</span></div>
+        {loading ? <LoadingState label="Loading run history…" /> : visibleRows.length === 0 ? <EmptyState title="No matching runs" why="No recorded activity matches the current client and filters." /> : (
           <div className="table-list">
-            {rows.map((row) => (
+            {visibleRows.map((row) => (
               <article className="table-row" key={row.activity_id}>
                 <div>
                   <strong>{row.title}</strong>

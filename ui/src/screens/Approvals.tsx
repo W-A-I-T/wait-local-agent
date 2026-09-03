@@ -82,7 +82,7 @@ export function Approvals() {
     <section className="panel approvals-panel">
       <div className="panel-heading">
         <h2>Approval Queue</h2>
-        <div><ScopeBadge selectedClientId={selectedClientId} clients={clients} /> <span>{pendingApprovals.length} pending</span></div>
+        <div><ScopeBadge /> <span>{pendingApprovals.length} pending</span></div>
       </div>
       <div className="stack-list">
         {loading ? <LoadingState label="Loading approval requests…" /> : approvalRequests.map((request) => (

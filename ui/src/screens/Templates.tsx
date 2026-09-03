@@ -3,7 +3,8 @@ import { useDashboard } from "../app/DashboardContext";
 import { apiFetch } from "../api/client";
 import { EmptyState } from "../components/EmptyState";
 import { LoadingState } from "../components/LoadingState";
-import { ClientIdSelect } from "../components/ClientIdSelect";
+import { ScopeBadge } from "../components/ScopeBadge";
+import { SelectClientNotice } from "../components/SelectClientNotice";
 import type { TemplateGalleryEntry, TemplateGalleryRevision, TemplateGalleryRevisionDiff, WorkflowTemplate } from "../api/types";
 
 type GalleryDraft = {
@@ -13,7 +14,7 @@ type GalleryDraft = {
 };
 
 export function Templates() {
-  const { canWrite, clients = [] } = useDashboard();
+  const { canWrite, clients = [], selectedClientId = "", isMspAdmin = false } = useDashboard();
   const [templates, setTemplates] = useState<WorkflowTemplate[]>([]);
   const [entries, setEntries] = useState<TemplateGalleryEntry[]>([]);
   const [loading, setLoading] = useState(true);
@@ -26,7 +27,6 @@ export function Templates() {
   const [displayName, setDisplayName] = useState("");
   const [provenance, setProvenance] = useState("Reviewed by local operator");
   const [instructions, setInstructions] = useState("");
-  const [clientId, setClientId] = useState("");
   const [importFile, setImportFile] = useState<File | null>(null);
   const [message, setMessage] = useState("");
 
@@ -53,7 +53,7 @@ export function Templates() {
       hasLoadedRef.current = true;
       setLoading(false);
     }
-  }, [sourceTemplateId]);
+  }, [selectedClientId, sourceTemplateId]);
 
   useEffect(() => {
     void refresh();
@@ -74,7 +74,7 @@ export function Templates() {
           provenance,
           display_name: displayName || undefined,
           instructions,
-          client_id: clientId || undefined
+          client_id: selectedClientId || undefined
         })
       });
       setMessage("Local template created.");
@@ -224,10 +224,11 @@ export function Templates() {
             </select></label>
             <label>Display name<input value={displayName} onChange={(event) => setDisplayName(event.target.value)} placeholder="Acme triage" /></label>
             <label>Source note<input value={provenance} onChange={(event) => setProvenance(event.target.value)} /></label>
-            <ClientIdSelect label="Client id (optional)" value={clientId} onChange={setClientId} clients={clients} id="template-client-id" />
+            <p className="screen-note">Scope: <ScopeBadge /></p>
           </div>
           <label>Operator instructions<textarea rows={3} value={instructions} onChange={(event) => setInstructions(event.target.value)} /></label>
-        <button type="submit" disabled={!canWrite || !sourceTemplateId} title={!canWrite ? "Requires technician access" : !sourceTemplateId ? "Choose a reviewed template first" : undefined}>Create local template</button>
+        {!selectedClientId && !isMspAdmin ? <SelectClientNotice /> : null}
+        <button type="submit" disabled={!canWrite || !sourceTemplateId || (!selectedClientId && !isMspAdmin)} title={!canWrite ? "Requires technician access" : !sourceTemplateId ? "Choose a reviewed template first" : !selectedClientId ? "Choose a client in the top bar first" : undefined}>Create local template</button>
         <div className="template-import-row">
           <label>Import template artifact<input type="file" accept="application/json,.json" onChange={(event) => setImportFile(event.target.files?.[0] ?? null)} /></label>
           <button type="button" disabled={!canWrite || !importFile} title={!canWrite ? "Requires technician access" : !importFile ? "Choose a template artifact first" : undefined} onClick={() => void importEntry()}>Import template</button>

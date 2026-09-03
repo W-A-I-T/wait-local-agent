@@ -87,7 +87,7 @@ describe("Connector Instances screen", () => {
     expect(screen.getByText("Unassigned")).toBeInTheDocument();
     expect(screen.queryByText("super-secret-credential-ref")).not.toBeInTheDocument();
     expect(screen.queryByText("also-secret")).not.toBeInTheDocument();
-    expect(screen.getByRole("link", { name: "Connector Instances" })).toHaveAttribute("href", "/integrations/connector-instances");
+    expect(screen.getByRole("link", { name: "Connector instances" })).toHaveAttribute("href", "/integrations/connector-instances");
 
     fireEvent.click(screen.getByRole("button", { name: /Acme Halo/ }));
 
@@ -154,7 +154,7 @@ describe("Connector Instances screen", () => {
     );
 
     expect(screen.getByText("Administrator role required to view connector instances.")).toBeInTheDocument();
-    expect(screen.queryByRole("link", { name: "Connector Instances" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "Connector instances" })).not.toBeInTheDocument();
     expect(fetchMock).not.toHaveBeenCalled();
   });
 

@@ -58,12 +58,12 @@ describe("ActivityRuns", () => {
     expect(screen.getByRole("link", { name: "Open source" })).toHaveAttribute("href", "/backfills");
   });
 
-  it("pushes run type filtering into the unified API", async () => {
+  it("pushes run kind filtering into the unified API", async () => {
     mockedApiFetch.mockResolvedValue(rows);
     render(<MemoryRouter><ActivityRuns /></MemoryRouter>);
     await screen.findByText("Agent 10");
 
-    fireEvent.change(screen.getByLabelText("Run type"), { target: { value: "backfill" } });
+    fireEvent.click(screen.getByRole("button", { name: "Backfill" }));
 
     await waitFor(() => expect(mockedApiFetch).toHaveBeenLastCalledWith(
       expect.stringContaining("kinds=backfill")

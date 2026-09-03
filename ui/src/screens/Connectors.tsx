@@ -2,8 +2,8 @@ import { useCallback, useEffect, useState, type FormEvent } from "react";
 import { useDashboard } from "../app/DashboardContext";
 import { apiFetch } from "../api/client";
 import { type ConnectorStatus } from "../api/types";
-import { ClientIdSelect } from "../components/ClientIdSelect";
 import { ConnectorExplorer } from "../components/ConnectorExplorer";
+import { ScopeBadge } from "../components/ScopeBadge";
 import { connectorSetup } from "../lib/connectorSetup";
 
 type HealthState = {
@@ -45,7 +45,7 @@ type ScreenConnectActionResponse = {
 type NotionCommentActionResponse = ScreenConnectActionResponse;
 
 export function Connectors() {
-  const { clients = [], connectors, haloConnector, huduConnector, writeHealth, loading, canWrite } = useDashboard();
+  const { clients = [], connectors, haloConnector, huduConnector, writeHealth, loading, canWrite, selectedClientId = "", isMspAdmin = false } = useDashboard();
   const [halopsaHealth, setHalopsaHealth] = useState<HealthState | null>(null);
   const [connectwiseHealth, setConnectwiseHealth] = useState<HealthState | null>(null);
   const [connectwiseWriteHealth, setConnectwiseWriteHealth] = useState<HealthState | null>(null);
@@ -57,14 +57,12 @@ export function Connectors() {
   const [syncroMeta, setSyncroMeta] = useState<SyncroCommentsResponse["meta"]>({});
   const [syncroStatus, setSyncroStatus] = useState<HealthState | null>(null);
   const [syncroLoading, setSyncroLoading] = useState(false);
-  const [screenConnectClientId, setScreenConnectClientId] = useState("");
   const [screenConnectSessionId, setScreenConnectSessionId] = useState("");
   const [screenConnectNote, setScreenConnectNote] = useState("");
   const [screenConnectHost, setScreenConnectHost] = useState("");
   const [screenConnectMessage, setScreenConnectMessage] = useState("");
   const [screenConnectActionStatus, setScreenConnectActionStatus] = useState<HealthState | null>(null);
   const [screenConnectActionLoading, setScreenConnectActionLoading] = useState(false);
-  const [notionClientId, setNotionClientId] = useState("");
   const [notionPageId, setNotionPageId] = useState("");
   const [notionComment, setNotionComment] = useState("");
   const [notionCommentStatus, setNotionCommentStatus] = useState<HealthState | null>(null);
@@ -151,7 +149,7 @@ export function Connectors() {
     actionId: "screenconnect-session-note" | "screenconnect-session-message"
   ) => {
     event.preventDefault();
-    const clientId = screenConnectClientId.trim();
+    const clientId = selectedClientId.trim();
     const sessionId = screenConnectSessionId.trim();
     const sessionUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
     if (!clientId || clientId.length > 200 || !sessionUuid.test(sessionId)) {
@@ -193,7 +191,7 @@ export function Connectors() {
 
   const prepareNotionComment = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    const clientId = notionClientId.trim();
+    const clientId = selectedClientId.trim();
     const pageId = notionPageId.trim();
     const markdown = notionComment.trim();
     const pageUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -277,7 +275,7 @@ export function Connectors() {
     <div className="screen-stack">
       <section className="panel">
         <div className="panel-heading">
-          <h2>Connector Readiness</h2>
+          <h2>Connectors</h2>
           <span>{loading ? "loading" : "live"}</span>
         </div>
         <div className="connector-summary">
@@ -349,21 +347,21 @@ export function Connectors() {
       <section className="panel">
         <div className="panel-heading">
           <h2>ScreenConnect session actions</h2>
-          <span>approval required</span>
+          <span><ScopeBadge /> · approval required</span>
         </div>
         <p className="screen-note">Prepare a bounded note or message for one locally mapped session. WAIT validates the tenant/session map and places the proposed provider mutation in the approval queue.</p>
         <div className="grid">
-          <ClientIdSelect label="ScreenConnect client ID" value={screenConnectClientId} onChange={setScreenConnectClientId} clients={clients} required id="screenconnect-client-id" />
           <label>Session UUID<input aria-label="ScreenConnect session UUID" value={screenConnectSessionId} onChange={(event) => setScreenConnectSessionId(event.target.value)} placeholder="11111111-2222-3333-4444-555555555555" /></label>
         </div>
         <form className="draft-form" onSubmit={(event) => void prepareScreenConnectAction(event, "screenconnect-session-note")}>
           <label>Session note<textarea aria-label="ScreenConnect session note" rows={3} maxLength={10000} value={screenConnectNote} onChange={(event) => setScreenConnectNote(event.target.value)} placeholder="Add an operator note to the mapped session" /></label>
-          <button type="submit" disabled={screenConnectActionLoading || !canWrite}>Prepare note approval</button>
+          {!selectedClientId && !isMspAdmin ? <p className="notice" role="status">Choose a client in the top bar to continue.</p> : null}
+          <button type="submit" disabled={screenConnectActionLoading || !canWrite || !selectedClientId}>Prepare note approval</button>
         </form>
         <form className="draft-form" onSubmit={(event) => void prepareScreenConnectAction(event, "screenconnect-session-message")}>
           <label>Technician display name<input aria-label="ScreenConnect technician display name" maxLength={200} value={screenConnectHost} onChange={(event) => setScreenConnectHost(event.target.value)} placeholder="WAIT technician" /></label>
           <label>Session message<textarea aria-label="ScreenConnect session message" rows={3} maxLength={10000} value={screenConnectMessage} onChange={(event) => setScreenConnectMessage(event.target.value)} placeholder="Send a bounded message to the mapped session" /></label>
-          <button type="submit" disabled={screenConnectActionLoading || !canWrite}>Prepare message approval</button>
+          <button type="submit" disabled={screenConnectActionLoading || !canWrite || !selectedClientId}>Prepare message approval</button>
         </form>
         {screenConnectActionStatus ? <p className={`screen-note ${screenConnectActionStatus.status === "failed" ? "danger" : ""}`} role="status">{screenConnectActionStatus.message}</p> : null}
       </section>
@@ -371,16 +369,16 @@ export function Connectors() {
       <section className="panel">
         <div className="panel-heading">
           <h2>Notion page comments</h2>
-          <span>approval required</span>
+          <span><ScopeBadge /> · approval required</span>
         </div>
         <p className="screen-note">Prepare a bounded Markdown comment for one locally mapped Notion page. The provider call happens only after technician approval.</p>
         <form className="draft-form" onSubmit={(event) => void prepareNotionComment(event)}>
           <div className="grid">
-            <ClientIdSelect label="Notion client ID" value={notionClientId} onChange={setNotionClientId} clients={clients} required id="notion-client-id" />
             <label>Page UUID<input aria-label="Notion page UUID" value={notionPageId} onChange={(event) => setNotionPageId(event.target.value)} placeholder="11111111-2222-3333-4444-555555555555" /></label>
           </div>
           <label>Markdown comment<textarea aria-label="Notion Markdown comment" rows={3} maxLength={10000} value={notionComment} onChange={(event) => setNotionComment(event.target.value)} placeholder="Add a bounded review comment" /></label>
-          <button type="submit" disabled={notionCommentLoading || !canWrite}>{notionCommentLoading ? "Preparing…" : "Prepare comment approval"}</button>
+          {!selectedClientId && !isMspAdmin ? <p className="notice" role="status">Choose a client in the top bar to continue.</p> : null}
+          <button type="submit" disabled={notionCommentLoading || !canWrite || !selectedClientId}>{notionCommentLoading ? "Preparing…" : "Prepare comment approval"}</button>
         </form>
         {notionCommentStatus ? <p className={`screen-note ${notionCommentStatus.status === "failed" ? "danger" : ""}`} role="status">{notionCommentStatus.message}</p> : null}
       </section>

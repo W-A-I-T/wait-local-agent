@@ -4,7 +4,12 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { Backfills } from "../src/screens/Backfills";
 
 vi.mock("../src/app/DashboardContext", () => ({
-  useDashboard: () => ({ canWrite: true })
+  useDashboard: () => ({
+    canWrite: true,
+    selectedClientId: "acme",
+    clients: [{ client_id: "acme", name: "Acme Support", status: "active" }],
+    isMspAdmin: false
+  })
 }));
 
 describe("Backfills", () => {

@@ -13,18 +13,18 @@ import {
 import { SchemaForm, defaultsForFields, validateRequiredFields, type SchemaFormValue } from "../components/SchemaForm";
 import { EmptyState } from "../components/EmptyState";
 import { LoadingState } from "../components/LoadingState";
-import { ClientIdSelect } from "../components/ClientIdSelect";
+import { SelectClientNotice } from "../components/SelectClientNotice";
+import { ScopeBadge } from "../components/ScopeBadge";
 import { ScopeChip, StatusChip } from "../components/StatusChip";
 
 export function Collectors() {
-  const { canWrite, clients = [] } = useDashboard();
+  const { canWrite, selectedClientId = "", clients = [], isMspAdmin = false } = useDashboard();
   const [modules, setModules] = useState<CollectorModule[]>([]);
   const [loading, setLoading] = useState(true);
   const hasLoadedRef = useRef(false);
   const [selectedModule, setSelectedModule] = useState("");
   const [config, setConfig] = useState<SchemaFormValue>({});
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
-  const [clientId, setClientId] = useState("");
   const [validation, setValidation] = useState<CollectorValidationResult | null>(null);
   const [preview, setPreview] = useState<CollectorPreviewResult | null>(null);
   const [runs, setRuns] = useState<CollectorRun[]>([]);
@@ -59,7 +59,7 @@ export function Collectors() {
       hasLoadedRef.current = true;
       setLoading(false);
     }
-  }, [selectedModule]);
+  }, [selectedClientId, selectedModule]);
 
   useEffect(() => {
     void load();
@@ -78,7 +78,7 @@ export function Collectors() {
   function parsedPayload(): CollectorConfigPayload {
     return {
       config,
-      client_id: clientId || undefined
+      client_id: selectedClientId || undefined
     };
   }
 
@@ -212,7 +212,7 @@ export function Collectors() {
             </select>
           </label>
           {activeModule ? <p className="screen-note">{activeModule.description}</p> : null}
-          <ClientIdSelect label="Client id" value={clientId} onChange={setClientId} clients={clients} id="collector-client-id" />
+          <p className="screen-note">Scope: <ScopeBadge /></p>
           {activeModule ? (
             <SchemaForm
               fields={activeModule.config_schema ?? []}
@@ -223,6 +223,7 @@ export function Collectors() {
             />
           ) : null}
           <div className="row-actions">
+            {!selectedClientId && !isMspAdmin ? <SelectClientNotice /> : null}
             <button type="submit">Check settings</button>
             <button type="button" className="icon-button" onClick={() => void previewModule()}>
               Preview

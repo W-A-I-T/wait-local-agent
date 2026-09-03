@@ -3,11 +3,12 @@ import { useDashboard } from "../app/DashboardContext";
 import { apiFetch } from "../api/client";
 import { EmptyState } from "../components/EmptyState";
 import { LoadingState } from "../components/LoadingState";
-import { ClientIdSelect } from "../components/ClientIdSelect";
+import { ScopeBadge } from "../components/ScopeBadge";
+import { SelectClientNotice } from "../components/SelectClientNotice";
 import type { AgentDefinition, MspPlaybook, ScheduledJob, ScheduledJobRequestBody, WorkflowTemplate } from "../api/types";
 
 export function ScheduledJobs() {
-  const { canWrite, clients = [], selectedClientId, setSelectedClientId } = useDashboard();
+  const { canWrite, clients = [], selectedClientId = "", isMspAdmin = false } = useDashboard();
   const [jobs, setJobs] = useState<ScheduledJob[]>([]);
   const [templates, setTemplates] = useState<WorkflowTemplate[]>([]);
   const [agents, setAgents] = useState<AgentDefinition[]>([]);
@@ -53,7 +54,7 @@ export function ScheduledJobs() {
       hasLoadedRef.current = true;
       setLoading(false);
     }
-  }, [agentId, templateId]);
+  }, [agentId, selectedClientId, templateId]);
 
   useEffect(() => {
     void refresh();
@@ -207,7 +208,7 @@ export function ScheduledJobs() {
                 ) : null}
               </>
             )}
-            {scheduleKind === "playbook" || scheduleKind === "report" || scheduleKind === "graph_sync" ? <ClientIdSelect label="Client ID" value={selectedClientId} onChange={setSelectedClientId} clients={clients} required id="scheduled-job-client-id" /> : null}
+            {scheduleKind === "playbook" || scheduleKind === "report" || scheduleKind === "graph_sync" ? <p className="screen-note">Scope: <ScopeBadge /></p> : null}
             {scheduleKind === "playbook" ? <span className="field-help">The selected client is added automatically; params may include ticket_id and input.</span> : null}
             <label>
               Cron
@@ -228,8 +229,8 @@ export function ScheduledJobs() {
               {scheduleKind === "report" ? <span>The selected client is added automatically; include period_days (1–366) or period_start/period_end ISO dates.</span> : null}
             </label>
           </div>
-          {(scheduleKind === "playbook" || scheduleKind === "report") && !selectedClientId ? <p className="screen-note">Select a client from the top bar before creating this schedule.</p> : null}
-          <button type="submit" disabled={!canWrite || ((scheduleKind === "playbook" || scheduleKind === "report" || scheduleKind === "graph_sync") && !selectedClientId)} title={!canWrite ? "Requires technician access" : (scheduleKind === "playbook" || scheduleKind === "report" || scheduleKind === "graph_sync") && !selectedClientId ? "Select a client from the top bar first" : undefined}>Create schedule</button>
+          {(scheduleKind === "playbook" || scheduleKind === "report" || scheduleKind === "graph_sync") && !selectedClientId && !isMspAdmin ? <SelectClientNotice /> : null}
+          <button type="submit" disabled={!canWrite || ((scheduleKind === "playbook" || scheduleKind === "report" || scheduleKind === "graph_sync") && !selectedClientId && !isMspAdmin)} title={!canWrite ? "Requires technician access" : (scheduleKind === "playbook" || scheduleKind === "report" || scheduleKind === "graph_sync") && !selectedClientId ? "Choose a client in the top bar first" : undefined}>Create schedule</button>
         </form>
 
           {message ? <div className="notice">{message}</div> : null}

@@ -84,7 +84,7 @@ describe("Appliance Health wiring", () => {
     );
 
     expect(await screen.findByText("Appliance health refreshed.")).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: "Appliance Health" })).toHaveAttribute("href", "/system/appliance-health");
+    expect(screen.getByRole("link", { name: "Appliance health" })).toHaveAttribute("href", "/system/appliance-health");
     expect(screen.getByText("Write health").parentElement).toHaveTextContent("Disabled");
     expect(screen.getByText("HTTP probing").parentElement).toHaveTextContent("Enabled");
     expect(screen.getByText("LLM inference").parentElement).toHaveTextContent("Enabled");
@@ -136,7 +136,7 @@ describe("Appliance Health wiring", () => {
     );
 
     expect(await screen.findByText("Administrator role required to view appliance health.")).toBeInTheDocument();
-    expect(screen.queryByRole("link", { name: "Appliance Health" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "Appliance health" })).not.toBeInTheDocument();
     expect(fetchMock).not.toHaveBeenCalled();
   });
 

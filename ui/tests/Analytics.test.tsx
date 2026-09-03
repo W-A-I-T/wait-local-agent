@@ -5,7 +5,9 @@ import { Analytics } from "../src/screens/Analytics";
 
 vi.mock("../src/app/DashboardContext", () => ({
   useDashboard: () => ({
-    clients: [{ client_id: "acme", name: "Acme Support", status: "active" }]
+    clients: [{ client_id: "acme", name: "Acme Support", status: "active" }],
+    selectedClientId: "acme",
+    isMspAdmin: false
   })
 }));
 
@@ -77,7 +79,6 @@ describe("Analytics", () => {
     await screen.findByRole("heading", { name: "Analytics" });
     fireEvent.change(screen.getByLabelText("From date"), { target: { value: "2026-08-01" } });
     fireEvent.change(screen.getByLabelText("To date"), { target: { value: "2026-08-08" } });
-    fireEvent.change(screen.getByLabelText("Client ID"), { target: { value: "acme" } });
     fireEvent.click(screen.getByRole("button", { name: "Apply filters" }));
 
     await waitFor(() => expect(fetchMock).toHaveBeenLastCalledWith(

@@ -108,10 +108,7 @@ describe("Sync / Reconciliation screen", () => {
     expect(screen.getByText("external-company-42")).toBeInTheDocument();
     expect(screen.getByText("no_verified_mapping")).toBeInTheDocument();
     expect(screen.getByText("digest-abc")).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: "Sync / Reconciliation" })).toHaveAttribute(
-      "href",
-      "/operations/reconciliation"
-    );
+    expect(screen.queryByRole("link", { name: "Sync / Reconciliation" })).not.toBeInTheDocument();
     expect(fetchMock.mock.calls.map(([input]) => String(input))).toEqual(
       expect.arrayContaining(["/ingestion/sync-cursors", "/ingestion/unmapped", "/connector-instances"])
     );
