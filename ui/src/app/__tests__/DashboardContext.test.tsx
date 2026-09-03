@@ -23,6 +23,7 @@ function deferred<T>(): Deferred<T> {
 }
 
 function DashboardHarness() {
+  const dashboard = useDashboard();
   const {
     capabilityError,
     capabilityGrants,
@@ -35,15 +36,19 @@ function DashboardHarness() {
     isMspAdmin,
     liveWritesReady,
     refresh,
+    refreshConfiguration,
+    recheckWriteHealth,
     roleResolved,
     selectedClientId,
     setSelectedClientId,
     clientScopeIds,
     writeHealthByConnector
-  } = useDashboard();
+  } = dashboard;
   return (
     <>
       <button type="button" onClick={() => void refresh()}>Refresh credentials</button>
+      <button type="button" onClick={() => void refreshConfiguration()}>Refresh configuration</button>
+      <button type="button" onClick={() => void recheckWriteHealth()}>Re-check write health</button>
       <button type="button" onClick={() => setSelectedClientId("client-a")}>Select client A</button>
       <output>{roleResolved ? "access resolved" : "access unresolved"}</output>
       <output data-testid="auth-state">{authState ?? "unresolved"}</output>
@@ -292,6 +297,36 @@ describe("DashboardContext role refresh", () => {
     expect(screen.getByTestId("write-health-map")).toHaveTextContent("halopsa:ready,connectwise:blocked");
   });
 
+  it("caches connector write health for route refreshes and ignores window focus", async () => {
+    mockedApiFetch.mockImplementation((path: string) => {
+      if (path === "/auth/role") {
+        return Promise.resolve({ role: "admin", api_auth_required: false, demo_mode: true }) as ReturnType<typeof apiFetch>;
+      }
+      if (path === "/connectors") {
+        return Promise.resolve([
+          { id: "halopsa", name: "HaloPSA", status: "configured", message: "configured" },
+          { id: "connectwise", name: "ConnectWise", status: "configured", message: "configured" }
+        ]) as ReturnType<typeof apiFetch>;
+      }
+      return Promise.resolve(defaultResponse(path)) as ReturnType<typeof apiFetch>;
+    });
+
+    render(<DashboardProvider><DashboardHarness /></DashboardProvider>);
+
+    await waitFor(() => expect(screen.getByText("access resolved")).toBeInTheDocument());
+    const healthCallsAfterInitialRefresh = mockedApiFetch.mock.calls.filter(([path]) => path.endsWith("/write-health")).length;
+
+    fireEvent.click(screen.getByRole("button", { name: "Re-check write health" }));
+    await waitFor(() => expect(mockedApiFetch.mock.calls.filter(([path]) => path.endsWith("/write-health")).length).toBe(healthCallsAfterInitialRefresh + 2));
+
+    const healthCallsAfterRecheck = mockedApiFetch.mock.calls.filter(([path]) => path.endsWith("/write-health")).length;
+    fireEvent.click(screen.getByRole("button", { name: "Refresh configuration" }));
+    fireEvent.click(screen.getByRole("button", { name: "Refresh configuration" }));
+    fireEvent.focus(window);
+    await waitFor(() => expect(mockedApiFetch.mock.calls.filter(([path]) => path === "/clients").length).toBeGreaterThan(1));
+    expect(mockedApiFetch.mock.calls.filter(([path]) => path.endsWith("/write-health")).length).toBe(healthCallsAfterRecheck);
+  });
+
   it("fails the capability state closed without failing the overall authenticated dashboard refresh", async () => {
     mockedApiFetch.mockImplementation((path: string) => {
       if (path === "/auth/role") {
@@ -378,8 +413,8 @@ describe("write health posture mapping", () => {
   });
 });
 
-describe("dashboard connector request scope", () => {
-  it("does not request the Halo ticket list outside the Tickets screen", async () => {
+describe("dashboard context cleanup", () => {
+  it("does not expose the removed Halo ticket bootstrap", async () => {
     mockedApiFetch.mockImplementation((path: string) => {
       if (path === "/auth/role") {
         return Promise.resolve({ role: "admin", api_auth_required: false, demo_mode: true }) as ReturnType<typeof apiFetch>;
@@ -387,7 +422,7 @@ describe("dashboard connector request scope", () => {
       return Promise.resolve(defaultResponse(path)) as ReturnType<typeof apiFetch>;
     });
 
-    render(<DashboardProvider activePath="/clients"><DashboardHarness /></DashboardProvider>);
+    render(<DashboardProvider><DashboardHarness /></DashboardProvider>);
 
     await waitFor(() => expect(screen.getByText("access resolved")).toBeInTheDocument());
     expect(mockedApiFetch.mock.calls.some(([path]) => path === "/connectors/halopsa/tickets")).toBe(false);
@@ -395,9 +430,6 @@ describe("dashboard connector request scope", () => {
 });
 
 function defaultResponse(path: string): unknown {
-  if (path === "/connectors/halopsa/tickets") {
-    return { result: { status: "blocked", message: "Tickets unavailable.", count: 0 }, items: [] };
-  }
   if (path === "/connectors/halopsa/write-health") {
     return { status: "blocked", message: "Write health unavailable.", count: 0 };
   }
