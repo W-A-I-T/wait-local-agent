@@ -1,5 +1,5 @@
 import { lazy, Suspense } from "react";
-import { Navigate, Route, Routes } from "react-router-dom";
+import { Navigate, Route, Routes, useParams } from "react-router-dom";
 import { Approvals } from "./screens/Approvals";
 import { Analytics } from "./screens/Analytics";
 import { Agents } from "./screens/Agents";
@@ -36,6 +36,7 @@ import { TechnicianPath } from "./screens/TechnicianPath";
 import { MicrosoftAdmin } from "./screens/MicrosoftAdmin";
 import { MicrosoftAdminAccess } from "./screens/MicrosoftAdminAccess";
 import { EndUserSupport } from "./screens/EndUserSupport";
+import { Executions } from "./screens/Executions";
 import { PrincipalsAdmin } from "./screens/PrincipalsAdmin";
 import { MicrosoftAdminCapabilityGate } from "./components/MicrosoftAdminCapabilityGate";
 import { RoleGate } from "./components/RoleGate";
@@ -90,6 +91,11 @@ function SettingsRoute() {
       <Settings />
     </RoleGate>
   );
+}
+
+function ExecutionDeepLink() {
+  const { executionId } = useParams();
+  return <Executions initialExecutionId={executionId} />;
 }
 
 function PrincipalsAdminRoute() {
@@ -165,6 +171,7 @@ export function AppRoutes() {
       <Route path="technician-path" element={<TechnicianPath />} />
       <Route path="backfills" element={<Navigate to="/activity/runs?kind=backfill" replace />} />
       <Route path="executions" element={<Navigate to="/activity/runs?kind=execution" replace />} />
+      <Route path="executions/:executionId" element={<ExecutionDeepLink />} />
       <Route path="settings" element={<SettingsRoute />} />
       <Route path="system/appliance-health" element={<ApplianceHealth />} />
       <Route path="system/diagnostics" element={<DiagnosticsSupport />} />

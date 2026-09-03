@@ -3,6 +3,7 @@ import { apiFetch, apiFetchBlob } from "../api/client";
 import { EmptyState } from "../components/EmptyState";
 import { LoadingState } from "../components/LoadingState";
 import { ScopeBadge } from "../components/ScopeBadge";
+import { RunRow } from "../components/RunRow";
 import type { ExecutionDetail, ExecutionRun } from "../api/types";
 import { useDashboard } from "../app/DashboardContext";
 
@@ -10,8 +11,12 @@ function displayValue(value: unknown): string {
   return typeof value === "string" ? value : JSON.stringify(value ?? {}, null, 2);
 }
 
-export function Executions() {
-  const { selectedClientId, clients } = useDashboard();
+type ExecutionsProps = {
+  initialExecutionId?: string;
+};
+
+export function Executions({ initialExecutionId }: ExecutionsProps = {}) {
+  const { selectedClientId } = useDashboard();
   const [executions, setExecutions] = useState<ExecutionRun[]>([]);
   const [selected, setSelected] = useState<ExecutionDetail | null>(null);
   const [loading, setLoading] = useState(true);
@@ -19,6 +24,7 @@ export function Executions() {
   const [kind, setKind] = useState("");
   const [status, setStatus] = useState("");
   const [message, setMessage] = useState("");
+  const initialExecutionIdNumber = parseExecutionId(initialExecutionId);
 
   const refresh = useCallback(async () => {
     setLoading(true);
@@ -40,16 +46,20 @@ export function Executions() {
     void refresh();
   }, [refresh]);
 
-  async function showDetail(execution: ExecutionRun) {
+  const showDetail = useCallback(async (executionId: number) => {
     setDetailLoading(true);
     try {
-      setSelected(await apiFetch<ExecutionDetail>(`/executions/${execution.id}`));
+      setSelected(await apiFetch<ExecutionDetail>(`/executions/${executionId}`));
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "Unable to load execution detail.");
     } finally {
       setDetailLoading(false);
     }
-  }
+  }, []);
+
+  useEffect(() => {
+    if (initialExecutionIdNumber !== null) void showDetail(initialExecutionIdNumber);
+  }, [initialExecutionIdNumber, showDetail]);
 
   async function downloadArtifact(artifact: ExecutionDetail["artifacts"][number]) {
     if (!selected) return;
@@ -79,11 +89,18 @@ export function Executions() {
       </section>
 
       <section className="table-list">
-        {loading ? <LoadingState label="Loading execution history…" /> : executions.length === 0 ? <EmptyState title="No execution history" why="Completed, failed, and cancelled runs appear here after an execution starts." /> : executions.map((execution) => <button className="table-row" type="button" key={execution.id} onClick={() => void showDetail(execution)}>
-          <div><strong>Run #{execution.id}</strong><span>{execution.run_kind} · {execution.trigger_source}</span></div>
-          <div><strong>{execution.status}</strong><span>{execution.actor} · {execution.client_id || "unbound"}</span></div>
-          <em>{execution.started_at}</em>
-        </button>)}
+        {loading ? <LoadingState label="Loading execution history…" /> : executions.length === 0 ? <EmptyState title="No execution history" why="Completed, failed, and cancelled runs appear here after an execution starts." /> : executions.map((execution) => (
+          <RunRow
+            key={execution.id}
+            title={`Run #${execution.id}`}
+            kind="execution"
+            clientId={execution.client_id}
+            origin={executionOrigin(execution)}
+            status={execution.status}
+            timestamp={execution.started_at}
+            onOpen={() => void showDetail(execution.id)}
+          />
+        ))}
       </section>
 
       {detailLoading ? <LoadingState label="Loading execution details…" /> : selected ? <section className="panel">
@@ -103,4 +120,17 @@ export function Executions() {
       </section> : null}
     </div>
   );
+}
+
+function executionOrigin(execution: ExecutionRun): string {
+  const source = execution.source_run_id === null || execution.source_run_id === undefined
+    ? "Source run unavailable"
+    : `Source run ${execution.source_run_id}`;
+  return `${source} · ${execution.run_kind} · ${execution.trigger_source} · ${execution.actor}`;
+}
+
+function parseExecutionId(value: string | undefined): number | null {
+  if (!value || !/^\d+$/.test(value)) return null;
+  const parsed = Number(value);
+  return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : null;
 }

@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Link, useSearchParams } from "react-router-dom";
+import { useSearchParams } from "react-router-dom";
 import { apiFetch } from "../api/client";
 import { EmptyState } from "../components/EmptyState";
 import { LoadingState } from "../components/LoadingState";
 import { ScopeBadge } from "../components/ScopeBadge";
+import { RunRow, runKindLabel } from "../components/RunRow";
 import { useDashboard } from "../app/DashboardContext";
 
 type ActivityItem = {
@@ -20,11 +21,15 @@ type ActivityItem = {
   client_id: string | null;
   detail_path: string;
   trigger_source: string;
+  ticket_id?: string | null;
+  approval_id?: number | null;
 };
 
 const kindOptions = [
   ["", "All"],
   ["workflow", "Workflow"],
+  ["playbook", "Playbook"],
+  ["agent", "Agent"],
   ["execution", "Execution"],
   ["smart_action", "Smart action"],
   ["scheduled", "Scheduled"],
@@ -39,6 +44,7 @@ export function ActivityRuns() {
   const [message, setMessage] = useState("");
   const [kind, setKind] = useState(() => searchParams.get("kind") ?? "");
   const [status, setStatus] = useState("");
+  const executionId = parseExecutionId(searchParams.get("execution_id"));
 
   const query = useMemo(() => {
     const params = new URLSearchParams({ limit: "200" });
@@ -48,10 +54,11 @@ export function ActivityRuns() {
   }, [kind, selectedClientId, status]);
 
   const visibleRows = rows.filter((row) => (
-    !kind || (
+    (executionId === null || row.canonical_execution_id === executionId) &&
+    (!kind || (
       (kind === "execution" ? row.canonical_execution_id !== null : true)
       && (kind !== "scheduled" || row.trigger_source === "scheduled")
-    )
+    ))
   ));
 
   const refresh = useCallback(async () => {
@@ -105,21 +112,47 @@ export function ActivityRuns() {
         {loading ? <LoadingState label="Loading run history…" /> : visibleRows.length === 0 ? <EmptyState title="No matching runs" why="No recorded activity matches the current client and filters." /> : (
           <div className="table-list">
             {visibleRows.map((row) => (
-              <article className="table-row" key={row.activity_id}>
-                <div>
-                  <strong>{row.title}</strong>
-                  <span>{row.kind.replace("_", " ")} · {row.client_id || "global"}{row.entity_id ? ` · ${row.entity_id}` : ""}</span>
-                  <small>{row.started_at || row.finished_at || "timestamp unavailable"}{row.actor ? ` · ${row.actor}` : ""}{row.trigger_source ? ` · ${row.trigger_source}` : ""}</small>
-                </div>
-                <span>{row.status}</span>
-                <div>
-                  {row.canonical_execution_id ? <Link to="/executions">Execution #{row.canonical_execution_id}</Link> : <Link to={row.detail_path}>Open source</Link>}
-                </div>
-              </article>
+              <RunRow
+                key={row.activity_id}
+                title={row.title}
+                kind={row.canonical_execution_id !== null ? "execution" : row.trigger_source === "scheduled" ? "scheduled" : row.kind}
+                clientId={row.client_id}
+                origin={activityOrigin(row)}
+                status={row.status}
+                timestamp={row.started_at || row.finished_at}
+                href={activityHref(row)}
+              />
             ))}
           </div>
         )}
       </section>
     </div>
   );
+}
+
+function activityHref(row: ActivityItem): string {
+  if (row.canonical_execution_id !== null) {
+    return `/executions/${row.canonical_execution_id}?kind=execution`;
+  }
+  return row.detail_path;
+}
+
+function activityOrigin(row: ActivityItem): string | null {
+  if (row.approval_id !== null && row.approval_id !== undefined) return `Approval ${row.approval_id}`;
+  if (row.canonical_execution_id !== null) {
+    return row.source_run_id === null ? "Source run unavailable" : `Source run ${row.source_run_id}`;
+  }
+  if (row.ticket_id) return `Ticket ${row.ticket_id}`;
+  if (row.entity_id) {
+    const kind = runKindLabel(row.kind);
+    return kind === "Workflow" || kind === "Agent" ? `Ticket ${row.entity_id}` : row.entity_id;
+  }
+  if (row.source_run_id !== null) return `Source run ${row.source_run_id}`;
+  return null;
+}
+
+function parseExecutionId(value: string | null): number | null {
+  if (!value || !/^\d+$/.test(value)) return null;
+  const parsed = Number(value);
+  return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : null;
 }

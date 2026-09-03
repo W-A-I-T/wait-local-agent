@@ -28,7 +28,16 @@ const STATUS_COPY: Record<string, { label: string; tone: string }> = {
   evidence_no_evidence: { label: "No evidence recorded", tone: "danger" },
   evidence_partial: { label: "Needs attention", tone: "warn" },
   evidence_completed: { label: "Checks completed", tone: "ok" },
-  evidence_unavailable: { label: "Evidence unavailable", tone: "danger" }
+  evidence_unavailable: { label: "Evidence unavailable", tone: "danger" },
+  not_started: { label: "Not started", tone: "neutral" },
+  submitted: { label: "Submitted", tone: "info" },
+  verified: { label: "Verified", tone: "ok" },
+  unverified: { label: "Needs verification", tone: "warn" },
+  cancelled: { label: "Cancelled", tone: "neutral" },
+  queued: { label: "Queued", tone: "info" },
+  pending: { label: "Pending", tone: "warn" },
+  approved: { label: "Approved", tone: "ok" },
+  rejected: { label: "Rejected", tone: "danger" }
 };
 
 export function StatusChip({ status, hint }: StatusChipProps) {

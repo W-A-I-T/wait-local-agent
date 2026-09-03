@@ -48,7 +48,7 @@ describe("Executions", () => {
     render(<MemoryRouter><Executions /></MemoryRouter>);
 
     expect(await screen.findByRole("heading", { name: "Execution History" })).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: /Run #4/ }));
+    fireEvent.click(screen.getByRole("button", { name: "Open" }));
     expect(await screen.findByRole("heading", { name: "Run #4" })).toBeInTheDocument();
     expect(screen.getByText(/Ticket triage/)).toBeInTheDocument();
     expect(screen.getByText(/classification/)).toBeInTheDocument();
@@ -66,7 +66,7 @@ describe("Executions", () => {
     Object.defineProperty(URL, "revokeObjectURL", { configurable: true, value: revokeObjectURL });
     render(<MemoryRouter><Executions /></MemoryRouter>);
 
-    fireEvent.click(await screen.findByRole("button", { name: /Run #4/ }));
+    fireEvent.click(await screen.findByRole("button", { name: "Open" }));
     fireEvent.click(await screen.findByRole("button", { name: "Download" }));
     await waitFor(() => expect((vi.mocked(fetch) as unknown as { mock: { calls: Array<[RequestInfo | URL]> } }).mock.calls.some(([input]) => String(input) === "/executions/4/artifacts/2")).toBe(true));
     expect(createObjectURL).toHaveBeenCalled();
@@ -80,7 +80,7 @@ describe("Executions", () => {
     });
     render(<MemoryRouter><Executions /></MemoryRouter>);
 
-    fireEvent.click(await screen.findByRole("button", { name: /Run #4/ }));
+    fireEvent.click(await screen.findByRole("button", { name: "Open" }));
     fireEvent.click(await screen.findByRole("button", { name: "Download" }));
 
     expect(await screen.findByRole("alert")).toHaveTextContent(
