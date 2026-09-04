@@ -25,6 +25,8 @@ All notable changes to WAIT Local Agent will be documented in this file.
 
 ### Changed
 
+- Client, discovery, setup, connector-instance, ingestion and mapping routes now live in
+  `api/routers/tenancy.py`; no route changes.
 - Ticket, approval, end-user and technician-chat routes now live in
   `api/routers/tickets.py` and `api/routers/end_user.py`; no route changes.
 - Workflow, scheduled-job and MSP playbook routes now live in

@@ -10,8 +10,10 @@ from fastapi.testclient import TestClient
 
 import wait_local_agent.api.app as app_module
 import wait_local_agent.api.routers.system as system_module
+import wait_local_agent.api.routers.tenancy as tenancy_module
 from tests.support import PINNED_SCHEMA_MIGRATIONS
 from wait_local_agent.api.app import create_app
+from wait_local_agent.api.schemas import ConnectorInstanceCreateRequest
 from wait_local_agent.client_scope import AllClients, BoundClients
 from wait_local_agent.migrations import Migration, MigrationRunner
 from wait_local_agent.rbac import AuthContext, Role
@@ -195,7 +197,7 @@ def test_connector_api_rejects_unknown_types_with_canonical_accepted_types(setti
         route for route in application.routes
         if isinstance(route, APIRoute) and route.path == "/connector-instances" and "POST" in (route.methods or set())
     )
-    request = app_module.ConnectorInstanceCreateRequest(
+    request = ConnectorInstanceCreateRequest(
         connector_type="unknown-provider",
         display_name="Unknown",
     )
@@ -679,6 +681,7 @@ def test_p1_api_non_msp_admin_is_denied_mutations_and_scoped_verify(settings, mo
         ).status_code == 403
 
         monkeypatch.setattr(app_module, "_require_msp_operator", lambda _context: None)
+        monkeypatch.setattr(tenancy_module, "_require_msp_operator", lambda _context: None)
         out_of_scope_patch = client.patch(
             "/clients/client-b", headers=headers, json={"status": "archived"}
         )
