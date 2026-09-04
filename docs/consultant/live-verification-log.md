@@ -7,7 +7,7 @@ dated live receipt.
 
 ## 2026-09-02 — recorded live run before the operator script (FAIL)
 
-Source: `ai/tasks/wla-live-verify-script/prior-live-run.md`.
+Source: `evidence/prior-live-run.md`.
 
 | | |
 | --- | --- |

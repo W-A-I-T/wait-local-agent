@@ -24,6 +24,7 @@ All notable changes to WAIT Local Agent will be documented in this file.
 
 ### Changed
 
+- `SECURITY.md` now lists the 2.0.0 release candidate line as supported and 1.1.x as security-fix only.
 - Connector setup now separates appliance-wide settings from client connections, shows plain-language readiness states, guides connector instances through provider, credential, and mapping steps, and links empty states to the action that populates them.
 - Approval, run, and audit activity now share explicit record kinds, origins, result links, and related-run actions so an approved action can be followed through execution evidence.
 - Solutions Architect handoffs to Solution delivery are now client-keyed in the browser session, named with their source blueprint, and shown through one plain-language lifecycle; standalone Power Apps builders are clearly separated.
@@ -101,6 +102,7 @@ All notable changes to WAIT Local Agent will be documented in this file.
 
 ### Removed
 
+- Internal task journals under `ai/` are no longer tracked in the repository; Power Platform verification evidence moved to `docs/consultant/evidence/`.
 - Removed the duplicate `GET /audit/export` route; use
   `GET /audit-events/export` with the `format` query parameter.
 
