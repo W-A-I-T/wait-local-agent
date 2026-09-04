@@ -58,7 +58,8 @@ requests only.
 
 | Version | Supported |
 | --- | --- |
-| 1.1.x | Yes |
+| 2.0.0-rc.x (main) | Yes |
+| 1.1.x | Critical security fixes only until 2.0.0 is released |
 | Older releases | No |
 
 ## Operator responsibilities
