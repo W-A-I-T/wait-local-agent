@@ -225,7 +225,7 @@ def test_memory_active_restore_scalar_history_and_filters(settings) -> None:
     with pytest.raises(AgentPlatformError):
         memories.resolve_context(client_id="acme", limit=0)
 
-    with store._connect() as connection:  # noqa: SLF001
+    with store._connect() as connection:
         connection.execute(
             "update agent_memories set value_json = 'not-json' where id = ?",
             (scalar.id,),
@@ -716,7 +716,7 @@ def test_technician_workload_and_availability_defensive_paths(settings) -> None:
     assert workload.to_dict()["open_tickets"] == 1
     assert profile.to_dict()["technician_id"] == "tech"
     with pytest.raises(AgentPlatformNotFoundError):
-        service._get_workload(999, "acme")  # noqa: SLF001
+        service._get_workload(999, "acme")
 
     no_window = replace(
         profile,
@@ -802,7 +802,7 @@ def test_attachment_model_configuration_matrix(settings) -> None:
     ]
     for configured, expected in variants:
         service = AttachmentService(store, configured, memories)
-        assert service._model_configuration()["status"] == expected  # noqa: SLF001
+        assert service._model_configuration()["status"] == expected
 
 
 def test_attachment_upload_and_private_storage_defensive_paths(settings, monkeypatch, tmp_path) -> None:
@@ -905,7 +905,7 @@ def test_attachment_verified_file_failure_paths(settings, monkeypatch, tmp_path)
         content_base64=_PNG,
         actor="tech",
     )
-    with store._connect() as connection:  # noqa: SLF001
+    with store._connect() as connection:
         original_path = Path(
             connection.execute(
                 "select storage_path from ticket_attachments where id = ?",
@@ -917,26 +917,26 @@ def test_attachment_verified_file_failure_paths(settings, monkeypatch, tmp_path)
             (str(tmp_path / "missing.png"), attachment.id),
         )
     with pytest.raises(AgentPlatformError, match="unavailable"):
-        service._read_verified_content(attachment)  # noqa: SLF001
+        service._read_verified_content(attachment)
 
     outside = tmp_path / "outside.png"
     outside.write_bytes(_PNG_BYTES)
-    with store._connect() as connection:  # noqa: SLF001
+    with store._connect() as connection:
         connection.execute(
             "update ticket_attachments set storage_path = ? where id = ?",
             (str(outside), attachment.id),
         )
     with pytest.raises(AgentPlatformError, match="invalid"):
-        service._read_verified_content(attachment)  # noqa: SLF001
+        service._read_verified_content(attachment)
 
-    with store._connect() as connection:  # noqa: SLF001
+    with store._connect() as connection:
         connection.execute(
             "update ticket_attachments set storage_path = ? where id = ?",
             (str(original_path), attachment.id),
         )
     monkeypatch.setattr(Path, "read_bytes", lambda _: (_ for _ in ()).throw(OSError("read")))
     with pytest.raises(AgentPlatformError, match="could not be read"):
-        service._read_verified_content(attachment)  # noqa: SLF001
+        service._read_verified_content(attachment)
 
 
 def test_multimodal_http_error_contracts(monkeypatch) -> None:
@@ -1084,7 +1084,7 @@ def test_iteration_corrupt_state_and_approval_recovery_paths(settings, monkeypat
         instruction="",
         actor="tech",
     )
-    with store._connect() as connection:  # noqa: SLF001
+    with store._connect() as connection:
         connection.execute(
             "update agent_iteration_sessions set current_step = 1 where id = ?",
             (completed_defensively.id,),
@@ -1105,7 +1105,7 @@ def test_iteration_corrupt_state_and_approval_recovery_paths(settings, monkeypat
         instruction="",
         actor="tech",
     )
-    with store._connect() as connection:  # noqa: SLF001
+    with store._connect() as connection:
         connection.execute(
             "update agent_iteration_sessions set state_json = ? where id = ?",
             (json.dumps({"allowed_tools": [], "results": []}), mismatched.id),
@@ -1126,7 +1126,7 @@ def test_iteration_corrupt_state_and_approval_recovery_paths(settings, monkeypat
         instruction="",
         actor="tech",
     )
-    with store._connect() as connection:  # noqa: SLF001
+    with store._connect() as connection:
         connection.execute(
             "update agent_iteration_sessions set status = 'pending_approval', approval_id = null where id = ?",
             (corrupt_pending.id,),

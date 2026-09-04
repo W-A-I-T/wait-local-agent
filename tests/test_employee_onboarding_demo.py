@@ -56,7 +56,7 @@ def _make_blueprint(
 def test_employee_onboarding_demo_composes_local_fixture_stages(settings) -> None:
     store = Store(settings.data_path)
     ingest_local(store, Path("examples/sample_tickets/tickets.json"))
-    with store._connect() as connection:  # noqa: SLF001 - bind the isolated fixture tenant.
+    with store._connect() as connection:
         connection.execute(
             "update tickets set client_id = ? where id = ?",
             ("acme", "TCK-1001"),
@@ -136,7 +136,7 @@ def test_employee_onboarding_demo_composes_local_fixture_stages(settings) -> Non
 def test_employee_onboarding_demo_uses_selected_blueprint_content(settings, tmp_path) -> None:
     store = Store(settings.data_path)
     ingest_local(store, Path("examples/sample_tickets/tickets.json"))
-    with store._connect() as connection:  # noqa: SLF001 - bind the isolated fixture tenant.
+    with store._connect() as connection:
         connection.execute(
             "update tickets set client_id = ? where id = ?",
             ("acme", "TCK-1001"),
@@ -192,7 +192,7 @@ def test_employee_onboarding_demo_requires_a_scoped_fixture_ticket(settings) -> 
 def test_employee_onboarding_demo_rejects_non_object_blueprint(settings) -> None:
     store = Store(settings.data_path)
     ingest_local(store, Path("examples/sample_tickets/tickets.json"))
-    with store._connect() as connection:  # noqa: SLF001 - bind the isolated fixture tenant.
+    with store._connect() as connection:
         connection.execute(
             "update tickets set client_id = ? where id = ?",
             ("acme", "TCK-1001"),
@@ -209,7 +209,7 @@ def test_employee_onboarding_demo_rejects_non_object_blueprint(settings) -> None
 def test_employee_onboarding_demo_maps_blueprint_validation_errors(settings) -> None:
     store = Store(settings.data_path)
     ingest_local(store, Path("examples/sample_tickets/tickets.json"))
-    with store._connect() as connection:  # noqa: SLF001 - bind the isolated fixture tenant.
+    with store._connect() as connection:
         connection.execute(
             "update tickets set client_id = ? where id = ?",
             ("acme", "TCK-1001"),

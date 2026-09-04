@@ -13,9 +13,9 @@ SRC = ROOT / "src"
 if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
-from wait_local_agent.config import Settings  # noqa: E402
-from wait_local_agent.employee_onboarding_demo import run_employee_onboarding_demo  # noqa: E402
-from wait_local_agent.store import Store  # noqa: E402
+from wait_local_agent.config import Settings  # noqa: E402, I001 - sys.path is configured above
+from wait_local_agent.employee_onboarding_demo import run_employee_onboarding_demo  # noqa: E402 - sys.path is configured above
+from wait_local_agent.store import Store  # noqa: E402 - sys.path is configured above
 
 
 def main() -> None:
@@ -42,7 +42,7 @@ def main() -> None:
         store = Store(settings.data_path)
         store.create_client("acme", "Demo client")
         store.ingest_ticket_file(ROOT / "examples/sample_tickets/tickets.json", client_id="acme")
-        with store._connect() as connection:  # noqa: SLF001 - isolated fixture tenant binding.
+        with store._connect() as connection:
             connection.execute(
                 "update tickets set client_id = ? where id = ?",
                 ("acme", "TCK-1001"),

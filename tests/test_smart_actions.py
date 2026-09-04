@@ -168,7 +168,7 @@ def test_redacts_secret_key_tokens_without_substring_overreach() -> None:
 
 def test_event_history_redacts_legacy_payloads_at_read_time(settings) -> None:
     store = Store(settings.data_path)
-    with store._connect() as connection:  # noqa: SLF001
+    with store._connect() as connection:
         connection.execute(
             "insert into event_history "
             "(event_type, subject_id, status, message, payload_json, created_at) "
@@ -184,7 +184,7 @@ def test_event_history_redacts_legacy_payloads_at_read_time(settings) -> None:
 def test_approval_payload_is_redacted_when_read_from_legacy_row(settings) -> None:
     store = Store(settings.data_path)
     approval = store.create_approval_request("TCK-1", "halopsa.add_note", {})
-    with store._connect() as connection:  # noqa: SLF001
+    with store._connect() as connection:
         connection.execute(
             "update approval_requests set payload_json = ? where id = ?",
             ('{"note":"key=old AKIA1234567890ABCDEF"}', approval.id),
@@ -247,7 +247,7 @@ def _action_context(
 def test_m365_compliance_review_reports_observed_findings_and_requires_scope(settings) -> None:
     store = Store(settings.data_path)
     _seed_tickets(store)
-    with store._connect() as connection:  # noqa: SLF001
+    with store._connect() as connection:
         connection.execute("update tickets set client_id = 'acme'")
     provider = SimpleNamespace(
         list_managed_devices=lambda page_size: M365GraphManagedDeviceReadResponse(
@@ -289,7 +289,7 @@ def test_m365_compliance_review_reports_observed_findings_and_requires_scope(set
 def test_m365_compliance_review_fails_closed_on_partial_graph_evidence(settings) -> None:
     store = Store(settings.data_path)
     _seed_tickets(store)
-    with store._connect() as connection:  # noqa: SLF001
+    with store._connect() as connection:
         connection.execute("update tickets set client_id = 'acme'")
     provider = SimpleNamespace(
         list_managed_devices=lambda page_size: M365GraphManagedDeviceReadResponse(
@@ -311,7 +311,7 @@ def test_m365_compliance_review_fails_closed_on_partial_graph_evidence(settings)
 def test_m365_inactive_license_review_reports_disabled_user_assignments(settings) -> None:
     store = Store(settings.data_path)
     _seed_tickets(store)
-    with store._connect() as connection:  # noqa: SLF001
+    with store._connect() as connection:
         connection.execute("update tickets set client_id = 'acme'")
     provider = SimpleNamespace(
         list_users=lambda identity, page_size: M365GraphReadResponse(
@@ -342,7 +342,7 @@ def test_m365_inactive_license_review_reports_disabled_user_assignments(settings
 def test_m365_inactive_license_review_fails_closed_on_detail_failure(settings) -> None:
     store = Store(settings.data_path)
     _seed_tickets(store)
-    with store._connect() as connection:  # noqa: SLF001
+    with store._connect() as connection:
         connection.execute("update tickets set client_id = 'acme'")
     provider = SimpleNamespace(
         list_users=lambda identity, page_size: M365GraphReadResponse(
@@ -365,7 +365,7 @@ def test_m365_inactive_license_review_fails_closed_on_detail_failure(settings) -
 def test_m365_inactive_license_review_rejects_invalid_and_malformed_evidence(settings) -> None:
     store = Store(settings.data_path)
     _seed_tickets(store)
-    with store._connect() as connection:  # noqa: SLF001
+    with store._connect() as connection:
         connection.execute("update tickets set client_id = 'acme'")
     context = replace(_action_context(store, settings), client_id="acme")
     action = M365InactiveLicenseReviewAction()
@@ -421,7 +421,7 @@ def test_m365_inactive_license_review_rejects_invalid_and_malformed_evidence(set
 def test_nsight_software_inventory_accepts_only_a_tenant_scoped_workflow_anchor(settings) -> None:
     store = Store(settings.data_path)
     _seed_tickets(store)
-    with store._connect() as connection:  # noqa: SLF001
+    with store._connect() as connection:
         connection.execute("update tickets set client_id = 'acme'")
     provider = SimpleNamespace(
         adapter_id="n-sight",
@@ -529,7 +529,7 @@ def test_each_action_run_body_covers_success_and_input_guards(settings) -> None:
         client_id="acme",
         source_module="endpoint-agents",
     )
-    with store._connect() as connection:  # noqa: SLF001
+    with store._connect() as connection:
         connection.execute("update tickets set client_id = 'acme'")
 
     triage = TicketTriageAction().run(context, {"ticket_id": "TCK-1001"})
@@ -948,7 +948,7 @@ def test_action_bodies_respect_tenancy_and_citation_optional_ids(settings) -> No
     store = Store(settings.data_path)
     ensure_test_clients(store, "acme", "beta")
     _seed_tickets(store)
-    with store._connect() as connection:  # noqa: SLF001
+    with store._connect() as connection:
         connection.execute("update tickets set client_id = 'acme' where id = 'TCK-1001'")
         connection.execute("update tickets set client_id = 'beta' where id = 'TCK-1002'")
         connection.execute(
@@ -971,7 +971,7 @@ def test_action_bodies_respect_tenancy_and_citation_optional_ids(settings) -> No
 def test_ticket_quality_reports_explainable_field_issues(settings) -> None:
     store = Store(settings.data_path)
     ensure_test_client(store, "acme")
-    with store._connect() as connection:  # noqa: SLF001
+    with store._connect() as connection:
         connection.execute(
             "insert into tickets (id, client, subject, body, priority, status, client_id) values (?, ?, ?, ?, ?, ?, ?)",
             ("TCK-BAD", "", "", "", "urgent", "waiting", "acme"),
@@ -991,7 +991,7 @@ def test_ticket_quality_reports_explainable_field_issues(settings) -> None:
 def test_security_alert_assessment_is_deterministic_and_non_mutating(settings) -> None:
     store = Store(settings.data_path)
     ensure_test_client(store, "acme")
-    with store._connect() as connection:  # noqa: SLF001
+    with store._connect() as connection:
         connection.execute(
             "insert into tickets (id, client, subject, body, priority, status, client_id) values (?, ?, ?, ?, ?, ?, ?)",
             (
@@ -1023,7 +1023,7 @@ def test_security_alert_assessment_is_deterministic_and_non_mutating(settings) -
 def test_ticket_sla_assessment_uses_explicit_threshold_and_reports_missing_evidence(settings) -> None:
     store = Store(settings.data_path)
     ensure_test_client(store, "acme")
-    with store._connect() as connection:  # noqa: SLF001
+    with store._connect() as connection:
         connection.execute(
             """
             insert into tickets
@@ -1071,7 +1071,7 @@ def test_ticket_sla_assessment_uses_explicit_threshold_and_reports_missing_evide
     assert missing.output["evidence_status"] == "insufficient"
     missing_assessment = cast(dict[str, object], missing.output["assessment"])
     assert missing_assessment["reason"] == "missing_created_at"
-    with store._connect() as connection:  # noqa: SLF001
+    with store._connect() as connection:
         connection.execute(
             "update tickets set status = 'closed' where id = ?",
             ("TCK-OLD",),
@@ -1086,7 +1086,7 @@ def test_ticket_sla_assessment_uses_explicit_threshold_and_reports_missing_evide
 def test_stale_ticket_sweep_is_tenant_scoped_and_bounded(settings) -> None:
     store = Store(settings.data_path)
     ensure_test_clients(store, "acme", "beta")
-    with store._connect() as connection:  # noqa: SLF001
+    with store._connect() as connection:
         connection.executemany(
             """
             insert into tickets
@@ -1111,7 +1111,7 @@ def test_stale_ticket_sweep_is_tenant_scoped_and_bounded(settings) -> None:
     assert StaleTicketSweepAction().run(
         _action_context(store, settings, client_id="acme"), {"stale_after_minutes": 0}
     ).status == "failed"
-    with store._connect() as connection:  # noqa: SLF001
+    with store._connect() as connection:
         connection.execute(
             """
             insert into tickets
@@ -1142,7 +1142,7 @@ def test_approval_pending_rejected_malformed_and_repeat_paths(settings) -> None:
 
     second = service.invoke("dispatch-suggestion", {"ticket_id": "TCK-1001"}, "requester")
     assert second.approval_id is not None and second.run_id is not None
-    with store._connect() as connection:  # noqa: SLF001
+    with store._connect() as connection:
         connection.execute(
             "update approval_requests set payload_json = ? where id = ?",
             ('{"payload": "bad"}', second.approval_id),
@@ -1299,7 +1299,7 @@ def test_smart_action_bound_helpers_cover_invalid_and_normalized_values(settings
     assert _provider_is_ai_assisted(context) is True
     store = Store(settings.data_path)
     ensure_test_client(store, "acme")
-    with store._connect() as connection:  # noqa: SLF001
+    with store._connect() as connection:
         connection.execute(
             """
             insert into tickets (id, client, subject, body, priority, status, client_id)
@@ -1487,7 +1487,7 @@ def test_autotask_ticket_writes_are_approval_gated_and_validated(settings) -> No
 
     store = Store(settings.data_path)
     _seed_tickets(store)
-    with store._connect() as connection:  # noqa: SLF001
+    with store._connect() as connection:
         connection.execute("update tickets set id = '123', client_id = 'acme' where id = 'TCK-1001'")
     provider = FakeAutotaskWrites()
     context = _action_context(store, settings, client_id="acme")
@@ -1606,7 +1606,7 @@ def test_autotask_ticket_writes_are_approval_gated_and_validated(settings) -> No
 def test_syncro_ticket_comments_are_tenant_scoped_and_fail_closed(settings) -> None:
     store = Store(settings.data_path)
     _seed_tickets(store)
-    with store._connect() as connection:  # noqa: SLF001
+    with store._connect() as connection:
         connection.execute("update tickets set client_id = 'acme'")
     provider = SimpleNamespace(
         list_ticket_comments=lambda ticket_id, **kwargs: SimpleNamespace(
@@ -1766,7 +1766,7 @@ def test_syncro_ticket_writes_are_approval_gated_and_tenant_scoped(settings) -> 
 
     store = Store(settings.data_path)
     _seed_tickets(store)
-    with store._connect() as connection:  # noqa: SLF001
+    with store._connect() as connection:
         connection.execute("update tickets set id = '42', client_id = 'acme' where id = 'TCK-1001'")
     provider = FakeSyncroWrites()
     context = _action_context(store, settings, client_id="acme")
@@ -1832,7 +1832,7 @@ def test_connectwise_ticket_writes_are_approval_gated_and_validated(settings) ->
 
     store = Store(settings.data_path)
     _seed_tickets(store)
-    with store._connect() as connection:  # noqa: SLF001
+    with store._connect() as connection:
         connection.execute("update tickets set client_id = 'acme'")
     provider = FakeConnectWiseWrites()
     context = _action_context(store, settings, client_id="acme")
@@ -1913,7 +1913,7 @@ def test_servicenow_incident_writes_are_approval_gated_and_validated(settings) -
 
     store = Store(settings.data_path)
     _seed_tickets(store)
-    with store._connect() as connection:  # noqa: SLF001
+    with store._connect() as connection:
         connection.execute("update tickets set client_id = 'acme'")
     provider = FakeServiceNowWrites()
     context = _action_context(store, settings, client_id="acme")
@@ -2064,7 +2064,7 @@ def test_halopsa_ticket_writes_are_approval_gated_and_validated(settings) -> Non
     ]
     store = Store(settings.data_path)
     _seed_tickets(store)
-    with store._connect() as connection:  # noqa: SLF001
+    with store._connect() as connection:
         connection.execute("update tickets set client_id = 'acme'")
     provider = FakeHaloWrites()
     service = SmartActionService(store, settings, halopsa_client=provider)
@@ -3119,7 +3119,7 @@ def test_m365_user_offboarding_is_approval_gated_and_reports_partial_failure(set
 def test_connector_read_tools_reject_malformed_or_foreign_records(settings, monkeypatch) -> None:
     store = Store(settings.data_path)
     _seed_tickets(store)
-    with store._connect() as connection:  # noqa: SLF001
+    with store._connect() as connection:
         connection.execute("update tickets set client_id = 'acme'")
     context = _action_context(store, settings, client_id="acme")
     foreign_halo = replace(
@@ -3607,7 +3607,7 @@ def test_ai_actions_use_deterministic_local_fallback(settings) -> None:
 def test_documentation_assisted_response_drafts_and_delivers_local_note_after_approval(settings) -> None:
     store = Store(settings.data_path)
     _seed_tickets(store)
-    with store._connect() as connection:  # noqa: SLF001
+    with store._connect() as connection:
         connection.execute("update tickets set client_id = 'acme'")
     service = SmartActionService(store, replace(settings, allow_write_actions=True))
 
@@ -4032,7 +4032,7 @@ def test_expired_smart_action_approval_rejects_without_execution(settings) -> No
     service = SmartActionService(store, settings)
     pending = service.invoke("dispatch-suggestion", {"ticket_id": "TCK-1001"}, "technician")
     assert pending.approval_id is not None and pending.run_id is not None
-    with store._connect() as connection:  # noqa: SLF001
+    with store._connect() as connection:
         connection.execute(
             "update approval_requests set expires_at = ? where id = ?",
             ("2000-01-01T00:00:00+00:00", pending.approval_id),
@@ -4089,7 +4089,7 @@ def test_approval_completion_requires_authorized_different_approver(settings) ->
 def test_unknown_approved_action_is_failed_and_audited(settings) -> None:
     store = Store(settings.data_path)
     _seed_tickets(store)
-    with store._connect() as connection:  # noqa: SLF001
+    with store._connect() as connection:
         connection.execute("update tickets set client_id = 'acme' where id = 'TCK-1001'")
     service = SmartActionService(store, settings)
     pending = service.invoke(
@@ -4099,7 +4099,7 @@ def test_unknown_approved_action_is_failed_and_audited(settings) -> None:
         client_id="acme",
     )
     assert pending.approval_id is not None and pending.run_id is not None
-    with store._connect() as connection:  # noqa: SLF001
+    with store._connect() as connection:
         connection.execute(
             "update approval_requests set action_type = ? where id = ?",
             ("smart_action:missing-action", pending.approval_id),
@@ -4209,7 +4209,7 @@ def test_recorder_failure_does_not_change_action_outcome(settings, monkeypatch) 
 def test_recurring_service_review_action_is_read_only_and_tenant_scoped(settings) -> None:
     store = Store(settings.data_path)
     _seed_tickets(store)
-    with store._connect() as connection:  # noqa: SLF001
+    with store._connect() as connection:
         connection.execute(
             "update tickets set client_id = ?, created_at = ?, updated_at = ? where id = ?",
             ("acme", "2026-01-01T00:00:00+00:00", "2026-01-05T00:00:00+00:00", "TCK-1001"),

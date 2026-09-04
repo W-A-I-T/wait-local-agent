@@ -286,7 +286,7 @@ def _assert_ticket_identity_migration_failure(failure: str, message: str) -> Non
 
     try:
         with pytest.raises(RuntimeError, match=message):
-            store._apply_ticket_identity_migration(  # noqa: SLF001
+            store._apply_ticket_identity_migration(
                 cast(sqlite3.Connection, _MigrationConnection(connection, failure)),
             )
     finally:

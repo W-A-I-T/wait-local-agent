@@ -240,7 +240,7 @@ def test_principal_deactivation_invalidates_sessions_credentials_grants_and_audi
         idle_expires_at=idle,
         absolute_expires_at=absolute,
     )
-    with store._connect() as connection:  # noqa: SLF001 - seed an active grant for the invariant test
+    with store._connect() as connection:
         connection.execute(
             """
             insert into principal_capability_grants
@@ -261,7 +261,7 @@ def test_principal_deactivation_invalidates_sessions_credentials_grants_and_audi
     assert response.json()["active"] is False
     assert store.find_principal_by_credential_hash(credential_hash) is None
     assert store.get_auth_session(session_hash) is None
-    with store._connect() as connection:  # noqa: SLF001 - verify the persisted grant state
+    with store._connect() as connection:
         assert connection.execute(
             "select active from principal_capability_grants where principal_id = ?",
             ("target",),

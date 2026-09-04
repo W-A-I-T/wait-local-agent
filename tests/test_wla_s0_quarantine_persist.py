@@ -114,7 +114,7 @@ def test_provider_ownership_invariant_and_retenant_guards(tmp_path: Path) -> Non
         store.verify_client_connector_mapping(AllClients(), inactive_mapping.mapping_id)
     assert store.list_client_connector_mappings(AllClients())[1].verified == 0
 
-    with store._connect() as connection:  # noqa: SLF001
+    with store._connect() as connection:
         with pytest.raises(ValueError, match="connector instance and external company are required"):
             store.retenant_quarantined_tickets(
                 connection,
@@ -481,7 +481,7 @@ def test_legacy_quarantine_reclassification_seeds_history_and_audit(tmp_path: Pa
     store = Store(tmp_path / "state.db")
     store.create_client("client-a", "Acme")
     now = utc_now()
-    with store._connect() as connection:  # noqa: SLF001
+    with store._connect() as connection:
         connection.execute(
             """
             insert into tickets

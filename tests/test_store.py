@@ -128,7 +128,7 @@ def test_store_lists_only_non_terminal_founder_poll_candidates(tmp_path: Path) -
 
 def test_store_reads_legacy_agent_execution_timezone_column(tmp_path: Path) -> None:
     store = Store(tmp_path / "state.db")
-    with store._connect() as connection:  # noqa: SLF001
+    with store._connect() as connection:
         connection.execute("alter table agent_definitions add column execution_timezone text")
 
     definition = AgentDefinition(
@@ -150,7 +150,7 @@ def test_store_reads_legacy_agent_execution_timezone_column(tmp_path: Path) -> N
         execution_window_timezone="UTC",
     )
     store.create_agent_definition(definition)
-    with store._connect() as connection:  # noqa: SLF001
+    with store._connect() as connection:
         connection.execute(
             "update agent_definitions set execution_timezone = ? where id = ?",
             ("America/Vancouver", definition.id),
@@ -164,7 +164,7 @@ def test_store_reads_legacy_agent_execution_timezone_column(tmp_path: Path) -> N
 def test_v5_duplicate_provider_identity_preflight_aborts(tmp_path: Path) -> None:
     store = Store(tmp_path / "state.db")
     store.create_client("client-a", "Acme")
-    with store._connect() as connection:  # noqa: SLF001
+    with store._connect() as connection:
         connection.execute("pragma foreign_keys = off")
         connection.execute("drop index ux_tickets_connector_external")
         for ticket_id in ("duplicate-a", "duplicate-b"):
@@ -178,13 +178,13 @@ def test_v5_duplicate_provider_identity_preflight_aborts(tmp_path: Path) -> None
                 (ticket_id,),
             )
         with pytest.raises(RuntimeError, match="instance-a.*remote-a"):
-            store._apply_ticket_identity_migration(connection)  # noqa: SLF001
+            store._apply_ticket_identity_migration(connection)
 
 
 def test_v5_backfills_legacy_client_and_rebuilds_existing_ticket(tmp_path: Path) -> None:
     store = Store(tmp_path / "state.db")
     instance = store.create_connector_instance("halopsa", "Legacy")
-    with store._connect() as connection:  # noqa: SLF001
+    with store._connect() as connection:
         connection.execute("pragma foreign_keys = off")
         connection.execute("drop index ux_tickets_connector_external")
         connection.execute(
@@ -197,13 +197,13 @@ def test_v5_backfills_legacy_client_and_rebuilds_existing_ticket(tmp_path: Path)
             """,
             (instance.connector_instance_id,),
         )
-        store._apply_ticket_identity_migration(connection)  # noqa: SLF001
+        store._apply_ticket_identity_migration(connection)
 
     legacy_client = store.get_client(AllClients(), "legacy-client")
     ticket = store.get_ticket("legacy-client-ticket", "legacy-client")
     assert legacy_client is not None and legacy_client.status == "active"
     assert ticket is not None
-    with store._connect() as connection:  # noqa: SLF001
+    with store._connect() as connection:
         assert connection.execute("pragma foreign_key_check").fetchall() == []
         assert connection.execute("pragma integrity_check").fetchone()[0] == "ok"
 
@@ -391,7 +391,7 @@ def test_store_template_gallery_revision_lookup_and_validation_edges(tmp_path: P
     with pytest.raises(ValueError, match="instructions"):
         store.update_template_gallery_entry(entry.id, instructions="x" * 4001, client_id="acme")
 
-    with store._connect() as connection:  # noqa: SLF001
+    with store._connect() as connection:
         connection.execute("delete from template_gallery_revisions where gallery_id = ?", (entry.id,))
     migrated = Store(tmp_path / "state.db")
     backfilled = migrated.list_template_gallery_revisions(entry.id, "acme")
@@ -477,7 +477,7 @@ def test_store_client_filters_cover_required_list_surfaces(tmp_path: Path) -> No
     store.create_client("acme", "Acme")
     store.create_client("beta", "Beta")
 
-    with store._connect() as connection:  # noqa: SLF001
+    with store._connect() as connection:
         connection.execute(
             """
             insert into tickets (id, client, subject, body, priority, status, client_id)
@@ -678,7 +678,7 @@ def test_store_expires_pending_approval_and_blocks_mutation(tmp_path: Path) -> N
         {"fields": {"note": "safe"}},
         expires_in_seconds=60,
     )
-    with store._connect() as connection:  # noqa: SLF001
+    with store._connect() as connection:
         connection.execute(
             "update approval_requests set expires_at = ? where id = ?",
             ("2000-01-01T00:00:00+00:00", approval.id),
@@ -702,7 +702,7 @@ def test_store_expires_pending_approval_and_blocks_mutation(tmp_path: Path) -> N
 def test_store_treats_malformed_approval_expiry_as_expired(tmp_path: Path) -> None:
     store = Store(tmp_path / "state.db")
     approval = store.create_approval_request("TCK-1", "ticket.assign", {})
-    with store._connect() as connection:  # noqa: SLF001
+    with store._connect() as connection:
         connection.execute(
             "update approval_requests set expires_at = ? where id = ?",
             ("not-a-timestamp", approval.id),
@@ -717,7 +717,7 @@ def test_store_backfills_legacy_approval_deadlines(tmp_path: Path) -> None:
     db_path = tmp_path / "state.db"
     store = Store(db_path)
     approval = store.create_approval_request("TCK-1", "ticket.assign", {})
-    with store._connect() as connection:  # noqa: SLF001
+    with store._connect() as connection:
         connection.execute(
             "update approval_requests set expires_at = null, created_at = ? where id = ?",
             ("2026-08-08T00:00:00", approval.id),
@@ -734,7 +734,7 @@ def test_store_backfills_malformed_legacy_approval_timestamp(tmp_path: Path) -> 
     db_path = tmp_path / "state.db"
     store = Store(db_path)
     approval = store.create_approval_request("TCK-1", "ticket.assign", {})
-    with store._connect() as connection:  # noqa: SLF001
+    with store._connect() as connection:
         connection.execute(
             "update approval_requests set expires_at = null, created_at = ? where id = ?",
             ("not-a-timestamp", approval.id),
@@ -1165,7 +1165,7 @@ def test_store_candidate_baseline_and_mapping_edges(tmp_path: Path) -> None:
     )
     assert verified.verified == 1
     assert retenanted_count == 0
-    with store._connect() as connection:  # noqa: SLF001
+    with store._connect() as connection:
         connection.execute(
             f"""
             create trigger force_verified_mapping_conflict

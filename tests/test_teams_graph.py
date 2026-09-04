@@ -173,9 +173,9 @@ def test_teams_health_and_write_guards_cover_blocked_and_ready_states(settings) 
     blocked_write = TeamsGraphClient(replace(_configured(settings), allow_write_actions=False))
     assert blocked_write.write_health().status == "blocked"
     with pytest.raises(teams_module.TeamsGraphReadError, match="blocked"):
-        blocked_http._get("me/joinedTeams", params={"$top": 1})  # noqa: SLF001
+        blocked_http._get("me/joinedTeams", params={"$top": 1})
     with pytest.raises(teams_module.TeamsGraphReadError, match="require"):
-        blocked_write._post("teams/team/channels/channel/messages", payload={})  # noqa: SLF001
+        blocked_write._post("teams/team/channels/channel/messages", payload={})
 
 
 def test_teams_http_error_and_invalid_base_url_paths_are_bounded(settings) -> None:

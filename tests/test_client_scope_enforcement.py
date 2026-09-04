@@ -80,7 +80,7 @@ def _contains_entity_client_attribute(node: ast.AST, entity_names: set[str]) -> 
 
 def _seed_cross_client_state(store: Store) -> int:
     ensure_test_clients(store, "alpha", "beta")
-    with store._connect() as connection:  # noqa: SLF001
+    with store._connect() as connection:
         connection.execute(
             """
             insert into tickets (id, client, subject, body, priority, status, client_id)
@@ -629,7 +629,7 @@ def test_ticket_detail_endpoints_hide_foreign_client_ticket(settings) -> None:
         body="alpha-own-note",
     )
     assert alpha_note is not None
-    with store._connect() as connection:  # noqa: SLF001
+    with store._connect() as connection:
         connection.execute(
             """
             insert into ticket_status_history

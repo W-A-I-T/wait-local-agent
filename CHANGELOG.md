@@ -25,6 +25,8 @@ All notable changes to WAIT Local Agent will be documented in this file.
 
 ### Changed
 
+- Ruff now enforces `SLF001` in `src/` and flags unused `noqa` directives
+  (`RUF100`); inert suppressions were removed.
 - `SECURITY.md` now lists the 2.0.0 release candidate line as supported and 1.1.x as security-fix only.
 - Connector setup now separates appliance-wide settings from client connections, shows plain-language readiness states, guides connector instances through provider, credential, and mapping steps, and links empty states to the action that populates them.
 - Approval, run, and audit activity now share explicit record kinds, origins, result links, and related-run actions so an approved action can be followed through execution evidence.

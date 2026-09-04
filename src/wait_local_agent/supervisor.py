@@ -232,7 +232,7 @@ def execute_supervisor_delegation(
                     actor=actor,
                     approver_role=actor_role,
                 )
-            except Exception as exc:  # noqa: BLE001 - return a bounded orchestration failure
+            except Exception as exc:  # return a bounded orchestration failure
                 message = redact_text(str(exc))[:500]
                 child_results.append(
                     {
@@ -280,7 +280,7 @@ def execute_supervisor_delegation(
                 supervisor_context=supervisor_context,
                 actor_role=actor_role,
             )
-        except Exception as exc:  # noqa: BLE001 - return a bounded orchestration failure
+        except Exception as exc:  # return a bounded orchestration failure
             message = redact_text(str(exc))[:500]
             summary = {
                 "agent_id": agent_id,
@@ -329,7 +329,7 @@ def execute_supervisor_delegation(
                     actor_role=actor_role,
                     supervisor_context=retry_context,
                 )
-            except Exception as exc:  # noqa: BLE001 - return a bounded orchestration failure
+            except Exception as exc:  # return a bounded orchestration failure
                 attempts.append(
                     {
                         "agent_id": agent_id,

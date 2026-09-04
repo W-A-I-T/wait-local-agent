@@ -336,7 +336,7 @@ def test_baseline_fallback_and_functional_entry_points(tmp_path: Path) -> None:
         summary={"hash": "before"},
         sections=_sections(noncompliant_devices=1),
     )
-    with store._connect() as connection:  # noqa: SLF001
+    with store._connect() as connection:
         connection.execute("update client_baselines set accepted = 0 where baseline_id = ?", (baseline.baseline_id,))
 
     composed = compose_baseline("acme", store=store)
@@ -442,10 +442,10 @@ def test_safe_json_and_correlation_parsing_cover_invalid_and_boundary_timestamps
     service = BaselineService(store)
     finding = cast(list[dict[str, object]], [{"domain": "microsoft_posture"}])
     invalid = ClientBaseline("id", "acme", 1, "bad timestamp", True, "{}", "{}", "{}")
-    service._correlate_findings(finding, invalid, "acme", now=end)  # noqa: SLF001
+    service._correlate_findings(finding, invalid, "acme", now=end)
     assert finding[0]["correlation"] == "no_matching_approved_change"
     naive_baseline = ClientBaseline("id", "acme", 1, "2026-09-01T00:00:00", True, "{}", "{}", "{}")
-    service._correlate_findings(finding, naive_baseline, "acme", now=end)  # noqa: SLF001
+    service._correlate_findings(finding, naive_baseline, "acme", now=end)
 
 
 @pytest.mark.parametrize(
@@ -562,6 +562,6 @@ def test_baseline_snapshot_scheduler_job_is_validated_triggered_and_audited(tmp_
         job_kind="baseline_snapshot",
         entity_id="acme",
     )
-    asyncio.run(manager._run_job(job))  # noqa: SLF001
+    asyncio.run(manager._run_job(job))
     assert store.list_client_baselines("acme")[0].version == 1
     assert any(event.event_type == "scheduled_job.baseline_snapshot" for event in store.list_audit_events("acme"))

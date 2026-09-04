@@ -296,7 +296,7 @@ class AttachmentService:
             except AgentPlatformError as exc:
                 status = "failed"
                 error_detail = redact_text(str(exc))[:2_000]
-            except Exception:  # noqa: BLE001 - provider details remain private
+            except Exception:  # provider details remain private
                 status = "failed"
                 error_detail = "multimodal provider request failed"
         analysis = self._persist_analysis(

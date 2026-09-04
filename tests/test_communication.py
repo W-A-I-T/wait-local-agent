@@ -214,7 +214,7 @@ def test_configured_webhook_delivery_requires_flags_and_never_returns_body(setti
 def test_approved_communication_send_creates_local_ticket_note(settings) -> None:
     store = Store(settings.data_path)
     ingest_local(store, Path("examples/sample_tickets/tickets.json"))
-    with store._connect() as connection:  # noqa: SLF001
+    with store._connect() as connection:
         connection.execute("update tickets set client_id = 'acme'")
     active = replace(settings, allow_write_actions=True)
     service = SmartActionService(store, active)
@@ -279,7 +279,7 @@ def test_communication_delivery_rejects_unsafe_endpoint_and_missing_ticket(setti
 def test_api_communication_approval_and_ticket_note_view(settings) -> None:
     store = Store(settings.data_path)
     ingest_local(store, Path("examples/sample_tickets/tickets.json"))
-    with store._connect() as connection:  # noqa: SLF001
+    with store._connect() as connection:
         connection.execute("update tickets set client_id = 'acme'")
     client = TestClient(
         create_app(
@@ -661,7 +661,7 @@ def test_communication_send_uses_approved_sender(settings, sender, status, detai
 def test_communication_send_preview_failure_and_blocked_local_note(settings) -> None:
     store = Store(settings.data_path)
     ingest_local(store, Path("examples/sample_tickets/tickets.json"))
-    with store._connect() as connection:  # noqa: SLF001
+    with store._connect() as connection:
         connection.execute("update tickets set client_id = 'acme'")
     action = CommunicationSendAction()
     preview_failure = action.run(
@@ -699,7 +699,7 @@ def test_communication_send_preview_failure_and_blocked_local_note(settings) -> 
 def test_store_ticket_note_scope_and_validation(settings) -> None:
     store = Store(settings.data_path)
     ingest_local(store, Path("examples/sample_tickets/tickets.json"))
-    with store._connect() as connection:  # noqa: SLF001
+    with store._connect() as connection:
         connection.execute("update tickets set client_id = 'acme'")
     assert store.get_ticket_for_client("TCK-1001", "acme") is not None
     with pytest.raises(ValueError, match="client scope"):

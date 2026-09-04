@@ -337,7 +337,7 @@ def test_ticket_lifecycle_metrics_bound_duration_and_deduplicate_reopened_ticket
     ingest_local(store,
         Path("examples/sample_tickets/tickets.json")
     )
-    with store._connect() as connection:  # noqa: SLF001
+    with store._connect() as connection:
         connection.execute(
             "update tickets set created_at = ?, updated_at = ? where id = ?",
             ("2026-08-08T10:00:00", "2026-08-08T10:00:00", "TCK-1001"),

@@ -12,8 +12,8 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
-from wait_local_agent.api.app import create_app  # noqa: E402
-from wait_local_agent.config import load_settings  # noqa: E402
+from wait_local_agent.api.app import create_app  # noqa: E402 - sys.path is configured above
+from wait_local_agent.config import load_settings  # noqa: E402 - sys.path is configured above
 
 
 def export_openapi() -> dict[str, object]:

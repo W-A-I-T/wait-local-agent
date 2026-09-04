@@ -96,12 +96,12 @@ def test_v7_operational_graph_is_additive_idempotent_and_fk_clean(tmp_path: Path
         client_id="client-a",
     )
 
-    with store._connect() as connection:  # noqa: SLF001
+    with store._connect() as connection:
         before_counts = {
             table: int(connection.execute(f"select count(*) from {table}").fetchone()[0])  # nosec B608: fixed test table names
             for table in ("clients", "tickets", "canonical_assets")
         }
-        store._apply_operational_graph_migration(connection)  # noqa: SLF001
+        store._apply_operational_graph_migration(connection)
         after_counts = {
             table: int(connection.execute(f"select count(*) from {table}").fetchone()[0])  # nosec B608: fixed test table names
             for table in ("clients", "tickets", "canonical_assets")
@@ -120,7 +120,7 @@ def test_v7_operational_graph_is_additive_idempotent_and_fk_clean(tmp_path: Path
                 "order by type, name"
             )
         ]
-        store._apply_operational_graph_migration(connection)  # noqa: SLF001
+        store._apply_operational_graph_migration(connection)
         assert after_schema == [
             tuple(row)
             for row in connection.execute(
@@ -129,7 +129,7 @@ def test_v7_operational_graph_is_additive_idempotent_and_fk_clean(tmp_path: Path
                 "order by type, name"
             )
         ]
-        declared_migrations = store._declared_migrations()  # noqa: SLF001
+        declared_migrations = store._declared_migrations()
         assert connection.execute("select max(version) from schema_migrations").fetchone()[0] == (
             latest_declared_schema_version(store)
         )
@@ -823,7 +823,7 @@ def test_scheduled_graph_sync_runner_guards(settings, monkeypatch) -> None:
     app = create_app(settings)
     store = app.state.store
     store.create_client("client-a", "Acme")
-    runner = app.state.scheduler._graph_sync_runner  # noqa: SLF001
+    runner = app.state.scheduler._graph_sync_runner
     assert runner is not None
 
     store.set_client_status(AllClients(), "client-a", "archived")

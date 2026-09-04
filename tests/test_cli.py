@@ -125,7 +125,7 @@ def test_microsoft_provider_health_reports_scopes_without_secrets(monkeypatch, t
     assert "scope=local provider=ollama model=llama3.1 status=ready probe=models" in result.output
     assert "scope=remote provider=deepseek model=documented-model status=blocked_offline probe=not_run" in result.output
     assert "secret" not in result.output.casefold()
-    events = cli_module._store().list_audit_events()  # noqa: SLF001
+    events = cli_module._store().list_audit_events()
     assert [event.event_type for event in events[-2:]] == [
         "model_provider.health",
         "model_provider.health",
@@ -331,7 +331,7 @@ def test_microsoft_evaluation_cli_runs_existing_agent_in_controlled_mode(monkeyp
     store = Store(settings.data_path)
     ensure_test_client(store, "acme")
     ingest_local(store, Path("examples/sample_tickets/tickets.json"))
-    with store._connect() as connection:  # noqa: SLF001
+    with store._connect() as connection:
         connection.execute("update tickets set client_id = 'acme'")
     service = AgentService(store, settings, SmartActionService(store, settings))
     agent = service.create(
@@ -711,7 +711,7 @@ def test_technician_chat_command_persists_plan_preview(monkeypatch, tmp_path) ->
     settings = load_settings()
     store = Store(settings.data_path)
     ensure_test_client(store, "acme")
-    with store._connect() as connection:  # noqa: SLF001
+    with store._connect() as connection:
         connection.execute(
             """
             insert into tickets (id, client, subject, body, priority, status, client_id)
@@ -805,7 +805,7 @@ def test_technician_chat_persisted_action_and_parse_failure(monkeypatch, tmp_pat
     settings = load_settings()
     store = Store(settings.data_path)
     ensure_test_client(store, "acme")
-    with store._connect() as connection:  # noqa: SLF001
+    with store._connect() as connection:
         connection.execute(
             """
             insert into tickets (id, client, subject, body, priority, status, client_id)
@@ -952,7 +952,7 @@ def test_agents_cancel_retry_and_resume_use_persisted_scope(monkeypatch, tmp_pat
     )
     store = Store(settings.data_path)
     ensure_test_client(store, "acme")
-    with store._connect() as connection:  # noqa: SLF001
+    with store._connect() as connection:
         connection.execute(
             """
             insert into tickets (id, client, subject, body, priority, status, client_id)
@@ -1645,8 +1645,8 @@ def test_connector_workflow_approval_event_and_backup_commands(monkeypatch, tmp_
     assert gallery_diff.exit_code == 0 and '"field": "name"' in gallery_diff.output
     assert missing_gallery_diff.exit_code != 0
     assert missing_gallery_diff_revision.exit_code != 0
-    assert cli_module._safe_revision_definition("not-json") == {}  # noqa: SLF001
-    assert cli_module._safe_revision_definition("[]") == {}  # noqa: SLF001
+    assert cli_module._safe_revision_definition("not-json") == {}
+    assert cli_module._safe_revision_definition("[]") == {}
     assert gallery_disable.exit_code == 0 and "enabled=False" in gallery_disable.output
     assert gallery_enable.exit_code == 0 and "enabled=True" in gallery_enable.output
     assert gallery_restore.exit_code == 0 and "version=5" in gallery_restore.output
@@ -2597,7 +2597,7 @@ def test_teams_client_factory_is_reachable(monkeypatch) -> None:
     sentinel = object()
     monkeypatch.setattr(cli_module, "TeamsGraphClient", lambda settings: sentinel)
 
-    assert cli_module._teams_client() is sentinel  # noqa: SLF001
+    assert cli_module._teams_client() is sentinel
 
 
 def test_smart_action_cli_requires_rbac_for_invoke_and_approval(monkeypatch, tmp_path) -> None:
@@ -2607,7 +2607,7 @@ def test_smart_action_cli_requires_rbac_for_invoke_and_approval(monkeypatch, tmp
     monkeypatch.setenv("WAIT_TECH_TOKEN", "tech-token")
     store = Store(data_path)
     ensure_test_client(store, "acme")
-    with store._connect() as connection:  # noqa: SLF001
+    with store._connect() as connection:
         connection.execute(
             """
             insert into tickets (id, client, subject, body, priority, status, client_id)
@@ -2647,7 +2647,7 @@ def test_smart_action_cli_commands_success_and_errors(monkeypatch, tmp_path) -> 
     monkeypatch.setenv("WAIT_DATA_PATH", str(data_path))
     store = Store(data_path)
     ensure_test_client(store, "acme")
-    with store._connect() as connection:  # noqa: SLF001
+    with store._connect() as connection:
         connection.execute(
             "insert into tickets (id, client, subject, body, priority, status, client_id) values (?, ?, ?, ?, ?, ?, ?)",
             ("TCK-CMD", "Acme", "MFA reset", "Sign-in blocked", "High", "Open", "acme"),
@@ -2718,7 +2718,7 @@ def test_smart_action_cli_tenant_scope_and_approval_view_guards(monkeypatch, tmp
     store = Store(data_path)
     ensure_test_client(store, "acme")
     ensure_test_client(store, "beta")
-    with store._connect() as connection:  # noqa: SLF001
+    with store._connect() as connection:
         connection.execute(
             "insert into tickets (id, client, subject, body, priority, status, client_id) values (?, ?, ?, ?, ?, ?, ?)",
             ("TCK-ACME", "Acme", "MFA reset", "Sign-in blocked", "High", "Open", "acme"),
@@ -2743,12 +2743,12 @@ def test_smart_action_cli_tenant_scope_and_approval_view_guards(monkeypatch, tmp
     assert no_token.exit_code != 0 and "missing bearer token" in no_token.output
 
     approval = store.create_approval_request("TCK-1", "ticket.assign", {"secret": "password=raw"})
-    with store._connect() as connection:  # noqa: SLF001
+    with store._connect() as connection:
         connection.execute(
             "update approval_requests set payload_json = ?, execution_result_json = ? where id = ?",
             ("not-json", "not-json", approval.id),
         )
-    view = cli_module._approval_cli_view(store.get_approval_request(approval.id or 0))  # noqa: SLF001
+    view = cli_module._approval_cli_view(store.get_approval_request(approval.id or 0))
     assert view["payload"] == {} and view["output"] == {}
 
 

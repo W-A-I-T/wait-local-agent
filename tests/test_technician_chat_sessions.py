@@ -19,7 +19,7 @@ def _auth(token: str) -> dict[str, str]:
 
 def _seed_tickets(store: Store) -> None:
     ensure_test_clients(store, "acme", "beta")
-    with store._connect() as connection:  # noqa: SLF001
+    with store._connect() as connection:
         connection.executemany(
             """
             insert into tickets (id, client, subject, body, priority, status, client_id)

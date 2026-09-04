@@ -73,7 +73,7 @@ def get_entitlement_status(registry: PackRegistry) -> dict[str, Any] | None:
             if not isinstance(value, dict):
                 raise TypeError("entitlement_status_factory must return a dict")
             return dict(value)
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             LOGGER.warning("Unable to read entitlement status for pack %s: %s", status.name, exc)
     return None
 
@@ -106,7 +106,7 @@ def load_pack_registry(
         try:
             module = importlib.import_module(module_name)
             manifest = _load_manifest(module)
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             LOGGER.warning("Skipping pack module %s: %s", module_name, exc)
             continue
         if manifest is None:
@@ -153,7 +153,7 @@ def configure_pack_routes(
                     dependencies=route_dependencies,
                 )
                 mounted_router = True
-            except Exception as exc:  # noqa: BLE001
+            except Exception as exc:
                 LOGGER.warning("Skipping pack router for %s: %s", status.name, exc)
                 registry.loaded.pop(status.name, None)
                 error = str(exc)
@@ -197,7 +197,7 @@ def configure_pack_cli(
                     typer_app.add_typer(_resolve_typer(loaded_pack.manifest["cli_app"]), name=status.name)
                     collisions.add(status.name)
                     mounted_cli = True
-                except Exception as exc:  # noqa: BLE001
+                except Exception as exc:
                     LOGGER.warning("Skipping pack CLI for %s: %s", status.name, exc)
                     registry.loaded.pop(status.name, None)
                     error = str(exc)
@@ -384,12 +384,12 @@ def _pack_enabled(pack_name: str, settings: Settings) -> bool:
         try:
             if bool(pack_enabled_v2(pack_name, settings.license_key or None, verifier=verifier)):
                 return True
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             LOGGER.warning("License v2 validation failed for pack %s: %s", pack_name, exc)
     try:
         pack_enabled = pack_keys.pack_enabled
         return bool(pack_enabled(pack_name, settings.license_key or None))
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         LOGGER.warning("License validation failed for pack %s: %s", pack_name, exc)
         return False
 

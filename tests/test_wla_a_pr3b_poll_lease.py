@@ -30,7 +30,7 @@ def _seed_instance(path: Path) -> tuple[Store, str]:
 def test_v6_registers_additive_lease_columns_and_preserves_foreign_keys(tmp_path: Path) -> None:
     store, _ = _seed_instance(tmp_path / "state.db")
 
-    with store._connect() as connection:  # noqa: SLF001
+    with store._connect() as connection:
         assert [
             tuple(row) for row in connection.execute("select version, name from schema_migrations")
         ] == PINNED_SCHEMA_MIGRATIONS
@@ -41,7 +41,7 @@ def test_v6_registers_additive_lease_columns_and_preserves_foreign_keys(tmp_path
         assert connection.execute("pragma foreign_keys").fetchone()[0] == 1
         assert connection.execute("pragma foreign_key_check").fetchall() == []
 
-        store._apply_poll_lease_migration(connection)  # noqa: SLF001
+        store._apply_poll_lease_migration(connection)
         assert connection.execute("pragma foreign_key_check").fetchall() == []
 
 
@@ -157,7 +157,7 @@ def test_claim_preserves_progress_and_takes_over_expired_and_legacy_leases(tmp_p
     assert cursor.last_synced_at == LAST_SYNCED
 
     expired = (datetime.fromisoformat(NOW).replace(tzinfo=UTC) - timedelta(seconds=1)).isoformat()
-    with store._connect() as connection:  # noqa: SLF001
+    with store._connect() as connection:
         connection.execute(
             "update sync_cursors set lease_expires_at = ? where connector_instance_id = ?",
             (expired, instance_id),
@@ -166,7 +166,7 @@ def test_claim_preserves_progress_and_takes_over_expired_and_legacy_leases(tmp_p
         PollLeaseClaimResult.GRANTED
     )
 
-    with store._connect() as connection:  # noqa: SLF001
+    with store._connect() as connection:
         connection.execute(
             "update sync_cursors set status = 'syncing', lease_expires_at = null where connector_instance_id = ?",
             (instance_id,),
@@ -191,7 +191,7 @@ def test_stale_finish_cannot_modify_successor_and_terminal_release_preserves_his
     assert store.claim_poll_lease(instance_id, "tickets", token="stale", ttl_seconds=60, now=NOW) == (
         PollLeaseClaimResult.GRANTED
     )
-    with store._connect() as connection:  # noqa: SLF001
+    with store._connect() as connection:
         connection.execute(
             "update sync_cursors set lease_expires_at = ? where connector_instance_id = ?",
             ((datetime.fromisoformat(NOW) - timedelta(seconds=1)).isoformat(), instance_id),
@@ -232,7 +232,7 @@ def test_stale_finish_cannot_modify_successor_and_terminal_release_preserves_his
     assert finished.status == terminal_status
     assert finished.cursor_value == "new-offset"
     assert finished.last_synced_at == LAST_SYNCED
-    with store._connect() as connection:  # noqa: SLF001
+    with store._connect() as connection:
         lease = connection.execute(
             "select lease_token, lease_expires_at from sync_cursors "
             "where connector_instance_id = ? and cursor_type = ?",
@@ -273,7 +273,7 @@ def test_upsert_proceeds_for_absent_and_expired_leases(tmp_path: Path) -> None:
     assert updated_without_lease.cursor_value == "offset-2"
     assert updated_without_lease.last_synced_at == LAST_SYNCED
 
-    with store._connect() as connection:  # noqa: SLF001
+    with store._connect() as connection:
         connection.execute(
             "update sync_cursors set status = 'syncing', lease_token = ?, lease_expires_at = ? "
             "where connector_instance_id = ? and cursor_type = ?",
@@ -282,7 +282,7 @@ def test_upsert_proceeds_for_absent_and_expired_leases(tmp_path: Path) -> None:
 
     proceeded = store.upsert_sync_cursor(instance_id, "tickets", cursor_value="offset-3", status="idle")
     assert proceeded.cursor_value == "offset-3"
-    with store._connect() as connection:  # noqa: SLF001
+    with store._connect() as connection:
         lease = connection.execute(
             "select lease_token, lease_expires_at from sync_cursors "
             "where connector_instance_id = ? and cursor_type = ?",

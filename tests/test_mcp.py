@@ -46,7 +46,7 @@ def _secure_settings(settings):
 def _seed_tickets(settings) -> None:
     store = Store(settings.data_path)
     ensure_test_clients(store, "acme", "beta")
-    with store._connect() as connection:  # noqa: SLF001
+    with store._connect() as connection:
         connection.executemany(
             """
             insert into tickets (id, client, subject, body, priority, status, client_id)
@@ -451,7 +451,7 @@ def test_mcp_protocol_validation_and_session_bounds() -> None:
         session_id=session_id,
     )
     assert response["error"]["code"] == -32001
-    server._sessions[session_id] = True  # noqa: SLF001
+    server._sessions[session_id] = True
     response, _ = server.handle(
         {"jsonrpc": "2.0", "id": 5, "method": "ping"},
         context=context,
@@ -471,13 +471,13 @@ def test_mcp_protocol_validation_and_session_bounds() -> None:
     )
     assert response["error"]["code"] == -32601
 
-    server._sessions = {str(index): False for index in range(MAX_MCP_SESSIONS)}  # noqa: SLF001
+    server._sessions = {str(index): False for index in range(MAX_MCP_SESSIONS)}
     _, new_session = server.handle(
         {"jsonrpc": "2.0", "id": 7, "method": "initialize", "params": {"protocolVersion": "2025-03-26"}},
         context=context,
         session_id=None,
     )
-    assert len(server._sessions) == MAX_MCP_SESSIONS  # noqa: SLF001
+    assert len(server._sessions) == MAX_MCP_SESSIONS
     assert new_session not in {str(index) for index in range(MAX_MCP_SESSIONS)}
 
 
@@ -485,7 +485,7 @@ def test_mcp_protocol_validation_and_session_bounds() -> None:
 def test_mcp_tool_validation_errors_are_bounded(mode: str) -> None:
     server = _fake_server(mode)
     context = AuthContext(Role.TECHNICIAN, "token", "acme")
-    server._sessions["s"] = True  # noqa: SLF001
+    server._sessions["s"] = True
 
     invalid_cases = [
         {"name": "fake-read"},
@@ -529,7 +529,7 @@ def test_mcp_tool_validation_errors_are_bounded(mode: str) -> None:
 
 def test_mcp_role_scope_schema_and_origin_helpers() -> None:
     server = _fake_server()
-    server._sessions["s"] = True  # noqa: SLF001
+    server._sessions["s"] = True
     viewer = AuthContext(Role.VIEWER, "token", "acme")
     response, _ = server.handle(
         {"jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": {"name": "wait.fake-read"}},

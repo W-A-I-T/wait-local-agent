@@ -1451,7 +1451,7 @@ class _TypedLegacyCollector:
         return _TypedCollection(self._records(config, limit=limit, strict=strict))
 
     def _legacy_result(self, records: list[dict[str, Any]], *, preview: bool) -> dict[str, Any]:
-        return self._legacy_module._result(records, preview=preview)
+        return self._legacy_module._result(records, preview=preview)  # noqa: SLF001 - delegates to the legacy collector module
 
     def preview(self, config: dict[str, Any]) -> CollectorPreview:
         validation = self.validate_config(config)
@@ -1589,7 +1589,7 @@ class ProcessInventoryCollector(_TypedLegacyCollector):
     _platform_hint = "Platform guard: this collector requires Linux /proc process metadata."
 
     def _records(self, config: dict[str, Any], *, limit: int | None, strict: bool) -> list[dict[str, Any]]:
-        return self._legacy_module._process_records(limit=limit, strict=strict)
+        return self._legacy_module._process_records(limit=limit, strict=strict)  # noqa: SLF001 - delegates to the legacy collector module
 
     def _records_with_outcomes(
         self,
@@ -1598,7 +1598,7 @@ class ProcessInventoryCollector(_TypedLegacyCollector):
         limit: int | None,
         strict: bool,
     ) -> _TypedCollection:
-        return self._legacy_module._process_records_with_outcomes(limit=limit, strict=strict)
+        return self._legacy_module._process_records_with_outcomes(limit=limit, strict=strict)  # noqa: SLF001 - delegates to the legacy collector module
 
 
 class ListeningPortsCollector(_TypedLegacyCollector):
@@ -1625,7 +1625,7 @@ class ListeningPortsCollector(_TypedLegacyCollector):
     _platform_hint = "Platform guard: this collector requires Linux /proc/net socket tables."
 
     def _records(self, config: dict[str, Any], *, limit: int | None, strict: bool) -> list[dict[str, Any]]:
-        return self._legacy_module._socket_records(limit=limit, strict=strict)
+        return self._legacy_module._socket_records(limit=limit, strict=strict)  # noqa: SLF001 - delegates to the legacy collector module
 
     def _records_with_outcomes(
         self,
@@ -1634,7 +1634,7 @@ class ListeningPortsCollector(_TypedLegacyCollector):
         limit: int | None,
         strict: bool,
     ) -> _TypedCollection:
-        return self._legacy_module._socket_records_with_outcomes(limit=limit, strict=strict)
+        return self._legacy_module._socket_records_with_outcomes(limit=limit, strict=strict)  # noqa: SLF001 - delegates to the legacy collector module
 
 
 class NetworkInterfacesCollector(_TypedLegacyCollector):
@@ -1661,7 +1661,7 @@ class NetworkInterfacesCollector(_TypedLegacyCollector):
     _platform_hint = "Platform guard: this collector requires Linux /sys/class/net interface metadata."
 
     def _records(self, config: dict[str, Any], *, limit: int | None, strict: bool) -> list[dict[str, Any]]:
-        return self._legacy_module._interface_records(limit=limit, strict=strict)
+        return self._legacy_module._interface_records(limit=limit, strict=strict)  # noqa: SLF001 - delegates to the legacy collector module
 
     def _records_with_outcomes(
         self,
@@ -1670,7 +1670,7 @@ class NetworkInterfacesCollector(_TypedLegacyCollector):
         limit: int | None,
         strict: bool,
     ) -> _TypedCollection:
-        return self._legacy_module._interface_records_with_outcomes(limit=limit, strict=strict)
+        return self._legacy_module._interface_records_with_outcomes(limit=limit, strict=strict)  # noqa: SLF001 - delegates to the legacy collector module
 
 
 TypedProcessInventoryCollector = ProcessInventoryCollector
@@ -2652,7 +2652,7 @@ class FirewallRulesCollector(_TypedLegacyCollector):
     _platform_hint = "Platform guard: this collector requires Linux firewall configuration files."
 
     def _records(self, config: dict[str, Any], *, limit: int | None, strict: bool) -> list[dict[str, Any]]:
-        return self._legacy_module._firewall_rule_records(limit=limit)
+        return self._legacy_module._firewall_rule_records(limit=limit)  # noqa: SLF001 - delegates to the legacy collector module
 
     def _records_with_outcomes(
         self,
@@ -2661,7 +2661,7 @@ class FirewallRulesCollector(_TypedLegacyCollector):
         limit: int | None,
         strict: bool,
     ) -> _TypedCollection:
-        return self._legacy_module._firewall_rule_records_with_outcomes(limit=limit, strict=strict)
+        return self._legacy_module._firewall_rule_records_with_outcomes(limit=limit, strict=strict)  # noqa: SLF001 - delegates to the legacy collector module
 
 
 class DatabaseInventoryCollector(_TypedLegacyCollector):
@@ -2688,7 +2688,7 @@ class DatabaseInventoryCollector(_TypedLegacyCollector):
     _platform_hint = "Platform guard: this collector requires Linux database configuration files."
 
     def _records(self, config: dict[str, Any], *, limit: int | None, strict: bool) -> list[dict[str, Any]]:
-        return self._legacy_module._database_records(limit=limit)
+        return self._legacy_module._database_records(limit=limit)  # noqa: SLF001 - delegates to the legacy collector module
 
     def _records_with_outcomes(
         self,
@@ -2697,7 +2697,7 @@ class DatabaseInventoryCollector(_TypedLegacyCollector):
         limit: int | None,
         strict: bool,
     ) -> _TypedCollection:
-        return self._legacy_module._database_records_with_outcomes(limit=limit, strict=strict)
+        return self._legacy_module._database_records_with_outcomes(limit=limit, strict=strict)  # noqa: SLF001 - delegates to the legacy collector module
 
 
 class WifiInventoryCollector(_TypedLegacyCollector):
@@ -2724,7 +2724,7 @@ class WifiInventoryCollector(_TypedLegacyCollector):
     _platform_hint = "Platform guard: this collector requires Linux wireless interface metadata."
 
     def _records(self, config: dict[str, Any], *, limit: int | None, strict: bool) -> list[dict[str, Any]]:
-        return self._legacy_module._wifi_records(limit=limit)
+        return self._legacy_module._wifi_records(limit=limit)  # noqa: SLF001 - delegates to the legacy collector module
 
     def _records_with_outcomes(
         self,
@@ -2733,7 +2733,7 @@ class WifiInventoryCollector(_TypedLegacyCollector):
         limit: int | None,
         strict: bool,
     ) -> _TypedCollection:
-        return self._legacy_module._wifi_records_with_outcomes(limit=limit, strict=strict)
+        return self._legacy_module._wifi_records_with_outcomes(limit=limit, strict=strict)  # noqa: SLF001 - delegates to the legacy collector module
 
 
 TypedFirewallRulesCollector = FirewallRulesCollector
@@ -3836,7 +3836,7 @@ class RoutingTableCollector(_TypedLegacyCollector):
     _platform_hint = "Platform guard: this collector requires Linux /proc/net routing tables."
 
     def _records(self, config: dict[str, Any], *, limit: int | None, strict: bool) -> list[dict[str, Any]]:
-        return self._legacy_module._route_records(limit=limit)
+        return self._legacy_module._route_records(limit=limit)  # noqa: SLF001 - delegates to the legacy collector module
 
     def _records_with_outcomes(
         self,
@@ -3845,7 +3845,7 @@ class RoutingTableCollector(_TypedLegacyCollector):
         limit: int | None,
         strict: bool,
     ) -> _TypedCollection:
-        return self._legacy_module._route_records_with_outcomes(limit=limit, strict=strict)
+        return self._legacy_module._route_records_with_outcomes(limit=limit, strict=strict)  # noqa: SLF001 - delegates to the legacy collector module
 
 
 class EndpointAgentsCollector(_TypedLegacyCollector):
@@ -3872,7 +3872,7 @@ class EndpointAgentsCollector(_TypedLegacyCollector):
     _platform_hint = "Platform guard: this collector requires Linux endpoint-agent marker paths."
 
     def _records(self, config: dict[str, Any], *, limit: int | None, strict: bool) -> list[dict[str, Any]]:
-        return self._legacy_module._agent_records(limit=limit)
+        return self._legacy_module._agent_records(limit=limit)  # noqa: SLF001 - delegates to the legacy collector module
 
     def _records_with_outcomes(
         self,
@@ -3881,7 +3881,7 @@ class EndpointAgentsCollector(_TypedLegacyCollector):
         limit: int | None,
         strict: bool,
     ) -> _TypedCollection:
-        return self._legacy_module._agent_records_with_outcomes(limit=limit, strict=strict)
+        return self._legacy_module._agent_records_with_outcomes(limit=limit, strict=strict)  # noqa: SLF001 - delegates to the legacy collector module
 
 
 class WebServicesCollector(_TypedLegacyCollector):
@@ -3908,7 +3908,7 @@ class WebServicesCollector(_TypedLegacyCollector):
     _platform_hint = "Platform guard: this collector requires Linux web-service configuration files."
 
     def _records(self, config: dict[str, Any], *, limit: int | None, strict: bool) -> list[dict[str, Any]]:
-        return self._legacy_module._web_service_records(limit=limit)
+        return self._legacy_module._web_service_records(limit=limit)  # noqa: SLF001 - delegates to the legacy collector module
 
     def _records_with_outcomes(
         self,
@@ -3917,7 +3917,7 @@ class WebServicesCollector(_TypedLegacyCollector):
         limit: int | None,
         strict: bool,
     ) -> _TypedCollection:
-        return self._legacy_module._web_service_records_with_outcomes(limit=limit, strict=strict)
+        return self._legacy_module._web_service_records_with_outcomes(limit=limit, strict=strict)  # noqa: SLF001 - delegates to the legacy collector module
 
 
 TypedRoutingTableCollector = RoutingTableCollector
@@ -3930,7 +3930,7 @@ default_registry.register(EndpointAgentsCollector())
 default_registry.register(WebServicesCollector())
 
 
-from wait_local_agent.cloud_connectors.adapters import (  # noqa: E402
+from wait_local_agent.cloud_connectors.adapters import (  # noqa: E402 - adapters import the registry defined above
     AwsCloudAdapter,
     AzureCloudAdapter,
     GcpCloudAdapter,

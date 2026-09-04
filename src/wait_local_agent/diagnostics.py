@@ -251,7 +251,7 @@ def support_upload_refusal(settings: Settings, *, consent: bool) -> str:
 def _best_effort(section: str, collector: Callable[[], Any]) -> Any:
     try:
         return collector()
-    except Exception:  # noqa: BLE001 - diagnostics must report degraded sections
+    except Exception:  # diagnostics must report degraded sections
         return {"status": "degraded", "section": section}
 
 

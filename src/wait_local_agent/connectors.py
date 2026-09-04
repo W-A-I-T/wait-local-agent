@@ -1152,7 +1152,7 @@ def probe_connector_health(
                 "layer": validation.layer,
                 "message": redact_text(" ".join(validation.message.split()))[:240],
             }
-        except Exception as exc:  # noqa: BLE001 - health failures become explicit evidence.
+        except Exception as exc:  # health failures become explicit evidence.
             results[connector_id] = {
                 "passed": False,
                 "layer": "connector",

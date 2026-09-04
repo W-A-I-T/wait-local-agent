@@ -176,7 +176,7 @@ def test_restore_report_rechecks_a_missing_run_before_listing_evidence() -> None
 def test_recurring_service_review_is_client_scoped_and_labels_missing_evidence(settings) -> None:
     store = Store(settings.data_path)
     ingest_local(store, Path("examples/sample_tickets/tickets.json"))
-    with store._connect() as connection:  # noqa: SLF001
+    with store._connect() as connection:
         connection.execute(
             "update tickets set client_id = ?, created_at = ?, updated_at = ? where id = ?",
             ("acme", "2026-01-01T00:00:00+00:00", "2026-01-05T00:00:00+00:00", "TCK-1001"),
@@ -220,7 +220,7 @@ def test_recurring_service_review_is_client_scoped_and_labels_missing_evidence(s
             follow_up_after_days=True,
         )
 
-    with store._connect() as connection:  # noqa: SLF001
+    with store._connect() as connection:
         connection.execute(
             "update tickets set created_at = ?, updated_at = ? where id = ?",
             ("", "", "TCK-1001"),
@@ -233,7 +233,7 @@ def test_recurring_service_review_is_client_scoped_and_labels_missing_evidence(s
     )
     assert empty_timestamp_metadata["follow_up_candidate_count"] == 0
 
-    with store._connect() as connection:  # noqa: SLF001
+    with store._connect() as connection:
         connection.execute(
             "update tickets set created_at = ?, updated_at = ? where id = ?",
             ("not-a-date", "not-a-date", "TCK-1001"),
@@ -492,7 +492,7 @@ def test_cli_generates_recurring_service_review(monkeypatch, tmp_path) -> None:
     monkeypatch.setenv("WAIT_DEMO_MODE", "true")
     store = Store(data_path)
     ingest_local(store, Path("examples/sample_tickets/tickets.json"))
-    with store._connect() as connection:  # noqa: SLF001
+    with store._connect() as connection:
         connection.execute("update tickets set client_id = 'acme'")
 
     result = CliRunner().invoke(

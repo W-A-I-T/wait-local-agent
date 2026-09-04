@@ -53,7 +53,7 @@ def _load_surface_manifest() -> SurfaceManifest:
 def test_store_migrations_are_idempotent_and_connection_pragmas_are_safe(tmp_path: Path) -> None:
     path = tmp_path / "state.db"
     store = Store(path)
-    with store._connect() as connection:  # noqa: SLF001
+    with store._connect() as connection:
         migration_columns = [str(row[1]) for row in connection.execute("pragma table_info(schema_migrations)")]
         assert migration_columns == ["version", "name", "applied_at"]
         assert [
@@ -64,7 +64,7 @@ def test_store_migrations_are_idempotent_and_connection_pragmas_are_safe(tmp_pat
         assert connection.execute("pragma busy_timeout").fetchone()[0] >= 3000
 
     store = Store(path)
-    declared_migrations = store._declared_migrations()  # noqa: SLF001
+    declared_migrations = store._declared_migrations()
     with sqlite3.connect(path) as connection:
         assert connection.execute("select max(version) from schema_migrations").fetchone()[0] == (
             latest_declared_schema_version(store)
@@ -104,7 +104,7 @@ def test_migration_failure_rolls_back_data_and_version_bump(tmp_path: Path) -> N
 
 def test_fresh_database_integrity_checks_are_clean(tmp_path: Path) -> None:
     store = Store(tmp_path / "state.db")
-    with store._connect() as connection:  # noqa: SLF001
+    with store._connect() as connection:
         assert connection.execute("pragma foreign_key_check").fetchall() == []
         assert connection.execute("pragma integrity_check").fetchone()[0] == "ok"
 
@@ -118,7 +118,7 @@ def test_backup_restore_round_trip_under_wal(tmp_path: Path) -> None:
     backup_state(source, backup_path)
     restore_state(Store(restored_path), backup_path)
 
-    with Store(restored_path)._connect() as connection:  # noqa: SLF001
+    with Store(restored_path)._connect() as connection:
         assert connection.execute("select count(*) from tickets").fetchone()[0] > 0
         assert connection.execute("pragma integrity_check").fetchone()[0] == "ok"
 

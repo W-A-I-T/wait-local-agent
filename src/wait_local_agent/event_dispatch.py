@@ -303,7 +303,7 @@ class EventDispatcher:
                     if result.status == "completed":
                         completed_agents.add(definition.id)
                     progressed = True
-                except Exception as exc:  # noqa: BLE001 - one bad agent must not block others
+                except Exception as exc:  # one bad agent must not block others
                     error = redact_text(f"{definition.id}: {exc}")
                     attempts[definition.id] = {"status": "failed", "error": error, "run_ids": []}
                     errors.append(error)
@@ -355,7 +355,7 @@ class EventDispatcher:
                     "error": "" if attempt_status == "completed" else "playbook requires review",
                     "run_ids": [playbook_run_id],
                 }
-            except Exception as exc:  # noqa: BLE001 - preserve one subscription failure explicitly.
+            except Exception as exc:  # preserve one subscription failure explicitly.
                 error = redact_text(f"{subscription.id}: {exc}")
                 playbook_attempts[subscription.id] = {"status": "failed", "error": error, "run_ids": []}
                 errors.append(error)

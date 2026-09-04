@@ -80,7 +80,7 @@ def test_capability_migration_is_canonical_and_idempotent(tmp_path) -> None:
     path = tmp_path / "state.db"
     store = Store(path)
 
-    declared = store._declared_migrations()  # noqa: SLF001
+    declared = store._declared_migrations()
     assert any(migration.version == CAPABILITY_MIGRATION_VERSION for migration in declared)
 
     with sqlite3.connect(path) as connection:

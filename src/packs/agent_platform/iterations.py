@@ -287,7 +287,7 @@ class IterationService:
                 actor,
                 client_id=session.client_id,
             )
-        except Exception as exc:  # noqa: BLE001 - persist a safe terminal state
+        except Exception as exc:  # persist a safe terminal state
             safe_error = redact_text(str(exc))[:2_000]
             return self._record_result(
                 session,

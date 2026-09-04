@@ -144,7 +144,7 @@ class ExecutionRecorder:
                     artifacts=artifacts,
                 )
                 result.append(execution_run_id)
-            except Exception as exc:  # noqa: BLE001 - recording must never fail a run
+            except Exception as exc:  # recording must never fail a run
                 failure.append(exc)
 
         worker = threading.Thread(target=record, name="execution-recorder", daemon=True)

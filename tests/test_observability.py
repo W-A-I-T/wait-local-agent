@@ -36,7 +36,7 @@ def _seed_tickets(store: Store) -> None:
 
 def test_fresh_database_has_execution_tables(settings) -> None:
     store = Store(settings.data_path)
-    with store._connect() as connection:  # noqa: SLF001
+    with store._connect() as connection:
         tables = {
             str(row["name"])
             for row in connection.execute(
@@ -95,7 +95,7 @@ def test_older_execution_runs_shape_gets_missing_columns(settings, tmp_path) -> 
     assert run.client_id == "acme"
     assert run.trigger_source == "test"
 
-    with store._connect() as connection:  # noqa: SLF001
+    with store._connect() as connection:
         columns = {str(row["name"]) for row in connection.execute("pragma table_info(execution_runs)")}
     assert {"source_run_id", "actor", "status", "started_at", "finished_at", "client_id", "trigger_source"} <= columns
 
@@ -319,7 +319,7 @@ def test_legacy_step_rows_are_redacted_at_read_time(settings) -> None:
         "smart_action", 1, "tech", "success", utc_now(), utc_now(), "test"
     )
     assert run.id is not None
-    with store._connect() as connection:  # noqa: SLF001
+    with store._connect() as connection:
         connection.execute(
             """
             insert into execution_steps

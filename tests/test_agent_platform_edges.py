@@ -789,7 +789,7 @@ def test_attachment_analysis_ready_failed_and_integrity_paths(settings, monkeypa
     assert failed.status == "failed"
     assert failed.error_detail == "provider unavailable"
 
-    with store._connect() as connection:  # noqa: SLF001
+    with store._connect() as connection:
         path = Path(
             connection.execute(
                 "select storage_path from ticket_attachments where id = ?", (attachment.id,)
