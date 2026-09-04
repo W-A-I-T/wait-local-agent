@@ -10,6 +10,7 @@ import pytest
 from fastapi import HTTPException
 from fastapi.routing import APIRoute
 
+import wait_local_agent.api.routers.tenancy as tenancy_module
 from wait_local_agent.api.app import create_app
 from wait_local_agent.client_scope import AllClients, BoundClients
 from wait_local_agent.m365_graph import (
@@ -730,6 +731,9 @@ def test_client_graph_endpoints_are_fail_closed_and_operator_gated(settings, mon
     monkeypatch.setattr(
         app_module, "rmm_provider_from_settings", lambda *_args, **_kwargs: _FakeRmmProvider()
     )
+    monkeypatch.setattr(
+        tenancy_module, "rmm_provider_from_settings", lambda *_args, **_kwargs: _FakeRmmProvider()
+    )
     secure_settings = replace(
         settings, demo_mode=False, api_token="bootstrap-admin", viewer_token="", allow_http_probing=True
     )
@@ -836,11 +840,15 @@ def test_scheduled_graph_sync_runner_guards(settings, monkeypatch) -> None:
         raise RmmProviderResolutionError("ambiguous RMM provider")
 
     monkeypatch.setattr(app_module, "rmm_provider_from_settings", raise_resolution_error)
+    monkeypatch.setattr(tenancy_module, "rmm_provider_from_settings", raise_resolution_error)
     with pytest.raises(ValueError, match="ambiguous RMM provider"):
         runner("client-a")
 
     monkeypatch.setattr(
         app_module, "rmm_provider_from_settings", lambda *_args, **_kwargs: _FakeRmmProvider()
+    )
+    monkeypatch.setattr(
+        tenancy_module, "rmm_provider_from_settings", lambda *_args, **_kwargs: _FakeRmmProvider()
     )
     with pytest.raises(ValueError, match="RMM read probing is disabled"):
         runner("client-a")
