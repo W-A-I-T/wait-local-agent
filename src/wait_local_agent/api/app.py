@@ -8,7 +8,6 @@ import os
 import sqlite3
 import time
 import uuid
-from concurrent.futures import ThreadPoolExecutor
 from contextlib import asynccontextmanager
 from dataclasses import asdict, replace
 from datetime import UTC, datetime
@@ -16,12 +15,11 @@ from functools import partial
 from pathlib import Path
 from typing import Annotated, Literal, cast
 
-from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request, Response
+from fastapi import Depends, FastAPI, HTTPException, Query, Request, Response
 from fastapi import status as http_status
 from fastapi.encoders import jsonable_encoder
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import FileResponse, JSONResponse
-from pydantic import ValidationError
 from slowapi import Limiter
 from slowapi.errors import RateLimitExceeded
 from slowapi.extension import _rate_limit_exceeded_handler
@@ -36,7 +34,7 @@ from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from packs.microsoft_admin.client import MicrosoftAdminGraphClient
 from wait_local_agent import __version__
-from wait_local_agent.agents import AgentDefinitionError, AgentService
+from wait_local_agent.agents import AgentService
 from wait_local_agent.api.auth_routes import create_auth_router
 from wait_local_agent.api.context import (
     AdminAccess,
@@ -63,6 +61,8 @@ from wait_local_agent.api.packs.loader import (
     configure_pack_routes,
 )
 from wait_local_agent.api.routers import mount_flat
+from wait_local_agent.api.routers.agents import create_agents_router
+from wait_local_agent.api.routers.automation import create_automation_router
 from wait_local_agent.api.routers.consultant import create_consultant_router
 from wait_local_agent.api.routers.documentation_connectors import create_documentation_connectors_router
 from wait_local_agent.api.routers.m365 import create_m365_router
@@ -73,11 +73,6 @@ from wait_local_agent.api.routers.system import create_system_router
 from wait_local_agent.api.routers.workflows import create_workflows_router
 from wait_local_agent.api.schemas import (
     AgentApprovalRuleRequest,  # noqa: F401
-    AgentBackfillCreateRequest,
-    AgentBackfillPreviewRequest,
-    AgentDefinitionRequest,
-    AgentPlanRequest,
-    AgentRunStartRequest,
     AgentStepRequest,  # noqa: F401
     ApprovalPayloadPatchRequest,
     ApprovalRequest,
@@ -101,14 +96,12 @@ from wait_local_agent.api.schemas import (
     EndUserMessageRequest,
     EndUserTicketCreateRequest,
     EvaluationExecutionRequest,  # noqa: F401
-    EventIngestRequest,
     HardeningRunRequest,
     KnowledgeAuthorityRequest,
     KnowledgeIngestRequest,
     QuarantineReclassificationRequest,
     RestoreExerciseRequest,
     SecretSetRequest,
-    SmartActionInvokeRequest,
     TeamsMessageDraftRequest,  # noqa: F401
     TechnicianChatMessageRequest,
     TechnicianChatRequest,
@@ -116,7 +109,7 @@ from wait_local_agent.api.schemas import (
 )
 from wait_local_agent.api.scopes import (
     _approval_scope_visible,
-    _backfill_scope,
+    _backfill_scope,  # noqa: F401
     _connector_read_client,  # noqa: F401
     _end_user_client_id,
     _end_user_read_client_id,
@@ -124,7 +117,7 @@ from wait_local_agent.api.scopes import (
     _request_correlation_id,
     _require_commercial_activation_access,
     _require_msp_operator,
-    _required_client_id,
+    _required_client_id,  # noqa: F401
     _resolve_client_target_scope,
     _resolve_detail_scope,
     _scope_contains_client,  # noqa: F401
@@ -133,11 +126,6 @@ from wait_local_agent.api.scopes import (
 from wait_local_agent.api.views import (
     _EXECUTING_EXECUTION_STATUS,  # noqa: F401
     SENSITIVE_KEY_PARTS,  # noqa: F401
-    _agent_backfill_view,
-    _agent_definition_view,
-    _agent_revision_diff_view,
-    _agent_revision_view,
-    _agent_run_view,
     _baseline_view,
     _empty_analytics_summary,  # noqa: F401
     _end_user_brand_color,
@@ -145,8 +133,6 @@ from wait_local_agent.api.views import (
     _end_user_branding_text,
     _end_user_message_view,
     _end_user_ticket_view,
-    _event_delivery_view,
-    _event_dispatch_view,
     _halopsa_client_mapping,
     _halopsa_draft_view,
     _invoke_technician_chat_message,
@@ -161,10 +147,9 @@ from wait_local_agent.api.views import (
     _safe_json_list,  # noqa: F401
     _safe_json_object,
     _safe_json_value,  # noqa: F401
-    _safe_json_values,
+    _safe_json_values,  # noqa: F401
     _safe_redacted_json_object,  # noqa: F401
     _scheduled_job_view,
-    _smart_action_run_view,
     _technician_chat_session_view,
     make_approval_view,
 )
@@ -185,7 +170,6 @@ from wait_local_agent.client_discovery import (
 from wait_local_agent.client_scope import (
     AllClients,
     BoundClients,
-    ClientScope,
     requested_client_from,
     resolve_client_scope,
 )
@@ -229,7 +213,7 @@ from wait_local_agent.diagnostics import (
 from wait_local_agent.diagnostics import (
     scrub_text as scrub_diagnostic_text,
 )
-from wait_local_agent.event_dispatch import EventDispatcher, EventDispatchError
+from wait_local_agent.event_dispatch import EventDispatcher
 from wait_local_agent.founder_bundle import PrivacyViolation
 from wait_local_agent.halopsa import HaloPSAClient
 from wait_local_agent.hudu import HuduClient
@@ -248,16 +232,9 @@ from wait_local_agent.m365_graph import (
     M365GraphClient,
 )
 from wait_local_agent.mcp import (
-    MAX_MCP_REQUEST_BYTES,
-    MCP_PROTOCOL_VERSION,
-    McpProtocolError,
     WaitMcpServer,
-    origin_allowed,
-    protocol_error_response,
 )
 from wait_local_agent.models import (
-    AGENT_BACKFILL_MAX_CONCURRENCY,
-    AgentDefinition,
     ClientCandidate,
     ConnectorInstance,
 )
@@ -272,7 +249,7 @@ from wait_local_agent.rbac import (
     Role,
     admin_credential_configured,
     require_role,
-    resolve_auth_context,
+    resolve_auth_context,  # noqa: F401
 )
 from wait_local_agent.reports.builders import (
     build_appliance_hardening_report,
@@ -1395,831 +1372,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         response["retenanted_count"] = retenanted_count
         return response
 
-    @app.get("/smart-actions")
-    def smart_actions(_: ViewerAccess) -> list[dict[str, object]]:
-        return [asdict(manifest) for manifest in smart_action_service.list()]
-
-    @app.get("/tools")
-    def tools(_: ViewerAccess) -> list[dict[str, object]]:
-        return [asdict(tool) for tool in agent_service.list_tools()]
-
-    @app.get("/mcp")
-    def mcp_get() -> Response:
-        return Response(status_code=405, headers={"Allow": "POST"})
-
-    @app.post("/mcp")
-    @limiter.limit(active_settings.rate_limit_connector)
-    async def mcp_endpoint(request: Request) -> Response:
-        origin = request.headers.get("origin")
-        request_origin = str(request.base_url).rstrip("/")
-        if not origin_allowed(origin, request_origin, active_settings.mcp_allowed_origins):
-            return JSONResponse(status_code=403, content={"detail": "invalid MCP origin"})
-        content_length = request.headers.get("content-length")
-        if content_length is not None:
-            try:
-                if int(content_length) > MAX_MCP_REQUEST_BYTES:
-                    return JSONResponse(status_code=413, content={"detail": "MCP request is too large"})
-            except ValueError:
-                return JSONResponse(status_code=400, content={"detail": "invalid content length"})
-        try:
-            body = await request.body()
-            if len(body) > MAX_MCP_REQUEST_BYTES:
-                return JSONResponse(status_code=413, content={"detail": "MCP request is too large"})
-            message = json.loads(body)
-        except (UnicodeDecodeError, json.JSONDecodeError):
-            return JSONResponse(status_code=400, content={"detail": "MCP request must be JSON"})
-        request_id = message.get("id") if isinstance(message, dict) else None
-        try:
-            context = resolve_auth_context(
-                active_settings,
-                request.headers.get("authorization"),
-                store,
-            )
-            protocol_header = request.headers.get("mcp-protocol-version")
-            if protocol_header and protocol_header not in {MCP_PROTOCOL_VERSION, "2025-03-26"}:
-                raise McpProtocolError(-32600, "unsupported MCP protocol version")
-            response, new_session_id = mcp_server.handle(
-                message,
-                context=context,
-                session_id=request.headers.get("mcp-session-id"),
-            )
-        except McpProtocolError as exc:
-            response = protocol_error_response(request_id, exc)
-            new_session_id = None
-        except HTTPException as exc:
-            return JSONResponse(
-                status_code=exc.status_code,
-                content={"detail": redact_text(str(exc.detail))},
-                headers=dict(exc.headers or {}),
-            )
-        headers = {"MCP-Session-Id": new_session_id} if new_session_id else None
-        if response is None:
-            return Response(status_code=202, headers=headers)
-        return JSONResponse(content=response, headers=headers)
-
-    @app.post("/agents/plan")
-    def plan_agent(payload: AgentPlanRequest, context: TechnicianAccess) -> dict[str, object]:
-        scoped_client_id = resolve_client_scope(context, payload.client_id).client_id
-        if context.role < Role.ADMIN and scoped_client_id is None:
-            raise HTTPException(status_code=403, detail="authenticated principal has no tenant")
-        try:
-            plan = agent_service.plan(
-                payload.instruction,
-                entity_id=payload.entity_id,
-                client_id=scoped_client_id,
-                max_steps=payload.max_steps,
-            )
-        except AgentDefinitionError as exc:
-            raise HTTPException(status_code=400, detail=str(exc)) from exc
-        return asdict(plan)
-
-    @app.get("/agents")
-    def agents(
-        context: ViewerAccess,
-        client_id: str | None = None,
-    ) -> list[dict[str, object]]:
-        scoped_client_id = resolve_client_scope(context, client_id).client_id
-        if context.role < Role.ADMIN and scoped_client_id is None and not context.is_msp_admin:
-            return []
-        return [_agent_definition_view(definition) for definition in agent_service.list_definitions(scoped_client_id)]
-
-    @app.post("/agents")
-    def create_agent(
-        payload: AgentDefinitionRequest,
-        context: TechnicianAccess,
-    ) -> dict[str, object]:
-        scoped_client_id = resolve_client_scope(context, payload.client_id).client_id
-        if context.role < Role.ADMIN and scoped_client_id is None:
-            raise HTTPException(status_code=403, detail="authenticated principal has no tenant")
-        try:
-            definition = agent_service.create(
-                name=payload.name,
-                description=payload.description,
-                enabled=payload.enabled,
-                trigger=payload.trigger,
-                entity_type=payload.entity_type,
-                filters=payload.filters,
-                enabled_tools=payload.enabled_tools,
-                steps=[step.model_dump() for step in payload.steps],
-                max_steps=payload.max_steps,
-                execution_timeout_seconds=payload.execution_timeout_seconds,
-                client_id=scoped_client_id,
-                run_once_per_entity=payload.run_once_per_entity,
-                depends_on_agent_ids=payload.depends_on_agent_ids,
-                execution_window_start=payload.execution_window_start,
-                execution_window_end=payload.execution_window_end,
-                execution_window_timezone=payload.execution_window_timezone,
-                context_sources=list(payload.context_sources),
-                approval_expiry_seconds=payload.approval_expiry_seconds,
-                result_aware=payload.result_aware,
-                approval_required_tools=payload.approval_required_tools,
-                approval_rules=[rule.model_dump() for rule in payload.approval_rules],
-            )
-        except AgentDefinitionError as exc:
-            raise HTTPException(status_code=400, detail=str(exc)) from exc
-        return _agent_definition_view(definition)
-
-    @app.get("/agents/{agent_id}")
-    def agent_detail(agent_id: str, context: ViewerAccess, client_id: str | None = None) -> dict[str, object]:
-        scoped_client_id = _resolve_detail_scope(context, client_id).client_id
-        if context.role < Role.ADMIN and scoped_client_id is None and not context.is_msp_admin:
-            raise HTTPException(status_code=404, detail="agent not found")
-        definition = agent_service.get(agent_id, scoped_client_id)
-        if definition is None:
-            raise HTTPException(status_code=404, detail="agent not found")
-        return _agent_definition_view(definition)
-
-    @app.get("/agents/{agent_id}/revisions")
-    def agent_revisions(
-        agent_id: str,
-        context: ViewerAccess,
-        client_id: str | None = None,
-    ) -> list[dict[str, object]]:
-        scoped_client_id = resolve_client_scope(context, client_id).client_id
-        if context.role < Role.ADMIN and scoped_client_id is None and not context.is_msp_admin:
-            return []
-        definition = agent_service.get(agent_id, scoped_client_id)
-        if definition is None:
-            return []
-        return [
-            _agent_revision_view(revision)
-            for revision in store.list_agent_definition_revisions(agent_id, definition.client_id)
-        ]
-
-    @app.get("/agents/{agent_id}/revisions/{version}/diff/{other_version}")
-    def agent_revision_diff(
-        agent_id: str,
-        version: int,
-        other_version: int,
-        context: ViewerAccess,
-        client_id: str | None = None,
-    ) -> dict[str, object]:
-        scoped_client_id = _resolve_detail_scope(context, client_id).client_id
-        if context.role < Role.ADMIN and scoped_client_id is None and not context.is_msp_admin:
-            raise HTTPException(status_code=404, detail="agent revision not found")
-        definition = agent_service.get(agent_id, scoped_client_id)
-        if definition is None:
-            raise HTTPException(status_code=404, detail="agent revision not found")
-        left = store.get_agent_definition_revision(agent_id, version, definition.client_id)
-        right = store.get_agent_definition_revision(agent_id, other_version, definition.client_id)
-        if left is None or right is None:
-            raise HTTPException(status_code=404, detail="agent revision not found")
-        return _agent_revision_diff_view(left, right)
-
-    @app.post("/agents/{agent_id}/revisions/{version}/restore")
-    def restore_agent_revision(
-        agent_id: str,
-        version: int,
-        context: TechnicianAccess,
-    ) -> dict[str, object]:
-        scoped_client_id = resolve_client_scope(context, None).client_id
-        if context.role < Role.ADMIN and scoped_client_id is None and not context.is_msp_admin:
-            raise HTTPException(status_code=404, detail="agent not found")
-        existing = agent_service.get(agent_id, scoped_client_id)
-        if existing is None:
-            raise HTTPException(status_code=404, detail="agent not found")
-        revision = store.get_agent_definition_revision(agent_id, version, existing.client_id)
-        if revision is None:
-            raise HTTPException(status_code=404, detail="agent revision not found")
-        try:
-            payload = AgentDefinitionRequest.model_validate(_safe_json_object(revision.definition_json))
-            restored = agent_service.update(
-                existing,
-                name=payload.name,
-                description=payload.description,
-                enabled=payload.enabled,
-                trigger=payload.trigger,
-                entity_type=payload.entity_type,
-                filters=payload.filters,
-                enabled_tools=payload.enabled_tools,
-                steps=[step.model_dump() for step in payload.steps],
-                max_steps=payload.max_steps,
-                execution_timeout_seconds=payload.execution_timeout_seconds,
-                run_once_per_entity=payload.run_once_per_entity,
-                depends_on_agent_ids=payload.depends_on_agent_ids,
-                execution_window_start=payload.execution_window_start,
-                execution_window_end=payload.execution_window_end,
-                execution_window_timezone=payload.execution_window_timezone,
-                context_sources=list(payload.context_sources),
-                approval_expiry_seconds=payload.approval_expiry_seconds,
-                result_aware=payload.result_aware,
-                approval_required_tools=payload.approval_required_tools,
-                approval_rules=[rule.model_dump() for rule in payload.approval_rules],
-            )
-        except (AgentDefinitionError, ValidationError) as exc:
-            raise HTTPException(status_code=409, detail="agent revision is no longer valid") from exc
-        return _agent_definition_view(restored)
-
-    @app.put("/agents/{agent_id}")
-    def update_agent(
-        agent_id: str,
-        payload: AgentDefinitionRequest,
-        context: TechnicianAccess,
-    ) -> dict[str, object]:
-        scoped_client_id = resolve_client_scope(context, payload.client_id).client_id
-        if context.role < Role.ADMIN and scoped_client_id is None:
-            raise HTTPException(status_code=404, detail="agent not found")
-        existing = agent_service.get(agent_id, scoped_client_id)
-        if existing is None:
-            raise HTTPException(status_code=404, detail="agent not found")
-        if payload.client_id is not None and _normalize_client_id(payload.client_id) != existing.client_id:
-            raise HTTPException(status_code=409, detail="agent tenant scope cannot be changed")
-        try:
-            updated = agent_service.update(
-                existing,
-                name=payload.name,
-                description=payload.description,
-                enabled=payload.enabled,
-                trigger=payload.trigger,
-                entity_type=payload.entity_type,
-                filters=payload.filters,
-                enabled_tools=payload.enabled_tools,
-                steps=[step.model_dump() for step in payload.steps],
-                max_steps=payload.max_steps,
-                execution_timeout_seconds=payload.execution_timeout_seconds,
-                run_once_per_entity=payload.run_once_per_entity,
-                depends_on_agent_ids=payload.depends_on_agent_ids,
-                execution_window_start=payload.execution_window_start,
-                execution_window_end=payload.execution_window_end,
-                execution_window_timezone=payload.execution_window_timezone,
-                context_sources=list(payload.context_sources),
-                approval_expiry_seconds=payload.approval_expiry_seconds,
-                result_aware=payload.result_aware,
-                approval_required_tools=payload.approval_required_tools,
-                approval_rules=[rule.model_dump() for rule in payload.approval_rules],
-            )
-        except AgentDefinitionError as exc:
-            raise HTTPException(status_code=400, detail=str(exc)) from exc
-        return _agent_definition_view(updated)
-
-    @app.post("/agents/{agent_id}/run")
-    def run_agent(
-        agent_id: str,
-        payload: AgentRunStartRequest,
-        request: Request,
-        context: TechnicianAccess,
-    ) -> dict[str, object]:
-        scoped_client_id = resolve_client_scope(context, payload.client_id).client_id
-        if context.role < Role.ADMIN and scoped_client_id is None:
-            raise HTTPException(status_code=403, detail="authenticated principal has no tenant")
-        definition = agent_service.get(agent_id, scoped_client_id)
-        if definition is None:
-            raise HTTPException(status_code=404, detail="agent not found")
-        if definition.client_id is None and scoped_client_id is not None:
-            definition = replace(definition, client_id=scoped_client_id)
-        try:
-            result = agent_service.run(
-                definition,
-                entity_id=payload.entity_id,
-                actor=context.approver_id or "api",
-                input_payload=payload.input,
-                actor_role=context.role,
-                correlation_id=_request_correlation_id(request),
-            )
-        except AgentDefinitionError as exc:
-            raise HTTPException(status_code=400, detail=str(exc)) from exc
-        return asdict(result)
-
-    def _process_backfill(
-        backfill,
-        definition,
-        context: AuthContext,
-        scope: ClientScope,
-        scoped_client_id: str | None,
-        correlation_id: str | None = None,
-    ):
-        entity_ids = [item for item in _safe_json_values(backfill.entity_ids_json) if isinstance(item, str)]
-        input_payload = _safe_json_object(backfill.input_json)
-        run_ids = [
-            item
-            for item in _safe_json_values(backfill.run_ids_json)
-            if isinstance(item, int) and not isinstance(item, bool)
-        ]
-        failed_entity_ids = [
-            item for item in _safe_json_values(backfill.failed_entity_ids_json) if isinstance(item, str)
-        ]
-        errors = [backfill.error_detail] if backfill.error_detail else []
-        if definition.client_id is None and scoped_client_id is not None:
-            definition = replace(definition, client_id=scoped_client_id)
-        store.update_agent_backfill(
-            backfill.id or 0,
-            client_id=scope,
-            status="running",
-            next_index=backfill.next_index,
-            processed_count=backfill.processed_count,
-            succeeded_count=backfill.succeeded_count,
-            failed_count=backfill.failed_count,
-            run_ids=run_ids,
-            failed_entity_ids=failed_entity_ids,
-            error_detail="; ".join(errors),
-        )
-        processed_count = backfill.processed_count
-        succeeded_count = backfill.succeeded_count
-        failed_count = backfill.failed_count
-
-        def run_entity(entity_id: str):
-            try:
-                result = agent_service.run(
-                    definition,
-                    entity_id=entity_id,
-                    actor=backfill.actor or context.approver_id or "api",
-                    input_payload=input_payload,
-                    actor_role=context.role,
-                    correlation_id=correlation_id,
-                )
-                if result.status in {"completed", "pending_approval"}:
-                    return result, None
-                return result, f"{entity_id}: agent run status {result.status}"
-            except Exception as exc:  # continue independent entities
-                return None, redact_text(f"{entity_id}: {exc}")
-
-        max_concurrency = min(max(1, backfill.max_concurrency), AGENT_BACKFILL_MAX_CONCURRENCY)
-        for batch_start in range(backfill.next_index, len(entity_ids), max_concurrency):
-            batch = entity_ids[batch_start : batch_start + max_concurrency]
-            if max_concurrency == 1:
-                outcomes = [run_entity(batch[0])]
-            else:
-                with ThreadPoolExecutor(max_workers=max_concurrency) as executor:
-                    outcomes = list(executor.map(run_entity, batch))
-            for offset, (result, error_detail) in enumerate(outcomes):
-                index = batch_start + offset
-                entity_id = entity_ids[index]
-                if result is not None:
-                    if result.run_id:
-                        run_ids.append(result.run_id)
-                    if error_detail is None:
-                        succeeded_count += 1
-                    else:
-                        failed_count += 1
-                        failed_entity_ids.append(entity_id)
-                        errors.append(error_detail)
-                else:
-                    failed_count += 1
-                    failed_entity_ids.append(entity_id)
-                    errors.append(error_detail or f"{entity_id}: agent run failed")
-                processed_count += 1
-                store.update_agent_backfill(
-                    backfill.id or 0,
-                    client_id=scope,
-                    status="running",
-                    next_index=index + 1,
-                    processed_count=processed_count,
-                    succeeded_count=succeeded_count,
-                    failed_count=failed_count,
-                    run_ids=run_ids,
-                    failed_entity_ids=failed_entity_ids,
-                    error_detail="; ".join(errors),
-                )
-        final_status = "completed_with_errors" if failed_entity_ids else "completed"
-        return store.update_agent_backfill(
-            backfill.id or 0,
-            client_id=scope,
-            status=final_status,
-            next_index=len(entity_ids),
-            processed_count=processed_count,
-            succeeded_count=succeeded_count,
-            failed_count=failed_count,
-            run_ids=run_ids,
-            failed_entity_ids=failed_entity_ids,
-            error_detail="; ".join(errors),
-        )
-
-    @app.post("/agent-backfills")
-    def create_agent_backfill(
-        payload: AgentBackfillCreateRequest,
-        context: TechnicianAccess,
-    ) -> dict[str, object]:
-        scoped_client_id = _required_client_id(context, payload.client_id)
-        if len(set(payload.entity_ids)) != len(payload.entity_ids):
-            raise HTTPException(status_code=422, detail="entity_ids must not contain duplicates")
-        definition = agent_service.get(payload.agent_id, scoped_client_id)
-        if definition is None:
-            raise HTTPException(status_code=404, detail="agent not found")
-        backfill_scope = scoped_client_id
-        for entity_id in payload.entity_ids:
-            if store.get_ticket(entity_id, client_id=backfill_scope) is None:
-                raise HTTPException(status_code=404, detail=f"ticket not found: {entity_id}")
-        backfill = store.create_agent_backfill(
-            payload.agent_id,
-            payload.entity_ids,
-            payload.input,
-            actor=context.approver_id or "api",
-            max_concurrency=payload.max_concurrency,
-            client_id=scoped_client_id,
-        )
-        return _agent_backfill_view(backfill)
-
-    @app.post("/agent-backfills/preview")
-    def preview_agent_backfill(
-        payload: AgentBackfillPreviewRequest,
-        context: TechnicianAccess,
-    ) -> dict[str, object]:
-        scoped_client_id = _required_client_id(context, payload.client_id)
-        if len(set(payload.entity_ids)) != len(payload.entity_ids):
-            raise HTTPException(status_code=422, detail="entity_ids must not contain duplicates")
-        definition = agent_service.get(payload.agent_id, scoped_client_id)
-        if definition is None:
-            raise HTTPException(status_code=404, detail="agent not found")
-        backfill_scope = scoped_client_id
-        missing_entity_ids = [
-            entity_id
-            for entity_id in payload.entity_ids
-            if store.get_ticket(entity_id, client_id=backfill_scope) is None
-        ]
-        if missing_entity_ids:
-            raise HTTPException(
-                status_code=404,
-                detail=f"ticket not found: {missing_entity_ids[0]}",
-            )
-        execution_mode = "sequential" if payload.max_concurrency == 1 else "bounded_parallel"
-        return {
-            "dry_run": True,
-            "agent_id": payload.agent_id,
-            "entity_count": len(payload.entity_ids),
-            "estimated_runs": len(payload.entity_ids),
-            "max_concurrency": payload.max_concurrency,
-            "execution_mode": execution_mode,
-            "will_persist": False,
-            "input": _redact_payload(payload.input),
-            "client_id": scoped_client_id,
-        }
-
-    @app.get("/agent-backfills")
-    def agent_backfills(
-        context: ViewerAccess,
-        client_id: str | None = None,
-    ) -> list[dict[str, object]]:
-        scope = _backfill_scope(context, client_id)
-        return [_agent_backfill_view(item) for item in store.list_agent_backfills(scope)]
-
-    @app.get("/agent-backfills/{backfill_id}")
-    def agent_backfill_detail(backfill_id: int, context: ViewerAccess) -> dict[str, object]:
-        scope = _backfill_scope(context, None)
-        backfill = store.get_agent_backfill(backfill_id, scope)
-        if backfill is None:
-            raise HTTPException(status_code=404, detail="agent backfill not found")
-        return _agent_backfill_view(backfill)
-
-    @app.post("/agent-backfills/{backfill_id}/run")
-    def run_agent_backfill(
-        backfill_id: int,
-        request: Request,
-        context: TechnicianAccess,
-    ) -> dict[str, object]:
-        scope = _backfill_scope(context, None)
-        backfill = store.get_agent_backfill(backfill_id, scope)
-        if backfill is None:
-            raise HTTPException(status_code=404, detail="agent backfill not found")
-        if backfill.status not in {"queued", "paused"}:
-            raise HTTPException(status_code=409, detail="agent backfill is not runnable in its current state")
-        definition = agent_service.get(backfill.agent_id, backfill.client_id)
-        if definition is None:
-            raise HTTPException(status_code=404, detail="agent not found")
-        return _agent_backfill_view(
-            _process_backfill(
-                backfill,
-                definition,
-                context,
-                scope,
-                backfill.client_id,
-                _request_correlation_id(request),
-            )
-        )
-
-    @app.post("/agent-backfills/{backfill_id}/pause")
-    def pause_agent_backfill(backfill_id: int, context: TechnicianAccess) -> dict[str, object]:
-        scope = _backfill_scope(context, None)
-        backfill = store.get_agent_backfill(backfill_id, scope)
-        if backfill is None:
-            raise HTTPException(status_code=404, detail="agent backfill not found")
-        if backfill.status != "queued":
-            raise HTTPException(status_code=409, detail="only queued backfills can be paused")
-        return _agent_backfill_view(
-            store.update_agent_backfill(
-                backfill_id,
-                client_id=scope,
-                status="paused",
-                next_index=backfill.next_index,
-                processed_count=backfill.processed_count,
-                succeeded_count=backfill.succeeded_count,
-                failed_count=backfill.failed_count,
-                run_ids=[
-                    item
-                    for item in _safe_json_values(backfill.run_ids_json)
-                    if isinstance(item, int) and not isinstance(item, bool)
-                ],
-                failed_entity_ids=[
-                    item for item in _safe_json_values(backfill.failed_entity_ids_json) if isinstance(item, str)
-                ],
-                error_detail=backfill.error_detail,
-            )
-        )
-
-    @app.post("/agent-backfills/{backfill_id}/cancel")
-    def cancel_agent_backfill(backfill_id: int, context: TechnicianAccess) -> dict[str, object]:
-        scope = _backfill_scope(context, None)
-        backfill = store.get_agent_backfill(backfill_id, scope)
-        if backfill is None:
-            raise HTTPException(status_code=404, detail="agent backfill not found")
-        if backfill.status in {"completed", "completed_with_errors", "cancelled"}:
-            raise HTTPException(status_code=409, detail="agent backfill is already terminal")
-        return _agent_backfill_view(
-            store.update_agent_backfill(
-                backfill_id,
-                client_id=scope,
-                status="cancelled",
-                next_index=backfill.next_index,
-                processed_count=backfill.processed_count,
-                succeeded_count=backfill.succeeded_count,
-                failed_count=backfill.failed_count,
-                run_ids=[],
-                failed_entity_ids=[],
-                error_detail=backfill.error_detail,
-            )
-        )
-
-    @app.post("/agent-backfills/{backfill_id}/rerun-failed")
-    def rerun_failed_backfill(
-        backfill_id: int,
-        request: Request,
-        context: TechnicianAccess,
-    ) -> dict[str, object]:
-        scope = _backfill_scope(context, None)
-        backfill = store.get_agent_backfill(backfill_id, scope)
-        if backfill is None:
-            raise HTTPException(status_code=404, detail="agent backfill not found")
-        failed_entity_ids = [
-            item for item in _safe_json_values(backfill.failed_entity_ids_json) if isinstance(item, str)
-        ]
-        if not failed_entity_ids:
-            raise HTTPException(status_code=409, detail="agent backfill has no failed entities")
-        reset = store.reset_agent_backfill_failed(backfill_id, failed_entity_ids, client_id=scope)
-        definition = agent_service.get(reset.agent_id, reset.client_id)
-        if definition is None:
-            raise HTTPException(status_code=404, detail="agent not found")
-        return _agent_backfill_view(
-            _process_backfill(
-                reset,
-                definition,
-                context,
-                scope,
-                reset.client_id,
-                _request_correlation_id(request),
-            )
-        )
-
-    def _definition_for_agent_run(run) -> AgentDefinition | None:
-        definition = agent_service.get(run.agent_id, run.client_id)
-        if definition is None:
-            definition = agent_service.get(run.agent_id)
-        if definition is None:
-            return None
-        if definition.client_id is not None and definition.client_id != run.client_id:
-            return None
-        if definition.client_id is None and run.client_id is not None:
-            return replace(definition, client_id=run.client_id)
-        return definition
-
-    @app.get("/agent-runs")
-    def agent_runs(
-        request: Request,
-        context: ViewerAccess,
-        client_id: str | None = None,
-    ) -> list[dict[str, object]]:
-        scope = resolve_client_scope(context, requested_client_from(request, client_id))
-        return [_agent_run_view(run) for run in store.list_agent_runs(scope)]
-
-    @app.get("/agent-runs/{run_id}")
-    def agent_run_detail(run_id: int, context: ViewerAccess, client_id: str | None = None) -> dict[str, object]:
-        scope = _resolve_detail_scope(context, client_id)
-        run = store.get_agent_run(run_id, scope)
-        if run is None:
-            raise HTTPException(status_code=404, detail="agent run not found")
-        view = _agent_run_view(run)
-        definition = _definition_for_agent_run(run)
-        if definition is not None and run.revision_version is not None:
-            revision = store.get_agent_definition_revision(
-                run.agent_id,
-                run.revision_version,
-                definition.client_id,
-            )
-            if revision is None and definition.client_id == run.client_id:
-                revision = store.get_agent_definition_revision(
-                    run.agent_id,
-                    run.revision_version,
-                    None,
-                )
-            if revision is not None:
-                view["definition_revision"] = _agent_revision_view(revision)
-        return view
-
-    @app.post("/agent-runs/{run_id}/resume")
-    def resume_agent(
-        run_id: int,
-        request: Request,
-        context: TechnicianAccess,
-        client_id: str | None = None,
-    ) -> dict[str, object]:
-        scope = _resolve_detail_scope(context, client_id)
-        run = store.get_agent_run(run_id, scope)
-        if run is None:
-            raise HTTPException(status_code=404, detail="agent run not found")
-        definition = _definition_for_agent_run(run)
-        if definition is None:
-            raise HTTPException(status_code=404, detail="agent definition not found")
-        try:
-            result = agent_service.resume(
-                definition,
-                run,
-                approver=context.approver_id or "api",
-                approver_role=context.role,
-                correlation_id=_request_correlation_id(request),
-            )
-        except (AgentDefinitionError, PermissionError) as exc:
-            raise HTTPException(status_code=409, detail=str(exc)) from exc
-        return asdict(result)
-
-    @app.post("/agent-runs/{run_id}/cancel")
-    def cancel_agent_run(
-        run_id: int,
-        request: Request,
-        context: TechnicianAccess,
-        client_id: str | None = None,
-    ) -> dict[str, object]:
-        scope = _resolve_detail_scope(context, client_id)
-        run = store.get_agent_run(run_id, scope)
-        if run is None:
-            raise HTTPException(status_code=404, detail="agent run not found")
-        definition = _definition_for_agent_run(run)
-        if definition is None:
-            raise HTTPException(status_code=404, detail="agent definition not found")
-        try:
-            result = agent_service.cancel(
-                definition,
-                run,
-                actor=context.approver_id or "api",
-                approver_role=context.role,
-                correlation_id=_request_correlation_id(request),
-            )
-        except (AgentDefinitionError, PermissionError) as exc:
-            raise HTTPException(status_code=409, detail=str(exc)) from exc
-        return asdict(result)
-
-    @app.post("/agent-runs/{run_id}/retry")
-    def retry_agent_run(
-        run_id: int,
-        request: Request,
-        context: TechnicianAccess,
-        client_id: str | None = None,
-    ) -> dict[str, object]:
-        scope = _resolve_detail_scope(context, client_id)
-        run = store.get_agent_run(run_id, scope)
-        if run is None:
-            raise HTTPException(status_code=404, detail="agent run not found")
-        definition = _definition_for_agent_run(run)
-        if definition is None:
-            raise HTTPException(status_code=404, detail="agent definition not found")
-        try:
-            result = agent_service.retry(
-                definition,
-                run,
-                actor=context.approver_id or "api",
-                actor_role=context.role,
-                correlation_id=_request_correlation_id(request),
-            )
-        except (AgentDefinitionError, PermissionError) as exc:
-            raise HTTPException(status_code=409, detail=str(exc)) from exc
-        return {"retry_of_run_id": run.id, **asdict(result)}
-
-    @app.post("/automation/events")
-    @limiter.limit(active_settings.rate_limit_general)
-    def ingest_automation_event(
-        request: Request,
-        payload: EventIngestRequest,
-        context: TechnicianAccess,
-        idempotency_key_header: str | None = Header(default=None, alias="Idempotency-Key"),
-    ) -> dict[str, object]:
-        scoped_client_id = resolve_client_scope(context, payload.client_id).client_id
-        if context.role < Role.ADMIN and scoped_client_id is None:
-            raise HTTPException(status_code=403, detail="authenticated principal has no tenant")
-        idempotency_key = idempotency_key_header or payload.idempotency_key
-        if idempotency_key is None:
-            raise HTTPException(status_code=422, detail="Idempotency-Key header or idempotency_key is required")
-        try:
-            result = event_dispatcher.dispatch(
-                event_type=payload.event_type,
-                entity_type=payload.entity_type,
-                entity_id=payload.entity_id,
-                payload=payload.payload,
-                idempotency_key=idempotency_key,
-                client_id=scoped_client_id,
-                actor=context.approver_id or "webhook",
-                max_retries=payload.max_retries,
-                retry_delay_seconds=payload.retry_delay_seconds,
-            )
-        except EventDispatchError as exc:
-            raise HTTPException(status_code=422, detail=str(exc)) from exc
-        except LookupError as exc:
-            raise HTTPException(status_code=404, detail="event entity not found") from exc
-        return _event_dispatch_view(result)
-
-    @app.get("/automation/event-deliveries")
-    def event_deliveries(
-        request: Request,
-        context: ViewerAccess,
-        client_id: str | None = None,
-    ) -> list[dict[str, object]]:
-        scope = resolve_client_scope(context, requested_client_from(request, client_id))
-        return [_event_delivery_view(delivery) for delivery in store.list_event_deliveries(scope)]
-
-    @app.get("/automation/event-deliveries/{delivery_id}")
-    def event_delivery_detail(delivery_id: int, context: ViewerAccess) -> dict[str, object]:
-        scope = _resolve_detail_scope(context, None)
-        delivery = store.get_event_delivery(delivery_id, scope)
-        if delivery is None:
-            raise HTTPException(status_code=404, detail="event delivery not found")
-        return _event_delivery_view(delivery)
-
-    @app.post("/automation/event-deliveries/{delivery_id}/retry")
-    @limiter.limit(active_settings.rate_limit_general)
-    def retry_event_delivery(
-        request: Request,
-        delivery_id: int,
-        context: TechnicianAccess,
-    ) -> dict[str, object]:
-        requested_client_id = None
-        if not context.demo_mode and context.role < Role.ADMIN:
-            requested_client_id = _normalize_client_id(context.client_id)
-        scope = _resolve_detail_scope(context, requested_client_id)
-        delivery = store.get_event_delivery(delivery_id, scope)
-        if delivery is None:
-            raise HTTPException(status_code=404, detail="event delivery not found")
-        try:
-            result = event_dispatcher.retry(
-                delivery_id,
-                client_id=delivery.client_id,
-                actor=context.approver_id or "operator",
-            )
-        except KeyError as exc:
-            raise HTTPException(status_code=404, detail="event delivery not found") from exc
-        except ValueError as exc:
-            raise HTTPException(status_code=409, detail=str(exc)) from exc
-        return _event_dispatch_view(result)
-
-    @app.get("/smart-actions/runs")
-    def smart_action_runs(context: ViewerAccess, client_id: str | None = None) -> list[dict[str, object]]:
-        scope = resolve_client_scope(context, client_id)
-        return [
-            _smart_action_run_view(run)
-            for run in smart_action_service.store.list_smart_action_runs(client_id=scope)
-        ]
-
-    @app.get("/smart-actions/runs/{run_id}")
-    def smart_action_run_detail(run_id: int, context: ViewerAccess, client_id: str | None = None) -> dict[str, object]:
-        scope = _resolve_detail_scope(context, client_id)
-        run = smart_action_service.store.get_smart_action_run(run_id, client_id=scope)
-        if run is None:
-            raise HTTPException(status_code=404, detail="smart action run not found")
-        return _smart_action_run_view(run)
-
-    @app.get("/smart-actions/{action_id}")
-    def smart_action_detail(action_id: str, _: ViewerAccess) -> dict[str, object]:
-        try:
-            return asdict(smart_action_service.describe(action_id))
-        except KeyError as exc:
-            raise HTTPException(status_code=404, detail="smart action not found") from exc
-
-    @app.post("/smart-actions/{action_id}/invoke")
-    def invoke_smart_action(
-        action_id: str,
-        payload: SmartActionInvokeRequest,
-        request: Request,
-        context: TechnicianAccess,
-    ) -> dict[str, object]:
-        try:
-            manifest = smart_action_service.describe(action_id)
-            if manifest.required_role.strip().lower() == "admin" and context.role < Role.ADMIN:
-                raise HTTPException(status_code=403, detail="smart action requires admin authority")
-            scoped_client_id = _singular_action_client(
-                store,
-                context,
-                payload.client_id,
-                payload.payload,
-            )
-            result = smart_action_service.invoke(
-                action_id,
-                payload.payload,
-                context.approver_id or "api",
-                confirm=payload.confirm,
-                client_id=scoped_client_id,
-                correlation_id=_request_correlation_id(request),
-            )
-        except KeyError as exc:
-            raise HTTPException(status_code=404, detail="smart action not found") from exc
-        except ValueError as exc:
-            raise HTTPException(status_code=400, detail=str(exc)) from exc
-        return asdict(result)
-
+    mount_flat(app, create_automation_router(ctx))
+    mount_flat(app, create_agents_router(ctx))
     @app.post("/technician/chat")
     @limiter.limit(active_settings.rate_limit_connector)
     def technician_chat(
