@@ -25,6 +25,8 @@ All notable changes to WAIT Local Agent will be documented in this file.
 
 ### Changed
 
+- Workflow, scheduled-job and MSP playbook routes now live in
+  `api/routers/workflows.py`, `scheduled_jobs.py` and `msp_playbooks.py`; no route changes.
 - Solutions Architect routes now live in `api/routers/consultant.py`; no route changes.
 - Microsoft 365 connector routes now live in `api/routers/m365.py`; no route changes.
 - System routes (health, settings, providers, updates, packs) now live in
