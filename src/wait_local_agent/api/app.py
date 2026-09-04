@@ -63,6 +63,8 @@ from wait_local_agent.api.packs.loader import (
     configure_pack_routes,
 )
 from wait_local_agent.api.routers import mount_flat
+from wait_local_agent.api.routers.documentation_connectors import create_documentation_connectors_router
+from wait_local_agent.api.routers.psa_connectors import create_psa_connectors_router
 from wait_local_agent.api.routers.system import create_system_router
 from wait_local_agent.api.schemas import (
     AgentApprovalRuleRequest,  # noqa: F401
@@ -86,7 +88,6 @@ from wait_local_agent.api.schemas import (
     CollectorRunRequest,
     ConnectorInstanceCreateRequest,
     ConnectorInstanceUpdateRequest,
-    ConnectWiseDraftRequest,
     CopilotStudioPlanRequest,
     DeliveryPlanRequest,
     DeploymentModeRequest,
@@ -106,7 +107,6 @@ from wait_local_agent.api.schemas import (
     EvaluationRequest,
     EventIngestRequest,
     GovernanceRequest,
-    HaloDraftRequest,
     HardeningRunRequest,
     KnowledgeAuthorityRequest,
     KnowledgeIngestRequest,
@@ -184,7 +184,6 @@ from wait_local_agent.api.views import (
     _agent_revision_view,
     _agent_run_view,
     _baseline_view,
-    _connectwise_draft_view,
     _dispatch_workflow_completion_event,
     _empty_analytics_summary,  # noqa: F401
     _end_user_brand_color,
@@ -225,7 +224,7 @@ from wait_local_agent.api.views import (
     _workflow_run_comparison_view,
     make_approval_view,
 )
-from wait_local_agent.autotask import AutotaskClient, AutotaskReadResponse
+from wait_local_agent.autotask import AutotaskClient
 from wait_local_agent.backup import (
     BackupEncryptionError,
     backup_state,
@@ -258,7 +257,7 @@ from wait_local_agent.config import (
     load_settings,
     validate_secrets_backend_configuration,
 )
-from wait_local_agent.confluence import ConfluenceClient, ConfluenceReadResponse
+from wait_local_agent.confluence import ConfluenceClient
 from wait_local_agent.connector_factory import (
     SUPPORTED_CONNECTOR_TYPES,
     ConnectorFactoryError,
@@ -266,7 +265,6 @@ from wait_local_agent.connector_factory import (
     validate_connector_instance,
 )
 from wait_local_agent.connectors import (
-    draft_connectwise_ticket_action,
     draft_halopsa_ticket_action,
     draft_m365_authentication_method_delete,
     draft_m365_group_membership,
@@ -292,7 +290,7 @@ from wait_local_agent.connectors import (
     update_connectwise_approval_fields,
     update_halopsa_approval_fields,
 )
-from wait_local_agent.connectwise import ConnectWiseClient, ConnectWiseReadResponse
+from wait_local_agent.connectwise import ConnectWiseClient
 from wait_local_agent.consultant import (
     BlueprintValidationError,
     architect_solution_blueprint,
@@ -334,10 +332,10 @@ from wait_local_agent.evaluation import (
 from wait_local_agent.event_dispatch import EventDispatcher, EventDispatchError
 from wait_local_agent.founder_bundle import PrivacyViolation
 from wait_local_agent.governance import GovernanceValidationError, evaluate_solution_governance
-from wait_local_agent.halopsa import HaloPSAClient, HaloReadResponse
-from wait_local_agent.hudu import HuduClient, HuduReadResponse
+from wait_local_agent.halopsa import HaloPSAClient
+from wait_local_agent.hudu import HuduClient
 from wait_local_agent.ingestion_poller import IngestionPoller
-from wait_local_agent.itglue import ItGlueClient, ItGlueReadResponse
+from wait_local_agent.itglue import ItGlueClient
 from wait_local_agent.knowledge import ingestion_service_from_settings
 from wait_local_agent.lp_client import (
     LaunchPassportError,
@@ -388,7 +386,7 @@ from wait_local_agent.msp_playbooks import (
     update_msp_playbook,
     update_msp_playbook_subscription,
 )
-from wait_local_agent.notion import NotionClient, NotionDataSourceResponse, NotionReadResponse
+from wait_local_agent.notion import NotionClient
 from wait_local_agent.observability import (
     build_analytics_summary,
 )
@@ -445,22 +443,17 @@ from wait_local_agent.reports.msp import (
     build_qbr_report,
     build_recurring_service_review_report,
 )
-from wait_local_agent.reports.renderers import redact_text, redact_value, report_as_dict
+from wait_local_agent.reports.renderers import redact_text, report_as_dict
 from wait_local_agent.reports.service import ReportService
 from wait_local_agent.rmm import RmmProviderResolutionError, rmm_provider_from_settings
 from wait_local_agent.scalepad import (
-    ScalePadAssessmentResponse,
     ScalePadClient,
-    ScalePadClientResponse,
-    ScalePadComplianceHealthResponse,
-    ScalePadGoalResponse,
-    ScalePadRiskSummaryResponse,
 )
 from wait_local_agent.scheduler import SchedulerManager, validate_scheduled_report_params
-from wait_local_agent.servicenow import ServiceNowClient, ServiceNowReadResponse
+from wait_local_agent.servicenow import ServiceNowClient
 from wait_local_agent.services import TicketIntelligenceService
 from wait_local_agent.sessions import SESSION_COOKIE_NAME
-from wait_local_agent.sharepoint import SharePointClient, SharePointReadResponse
+from wait_local_agent.sharepoint import SharePointClient
 from wait_local_agent.smart_actions import SmartActionService
 from wait_local_agent.spa_routes import SPA_ROUTE_PATHS
 from wait_local_agent.store import (
@@ -477,7 +470,7 @@ from wait_local_agent.supervisor import (
     build_supervisor_delegation_plan,
     execute_supervisor_delegation,
 )
-from wait_local_agent.syncro import SyncroClient, SyncroCommentsResponse, SyncroReadResponse
+from wait_local_agent.syncro import SyncroClient
 from wait_local_agent.teams_graph import TeamsGraphClient
 from wait_local_agent.technician_chat import TechnicianChatParseError
 from wait_local_agent.timezest import TimeZestClient
@@ -528,8 +521,6 @@ class CorrelationIdMiddleware:
                 status_code,
                 extra={"correlation_id": correlation_id},
             )
-
-
 
 
 class SPAStaticFiles(StaticFiles):
@@ -1506,34 +1497,6 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             raise HTTPException(status_code=404, detail="connector instance not found")
         return asdict(instance)
 
-    @app.post("/connectors/instances/{connector_instance_id}/sync")
-    def connector_instance_sync_now(
-        connector_instance_id: str,
-        context: AdminAccess,
-    ) -> dict[str, object]:
-        _require_msp_operator(context)
-        instance = store.get_connector_instance(connector_instance_id)
-        if instance is None:
-            raise HTTPException(status_code=404, detail="connector instance not found")
-        if not active_settings.allow_http_probing:
-            raise HTTPException(status_code=409, detail="connector read probing is disabled")
-        if str(instance.status).strip().lower() != "active":
-            raise HTTPException(status_code=409, detail="connector instance is not active")
-        poller = IngestionPoller(store, base_settings=active_settings)
-        try:
-            summary = poller.poll_instance(
-                connector_instance_id,
-                max_pages=25,
-                page_size=50,
-                deadline_seconds=60.0,
-                lease_ttl_seconds=300.0,
-            )
-        except (ConnectorFactoryError, KeyError, ValueError) as exc:
-            raise HTTPException(status_code=409, detail="connector sync could not run") from exc
-        store.add_audit_event(
-            "connector.sync_triggered", connector_instance_id, f"manual sync -> {summary.status}"
-        )
-        return asdict(summary)
 
     @app.get("/client-connector-mappings")
     def client_connector_mappings(
@@ -3307,9 +3270,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         scope = resolve_client_scope(context, requested_client_from(request, client_id))
         return [asdict(event) for event in store.list_event_history(client_id=scope)]
 
-    @app.get("/connectors")
-    def connectors(_: ViewerAccess) -> list[dict[str, object]]:
-        return [asdict(status) for status in list_connector_statuses(active_settings)]
+    mount_flat(app, create_psa_connectors_router(ctx))
 
     @app.get("/secrets")
     def secrets(_: AdminAccess) -> list[dict[str, object]]:
@@ -3537,1018 +3498,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     def list_restore_exercises(_: ViewerAccess) -> list[dict[str, object]]:
         return [asdict(exercise) for exercise in store.list_restore_exercises()]
 
-    @app.post("/connectors/halopsa/tickets/{ticket_id}/drafts")
-    @limiter.limit(active_settings.rate_limit_connector)
-    def create_halopsa_draft(
-        ticket_id: str,
-        payload: HaloDraftRequest,
-        request: Request,
-        context: TechnicianAccess,
-    ) -> dict[str, object]:
-        scoped_client_id = resolve_client_scope(context, payload.client_id).client_id
-        if scoped_client_id is None and not context.demo_mode:
-            raise HTTPException(status_code=403, detail="draft actions require a client scope")
-        try:
-            draft = draft_halopsa_ticket_action(
-                store,
-                ticket_id,
-                payload.action_type,
-                payload.fields,
-                client_id=scoped_client_id,
-            )
-        except ValueError as exc:
-            raise HTTPException(status_code=400, detail=str(exc)) from exc
-        return _halopsa_draft_view(draft)
 
-    @app.post("/connectors/connectwise/tickets/{ticket_id}/drafts")
-    @limiter.limit(active_settings.rate_limit_connector)
-    def create_connectwise_draft(
-        ticket_id: str,
-        payload: ConnectWiseDraftRequest,
-        request: Request,
-        context: TechnicianAccess,
-    ) -> dict[str, object]:
-        try:
-            draft = draft_connectwise_ticket_action(
-                store,
-                ticket_id,
-                payload.action_type,
-                payload.fields,
-                client_id=resolve_client_scope(context, payload.client_id).client_id,
-            )
-        except ValueError as exc:
-            raise HTTPException(status_code=400, detail=str(exc)) from exc
-        return _connectwise_draft_view(draft)
+    mount_flat(app, create_documentation_connectors_router(ctx))
 
-    @app.get("/connectors/halopsa/health")
-    @limiter.limit(active_settings.rate_limit_connector)
-    def halopsa_health(request: Request, _: ViewerAccess) -> dict[str, object]:
-        result = halopsa_client.health()
-        _audit_halopsa_read("health", result.status, result.count)
-        return asdict(result)
-
-    @app.get("/connectors/halopsa/write-health")
-    @limiter.limit(active_settings.rate_limit_connector)
-    def halopsa_write_health(request: Request, _: ViewerAccess) -> dict[str, object]:
-        result = halopsa_client.write_health()
-        store.add_audit_event("halopsa.write_health", "halopsa", result.status)
-        return asdict(result)
-
-    @app.post("/connectors/halopsa/approval-requests/{request_id}/execute")
-    @limiter.limit(active_settings.rate_limit_connector)
-    def execute_halopsa_approval(
-        request_id: int,
-        request: Request,
-        context: TechnicianAccess,
-    ) -> dict[str, object]:
-        try:
-            approval = store.get_approval_request(request_id)
-            if approval is None or not _approval_scope_visible(context, approval):
-                raise KeyError(request_id)
-            return _approval_view(execute_halopsa_approval_request(store, halopsa_client, request_id))
-        except KeyError as exc:
-            raise HTTPException(status_code=404, detail="approval request not found") from exc
-        except PermissionError as exc:
-            raise HTTPException(status_code=409, detail=str(exc)) from exc
-        except QuarantinedTicketError as exc:
-            raise HTTPException(status_code=409, detail=str(exc)) from exc
-        except (RuntimeError, ValueError) as exc:
-            raise HTTPException(status_code=400, detail=str(exc)) from exc
-
-    @app.get("/connectors/halopsa/tickets")
-    @limiter.limit(active_settings.rate_limit_connector)
-    def halopsa_tickets(
-        request: Request,
-        context: ViewerAccess,
-        page: int = 1,
-        page_size: int = 50,
-        client_id: str | None = None,
-    ) -> dict[str, object]:
-        # Halo tickets cannot be filtered to a WAIT client without guessing
-        # from provider customer names.  Keep the appliance-wide result for
-        # operators, but fail closed for bound principals.
-        scope = resolve_client_scope(context, requested_client_from(request, client_id))
-        if isinstance(scope, BoundClients):
-            raise HTTPException(status_code=409, detail={"code": "client_scope_unsupported"})
-        response = halopsa_client.list_tickets(page=page, page_size=page_size)
-        return _halopsa_response("tickets.list", response)
-
-    @app.get("/connectors/halopsa/tickets/{ticket_id}")
-    @limiter.limit(active_settings.rate_limit_connector)
-    def halopsa_ticket(
-        ticket_id: str,
-        request: Request,
-        context: ViewerAccess,
-        client_id: str | None = None,
-    ) -> dict[str, object]:
-        client = cast(
-            HaloPSAClient,
-            _connector_read_client(request, context, "halopsa", halopsa_client, requested_client_id=client_id),
-        )
-        response = client.get_ticket(ticket_id)
-        return _halopsa_response("tickets.get", response)
-
-    @app.get("/connectors/halopsa/tickets/{ticket_id}/notes")
-    @limiter.limit(active_settings.rate_limit_connector)
-    def halopsa_ticket_notes(
-        ticket_id: str,
-        request: Request,
-        context: ViewerAccess,
-        client_id: str | None = None,
-    ) -> dict[str, object]:
-        client = cast(
-            HaloPSAClient,
-            _connector_read_client(request, context, "halopsa", halopsa_client, requested_client_id=client_id),
-        )
-        response = client.list_ticket_notes(ticket_id)
-        return _halopsa_response("tickets.notes", response)
-
-    @app.get("/connectors/halopsa/clients")
-    @limiter.limit(active_settings.rate_limit_connector)
-    def halopsa_clients(
-        request: Request,
-        context: ViewerAccess,
-        page: int = 1,
-        page_size: int = 50,
-        client_id: str | None = None,
-    ) -> dict[str, object]:
-        client = cast(
-            HaloPSAClient,
-            _connector_read_client(request, context, "halopsa", halopsa_client, requested_client_id=client_id),
-        )
-        response = client.list_clients(page=page, page_size=page_size)
-        return _halopsa_response("clients.list", response)
-
-    @app.get("/connectors/halopsa/clients/{client_id}/assets")
-    @limiter.limit(active_settings.rate_limit_connector)
-    def halopsa_client_assets(client_id: str, request: Request, context: ViewerAccess) -> dict[str, object]:
-        # The path client id is validated against the principal's scope here; it must not be
-        # re-submitted as a *requested* client, or an appliance-wide (AllClients) caller would be
-        # narrowed to a bound scope and fail closed for lack of a client-scoped instance.
-        scoped_client_id = _resolve_detail_scope(context, client_id).client_id
-        if scoped_client_id is None:
-            raise HTTPException(status_code=403, detail="client scope is required")
-        client = cast(
-            HaloPSAClient,
-            _connector_read_client(request, context, "halopsa", halopsa_client),
-        )
-        response = client.list_client_assets(scoped_client_id)
-        return _halopsa_response("clients.assets", response)
-
-    @app.get("/connectors/halopsa/categories")
-    @limiter.limit(active_settings.rate_limit_connector)
-    def halopsa_categories(
-        request: Request,
-        context: ViewerAccess,
-        client_id: str | None = None,
-    ) -> dict[str, object]:
-        client = cast(
-            HaloPSAClient,
-            _connector_read_client(request, context, "halopsa", halopsa_client, requested_client_id=client_id),
-        )
-        response = client.list_categories()
-        return _halopsa_response("categories.list", response)
-
-    @app.get("/connectors/hudu/health")
-    @limiter.limit(active_settings.rate_limit_connector)
-    def hudu_health(request: Request, _: ViewerAccess) -> dict[str, object]:
-        result = hudu_client.health()
-        _audit_hudu_read("health", result.status, result.count)
-        return asdict(result)
-
-    @app.get("/connectors/hudu/companies")
-    @limiter.limit(active_settings.rate_limit_connector)
-    def hudu_companies(
-        request: Request,
-        context: ViewerAccess,
-        page: int = 1,
-        page_size: int | None = None,
-        client_id: str | None = None,
-    ) -> dict[str, object]:
-        client = cast(
-            HuduClient, _connector_read_client(request, context, "hudu", hudu_client, requested_client_id=client_id)
-        )
-        response = client.list_companies(page=page, page_size=page_size)
-        return _hudu_response("companies.list", response)
-
-    @app.get("/connectors/hudu/articles")
-    @limiter.limit(active_settings.rate_limit_connector)
-    def hudu_articles(
-        request: Request,
-        context: ViewerAccess,
-        company_id: str | None = None,
-        page: int = 1,
-        page_size: int | None = None,
-        client_id: str | None = None,
-    ) -> dict[str, object]:
-        client = cast(
-            HuduClient, _connector_read_client(request, context, "hudu", hudu_client, requested_client_id=client_id)
-        )
-        response = client.list_articles(
-            company_id=company_id,
-            page=page,
-            page_size=page_size,
-        )
-        return _hudu_response("articles.list", response)
-
-    @app.get("/connectors/hudu/articles/{article_id}")
-    @limiter.limit(active_settings.rate_limit_connector)
-    def hudu_article(
-        article_id: str,
-        request: Request,
-        context: ViewerAccess,
-        client_id: str | None = None,
-    ) -> dict[str, object]:
-        client = cast(
-            HuduClient, _connector_read_client(request, context, "hudu", hudu_client, requested_client_id=client_id)
-        )
-        response = client.get_article(article_id)
-        return _hudu_response("articles.get", response)
-
-    @app.get("/connectors/hudu/folders")
-    @limiter.limit(active_settings.rate_limit_connector)
-    def hudu_folders(
-        request: Request,
-        context: ViewerAccess,
-        company_id: str | None = None,
-        page: int = 1,
-        page_size: int | None = None,
-        client_id: str | None = None,
-    ) -> dict[str, object]:
-        client = cast(
-            HuduClient, _connector_read_client(request, context, "hudu", hudu_client, requested_client_id=client_id)
-        )
-        response = client.list_folders(
-            company_id=company_id,
-            page=page,
-            page_size=page_size,
-        )
-        return _hudu_response("folders.list", response)
-
-    @app.get("/connectors/connectwise/health")
-    @limiter.limit(active_settings.rate_limit_connector)
-    def connectwise_health(request: Request, _: ViewerAccess) -> dict[str, object]:
-        result = connectwise_client.health()
-        _audit_connectwise_read("health", result.status, result.count)
-        return asdict(result)
-
-    @app.get("/connectors/connectwise/write-health")
-    @limiter.limit(active_settings.rate_limit_connector)
-    def connectwise_write_health(request: Request, _: ViewerAccess) -> dict[str, object]:
-        result = connectwise_client.write_health()
-        store.add_audit_event("connectwise.write_health", "connectwise", result.status)
-        return asdict(result)
-
-    @app.post("/connectors/connectwise/approval-requests/{request_id}/execute")
-    @limiter.limit(active_settings.rate_limit_connector)
-    def execute_connectwise_approval(
-        request_id: int,
-        request: Request,
-        context: TechnicianAccess,
-    ) -> dict[str, object]:
-        try:
-            approval = store.get_approval_request(request_id)
-            if approval is None or not _approval_scope_visible(context, approval):
-                raise KeyError(request_id)
-            return _approval_view(execute_connectwise_approval_request(store, connectwise_client, request_id))
-        except KeyError as exc:
-            raise HTTPException(status_code=404, detail="approval request not found") from exc
-        except PermissionError as exc:
-            raise HTTPException(status_code=409, detail=str(exc)) from exc
-        except QuarantinedTicketError as exc:
-            raise HTTPException(status_code=409, detail=str(exc)) from exc
-        except (RuntimeError, ValueError) as exc:
-            raise HTTPException(status_code=400, detail=str(exc)) from exc
-
-    @app.get("/connectors/connectwise/tickets")
-    @limiter.limit(active_settings.rate_limit_connector)
-    def connectwise_tickets(
-        request: Request,
-        context: ViewerAccess,
-        page: int = 1,
-        page_size: int | None = None,
-        conditions: str | None = None,
-        client_id: str | None = None,
-    ) -> dict[str, object]:
-        client = cast(
-            ConnectWiseClient,
-            _connector_read_client(request, context, "connectwise", connectwise_client, requested_client_id=client_id),
-        )
-        response = client.list_tickets(
-            page=page,
-            page_size=(page_size if page_size is not None else active_settings.connectwise_page_size),
-            conditions=conditions,
-        )
-        return _connectwise_response("tickets.list", response)
-
-    @app.get("/connectors/connectwise/tickets/{ticket_id}")
-    @limiter.limit(active_settings.rate_limit_connector)
-    def connectwise_ticket(
-        ticket_id: str,
-        request: Request,
-        context: ViewerAccess,
-        client_id: str | None = None,
-    ) -> dict[str, object]:
-        client = cast(
-            ConnectWiseClient,
-            _connector_read_client(request, context, "connectwise", connectwise_client, requested_client_id=client_id),
-        )
-        response = client.get_ticket(ticket_id)
-        return _connectwise_response("tickets.get", response)
-
-    @app.get("/connectors/connectwise/companies")
-    @limiter.limit(active_settings.rate_limit_connector)
-    def connectwise_companies(
-        request: Request,
-        context: ViewerAccess,
-        page: int = 1,
-        page_size: int | None = None,
-        conditions: str | None = None,
-        client_id: str | None = None,
-    ) -> dict[str, object]:
-        client = cast(
-            ConnectWiseClient,
-            _connector_read_client(request, context, "connectwise", connectwise_client, requested_client_id=client_id),
-        )
-        response = client.list_companies(
-            page=page,
-            page_size=(page_size if page_size is not None else active_settings.connectwise_page_size),
-            conditions=conditions,
-        )
-        return _connectwise_response("companies.list", response)
-
-    @app.get("/connectors/syncro/health")
-    @limiter.limit(active_settings.rate_limit_connector)
-    def syncro_health(request: Request, _: ViewerAccess) -> dict[str, object]:
-        result = syncro_client.health()
-        _audit_syncro_read("health", result.status, result.count)
-        return asdict(result)
-
-    @app.get("/connectors/syncro/tickets")
-    @limiter.limit(active_settings.rate_limit_connector)
-    def syncro_tickets(
-        request: Request,
-        context: ViewerAccess,
-        page: int = 1,
-        query: str | None = None,
-        customer_id: str | None = None,
-        status: str | None = None,
-        since_updated_at: str | None = None,
-        client_id: str | None = None,
-    ) -> dict[str, object]:
-        client = cast(
-            SyncroClient,
-            _connector_read_client(request, context, "syncro", syncro_client, requested_client_id=client_id),
-        )
-        response = client.list_tickets(
-            page=page,
-            query=query,
-            customer_id=customer_id,
-            status=status,
-            since_updated_at=since_updated_at,
-        )
-        return _syncro_response("tickets.list", response)
-
-    @app.get("/connectors/syncro/tickets/{ticket_id}")
-    @limiter.limit(active_settings.rate_limit_connector)
-    def syncro_ticket(
-        ticket_id: str,
-        request: Request,
-        context: ViewerAccess,
-        client_id: str | None = None,
-    ) -> dict[str, object]:
-        client = cast(
-            SyncroClient,
-            _connector_read_client(request, context, "syncro", syncro_client, requested_client_id=client_id),
-        )
-        response = client.get_ticket(ticket_id)
-        return _syncro_response("tickets.get", response)
-
-    @app.get("/connectors/syncro/tickets/{ticket_id}/comments")
-    @limiter.limit(active_settings.rate_limit_connector)
-    def syncro_ticket_comments(
-        ticket_id: str,
-        request: Request,
-        context: ViewerAccess,
-        page: int = 1,
-        per_page: int = 10,
-        client_id: str | None = None,
-    ) -> dict[str, object]:
-        client = cast(
-            SyncroClient,
-            _connector_read_client(request, context, "syncro", syncro_client, requested_client_id=client_id),
-        )
-        response = client.list_ticket_comments(
-            ticket_id,
-            page=page,
-            per_page=per_page,
-        )
-        return _syncro_comments_response("tickets.comments", response)
-
-    @app.get("/connectors/syncro/customers")
-    @limiter.limit(active_settings.rate_limit_connector)
-    def syncro_customers(
-        request: Request,
-        context: ViewerAccess,
-        page: int = 1,
-        query: str | None = None,
-        business_name: str | None = None,
-        client_id: str | None = None,
-    ) -> dict[str, object]:
-        client = cast(
-            SyncroClient,
-            _connector_read_client(request, context, "syncro", syncro_client, requested_client_id=client_id),
-        )
-        response = client.list_customers(
-            page=page,
-            query=query,
-            business_name=business_name,
-        )
-        return _syncro_response("customers.list", response)
-
-    @app.get("/connectors/syncro/customers/{customer_id}")
-    @limiter.limit(active_settings.rate_limit_connector)
-    def syncro_customer(
-        customer_id: str,
-        request: Request,
-        context: ViewerAccess,
-        client_id: str | None = None,
-    ) -> dict[str, object]:
-        client = cast(
-            SyncroClient,
-            _connector_read_client(request, context, "syncro", syncro_client, requested_client_id=client_id),
-        )
-        response = client.get_customer(customer_id)
-        return _syncro_response("customers.get", response)
-
-    @app.get("/connectors/servicenow/health")
-    @limiter.limit(active_settings.rate_limit_connector)
-    def servicenow_health(request: Request, _: ViewerAccess) -> dict[str, object]:
-        result = servicenow_client.health()
-        _audit_servicenow_read("health", result.status, result.count)
-        return asdict(result)
-
-    @app.get("/connectors/servicenow/write-health")
-    @limiter.limit(active_settings.rate_limit_connector)
-    def servicenow_write_health(request: Request, _: ViewerAccess) -> dict[str, object]:
-        result = servicenow_client.write_health()
-        store.add_audit_event("servicenow.write_health", "servicenow", result.status)
-        return asdict(result)
-
-    @app.get("/connectors/servicenow/incidents")
-    @limiter.limit(active_settings.rate_limit_connector)
-    def servicenow_incidents(
-        request: Request,
-        context: ViewerAccess,
-        page: int = 1,
-        page_size: int | None = None,
-        query: str | None = None,
-        client_id: str | None = None,
-    ) -> dict[str, object]:
-        client = cast(
-            ServiceNowClient,
-            _connector_read_client(request, context, "servicenow", servicenow_client, requested_client_id=client_id),
-        )
-        response = client.list_incidents(
-            page=page,
-            page_size=(page_size if page_size is not None else active_settings.servicenow_page_size),
-            query=query,
-        )
-        return _servicenow_response("incidents.list", response)
-
-    @app.get("/connectors/servicenow/incidents/{sys_id}")
-    @limiter.limit(active_settings.rate_limit_connector)
-    def servicenow_incident(
-        sys_id: str,
-        request: Request,
-        context: ViewerAccess,
-        client_id: str | None = None,
-    ) -> dict[str, object]:
-        client = cast(
-            ServiceNowClient,
-            _connector_read_client(request, context, "servicenow", servicenow_client, requested_client_id=client_id),
-        )
-        response = client.get_incident(sys_id)
-        return _servicenow_response("incidents.get", response)
-
-    @app.get("/connectors/servicenow/companies")
-    @limiter.limit(active_settings.rate_limit_connector)
-    def servicenow_companies(
-        request: Request,
-        context: ViewerAccess,
-        page: int = 1,
-        page_size: int | None = None,
-        query: str | None = None,
-        client_id: str | None = None,
-    ) -> dict[str, object]:
-        client = cast(
-            ServiceNowClient,
-            _connector_read_client(request, context, "servicenow", servicenow_client, requested_client_id=client_id),
-        )
-        response = client.list_companies(
-            page=page,
-            page_size=(page_size if page_size is not None else active_settings.servicenow_page_size),
-            query=query,
-        )
-        return _servicenow_response("companies.list", response)
-
-    @app.get("/connectors/servicenow/companies/{sys_id}")
-    @limiter.limit(active_settings.rate_limit_connector)
-    def servicenow_company(
-        sys_id: str,
-        request: Request,
-        context: ViewerAccess,
-        client_id: str | None = None,
-    ) -> dict[str, object]:
-        client = cast(
-            ServiceNowClient,
-            _connector_read_client(request, context, "servicenow", servicenow_client, requested_client_id=client_id),
-        )
-        response = client.get_company(sys_id)
-        return _servicenow_response("companies.get", response)
-
-    @app.get("/connectors/autotask/health")
-    @limiter.limit(active_settings.rate_limit_connector)
-    def autotask_health(request: Request, _: ViewerAccess) -> dict[str, object]:
-        result = autotask_client.health()
-        _audit_autotask_read("health", result.status, result.count)
-        return asdict(result)
-
-    @app.get("/connectors/autotask/write-health")
-    @limiter.limit(active_settings.rate_limit_connector)
-    def autotask_write_health(request: Request, _: ViewerAccess) -> dict[str, object]:
-        result = autotask_client.write_health()
-        store.add_audit_event("autotask.write_health", "autotask", result.status)
-        return asdict(result)
-
-    @app.get("/connectors/autotask/tickets")
-    @limiter.limit(active_settings.rate_limit_connector)
-    def autotask_tickets(
-        request: Request,
-        context: ViewerAccess,
-        page: int = 1,
-        page_size: int | None = None,
-        client_id: str | None = None,
-    ) -> dict[str, object]:
-        client = cast(
-            AutotaskClient,
-            _connector_read_client(request, context, "autotask", autotask_client, requested_client_id=client_id),
-        )
-        response = client.list_tickets(
-            page=page,
-            page_size=(page_size if page_size is not None else active_settings.autotask_page_size),
-        )
-        return _autotask_response("tickets.list", response)
-
-    @app.get("/connectors/autotask/tickets/{ticket_id}")
-    @limiter.limit(active_settings.rate_limit_connector)
-    def autotask_ticket(
-        ticket_id: str,
-        request: Request,
-        context: ViewerAccess,
-        client_id: str | None = None,
-    ) -> dict[str, object]:
-        client = cast(
-            AutotaskClient,
-            _connector_read_client(request, context, "autotask", autotask_client, requested_client_id=client_id),
-        )
-        response = client.get_ticket(ticket_id)
-        return _autotask_response("tickets.get", response)
-
-    @app.get("/connectors/autotask/companies")
-    @limiter.limit(active_settings.rate_limit_connector)
-    def autotask_companies(
-        request: Request,
-        context: ViewerAccess,
-        page: int = 1,
-        page_size: int | None = None,
-        client_id: str | None = None,
-    ) -> dict[str, object]:
-        client = cast(
-            AutotaskClient,
-            _connector_read_client(request, context, "autotask", autotask_client, requested_client_id=client_id),
-        )
-        response = client.list_companies(
-            page=page,
-            page_size=(page_size if page_size is not None else active_settings.autotask_page_size),
-        )
-        return _autotask_response("companies.list", response)
-
-    @app.get("/connectors/autotask/companies/{company_id}")
-    @limiter.limit(active_settings.rate_limit_connector)
-    def autotask_company(
-        company_id: str,
-        request: Request,
-        context: ViewerAccess,
-        client_id: str | None = None,
-    ) -> dict[str, object]:
-        client = cast(
-            AutotaskClient,
-            _connector_read_client(request, context, "autotask", autotask_client, requested_client_id=client_id),
-        )
-        response = client.get_company(company_id)
-        return _autotask_response("companies.get", response)
-
-    @app.get("/connectors/itglue/health")
-    @limiter.limit(active_settings.rate_limit_connector)
-    def itglue_health(request: Request, _: ViewerAccess) -> dict[str, object]:
-        result = itglue_client.health()
-        _audit_itglue_read("health", result.status, result.count)
-        return asdict(result)
-
-    @app.get("/connectors/itglue/organizations")
-    @limiter.limit(active_settings.rate_limit_connector)
-    def itglue_organizations(
-        request: Request,
-        context: ViewerAccess,
-        page: int = 1,
-        page_size: int | None = None,
-        client_id: str | None = None,
-    ) -> dict[str, object]:
-        client = cast(
-            ItGlueClient,
-            _connector_read_client(request, context, "itglue", itglue_client, requested_client_id=client_id),
-        )
-        response = client.list_organizations(
-            page=page,
-            page_size=(page_size if page_size is not None else active_settings.itglue_page_size),
-        )
-        return _itglue_response("organizations.list", response)
-
-    @app.get("/connectors/itglue/organizations/{organization_id}/documents")
-    @limiter.limit(active_settings.rate_limit_connector)
-    def itglue_documents(
-        organization_id: str,
-        request: Request,
-        context: ViewerAccess,
-        folder_id: str | None = None,
-        page: int = 1,
-        page_size: int | None = None,
-        client_id: str | None = None,
-    ) -> dict[str, object]:
-        client = cast(
-            ItGlueClient,
-            _connector_read_client(request, context, "itglue", itglue_client, requested_client_id=client_id),
-        )
-        response = client.list_documents(
-            organization_id,
-            folder_id=folder_id,
-            page=page,
-            page_size=(page_size if page_size is not None else active_settings.itglue_page_size),
-        )
-        return _itglue_response("documents.list", response)
-
-    @app.get("/connectors/itglue/documents/{document_id}")
-    @limiter.limit(active_settings.rate_limit_connector)
-    def itglue_document(
-        document_id: str,
-        request: Request,
-        context: ViewerAccess,
-        client_id: str | None = None,
-    ) -> dict[str, object]:
-        client = cast(
-            ItGlueClient,
-            _connector_read_client(request, context, "itglue", itglue_client, requested_client_id=client_id),
-        )
-        response = client.get_document(document_id)
-        return _itglue_response("documents.get", response)
-
-    @app.get("/connectors/itglue/organizations/{organization_id}/folders")
-    @limiter.limit(active_settings.rate_limit_connector)
-    def itglue_folders(
-        organization_id: str,
-        request: Request,
-        context: ViewerAccess,
-        page: int = 1,
-        page_size: int | None = None,
-        client_id: str | None = None,
-    ) -> dict[str, object]:
-        client = cast(
-            ItGlueClient,
-            _connector_read_client(request, context, "itglue", itglue_client, requested_client_id=client_id),
-        )
-        response = client.list_folders(
-            organization_id,
-            page=page,
-            page_size=(page_size if page_size is not None else active_settings.itglue_page_size),
-        )
-        return _itglue_response("folders.list", response)
-
-    @app.get("/connectors/confluence/health")
-    @limiter.limit(active_settings.rate_limit_connector)
-    def confluence_health(request: Request, _: ViewerAccess) -> dict[str, object]:
-        result = confluence_client.health()
-        _audit_confluence_read("health", result.status, result.count)
-        return asdict(result)
-
-    @app.get("/connectors/confluence/pages")
-    @limiter.limit(active_settings.rate_limit_connector)
-    def confluence_pages(
-        request: Request,
-        context: ViewerAccess,
-        space_id: str | None = None,
-        title: str | None = None,
-        cursor: str | None = None,
-        page_size: int | None = None,
-        client_id: str | None = None,
-    ) -> dict[str, object]:
-        client = cast(
-            ConfluenceClient,
-            _connector_read_client(request, context, "confluence", confluence_client, requested_client_id=client_id),
-        )
-        response = client.list_pages(
-            space_id=space_id,
-            title=title,
-            cursor=cursor,
-            page_size=(page_size if page_size is not None else active_settings.confluence_page_size),
-        )
-        return _confluence_response("pages.list", response)
-
-    @app.get("/connectors/confluence/pages/{page_id}")
-    @limiter.limit(active_settings.rate_limit_connector)
-    def confluence_page(
-        page_id: str,
-        request: Request,
-        context: ViewerAccess,
-        client_id: str | None = None,
-    ) -> dict[str, object]:
-        client = cast(
-            ConfluenceClient,
-            _connector_read_client(request, context, "confluence", confluence_client, requested_client_id=client_id),
-        )
-        response = client.get_page(page_id)
-        return _confluence_response("pages.get", response)
-
-    @app.get("/connectors/notion/health")
-    @limiter.limit(active_settings.rate_limit_connector)
-    def notion_health(request: Request, _: ViewerAccess) -> dict[str, object]:
-        result = notion_client.health()
-        _audit_notion_read("health", result.status, result.count)
-        return asdict(result)
-
-    @app.get("/connectors/notion/pages")
-    @limiter.limit(active_settings.rate_limit_connector)
-    def notion_pages(
-        request: Request,
-        context: ViewerAccess,
-        client_id: str | None = None,
-        query: str = "",
-        page_size: int | None = None,
-    ) -> dict[str, object]:
-        scoped_client_id = resolve_client_scope(context, requested_client_from(request, client_id)).client_id
-        if scoped_client_id is None:
-            raise HTTPException(status_code=403, detail="Notion reads require a tenant scope")
-        response = notion_client.search_pages(
-            client_id=scoped_client_id,
-            query=query,
-            page_size=page_size if page_size is not None else active_settings.notion_page_size,
-        )
-        return _notion_response("pages.search", response)
-
-    @app.get("/connectors/notion/pages/{page_id}")
-    @limiter.limit(active_settings.rate_limit_connector)
-    def notion_page(
-        page_id: str,
-        request: Request,
-        context: ViewerAccess,
-        client_id: str | None = None,
-    ) -> dict[str, object]:
-        scoped_client_id = resolve_client_scope(context, requested_client_from(request, client_id)).client_id
-        if scoped_client_id is None:
-            raise HTTPException(status_code=403, detail="Notion reads require a tenant scope")
-        response = notion_client.get_page(page_id, client_id=scoped_client_id)
-        return _notion_response("pages.get", response)
-
-    @app.get("/connectors/notion/data-sources/{data_source_id}/pages")
-    @limiter.limit(active_settings.rate_limit_connector)
-    def notion_data_source_pages(
-        data_source_id: str,
-        request: Request,
-        context: ViewerAccess,
-        client_id: str | None = None,
-        start_cursor: str = "",
-        page_size: int | None = None,
-    ) -> dict[str, object]:
-        scoped_client_id = resolve_client_scope(context, requested_client_from(request, client_id)).client_id
-        if scoped_client_id is None:
-            raise HTTPException(status_code=403, detail="Notion data-source reads require a tenant scope")
-        response = notion_client.query_data_source(
-            data_source_id,
-            client_id=scoped_client_id,
-            page_size=page_size if page_size is not None else active_settings.notion_page_size,
-            start_cursor=start_cursor,
-        )
-        return _notion_response("data-sources.query", response)
-
-    @app.get("/connectors/notion/data-sources/{data_source_id}")
-    @limiter.limit(active_settings.rate_limit_connector)
-    def notion_data_source(
-        data_source_id: str,
-        request: Request,
-        context: ViewerAccess,
-        client_id: str | None = None,
-    ) -> dict[str, object]:
-        scoped_client_id = resolve_client_scope(context, requested_client_from(request, client_id)).client_id
-        if scoped_client_id is None:
-            raise HTTPException(status_code=403, detail="Notion data-source reads require a tenant scope")
-        response = notion_client.get_data_source(data_source_id, client_id=scoped_client_id)
-        return _notion_data_source_response("data-sources.get", response)
-
-    @app.get("/connectors/sharepoint/health")
-    @limiter.limit(active_settings.rate_limit_connector)
-    def sharepoint_health(request: Request, _: ViewerAccess) -> dict[str, object]:
-        result = sharepoint_client.health()
-        _audit_sharepoint_read("health", result.status, result.count)
-        return asdict(result)
-
-    @app.get("/connectors/sharepoint/sites")
-    @limiter.limit(active_settings.rate_limit_connector)
-    def sharepoint_sites(
-        request: Request,
-        context: ViewerAccess,
-        cursor: str | None = None,
-        page_size: int | None = None,
-        client_id: str | None = None,
-    ) -> dict[str, object]:
-        client = cast(
-            SharePointClient,
-            _connector_read_client(request, context, "sharepoint", sharepoint_client, requested_client_id=client_id),
-        )
-        response = client.list_sites(
-            cursor=cursor,
-            page_size=(page_size if page_size is not None else active_settings.sharepoint_page_size),
-        )
-        return _sharepoint_response("sites.list", response)
-
-    @app.get("/connectors/sharepoint/sites/{site_id}")
-    @limiter.limit(active_settings.rate_limit_connector)
-    def sharepoint_site(
-        site_id: str,
-        request: Request,
-        context: ViewerAccess,
-        client_id: str | None = None,
-    ) -> dict[str, object]:
-        client = cast(
-            SharePointClient,
-            _connector_read_client(request, context, "sharepoint", sharepoint_client, requested_client_id=client_id),
-        )
-        response = client.get_site(site_id)
-        return _sharepoint_response("sites.get", response)
-
-    @app.get("/connectors/sharepoint/sites/{site_id}/documents")
-    @limiter.limit(active_settings.rate_limit_connector)
-    def sharepoint_documents(
-        site_id: str,
-        request: Request,
-        context: ViewerAccess,
-        parent_item_id: str | None = None,
-        cursor: str | None = None,
-        page_size: int | None = None,
-        client_id: str | None = None,
-    ) -> dict[str, object]:
-        client = cast(
-            SharePointClient,
-            _connector_read_client(request, context, "sharepoint", sharepoint_client, requested_client_id=client_id),
-        )
-        response = client.list_documents(
-            site_id,
-            parent_item_id=parent_item_id,
-            cursor=cursor,
-            page_size=(page_size if page_size is not None else active_settings.sharepoint_page_size),
-        )
-        return _sharepoint_response("documents.list", response)
-
-    @app.get("/connectors/sharepoint/sites/{site_id}/documents/{item_id}")
-    @limiter.limit(active_settings.rate_limit_connector)
-    def sharepoint_document(
-        site_id: str,
-        item_id: str,
-        request: Request,
-        context: ViewerAccess,
-        client_id: str | None = None,
-    ) -> dict[str, object]:
-        client = cast(
-            SharePointClient,
-            _connector_read_client(request, context, "sharepoint", sharepoint_client, requested_client_id=client_id),
-        )
-        response = client.get_document(site_id, item_id)
-        return _sharepoint_response("documents.get", response)
-
-    @app.get("/connectors/sharepoint/sites/{site_id}/documents/{item_id}/content")
-    @limiter.limit(active_settings.rate_limit_connector)
-    def sharepoint_document_content(
-        site_id: str,
-        item_id: str,
-        request: Request,
-        context: ViewerAccess,
-        client_id: str | None = None,
-    ) -> dict[str, object]:
-        client = cast(
-            SharePointClient,
-            _connector_read_client(request, context, "sharepoint", sharepoint_client, requested_client_id=client_id),
-        )
-        response = client.get_document_content(site_id, item_id)
-        return _sharepoint_response("documents.content", response)
-
-    @app.get("/connectors/scalepad/health")
-    @limiter.limit(active_settings.rate_limit_connector)
-    def scalepad_health(request: Request, _: ViewerAccess) -> dict[str, object]:
-        result = scalepad_client.health()
-        _audit_scalepad_read("health", result.status, result.count)
-        return asdict(result)
-
-    @app.get("/connectors/scalepad/clients")
-    @limiter.limit(active_settings.rate_limit_connector)
-    def scalepad_client_lookup(
-        request: Request,
-        context: ViewerAccess,
-        client_id: str | None = None,
-    ) -> dict[str, object]:
-        scoped_client_id = resolve_client_scope(context, requested_client_from(request, client_id)).client_id
-        if scoped_client_id is None:
-            raise HTTPException(status_code=403, detail="ScalePad reads require a tenant scope")
-        response = scalepad_client.get_client(client_id=scoped_client_id)
-        return _scalepad_response("clients.get", response)
-
-    @app.get("/connectors/scalepad/risk-summaries")
-    @limiter.limit(active_settings.rate_limit_connector)
-    def scalepad_risk_summaries(
-        request: Request,
-        context: ViewerAccess,
-        client_id: str | None = None,
-    ) -> dict[str, object]:
-        scoped_client_id = resolve_client_scope(context, requested_client_from(request, client_id)).client_id
-        if scoped_client_id is None:
-            raise HTTPException(
-                status_code=403,
-                detail="ScalePad risk-summary reads require a tenant scope",
-            )
-        response = scalepad_client.get_risk_summary(client_id=scoped_client_id)
-        return _scalepad_risk_summary_response("clients.risks-summary", response)
-
-    @app.get("/connectors/scalepad/compliance-health")
-    @limiter.limit(active_settings.rate_limit_connector)
-    def scalepad_compliance_health(
-        request: Request,
-        context: ViewerAccess,
-        client_id: str | None = None,
-    ) -> dict[str, object]:
-        scoped_client_id = resolve_client_scope(context, requested_client_from(request, client_id)).client_id
-        if scoped_client_id is None:
-            raise HTTPException(
-                status_code=403,
-                detail="ScalePad compliance-health reads require a tenant scope",
-            )
-        response = scalepad_client.get_compliance_health(client_id=scoped_client_id)
-        return _scalepad_compliance_health_response("clients.health", response)
-
-    @app.get("/connectors/scalepad/goals")
-    @limiter.limit(active_settings.rate_limit_connector)
-    def scalepad_goals(
-        request: Request,
-        context: ViewerAccess,
-        client_id: str | None = None,
-        status: str | None = None,
-        title: str | None = None,
-        cursor: str | None = None,
-    ) -> dict[str, object]:
-        scoped_client_id = resolve_client_scope(context, requested_client_from(request, client_id)).client_id
-        if scoped_client_id is None:
-            raise HTTPException(
-                status_code=403,
-                detail="ScalePad Lifecycle goal reads require a tenant scope",
-            )
-        response = scalepad_client.get_goals(
-            client_id=scoped_client_id,
-            status=status,
-            title=title,
-            cursor=cursor,
-        )
-        return _scalepad_goal_response("lifecycle-manager.goals", response)
-
-    @app.get("/connectors/scalepad/assessments")
-    @limiter.limit(active_settings.rate_limit_connector)
-    def scalepad_assessments(
-        request: Request,
-        context: ViewerAccess,
-        client_id: str | None = None,
-        status: str | None = None,
-        assessment_template_id: str | None = None,
-        cursor: str | None = None,
-    ) -> dict[str, object]:
-        scoped_client_id = resolve_client_scope(context, requested_client_from(request, client_id)).client_id
-        if scoped_client_id is None:
-            raise HTTPException(
-                status_code=403,
-                detail="ScalePad Lifecycle assessment reads require a tenant scope",
-            )
-        response = scalepad_client.get_assessments(
-            client_id=scoped_client_id,
-            status=status,
-            assessment_template_id=assessment_template_id,
-            cursor=cursor,
-        )
-        return _scalepad_assessment_response("lifecycle-manager.assessments", response)
 
     @app.get("/connectors/m365/health")
     @limiter.limit(active_settings.rate_limit_connector)
@@ -7356,204 +6308,6 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 
-    def _halopsa_response(
-        read_type: str,
-        response: HaloReadResponse,
-    ) -> dict[str, object]:
-        items = response.items
-        result = asdict(response.result)
-        result["count"] = len(items)
-        _audit_halopsa_read(read_type, response.result.status, len(items))
-        return {
-            "result": result,
-            "items": [asdict(item) for item in items],
-        }
-
-    def _hudu_response(read_type: str, response: HuduReadResponse) -> dict[str, object]:
-        _audit_hudu_read(read_type, response.result.status, response.result.count)
-        return {
-            "result": asdict(response.result),
-            "items": [cast(dict[str, object], redact_value(asdict(item))) for item in response.items],
-        }
-
-    def _connectwise_response(read_type: str, response: ConnectWiseReadResponse) -> dict[str, object]:
-        _audit_connectwise_read(read_type, response.result.status, response.result.count)
-        return {
-            "result": asdict(response.result),
-            "items": response.items,
-        }
-
-    def _syncro_response(read_type: str, response: SyncroReadResponse) -> dict[str, object]:
-        _audit_syncro_read(read_type, response.result.status, response.result.count)
-        return {
-            "result": asdict(response.result),
-            "items": response.items,
-        }
-
-    def _syncro_comments_response(read_type: str, response: SyncroCommentsResponse) -> dict[str, object]:
-        _audit_syncro_read(read_type, response.result.status, response.result.count)
-        return {
-            "result": asdict(response.result),
-            "items": [cast(dict[str, object], redact_value(item)) for item in response.items],
-            "meta": cast(dict[str, object], redact_value(response.meta)),
-        }
-
-    def _servicenow_response(
-        read_type: str,
-        response: ServiceNowReadResponse,
-    ) -> dict[str, object]:
-        _audit_servicenow_read(read_type, response.result.status, response.result.count)
-        return {
-            "result": asdict(response.result),
-            "items": response.items,
-        }
-
-    def _audit_halopsa_read(read_type: str, status: str, count: int) -> None:
-        store.add_audit_event("halopsa.read", read_type, f"{status} count={count}")
-
-    def _audit_hudu_read(read_type: str, status: str, count: int) -> None:
-        store.add_audit_event("hudu.read", read_type, f"{status} count={count}")
-
-    def _audit_connectwise_read(read_type: str, status: str, count: int) -> None:
-        store.add_audit_event("connectwise.read", read_type, f"{status} count={count}")
-
-    def _audit_syncro_read(read_type: str, status: str, count: int) -> None:
-        store.add_audit_event("syncro.read", read_type, f"{status} count={count}")
-
-    def _audit_servicenow_read(read_type: str, status: str, count: int) -> None:
-        store.add_audit_event("servicenow.read", read_type, f"{status} count={count}")
-
-    def _autotask_response(
-        read_type: str,
-        response: AutotaskReadResponse,
-    ) -> dict[str, object]:
-        _audit_autotask_read(read_type, response.result.status, response.result.count)
-        return {
-            "result": asdict(response.result),
-            "items": response.items,
-        }
-
-    def _audit_autotask_read(read_type: str, status: str, count: int) -> None:
-        store.add_audit_event("autotask.read", read_type, f"{status} count={count}")
-
-    def _itglue_response(
-        read_type: str,
-        response: ItGlueReadResponse,
-    ) -> dict[str, object]:
-        _audit_itglue_read(read_type, response.result.status, response.result.count)
-        return {
-            "result": asdict(response.result),
-            "items": [cast(dict[str, object], redact_value(asdict(item))) for item in response.items],
-        }
-
-    def _audit_itglue_read(read_type: str, status: str, count: int) -> None:
-        store.add_audit_event("itglue.read", read_type, f"{status} count={count}")
-
-    def _confluence_response(
-        read_type: str,
-        response: ConfluenceReadResponse,
-    ) -> dict[str, object]:
-        _audit_confluence_read(read_type, response.result.status, response.result.count)
-        return {
-            "result": asdict(response.result),
-            "items": [cast(dict[str, object], redact_value(asdict(item))) for item in response.items],
-            "next_cursor": response.next_cursor,
-        }
-
-    def _audit_confluence_read(read_type: str, status: str, count: int) -> None:
-        store.add_audit_event("confluence.read", read_type, f"{status} count={count}")
-
-    def _notion_response(read_type: str, response: NotionReadResponse) -> dict[str, object]:
-        _audit_notion_read(read_type, response.result.status, response.result.count)
-        return {
-            "result": asdict(response.result),
-            "items": [cast(dict[str, object], redact_value(asdict(item))) for item in response.items],
-            "next_cursor": response.next_cursor,
-        }
-
-    def _notion_data_source_response(read_type: str, response: NotionDataSourceResponse) -> dict[str, object]:
-        _audit_notion_read(read_type, response.result.status, response.result.count)
-        return {
-            "result": asdict(response.result),
-            "items": [cast(dict[str, object], redact_value(asdict(item))) for item in response.items],
-        }
-
-    def _audit_notion_read(read_type: str, status: str, count: int) -> None:
-        store.add_audit_event("notion.read", read_type, f"{status} count={count}")
-
-    def _sharepoint_response(
-        read_type: str,
-        response: SharePointReadResponse,
-    ) -> dict[str, object]:
-        _audit_sharepoint_read(read_type, response.result.status, response.result.count)
-        return {
-            "result": asdict(response.result),
-            "items": [cast(dict[str, object], redact_value(asdict(item))) for item in response.items],
-            "next_cursor": response.next_cursor,
-        }
-
-    def _audit_sharepoint_read(read_type: str, status: str, count: int) -> None:
-        store.add_audit_event("sharepoint.read", read_type, f"{status} count={count}")
-
-    def _scalepad_response(
-        read_type: str,
-        response: ScalePadClientResponse,
-    ) -> dict[str, object]:
-        _audit_scalepad_read(read_type, response.result.status, response.result.count)
-        return {
-            "result": asdict(response.result),
-            "items": [cast(dict[str, object], redact_value(asdict(item))) for item in response.items],
-            "next_cursor": response.next_cursor,
-        }
-
-    def _scalepad_risk_summary_response(
-        read_type: str,
-        response: ScalePadRiskSummaryResponse,
-    ) -> dict[str, object]:
-        _audit_scalepad_read(read_type, response.result.status, response.result.count)
-        return {
-            "result": asdict(response.result),
-            "items": [cast(dict[str, object], redact_value(item)) for item in response.items],
-            "next_cursor": response.next_cursor,
-            "total_count": response.total_count,
-        }
-
-    def _scalepad_compliance_health_response(
-        read_type: str,
-        response: ScalePadComplianceHealthResponse,
-    ) -> dict[str, object]:
-        _audit_scalepad_read(read_type, response.result.status, response.result.count)
-        return {
-            "result": asdict(response.result),
-            "item": redact_value(response.item) if response.item is not None else None,
-        }
-
-    def _scalepad_goal_response(
-        read_type: str,
-        response: ScalePadGoalResponse,
-    ) -> dict[str, object]:
-        _audit_scalepad_read(read_type, response.result.status, response.result.count)
-        return {
-            "result": asdict(response.result),
-            "items": [cast(dict[str, object], redact_value(item)) for item in response.items],
-            "next_cursor": response.next_cursor,
-            "total_count": response.total_count,
-        }
-
-    def _scalepad_assessment_response(
-        read_type: str,
-        response: ScalePadAssessmentResponse,
-    ) -> dict[str, object]:
-        _audit_scalepad_read(read_type, response.result.status, response.result.count)
-        return {
-            "result": asdict(response.result),
-            "items": [cast(dict[str, object], redact_value(item)) for item in response.items],
-            "next_cursor": response.next_cursor,
-            "total_count": response.total_count,
-        }
-
-    def _audit_scalepad_read(read_type: str, status: str, count: int) -> None:
-        store.add_audit_event("scalepad.read", read_type, f"{status} count={count}")
 
     def _raise_m365_graph_http_error(error: M365GraphReadError | None) -> None:
         if error is None or error.code is None:
@@ -7663,7 +6417,6 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         app.mount("/", SPAStaticFiles(directory=ui_dist), name="ui")
 
     return app
-
 
 
 def _rate_limit_handler(request: Request, exc: Exception) -> Response:
