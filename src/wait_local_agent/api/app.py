@@ -39,7 +39,6 @@ from wait_local_agent.api.auth_routes import create_auth_router
 from wait_local_agent.api.context import (
     AdminAccess,
     ApiContext,
-    EndUserAccess,
     TechnicianAccess,
     ViewerAccess,
 )
@@ -65,17 +64,17 @@ from wait_local_agent.api.routers.agents import create_agents_router
 from wait_local_agent.api.routers.automation import create_automation_router
 from wait_local_agent.api.routers.consultant import create_consultant_router
 from wait_local_agent.api.routers.documentation_connectors import create_documentation_connectors_router
+from wait_local_agent.api.routers.end_user import create_end_user_router
 from wait_local_agent.api.routers.m365 import create_m365_router
 from wait_local_agent.api.routers.msp_playbooks import create_msp_playbooks_router
 from wait_local_agent.api.routers.psa_connectors import create_psa_connectors_router
 from wait_local_agent.api.routers.scheduled_jobs import create_scheduled_jobs_router
 from wait_local_agent.api.routers.system import create_system_router
+from wait_local_agent.api.routers.tickets import create_tickets_router
 from wait_local_agent.api.routers.workflows import create_workflows_router
 from wait_local_agent.api.schemas import (
     AgentApprovalRuleRequest,  # noqa: F401
     AgentStepRequest,  # noqa: F401
-    ApprovalPayloadPatchRequest,
-    ApprovalRequest,
     BackupCreateRequest,
     BackupRestoreRequest,
     ClientConnectorMappingCreateRequest,
@@ -91,10 +90,7 @@ from wait_local_agent.api.schemas import (
     DeploymentModeRequest,
     DiagnosticsBundleRequest,
     DiagnosticsUploadRequest,
-    EndUserBrandingResponse,
-    EndUserHaloSyncDraftRequest,
-    EndUserMessageRequest,
-    EndUserTicketCreateRequest,
+    EndUserMessageRequest,  # noqa: F401
     EvaluationExecutionRequest,  # noqa: F401
     HardeningRunRequest,
     KnowledgeAuthorityRequest,
@@ -103,54 +99,41 @@ from wait_local_agent.api.schemas import (
     RestoreExerciseRequest,
     SecretSetRequest,
     TeamsMessageDraftRequest,  # noqa: F401
-    TechnicianChatMessageRequest,
-    TechnicianChatRequest,
-    TechnicianChatSessionCreateRequest,
 )
+
+# Kept importable from api.app: tests/test_client_scope_enforcement.py resolves these helpers by name at runtime.
 from wait_local_agent.api.scopes import (
-    _approval_scope_visible,
+    _approval_scope_visible,  # noqa: F401
     _backfill_scope,  # noqa: F401
     _connector_read_client,  # noqa: F401
-    _end_user_client_id,
-    _end_user_read_client_id,
+    _end_user_read_client_id,  # noqa: F401
     _operator_scope,
-    _request_correlation_id,
     _require_commercial_activation_access,
     _require_msp_operator,
     _required_client_id,  # noqa: F401
     _resolve_client_target_scope,
-    _resolve_detail_scope,
+    _resolve_detail_scope,  # noqa: F401
     _scope_contains_client,  # noqa: F401
-    _singular_action_client,
 )
 from wait_local_agent.api.views import (
     _EXECUTING_EXECUTION_STATUS,  # noqa: F401
     SENSITIVE_KEY_PARTS,  # noqa: F401
     _baseline_view,
     _empty_analytics_summary,  # noqa: F401
-    _end_user_brand_color,
-    _end_user_brand_logo_data_uri,
-    _end_user_branding_text,
-    _end_user_message_view,
-    _end_user_ticket_view,
-    _halopsa_client_mapping,
-    _halopsa_draft_view,
-    _invoke_technician_chat_message,
-    _operator_end_user_message_view,
+    _halopsa_client_mapping,  # noqa: F401
+    _invoke_technician_chat_message,  # noqa: F401
     _record_technician_chat_assistant,  # noqa: F401
-    _redact_json_text,
-    _redact_payload,
+    _redact_json_text,  # noqa: F401
+    _redact_payload,  # noqa: F401
     _redact_request_input,
     _redact_value,  # noqa: F401
-    _safe_end_user_ticket_id,
-    _safe_external_ticket_id,
+    _safe_external_ticket_id,  # noqa: F401
     _safe_json_list,  # noqa: F401
-    _safe_json_object,
+    _safe_json_object,  # noqa: F401
     _safe_json_value,  # noqa: F401
     _safe_json_values,  # noqa: F401
     _safe_redacted_json_object,  # noqa: F401
     _scheduled_job_view,
-    _technician_chat_session_view,
     make_approval_view,
 )
 from wait_local_agent.autotask import AutotaskClient
@@ -193,13 +176,7 @@ from wait_local_agent.connector_factory import (
     validate_connector_instance,
 )
 from wait_local_agent.connectors import (
-    draft_halopsa_ticket_action,
-    execute_connectwise_approval_request,
-    execute_halopsa_approval_request,
-    execute_m365_approval_request,
     list_secret_records,
-    update_connectwise_approval_fields,
-    update_halopsa_approval_fields,
 )
 from wait_local_agent.connectwise import ConnectWiseClient
 from wait_local_agent.diagnostics import (
@@ -262,7 +239,7 @@ from wait_local_agent.reports.msp import (
     build_qbr_report,
     build_recurring_service_review_report,
 )
-from wait_local_agent.reports.renderers import redact_text, report_as_dict
+from wait_local_agent.reports.renderers import report_as_dict
 from wait_local_agent.reports.service import ReportService
 from wait_local_agent.rmm import RmmProviderResolutionError, rmm_provider_from_settings
 from wait_local_agent.scalepad import (
@@ -286,7 +263,6 @@ from wait_local_agent.store import (
 )
 from wait_local_agent.syncro import SyncroClient
 from wait_local_agent.teams_graph import TeamsGraphClient
-from wait_local_agent.technician_chat import TechnicianChatParseError
 from wait_local_agent.timezest import TimeZestClient
 from wait_local_agent.update_channel import UpdateStatusCache
 from wait_local_agent.vault import SecretVault, SecretVaultError
@@ -706,13 +682,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     mount_flat(app, create_system_router(ctx))
 
-    @app.get("/tickets")
-    def tickets(
-        context: ViewerAccess,
-        client_id: str | None = None,
-    ) -> list[dict[str, object]]:
-        scope = resolve_client_scope(context, client_id)
-        return [asdict(ticket) for ticket in store.list_tickets(client_id=scope)]
+    mount_flat(app, create_tickets_router(ctx))
 
     @app.get("/clients")
     def clients(context: ViewerAccess, client_id: str | None = None) -> list[dict[str, object]]:
@@ -1374,557 +1344,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     mount_flat(app, create_automation_router(ctx))
     mount_flat(app, create_agents_router(ctx))
-    @app.post("/technician/chat")
-    @limiter.limit(active_settings.rate_limit_connector)
-    def technician_chat(
-        payload: TechnicianChatRequest,
-        request: Request,
-        context: TechnicianAccess,
-    ) -> dict[str, object]:
-        scoped_client_id = _singular_action_client(
-            store,
-            context,
-            payload.client_id,
-            {"ticket_id": payload.ticket_id} if payload.ticket_id is not None else {},
-        )
-        try:
-            return _invoke_technician_chat_message(
-                store,
-                smart_action_service,
-                agent_service,
-                payload.message,
-                ticket_id=payload.ticket_id,
-                actor=context.approver_id or "api",
-                client_id=scoped_client_id,
-                correlation_id=_request_correlation_id(request),
-            )
-        except TechnicianChatParseError as exc:
-            raise HTTPException(status_code=422, detail=str(exc)) from exc
-        except KeyError as exc:
-            raise HTTPException(status_code=404, detail="requested technician action is unavailable") from exc
-
-    @app.post("/technician/chat/sessions")
-    @limiter.limit(active_settings.rate_limit_connector)
-    def create_technician_chat_session(
-        payload: TechnicianChatSessionCreateRequest,
-        request: Request,
-        context: TechnicianAccess,
-    ) -> dict[str, object]:
-        scope = resolve_client_scope(context, payload.client_id)
-        scoped_client_id = scope.client_id
-        if payload.ticket_id:
-            ticket = store.get_ticket(payload.ticket_id, scope)
-            if ticket is None:
-                raise HTTPException(status_code=404, detail="ticket not found in client scope")
-            scoped_client_id = ticket.client_id
-        if scoped_client_id is None:
-            raise HTTPException(status_code=403, detail="chat sessions require a client scope")
-        try:
-            session = store.create_technician_chat_session(
-                client_id=scoped_client_id,
-                principal_id=context.approver_id or "api",
-                ticket_id=payload.ticket_id,
-            )
-        except QuarantinedTicketError as exc:
-            raise HTTPException(status_code=409, detail=str(exc)) from exc
-        except (LookupError, ValueError) as exc:
-            raise HTTPException(status_code=400, detail=str(exc)) from exc
-        return _technician_chat_session_view(store, session)
-
-    @app.get("/technician/chat/sessions")
-    @limiter.limit(active_settings.rate_limit_connector)
-    def list_technician_chat_sessions(
-        request: Request,
-        context: TechnicianAccess,
-        client_id: str | None = None,
-    ) -> list[dict[str, object]]:
-        scope = resolve_client_scope(context, client_id)
-        principal_id = None if context.role >= Role.ADMIN else context.approver_id or "api"
-        sessions = store.list_technician_chat_sessions(
-            client_id=scope,
-            principal_id=principal_id,
-        )
-        return [_technician_chat_session_view(store, session) for session in sessions]
-
-    @app.get("/technician/chat/sessions/{session_id}")
-    @limiter.limit(active_settings.rate_limit_connector)
-    def get_technician_chat_session(
-        session_id: str,
-        request: Request,
-        context: TechnicianAccess,
-    ) -> dict[str, object]:
-        scope = _resolve_detail_scope(context, None)
-        principal_id = None if context.role >= Role.ADMIN else context.approver_id or "api"
-        session = store.get_technician_chat_session(
-            session_id,
-            client_id=scope,
-            principal_id=principal_id,
-        )
-        if session is None:
-            raise HTTPException(status_code=404, detail="technician chat session not found")
-        return _technician_chat_session_view(store, session)
-
-    @app.post("/technician/chat/sessions/{session_id}/messages")
-    @limiter.limit(active_settings.rate_limit_connector)
-    def send_technician_chat_message(
-        session_id: str,
-        payload: TechnicianChatMessageRequest,
-        request: Request,
-        context: TechnicianAccess,
-    ) -> dict[str, object]:
-        scope = _resolve_detail_scope(context, None)
-        principal_id = None if context.role >= Role.ADMIN else context.approver_id or "api"
-        session = store.get_technician_chat_session(
-            session_id,
-            client_id=scope,
-            principal_id=principal_id,
-        )
-        if session is None:
-            raise HTTPException(status_code=404, detail="technician chat session not found")
-        try:
-            return _invoke_technician_chat_message(
-                store,
-                smart_action_service,
-                agent_service,
-                payload.message,
-                ticket_id=payload.ticket_id or session.ticket_id,
-                actor=context.approver_id or "api",
-                client_id=session.client_id,
-                session_id=session.id,
-                principal_id=principal_id,
-                correlation_id=_request_correlation_id(request),
-            )
-        except TechnicianChatParseError as exc:
-            raise HTTPException(status_code=422, detail=str(exc)) from exc
-        except KeyError as exc:
-            raise HTTPException(status_code=404, detail="requested technician action is unavailable") from exc
-        except LookupError as exc:
-            raise HTTPException(status_code=404, detail="ticket not found in client scope") from exc
-        except ValueError as exc:
-            raise HTTPException(status_code=409, detail=str(exc)) from exc
-
-    @app.post("/technician/chat/sessions/{session_id}/close")
-    @limiter.limit(active_settings.rate_limit_connector)
-    def close_technician_chat_session(
-        session_id: str,
-        request: Request,
-        context: TechnicianAccess,
-    ) -> dict[str, object]:
-        scope = _resolve_detail_scope(context, None)
-        principal_id = None if context.role >= Role.ADMIN else context.approver_id or "api"
-        session = store.close_technician_chat_session(
-            session_id,
-            client_id=scope,
-            principal_id=principal_id,
-        )
-        if session is None:
-            raise HTTPException(status_code=404, detail="technician chat session not found")
-        return _technician_chat_session_view(store, session)
-
-    @app.get("/end-user/config", response_model=EndUserBrandingResponse)
-    @limiter.limit(active_settings.rate_limit_connector)
-    def end_user_config(
-        request: Request,
-        context: EndUserAccess,
-    ) -> EndUserBrandingResponse:
-        _end_user_client_id(context)
-        return EndUserBrandingResponse(
-            brand_name=_end_user_branding_text(active_settings.end_user_brand_name, "WAIT Support"),
-            brand_tagline=_end_user_branding_text(active_settings.end_user_brand_tagline, "Private help desk"),
-            brand_logo_data_uri=_end_user_brand_logo_data_uri(active_settings.end_user_brand_logo_data_uri),
-            brand_accent_color=_end_user_brand_color(active_settings.end_user_brand_accent_color, "#1f6f55"),
-            brand_surface_color=_end_user_brand_color(active_settings.end_user_brand_surface_color, "#f3f5f2"),
-        )
-
-    @app.post("/end-user/tickets")
-    @limiter.limit(active_settings.rate_limit_connector)
-    def end_user_create_ticket(
-        payload: EndUserTicketCreateRequest,
-        request: Request,
-        context: EndUserAccess,
-    ) -> dict[str, object]:
-        client_id = _end_user_client_id(context)
-        ticket = store.create_end_user_ticket(
-            client_id=client_id,
-            requester_id=context.principal_id or "",
-            subject=payload.subject,
-            body=payload.body,
-        )
-        return _end_user_ticket_view(ticket)
-
-    @app.get("/end-user/tickets/{ticket_id}")
-    @limiter.limit(active_settings.rate_limit_connector)
-    def end_user_ticket_status(
-        ticket_id: str,
-        request: Request,
-        context: EndUserAccess,
-    ) -> dict[str, object]:
-        client_id = _end_user_read_client_id(context)
-        if not _safe_end_user_ticket_id(ticket_id):
-            raise HTTPException(status_code=404, detail="end-user ticket not found")
-        ticket = store.get_end_user_ticket(
-            ticket_id,
-            client_id=client_id,
-            requester_id=context.principal_id or "",
-        )
-        if ticket is None:
-            raise HTTPException(status_code=404, detail="end-user ticket not found")
-        return _end_user_ticket_view(ticket)
-
-    @app.get("/end-user/tickets/{ticket_id}/messages")
-    @limiter.limit(active_settings.rate_limit_connector)
-    def end_user_ticket_messages(
-        ticket_id: str,
-        request: Request,
-        context: EndUserAccess,
-    ) -> list[dict[str, object]]:
-        client_id = _end_user_read_client_id(context)
-        if not _safe_end_user_ticket_id(ticket_id):
-            raise HTTPException(status_code=404, detail="end-user ticket not found")
-        ticket = store.get_end_user_ticket(
-            ticket_id,
-            client_id=client_id,
-            requester_id=context.principal_id or "",
-        )
-        if ticket is None:
-            raise HTTPException(status_code=404, detail="end-user ticket not found")
-        return [
-            _end_user_message_view(message)
-            for message in store.list_end_user_messages(
-                ticket_id,
-                client_id=client_id,
-                requester_id=context.principal_id or "",
-            )
-        ]
-
-    @app.post("/end-user/tickets/{ticket_id}/messages")
-    @limiter.limit(active_settings.rate_limit_connector)
-    def end_user_add_ticket_message(
-        ticket_id: str,
-        payload: EndUserMessageRequest,
-        request: Request,
-        context: EndUserAccess,
-    ) -> dict[str, object]:
-        client_id = _end_user_client_id(context)
-        if not _safe_end_user_ticket_id(ticket_id):
-            raise HTTPException(status_code=404, detail="end-user ticket not found")
-        message = store.create_end_user_message(
-            ticket_id,
-            client_id=client_id,
-            requester_id=context.principal_id or "",
-            body=payload.body,
-        )
-        if message is None:
-            raise HTTPException(status_code=404, detail="end-user ticket not found")
-        return _end_user_message_view(message)
-
-    @app.get("/tickets/{ticket_id}/end-user-messages")
-    @limiter.limit(active_settings.rate_limit_connector)
-    def ticket_end_user_messages(
-        ticket_id: str,
-        request: Request,
-        context: ViewerAccess,
-    ) -> list[dict[str, object]]:
-        scope = _operator_scope(context, active_settings.client_id)
-        ticket = store.get_ticket(ticket_id, client_id=scope, include_quarantine=False)
-        ticket_client_id = _normalize_client_id(ticket.client_id) if ticket is not None else None
-        if ticket_client_id is None:
-            raise HTTPException(status_code=404, detail="end-user ticket not found")
-        return [
-            _operator_end_user_message_view(message)
-            for message in store.list_end_user_messages_for_operator(ticket_id, client_id=ticket_client_id)
-        ]
-
-    @app.post("/tickets/{ticket_id}/end-user-messages")
-    @limiter.limit(active_settings.rate_limit_connector)
-    def add_ticket_end_user_message(
-        ticket_id: str,
-        payload: EndUserMessageRequest,
-        request: Request,
-        context: TechnicianAccess,
-    ) -> dict[str, object]:
-        scope = _operator_scope(context, active_settings.client_id)
-        ticket = store.get_ticket(ticket_id, client_id=scope)
-        ticket_client_id = _normalize_client_id(ticket.client_id) if ticket is not None else None
-        if ticket_client_id is None:
-            raise HTTPException(status_code=404, detail="end-user ticket not found")
-        message = store.create_support_end_user_message(
-            ticket_id,
-            client_id=ticket_client_id,
-            author_id=context.approver_id or "local-technician",
-            body=payload.body,
-        )
-        if message is None:
-            raise HTTPException(status_code=404, detail="end-user ticket not found")
-        return _operator_end_user_message_view(message)
-
-    @app.post("/tickets/{ticket_id}/end-user-messages/{message_id}/halopsa-drafts")
-    @limiter.limit(active_settings.rate_limit_connector)
-    def draft_end_user_halopsa_sync(
-        ticket_id: str,
-        message_id: int,
-        payload: EndUserHaloSyncDraftRequest,
-        request: Request,
-        context: TechnicianAccess,
-    ) -> dict[str, object]:
-        external_ticket_id = payload.external_ticket_id.strip()
-        if not _safe_external_ticket_id(external_ticket_id):
-            raise HTTPException(status_code=422, detail="external HaloPSA ticket id is invalid")
-        scope = _operator_scope(context, active_settings.client_id)
-        local_ticket = store.get_ticket(ticket_id, client_id=scope)
-        if local_ticket is None or not local_ticket.requester_id:
-            raise HTTPException(status_code=404, detail="end-user ticket not found")
-        scoped_client_id = _normalize_client_id(local_ticket.client_id)
-        if scoped_client_id is None:
-            raise HTTPException(status_code=404, detail="end-user ticket not found")
-        message = next(
-            (
-                item
-                for item in store.list_end_user_messages_for_operator(ticket_id, client_id=scoped_client_id)
-                if item.id == message_id
-            ),
-            None,
-        )
-        if message is None:
-            raise HTTPException(status_code=404, detail="end-user message not found")
-        expected_client_id = _halopsa_client_mapping(active_settings, scoped_client_id)
-        if expected_client_id is None:
-            raise HTTPException(status_code=409, detail="HaloPSA client mapping is not configured for this tenant")
-        remote = halopsa_client.get_ticket(external_ticket_id)
-        if remote.result.status != "ready" or len(remote.items) != 1:
-            raise HTTPException(status_code=409, detail="HaloPSA ticket could not be verified")
-        remote_ticket = remote.items[0]
-        if getattr(remote_ticket, "client_id", "") != expected_client_id:
-            raise HTTPException(status_code=403, detail="HaloPSA ticket is outside the configured tenant scope")
-        expected_fields = {"note": message.body, "hiddenfromuser": False}
-        for existing in store.list_approval_requests(client_id=scoped_client_id):
-            if existing.subject_id != external_ticket_id or existing.action_type != "halopsa.add_note":
-                continue
-            if existing.status not in {"pending", "approved"}:
-                continue
-            existing_payload = _safe_json_object(existing.payload_json)
-            if existing_payload.get("fields") != expected_fields:
-                continue
-            store.add_audit_event(
-                "end_user.halopsa_sync_draft_reused",
-                f"{ticket_id}:{message_id}",
-                f"Existing HaloPSA sync approval {existing.id} reused for external ticket {external_ticket_id}",
-                client_id=scoped_client_id,
-            )
-            return {
-                "ticket_id": existing.subject_id,
-                "action_type": "add_note",
-                "payload_json": _redact_json_text(existing.payload_json),
-                "payload": _redact_payload(existing_payload),
-                "approval_required": True,
-                "status": existing.status,
-                "approval_request_id": existing.id,
-            }
-        draft = draft_halopsa_ticket_action(
-            store,
-            external_ticket_id,
-            "add_note",
-            expected_fields,
-            client_id=scoped_client_id,
-        )
-        store.add_audit_event(
-            "end_user.halopsa_sync_draft",
-            f"{ticket_id}:{message_id}",
-            f"HaloPSA sync draft created for external ticket {external_ticket_id}",
-            client_id=scoped_client_id,
-        )
-        return _halopsa_draft_view(draft)
-
-    @app.post("/end-user/tickets/{ticket_id}/escalate")
-    @limiter.limit(active_settings.rate_limit_connector)
-    def end_user_escalate_ticket(
-        ticket_id: str,
-        request: Request,
-        context: EndUserAccess,
-    ) -> dict[str, object]:
-        client_id = _end_user_client_id(context)
-        if not _safe_end_user_ticket_id(ticket_id):
-            raise HTTPException(status_code=404, detail="end-user ticket not found")
-        ticket = store.escalate_end_user_ticket(
-            ticket_id,
-            client_id=client_id,
-            requester_id=context.principal_id or "",
-        )
-        if ticket is None:
-            raise HTTPException(status_code=404, detail="end-user ticket not found")
-        return _end_user_ticket_view(ticket)
-
-    @app.get("/tickets/{ticket_id}/summary")
-    def summarize_ticket(ticket_id: str, context: ViewerAccess) -> dict[str, object]:
-        scope = resolve_client_scope(context, None)
-        if store.get_ticket(ticket_id, client_id=scope, include_quarantine=False) is None:
-            raise HTTPException(status_code=404, detail="ticket not found")
-        try:
-            return asdict(service.summarize(ticket_id))
-        except KeyError as exc:
-            raise HTTPException(status_code=404, detail="ticket not found") from exc
-
-    @app.get("/tickets/{ticket_id}/context")
-    def ticket_context(ticket_id: str, context: ViewerAccess) -> dict[str, object]:
-        scope = resolve_client_scope(context, None)
-        if store.get_ticket(ticket_id, client_id=scope, include_quarantine=False) is None:
-            raise HTTPException(status_code=404, detail="ticket not found")
-        graph = operational_graph_service.ticket_context(scope, ticket_id)
-        if graph is None:
-            raise HTTPException(status_code=404, detail="ticket not found")
-        return asdict(graph)
-
-    @app.get("/tickets/{ticket_id}/notes")
-    def ticket_notes(ticket_id: str, context: ViewerAccess) -> list[dict[str, object]]:
-        scoped_client_id = resolve_client_scope(context, None).client_id
-        if scoped_client_id is None and context.role >= Role.ADMIN:
-            ticket = store.get_ticket(ticket_id, include_quarantine=False)
-            scoped_client_id = ticket.client_id if ticket is not None else None
-        if scoped_client_id is None:
-            return []
-        notes = store.list_ticket_notes(ticket_id, client_id=scoped_client_id)
-        return [
-            {
-                "id": note.id,
-                "ticket_id": note.ticket_id,
-                "author": redact_text(note.author),
-                "body": redact_text(note.body),
-                "created_at": note.created_at,
-            }
-            for note in notes
-        ]
-
-    @app.get("/tickets/{ticket_id}/status-history")
-    def ticket_status_history(ticket_id: str, context: ViewerAccess) -> list[dict[str, object]]:
-        scoped_client_id = resolve_client_scope(context, None).client_id
-        if scoped_client_id is None and context.role >= Role.ADMIN:
-            ticket = store.get_ticket(ticket_id, include_quarantine=False)
-            scoped_client_id = ticket.client_id if ticket is not None else None
-        if scoped_client_id is None:
-            return []
-        return store.list_ticket_status_history(ticket_id, client_id=scoped_client_id)
-
-    @app.post("/tickets/{ticket_id}/approvals")
-    def update_approval(
-        ticket_id: str,
-        request: ApprovalRequest,
-        context: TechnicianAccess,
-    ) -> dict[str, str]:
-        scope = resolve_client_scope(context, None)
-        if store.get_ticket(ticket_id, client_id=scope) is None:
-            raise HTTPException(status_code=404, detail="ticket not found")
-        store.set_approval(ticket_id, request.status, request.comment)
-        return {"ticket_id": ticket_id, "status": request.status, "comment": request.comment}
-
-    @app.get("/approval-requests")
-    def approval_requests(
-        request: Request,
-        context: ViewerAccess,
-        client_id: str | None = None,
-    ) -> list[dict[str, object]]:
-        scope = resolve_client_scope(context, requested_client_from(request, client_id))
-        return [_approval_view(request) for request in store.list_approval_requests(client_id=scope)]
-
-    @app.get("/approval-requests/{request_id}")
-    def approval_request_detail(request_id: int, context: ViewerAccess) -> dict[str, object]:
-        request = store.get_approval_request(request_id)
-        if request is None or not _approval_scope_visible(context, request):
-            raise HTTPException(status_code=404, detail="approval request not found")
-        return _approval_view(request)
-
-    @app.patch("/approval-requests/{request_id}/payload")
-    def update_approval_payload(
-        request_id: int,
-        request: ApprovalPayloadPatchRequest,
-        context: TechnicianAccess,
-    ) -> dict[str, object]:
-        try:
-            approval = store.get_approval_request(request_id)
-            if approval is None or not _approval_scope_visible(context, approval):
-                raise KeyError(request_id)
-            if approval.action_type.startswith("connectwise."):
-                approval = update_connectwise_approval_fields(store, request_id, request.fields, request.comment)
-            else:
-                approval = update_halopsa_approval_fields(store, request_id, request.fields, request.comment)
-        except KeyError as exc:
-            raise HTTPException(status_code=404, detail="approval request not found") from exc
-        except PermissionError as exc:
-            raise HTTPException(status_code=409, detail=str(exc)) from exc
-        except QuarantinedTicketError as exc:
-            raise HTTPException(status_code=409, detail=str(exc)) from exc
-        except (ValueError, json.JSONDecodeError) as exc:
-            raise HTTPException(status_code=400, detail=str(exc)) from exc
-        return _approval_view(approval)
-
-    @app.post("/approval-requests/{request_id}")
-    @limiter.limit(active_settings.rate_limit_connector)
-    def update_approval_request(
-        request_id: int,
-        payload: ApprovalRequest,
-        request: Request,
-        context: TechnicianAccess,
-    ) -> dict[str, object]:
-        try:
-            existing_approval = store.get_approval_request(request_id)
-            if existing_approval is None:
-                raise KeyError(request_id)
-            # A decision is an authorization operation: a known foreign
-            # approval must fail with 403, while detail/payload lookups keep
-            # hiding foreign existence with 404.
-            resolve_client_scope(context, existing_approval.client_id)
-            if not _approval_scope_visible(context, existing_approval):
-                raise KeyError(request_id)
-            if (
-                existing_approval.action_type.startswith("m365.")
-                or existing_approval.action_type == "teams.message.send"
-            ) and context.role < Role.ADMIN:
-                raise PermissionError("M365 approvals require admin authority")
-            if existing_approval.action_type.startswith("smart_action:"):
-                smart_action_service.update_approval(
-                    request_id,
-                    payload.status,
-                    payload.comment,
-                    approver=context.approver_id or "api",
-                    approver_role=context.role,
-                )
-                approval = store.get_approval_request(request_id) or existing_approval
-            else:
-                approval = store.update_approval_request(
-                    request_id,
-                    payload.status,
-                    payload.comment,
-                    approver_id=context.approver_id,
-                    allow_completed=store.get_workflow_run_for_approval(request_id) is not None,
-                )
-            if payload.status == "approved" and approval.action_type.startswith("halopsa."):
-                try:
-                    approval = execute_halopsa_approval_request(store, halopsa_client, request_id)
-                except RuntimeError:
-                    approval = store.get_approval_request(request_id) or approval
-            if payload.status == "approved" and approval.action_type.startswith("connectwise."):
-                try:
-                    approval = execute_connectwise_approval_request(store, connectwise_client, request_id)
-                except RuntimeError:
-                    approval = store.get_approval_request(request_id) or approval
-            if payload.status == "approved" and approval.action_type.startswith("m365."):
-                try:
-                    approval = execute_m365_approval_request(
-                        store,
-                        m365_client,
-                        SecretVault(active_settings.vault_path),
-                        request_id,
-                    )
-                except RuntimeError:
-                    approval = store.get_approval_request(request_id) or approval
-            return _approval_view(approval)
-        except KeyError as exc:
-            raise HTTPException(status_code=404, detail="approval request not found") from exc
-        except PermissionError as exc:
-            raise HTTPException(status_code=403, detail=str(exc)) from exc
-        except QuarantinedTicketError as exc:
-            raise HTTPException(status_code=409, detail=str(exc)) from exc
-        except ValueError as exc:  # pragma: no cover
-            raise HTTPException(status_code=422, detail=str(exc)) from exc
+    mount_flat(app, create_end_user_router(ctx))
 
     @app.get("/collectors/modules")
     def collector_modules(_: ViewerAccess) -> list[dict[str, object]]:
