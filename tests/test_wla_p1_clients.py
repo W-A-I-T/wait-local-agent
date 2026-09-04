@@ -9,6 +9,7 @@ from fastapi.routing import APIRoute
 from fastapi.testclient import TestClient
 
 import wait_local_agent.api.app as app_module
+import wait_local_agent.api.routers.system as system_module
 from tests.support import PINNED_SCHEMA_MIGRATIONS
 from wait_local_agent.api.app import create_app
 from wait_local_agent.client_scope import AllClients, BoundClients
@@ -627,7 +628,7 @@ def test_p1_api_route_error_branches_and_empty_results(settings, monkeypatch, tm
         def missing_pack(*_args, **_kwargs):
             raise OSError("missing pack")
 
-        monkeypatch.setattr(app_module, "install_pack_tarball", missing_pack)
+        monkeypatch.setattr(system_module, "install_pack_tarball", missing_pack)
         pack = client.post("/packs/install", json={"tarball_path": str(tmp_path / "missing.tar.gz")})
         assert pack.status_code == 400
         assert pack.json()["detail"] == "pack tarball could not be read"

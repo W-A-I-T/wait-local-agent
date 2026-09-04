@@ -38,6 +38,13 @@ from packs.microsoft_admin.client import MicrosoftAdminGraphClient
 from wait_local_agent import __version__
 from wait_local_agent.agents import AgentDefinitionError, AgentService
 from wait_local_agent.api.auth_routes import create_auth_router
+from wait_local_agent.api.context import (
+    AdminAccess,
+    ApiContext,
+    EndUserAccess,
+    TechnicianAccess,
+    ViewerAccess,
+)
 from wait_local_agent.api.founder import (
     FounderNotConfiguredError,
     FounderPackContractError,
@@ -53,11 +60,10 @@ from wait_local_agent.api.founder import (
     create_router as create_founder_router,
 )
 from wait_local_agent.api.packs.loader import (
-    PackInstallError,
     configure_pack_routes,
-    get_entitlement_status,
-    install_pack_tarball,
 )
+from wait_local_agent.api.routers import mount_flat
+from wait_local_agent.api.routers.system import create_system_router
 from wait_local_agent.api.schemas import (
     AgentApprovalRuleRequest,  # noqa: F401
     AgentBackfillCreateRequest,
@@ -125,7 +131,6 @@ from wait_local_agent.api.schemas import (
     MspPlaybookSubscriptionCreateRequest,
     MspPlaybookSubscriptionUpdateRequest,
     OpenApiConnectorRequest,
-    PackInstallRequest,
     PowerAppsPlanRequest,
     PowerAutomatePlanRequest,
     PowerPlatformDeploymentRequest,
@@ -420,16 +425,12 @@ from wait_local_agent.power_platform_package import (
     package_validation_result,
 )
 from wait_local_agent.providers import (
-    PROVIDER_CONFIGURATION_SCOPE,
-    PROVIDER_REQUEST_CONTEXT_SCOPE,
-    probe_model_providers,
     provider_from_settings,
 )
 from wait_local_agent.rbac import (
     AuthContext,
     Role,
     admin_credential_configured,
-    require_end_user,
     require_role,
     resolve_auth_context,
 )
@@ -456,7 +457,6 @@ from wait_local_agent.scalepad import (
     ScalePadRiskSummaryResponse,
 )
 from wait_local_agent.scheduler import SchedulerManager, validate_scheduled_report_params
-from wait_local_agent.security import auth_required
 from wait_local_agent.servicenow import ServiceNowClient, ServiceNowReadResponse
 from wait_local_agent.services import TicketIntelligenceService
 from wait_local_agent.sessions import SESSION_COOKIE_NAME
@@ -481,7 +481,7 @@ from wait_local_agent.syncro import SyncroClient, SyncroCommentsResponse, Syncro
 from wait_local_agent.teams_graph import TeamsGraphClient
 from wait_local_agent.technician_chat import TechnicianChatParseError
 from wait_local_agent.timezest import TimeZestClient
-from wait_local_agent.update_channel import UpdateStatusCache, check_for_updates
+from wait_local_agent.update_channel import UpdateStatusCache
 from wait_local_agent.vault import SecretVault, SecretVaultError
 from wait_local_agent.vector_search import search_backend_from_settings
 from wait_local_agent.workflow_designer import (
@@ -494,14 +494,6 @@ from wait_local_agent.workflows import (
     run_workflow_template,
 )
 from wait_local_agent.workiq import WorkIqClient
-
-ViewerAccess = Annotated[AuthContext, Depends(require_role(Role.VIEWER))]
-TechnicianAccess = Annotated[AuthContext, Depends(require_role(Role.TECHNICIAN))]
-AdminAccess = Annotated[AuthContext, Depends(require_role(Role.ADMIN))]
-EndUserAccess = Annotated[AuthContext, Depends(require_end_user)]
-
-
-
 
 LOGGER = logging.getLogger(__name__)
 CORRELATION_HEADER = "X-Correlation-ID"
@@ -878,181 +870,45 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         teams_client=teams_client,
     )
 
-    @app.get("/health")
-    @limiter.exempt
-    def health(request: Request, _: ViewerAccess) -> dict[str, object]:
-        return {
-            "status": "ok",
-            "write_actions_enabled": active_settings.allow_write_actions,
-            "http_probing_enabled": active_settings.allow_http_probing,
-            "cloud_fallback_enabled": active_settings.allow_cloud_fallback,
-            "offline_mode": active_settings.offline_mode,
-            "llm_inference_enabled": active_settings.allow_llm_inference,
-            "api_auth_required": auth_required(active_settings),
-            "demo_mode": active_settings.demo_mode,
-            "secrets_backend": active_settings.secrets_backend,
-            "scheduler_enabled": active_settings.scheduler_enabled,
-            "halopsa_configured": bool(
-                active_settings.halopsa_base_url
-                and active_settings.halopsa_client_id
-                and active_settings.halopsa_client_secret
-                and active_settings.halopsa_tenant
-            ),
-            "hudu_configured": bool(active_settings.hudu_base_url and active_settings.hudu_api_key),
-            "syncro_configured": bool(active_settings.syncro_base_url and active_settings.syncro_api_token),
-            "servicenow_configured": bool(
-                active_settings.servicenow_base_url
-                and active_settings.servicenow_username
-                and active_settings.servicenow_password
-            ),
-            "autotask_configured": bool(
-                active_settings.autotask_base_url
-                and active_settings.autotask_username
-                and active_settings.autotask_secret
-                and active_settings.autotask_integration_code
-            ),
-            "itglue_configured": bool(active_settings.itglue_base_url and active_settings.itglue_api_key),
-            "confluence_configured": bool(
-                active_settings.confluence_base_url
-                and active_settings.confluence_email
-                and active_settings.confluence_api_token
-            ),
-            "sharepoint_configured": bool(
-                active_settings.sharepoint_base_url and active_settings.sharepoint_access_token
-            ),
-            "m365_configured": _m365_health_configured(),
-        }
+    ctx = ApiContext(
+        active_settings=active_settings,
+        store=store,
+        vault=vault,
+        app=app,
+        limiter=limiter,
+        service=service,
+        rmm_provider=rmm_provider,
+        operational_graph_service=operational_graph_service,
+        halopsa_client=halopsa_client,
+        hudu_client=hudu_client,
+        connectwise_client=connectwise_client,
+        syncro_client=syncro_client,
+        servicenow_client=servicenow_client,
+        autotask_client=autotask_client,
+        itglue_client=itglue_client,
+        confluence_client=confluence_client,
+        notion_client=notion_client,
+        sharepoint_client=sharepoint_client,
+        timezest_client=timezest_client,
+        scalepad_client=scalepad_client,
+        m365_client=m365_client,
+        teams_client=teams_client,
+        update_status_cache=update_status_cache,
+        report_service=report_service,
+        collector_service=collector_service,
+        smart_action_service=smart_action_service,
+        agent_service=agent_service,
+        mcp_server=mcp_server,
+        event_dispatcher=event_dispatcher,
+        baseline_service=baseline_service,
+        scheduler=scheduler,
+        m365_graph_service_for_client=_m365_graph_service_for_client,
+        m365_health_configured=_m365_health_configured,
+        connector_read_client=_connector_read_client,
+        approval_view=_approval_view,
+    )
 
-    @app.get("/healthz", include_in_schema=False)
-    @limiter.exempt
-    def healthz() -> dict[str, str]:
-        return {"status": "ok"}
-
-    @app.get("/auth/role")
-    def auth_role(context: ViewerAccess) -> dict[str, object]:
-        return {
-            "role": context.role.label(),
-            "client_id": context.client_id,
-            "client_ids": sorted(context.client_ids),
-            "principal_id": context.principal_id,
-            "auth_method": context.auth_method,
-            "is_msp_admin": context.is_msp_admin,
-            "api_auth_required": auth_required(active_settings),
-            "demo_mode": active_settings.demo_mode,
-            "allow_write_actions": active_settings.allow_write_actions,
-            "end_user_support_enabled": active_settings.end_user_support_enabled,
-        }
-
-    @app.get("/settings/security")
-    def security_settings(_: AdminAccess) -> dict[str, object]:
-        return {
-            "api_token_configured": bool(active_settings.api_token),
-            "admin_token_configured": bool(active_settings.admin_token),
-            "tech_token_configured": bool(active_settings.tech_token),
-            "viewer_token_configured": bool(active_settings.viewer_token),
-            "api_auth_required": auth_required(active_settings),
-            "demo_mode": active_settings.demo_mode,
-        }
-
-    @app.get("/settings/providers")
-    def providers(_: ViewerAccess) -> dict[str, object]:
-        return {
-            "local_model_provider": active_settings.local_model_provider,
-            "local_model_base_url": active_settings.local_model_base_url,
-            "local_model_name": active_settings.local_model_name,
-            "local_model_timeout_seconds": active_settings.local_model_timeout_seconds,
-            "provider_scope": PROVIDER_CONFIGURATION_SCOPE,
-            "context_scope": PROVIDER_REQUEST_CONTEXT_SCOPE,
-            "llm_inference_enabled": active_settings.allow_llm_inference,
-            "cloud_fallback_enabled": active_settings.allow_cloud_fallback,
-            "offline_mode": active_settings.offline_mode,
-            "remote_model_provider": active_settings.remote_model_provider,
-            "remote_model_configured": bool(
-                active_settings.remote_model_provider
-                and active_settings.remote_model_base_url
-                and active_settings.remote_model_name
-                and active_settings.remote_model_api_key
-            ),
-            "remote_model_enabled": bool(
-                active_settings.allow_llm_inference
-                and active_settings.allow_cloud_fallback
-                and not active_settings.offline_mode
-                and active_settings.remote_model_provider
-                and active_settings.remote_model_base_url
-                and active_settings.remote_model_name
-                and active_settings.remote_model_api_key
-            ),
-            "model_input_cost_usd_per_million_tokens": active_settings.model_input_cost_usd_per_million_tokens,
-            "model_output_cost_usd_per_million_tokens": active_settings.model_output_cost_usd_per_million_tokens,
-            "vector_backend": active_settings.vector_backend,
-            "document_parser": active_settings.document_parser,
-            "ocr_enabled": active_settings.allow_ocr,
-            "embedding_provider": active_settings.embedding_provider,
-            "embedding_model": active_settings.embedding_model,
-            "qdrant_collection": active_settings.qdrant_collection,
-        }
-
-    @app.get("/settings/providers/health")
-    def provider_health(_: AdminAccess) -> dict[str, object]:
-        result = probe_model_providers(active_settings)
-        for name, status in result.items():
-            if isinstance(status, dict):
-                store.add_audit_event(
-                    "model_provider.health",
-                    str(name),
-                    str(status.get("status", "unknown")),
-                )
-        return result
-
-    @app.get("/update-status")
-    def update_status(_: AdminAccess) -> dict[str, object]:
-        return update_status_cache.get_status(lambda: check_for_updates(active_settings)).to_dict()
-
-    @app.post("/update-check")
-    def update_check(_: AdminAccess) -> dict[str, object]:
-        return check_for_updates(active_settings).to_dict()
-
-    @app.get("/packs")
-    def packs(_: ViewerAccess) -> list[dict[str, object]]:
-        registry = app.state.pack_registry
-        return [
-            {
-                "name": status.name,
-                "version": status.version,
-                "locked": status.locked,
-                "requires_license": status.requires_license,
-                "signature_status": "not_recorded",
-            }
-            for status in registry.statuses
-        ]
-
-    @app.get("/packs/status")
-    def pack_status(_: ViewerAccess) -> list[dict[str, object]]:
-        registry = app.state.pack_registry
-        return [{**asdict(status), "signature_status": "not_recorded"} for status in registry.statuses]
-
-    @app.get("/entitlement")
-    def entitlement(_: ViewerAccess) -> dict[str, object | None]:
-        return {"commercial": get_entitlement_status(app.state.pack_registry)}
-
-    @app.post("/packs/install")
-    def pack_install(payload: PackInstallRequest, _: AdminAccess) -> dict[str, object]:
-        try:
-            result = install_pack_tarball(
-                Path(payload.tarball_path),
-                license_key=payload.license_key,
-                settings=active_settings,
-            )
-        except PackInstallError as exc:
-            raise HTTPException(status_code=400, detail=str(exc)) from exc
-        except OSError as exc:
-            raise HTTPException(status_code=400, detail="pack tarball could not be read") from exc
-        return {
-            "pack_name": result.pack_name,
-            "version": result.version,
-            "files": len(result.extracted_files),
-            "license_stored_in_vault": result.license_stored_in_vault,
-        }
+    mount_flat(app, create_system_router(ctx))
 
     @app.get("/tickets")
     def tickets(
