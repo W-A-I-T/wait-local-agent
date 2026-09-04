@@ -187,7 +187,7 @@ def create_auth_router(limiter: Limiter | None = None) -> APIRouter:
         try:
             client = build_oauth_client(config)
             return await client.authorize_redirect(request, config.redirect_uri)
-        except Exception as exc:  # noqa: BLE001 - provider details must not reach logs or clients
+        except Exception as exc:  # provider details must not reach logs or clients
             raise HTTPException(status_code=502, detail="Microsoft sign-in is unavailable") from exc
 
     @router.get("/oidc/callback")
@@ -198,7 +198,7 @@ def create_auth_router(limiter: Limiter | None = None) -> APIRouter:
             raise HTTPException(status_code=404, detail="OIDC sign-in is not enabled")
         try:
             token = await build_oauth_client(config).authorize_access_token(request)
-        except Exception as exc:  # noqa: BLE001 - Authlib/provider errors can contain token material
+        except Exception as exc:  # Authlib/provider errors can contain token material
             if exc.__class__.__name__ == "MismatchingStateError":
                 raise HTTPException(status_code=400, detail="invalid sign-in transaction") from exc
             raise HTTPException(status_code=400, detail="Microsoft sign-in could not be completed") from exc

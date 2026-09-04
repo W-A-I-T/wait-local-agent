@@ -688,7 +688,7 @@ def test_flagship_employee_onboarding_runs_review_evaluation_and_approval_gates(
 
     store = Store(settings.data_path)
     ingest_local(store, Path("examples/sample_tickets/tickets.json"))
-    with store._connect() as connection:  # noqa: SLF001
+    with store._connect() as connection:
         connection.execute("update tickets set client_id = 'acme'")
     service = AgentService(store, settings, SmartActionService(store, settings))
 
@@ -1486,7 +1486,7 @@ def test_teams_message_draft_is_native_graph_approval_gated(settings) -> None:
 def test_supervisor_run_orders_persisted_children_and_returns_child_runs(settings) -> None:
     store = Store(settings.data_path)
     ingest_local(store, Path("examples/sample_tickets/tickets.json"))
-    with store._connect() as connection:  # noqa: SLF001
+    with store._connect() as connection:
         connection.execute("update tickets set client_id = 'acme'")
     service = AgentService(store, settings, SmartActionService(store, settings))
     identity = service.create(
@@ -1536,7 +1536,7 @@ def test_supervisor_run_orders_persisted_children_and_returns_child_runs(setting
 def test_controlled_evaluation_runs_existing_agent_in_local_fixture_mode(settings) -> None:
     store = Store(settings.data_path)
     ingest_local(store, Path("examples/sample_tickets/tickets.json"))
-    with store._connect() as connection:  # noqa: SLF001
+    with store._connect() as connection:
         connection.execute("update tickets set client_id = 'acme'")
     service = AgentService(store, settings, SmartActionService(store, settings))
     agent = service.create(
@@ -1605,7 +1605,7 @@ def test_employee_onboarding_demo_endpoint_composes_existing_local_fixture(setti
     payload = json.loads(Path("examples/consultant/employee-onboarding-blueprint.json").read_text())
     store = Store(settings.data_path)
     ingest_local(store, Path("examples/sample_tickets/tickets.json"))
-    with store._connect() as connection:  # noqa: SLF001 - bind the isolated fixture tenant.
+    with store._connect() as connection:
         connection.execute("update tickets set client_id = 'acme'")
 
     result = _endpoint(settings, "/consultant/demos/employee-onboarding")(
@@ -1641,7 +1641,7 @@ def test_employee_onboarding_demo_endpoint_resolves_persisted_blueprint_in_scope
     )
     store = Store(settings.data_path)
     ingest_local(store, Path("examples/sample_tickets/tickets.json"))
-    with store._connect() as connection:  # noqa: SLF001 - bind the isolated fixture tenant.
+    with store._connect() as connection:
         connection.execute("update tickets set client_id = 'acme'")
 
     result = _endpoint(settings, "/consultant/demos/employee-onboarding")(

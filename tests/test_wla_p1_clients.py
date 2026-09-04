@@ -28,7 +28,7 @@ def _auth(token: str) -> dict[str, str]:
 def test_clients_migration_repairs_and_backfills_existing_directory(tmp_path: Path) -> None:
     path = tmp_path / "state.db"
     store = Store(path)
-    with store._connect() as connection:  # noqa: SLF001
+    with store._connect() as connection:
         assert [
             tuple(row) for row in connection.execute("select version, name from schema_migrations")
         ] == PINNED_SCHEMA_MIGRATIONS
@@ -55,8 +55,8 @@ def test_clients_migration_repairs_and_backfills_existing_directory(tmp_path: Pa
             "(canonical_id, asset_type, display_name, client_id, first_seen, last_seen, attributes_json) "
             "values ('asset-backfill', 'server', 'Server', 'client-b', 'now', 'now', '{}')"
         )
-        store._apply_startup_repairs(connection)  # noqa: SLF001
-        store._apply_ticket_identity_migration(connection)  # noqa: SLF001
+        store._apply_startup_repairs(connection)
+        store._apply_ticket_identity_migration(connection)
         connection.execute("pragma foreign_keys = on")
 
     repaired = Store(path)
@@ -275,7 +275,7 @@ def test_p1_store_accessors_fail_closed_and_normalize_ids(tmp_path: Path) -> Non
 
     quarantine = store.ensure_quarantine_client()
     assert quarantine == store.get_client(AllClients(), "__quarantine__")
-    with store._connect() as connection:  # noqa: SLF001
+    with store._connect() as connection:
         assert store.ensure_quarantine_client(connection) == quarantine
 
 
@@ -380,7 +380,7 @@ def test_p1_mapping_scope_resolution_and_partial_unique_integrity_conflict(tmp_p
     # The normal conflict pre-check is covered above in the existing smoke test.
     # This trigger creates the race-equivalent SQLite integrity failure after
     # the pre-check and exercises the partial-unique-index exception handler.
-    with store._connect() as connection:  # noqa: SLF001
+    with store._connect() as connection:
         connection.execute(
             f"""
             create trigger force_verified_mapping_conflict

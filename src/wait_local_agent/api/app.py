@@ -1973,7 +1973,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             raise HTTPException(status_code=404, detail="client not found") from exc
         except ValueError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
-        except Exception as exc:  # noqa: BLE001 - do not expose provider failures
+        except Exception as exc:  # do not expose provider failures
             raise HTTPException(status_code=503, detail="baseline collection failed") from exc
 
     @app.get("/clients/{client_id}/baselines")
@@ -2700,7 +2700,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 if result.status in {"completed", "pending_approval"}:
                     return result, None
                 return result, f"{entity_id}: agent run status {result.status}"
-            except Exception as exc:  # noqa: BLE001 - continue independent entities
+            except Exception as exc:  # continue independent entities
                 return None, redact_text(f"{entity_id}: {exc}")
 
         max_concurrency = min(max(1, backfill.max_concurrency), AGENT_BACKFILL_MAX_CONCURRENCY)
@@ -9174,7 +9174,7 @@ def _dispatch_workflow_completion_event(
             "workflow.completed event dispatched",
             client_id=run.client_id,
         )
-    except Exception as exc:  # noqa: BLE001 - completion must not be undone
+    except Exception as exc:  # completion must not be undone
         detail = redact_text(f"workflow.completed dispatch failed: {exc}")
         event_dispatcher.store.add_audit_event(
             "workflow.completion_dispatch_failed",

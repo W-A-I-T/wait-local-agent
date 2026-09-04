@@ -39,7 +39,7 @@ def test_startup_logs_existing_quarantine_bindings_without_raising(
     store = Store(db_path)
     store.create_principal("principal-a")
     instance = store.create_connector_instance("halopsa", "Primary")
-    with store._connect() as connection:  # noqa: SLF001
+    with store._connect() as connection:
         connection.execute(
             "insert into principal_client_roles (principal_id, client_id, role) values (?, ?, ?)",
             ("principal-a", "__quarantine__", "viewer"),
@@ -76,7 +76,7 @@ def test_all_clients_ticket_reads_and_analytics_hide_quarantine(tmp_path: Path) 
     db_path = tmp_path / "state.db"
     store = Store(db_path)
     store.create_client("client-a", "Client A")
-    with store._connect() as connection:  # noqa: SLF001
+    with store._connect() as connection:
         for ticket_id, client_id in (("normal-ticket", "client-a"), ("quarantine-ticket", "__quarantine__")):
             connection.execute(
                 """

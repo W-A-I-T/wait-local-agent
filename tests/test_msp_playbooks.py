@@ -31,7 +31,7 @@ from wait_local_agent.workflows import run_workflow_template, validate_workflow_
 
 def _seed_client_ticket(store: Store) -> None:
     ingest_local(store, Path("examples/sample_tickets/tickets.json"))
-    with store._connect() as connection:  # noqa: SLF001
+    with store._connect() as connection:
         connection.execute("update tickets set client_id = ?", ("acme",))
 
 

@@ -21,7 +21,7 @@ def _seed_connectors(store: Store):
 def test_v3_is_additive_idempotent_and_fk_clean(tmp_path: Path) -> None:
     store = Store(tmp_path / "state.db")
 
-    with store._connect() as connection:  # noqa: SLF001
+    with store._connect() as connection:
         columns = {str(row[1]) for row in connection.execute("pragma table_info(tickets)")}
         assert columns >= {
             "source_system",
@@ -56,7 +56,7 @@ def test_v3_is_additive_idempotent_and_fk_clean(tmp_path: Path) -> None:
         before_versions = connection.execute(
             "select version, name from schema_migrations order by version"
         ).fetchall()
-        store._apply_provenance_migration(connection)  # noqa: SLF001
+        store._apply_provenance_migration(connection)
         after_versions = connection.execute(
             "select version, name from schema_migrations order by version"
         ).fetchall()
@@ -64,8 +64,8 @@ def test_v3_is_additive_idempotent_and_fk_clean(tmp_path: Path) -> None:
         assert connection.execute("pragma foreign_key_check").fetchall() == []
 
     Store(tmp_path / "state.db")
-    with store._connect() as connection:  # noqa: SLF001
-        declared_migrations = store._declared_migrations()  # noqa: SLF001
+    with store._connect() as connection:
+        declared_migrations = store._declared_migrations()
         assert connection.execute("select max(version) from schema_migrations").fetchone()[0] == (
             latest_declared_schema_version(store)
         )
@@ -104,7 +104,7 @@ def test_ticket_provenance_columns_accept_return_and_enforce_scope(tmp_path: Pat
         AllClients(), connector_a.connector_instance_id, "company-1", "client-a"
     )
     store.verify_client_connector_mapping(AllClients(), mapping.mapping_id)
-    with store._connect() as connection:  # noqa: SLF001
+    with store._connect() as connection:
         connection.execute(
             """
             insert into tickets

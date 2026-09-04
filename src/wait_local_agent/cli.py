@@ -4316,7 +4316,7 @@ def _dispatch_cli_workflow_completion(store: Store, settings, run) -> None:
             "workflow.completed event dispatched",
             client_id=run.client_id,
         )
-    except Exception as exc:  # noqa: BLE001 - completion must not be undone
+    except Exception as exc:  # completion must not be undone
         store.add_audit_event(
             "workflow.completion_dispatch_failed",
             str(run.id),
@@ -5943,7 +5943,7 @@ def serve(host: str = "127.0.0.1", port: int = 8788) -> None:
 def _sync_pack_cli_on_startup() -> None:
     try:
         sync_pack_cli()
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         LOGGER.warning("Pack CLI discovery failed during startup: %s", exc)
 
 

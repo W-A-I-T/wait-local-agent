@@ -23,7 +23,7 @@ from wait_local_agent.store import Store
 
 def _seed(store: Store, *, client_id: str | None = "acme") -> None:
     ingest_local(store, Path("examples/sample_tickets/tickets.json"))
-    with store._connect() as connection:  # noqa: SLF001
+    with store._connect() as connection:
         connection.execute(
             "update tickets set client_id = ?",
             (client_id if client_id is not None else "__quarantine__",),
@@ -424,7 +424,7 @@ def test_event_dispatch_skips_disabled_nonmatching_and_wrong_scope_agents(settin
     assert result.matched_agent_ids == [global_agent.id]
     assert len(result.run_ids) == 1
 
-    with store._connect() as connection:  # noqa: SLF001
+    with store._connect() as connection:
         connection.execute("update tickets set client_id = '__quarantine__' where id = ?", ("TCK-1002",))
     unscoped = EventDispatcher(store, service).dispatch(
         event_type="ticket.updated",

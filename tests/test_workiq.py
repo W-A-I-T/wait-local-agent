@@ -235,7 +235,7 @@ def test_workiq_validation_edges_and_configured_endpoint(settings) -> None:
             mcp_client_allowed_hosts=("workiq.example.test",),
         )
     )
-    assert configured._mcp_client is not None  # noqa: SLF001
+    assert configured._mcp_client is not None
     assert WorkIqClient(settings).fetch([]).status == "failed"
     assert WorkIqClient(settings).fetch(cast(list[str], [3])).status == "failed"
     assert WorkIqClient(settings).fetch(["/me/\x01messages"]).status == "failed"
@@ -262,7 +262,7 @@ def test_workiq_endpoint_requires_non_empty_token_before_client_creation(setting
             )
         )
 
-        assert client._mcp_client is None  # noqa: SLF001
+        assert client._mcp_client is None
         response = client.fetch(["/me/messages"])
         assert response.status == "not_configured"
         assert response.classification == "read"
@@ -293,7 +293,7 @@ def test_workiq_operation_classifier_and_path_validation_fail_closed(settings) -
     assert classify_work_iq_operation("get_schema", resource_paths=3) == "unknown"
     assert classify_work_iq_operation("get_schema", resource_paths="/admin/items") == "unknown"
     client = WorkIqClient(settings, mcp_client=FakeMcpClient(_result({})))
-    assert client._read("create_entity", {"path": "/me/items"}).status == "failed"  # noqa: SLF001
+    assert client._read("create_entity", {"path": "/me/items"}).status == "failed"
     for value in (None, "", "x" * 501, "https://graph.example/me/items", "/me/\x01items"):
         with pytest.raises(WorkIqValidationError):
             _validate_entity_path(value)  # type: ignore[arg-type]

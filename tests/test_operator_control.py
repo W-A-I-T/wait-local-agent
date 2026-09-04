@@ -32,7 +32,7 @@ def test_unified_activity_route_respects_tenant_scope_and_filters(settings) -> N
     store.create_client("alpha", "Alpha")
     store.create_client("beta", "Beta")
     _seed_staff(store, "alpha-viewer", "alpha-viewer-token", "alpha", "viewer")
-    with store._connect() as connection:  # noqa: SLF001 - focused activity projection fixture
+    with store._connect() as connection:
         connection.execute(
             """
             insert into execution_runs

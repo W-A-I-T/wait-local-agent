@@ -885,7 +885,7 @@ def test_blueprint_store_rejects_malformed_legacy_row(tmp_path) -> None:
     store = Store(tmp_path / "state.db")
     blueprint = parse_solution_blueprint(_payload(), client_id="acme", created_by="architect")
     store.create_solution_blueprint(blueprint)
-    with store._connect() as connection:  # noqa: SLF001
+    with store._connect() as connection:
         connection.execute(
             "update solution_blueprints set payload_json = ? where id = ?",
             ("not-json", blueprint.id),

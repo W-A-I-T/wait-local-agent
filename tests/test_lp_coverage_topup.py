@@ -506,14 +506,14 @@ def test_founder_scheduler_advances_once_and_stops_after_terminal(monkeypatch, s
     )
     manager = SchedulerManager(store, enabled=False, settings=runtime_settings)
 
-    manager._run_founder_poll_iteration()  # noqa: SLF001
+    manager._run_founder_poll_iteration()
     artifact = cast(dict[str, object], store.get_founder_artifact("artifact-1"))
     assert artifact["polling_status"] == "running"
     assert artifact["polling_attempts"] == 1
 
-    with store._connect() as connection:  # noqa: SLF001
+    with store._connect() as connection:
         connection.execute("update founder_artifacts set next_attempt_at = '' where artifact_id = 'artifact-1'")
-    manager._run_founder_poll_iteration()  # noqa: SLF001
+    manager._run_founder_poll_iteration()
     artifact = cast(dict[str, object], store.get_founder_artifact("artifact-1"))
     assert artifact["polling_status"] == "completed"
     assert polling_client.calls == 2
@@ -538,7 +538,7 @@ def test_founder_scheduler_advances_once_and_stops_after_terminal(monkeypatch, s
     assert watched["status"] == "completed"
     assert polling_client.calls == 2
 
-    manager._run_founder_poll_iteration()  # noqa: SLF001
+    manager._run_founder_poll_iteration()
     assert polling_client.calls == 2
 
 

@@ -139,7 +139,7 @@ def test_secret_vault_rejects_invalid_external_fernet_key(tmp_path, monkeypatch)
         SecretVault.initialize(tmp_path / "invalid-external-vault")
 
     with pytest.raises(SecretVaultError, match="WAIT_VAULT_KEY"):
-        SecretVault(tmp_path / "invalid-external-vault")._fernet()  # noqa: SLF001
+        SecretVault(tmp_path / "invalid-external-vault")._fernet()
 
 
 def test_secret_vault_migration_rejects_missing_and_malformed_payloads(tmp_path, monkeypatch) -> None:
@@ -198,10 +198,10 @@ def test_secret_vault_handles_key_read_payload_and_permission_failures(tmp_path,
     with monkeypatch.context() as patch:
         patch.setattr(Path, "read_bytes", fail_read)
         with pytest.raises(SecretVaultError, match="key could not be read"):
-            vault._fernet()  # noqa: SLF001
+            vault._fernet()
 
     vault = SecretVault.initialize(tmp_path / "payload-vault")
-    vault.secrets_path.write_bytes(vault._fernet().encrypt(b"[]"))  # noqa: SLF001
+    vault.secrets_path.write_bytes(vault._fernet().encrypt(b"[]"))
     with pytest.raises(SecretVaultError, match="payload is malformed"):
         vault.list_keys()
 

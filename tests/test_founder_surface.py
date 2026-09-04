@@ -466,7 +466,7 @@ def test_preview_marker_is_persisted_and_stale_markers_conflict(settings) -> Non
     assert second_store.get_founder_artifact_previewed_at("pack-artifact")
     with pytest.raises(FounderUploadConflictError, match="preview"):
         founder_module.require_fresh_preview(second_store, "missing-artifact")
-    with second_store._connect() as connection:  # noqa: SLF001
+    with second_store._connect() as connection:
         connection.execute(
             "update founder_artifact_previews set previewed_at = ? where artifact_id = ?",
             ("2000-01-01T00:00:00+00:00", "pack-artifact"),

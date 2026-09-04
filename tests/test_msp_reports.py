@@ -28,7 +28,7 @@ def _insert_smart_action_runs(
     *,
     client_id: str = "acme",
 ) -> None:
-    with store._connect() as connection:  # noqa: SLF001
+    with store._connect() as connection:
         for action_id, status, created_at, approval_id in runs:
             connection.execute(
                 """

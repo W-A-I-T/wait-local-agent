@@ -26,7 +26,7 @@ QUARANTINE_TICKET = "quarantine-ticket"
 def _store_with_tickets(tmp_path: Path) -> Store:
     store = Store(tmp_path / "state.db")
     ingest_local(store, Path("examples/sample_tickets/tickets.json"))
-    with store._connect() as connection:  # noqa: SLF001
+    with store._connect() as connection:
         connection.execute(
             """
             insert into tickets
@@ -127,7 +127,7 @@ def test_store_ticket_dependent_writes_raise_and_normal_writes_continue(tmp_path
 
 def test_store_remaining_quarantine_mutation_guards_raise(tmp_path: Path) -> None:
     store = _store_with_tickets(tmp_path)
-    with store._connect() as connection:  # noqa: SLF001
+    with store._connect() as connection:
         connection.execute(
             "update tickets set requester_id = 'requester-a' where id = 'TCK-1001'"
         )
@@ -143,7 +143,7 @@ def test_store_remaining_quarantine_mutation_guards_raise(tmp_path: Path) -> Non
         principal_id="operator",
         ticket_id="TCK-1001",
     )
-    with store._connect() as connection:  # noqa: SLF001
+    with store._connect() as connection:
         connection.execute(
             "update tickets set client_id = '__quarantine__' where id = 'TCK-1001'"
         )
@@ -220,7 +220,7 @@ def test_store_remaining_quarantine_mutation_guards_raise(tmp_path: Path) -> Non
 def test_orchestration_entries_skip_quarantine_before_side_effects(settings) -> None:
     store = Store(settings.data_path)
     ingest_local(store, Path("examples/sample_tickets/tickets.json"))
-    with store._connect() as connection:  # noqa: SLF001
+    with store._connect() as connection:
         connection.execute("update tickets set client_id = '__quarantine__' where id = 'TCK-1001'")
 
     class CountingTool:
@@ -389,7 +389,7 @@ def test_scheduler_quarantine_skip_has_no_tool_or_trigger_side_effect(settings) 
 
     import asyncio
 
-    asyncio.run(scheduler._run_job(scheduled))  # noqa: SLF001
+    asyncio.run(scheduler._run_job(scheduled))
 
     assert tool.calls == 0
     assert store.list_workflow_runs() == []
@@ -421,7 +421,7 @@ def test_event_retry_and_approval_resume_skip_without_claim_or_provider_call(set
         {"action_id": "ticket-follow-up", "payload": {"ticket_id": "TCK-1001"}},
         client_id="acme",
     )
-    with store._connect() as connection:  # noqa: SLF001
+    with store._connect() as connection:
         connection.execute("update tickets set client_id = '__quarantine__' where id = 'TCK-1001'")
         connection.execute(
             "update event_deliveries set status = 'failed', next_retry_at = '2026-08-16T00:00:00+00:00' where id = ?",
@@ -433,7 +433,7 @@ def test_event_retry_and_approval_resume_skip_without_claim_or_provider_call(set
     assert saved_delivery is not None
     assert saved_delivery.status == "failed"
 
-    with store._connect() as connection:  # noqa: SLF001
+    with store._connect() as connection:
         connection.execute("update approval_requests set status = 'approved' where id = ?", (approval.id,))
     assert (
         settings_store.complete_approval(
@@ -449,7 +449,7 @@ def test_event_retry_and_approval_resume_skip_without_claim_or_provider_call(set
 def test_playbook_and_scheduler_skip_quarantined_ticket(settings) -> None:
     store = Store(settings.data_path)
     ingest_local(store, Path("examples/sample_tickets/tickets.json"))
-    with store._connect() as connection:  # noqa: SLF001
+    with store._connect() as connection:
         connection.execute("update tickets set client_id = '__quarantine__' where id = 'TCK-1001'")
 
     playbook = run_msp_playbook(store, "ticket-intake-review", ticket_id="TCK-1001")
@@ -466,7 +466,7 @@ def test_playbook_and_scheduler_skip_quarantined_ticket(settings) -> None:
         {"ticket_id": "TCK-1002", "client_id": "acme"},
         client_id="acme",
     )
-    with store._connect() as connection:  # noqa: SLF001
+    with store._connect() as connection:
         connection.execute(
             "update scheduled_jobs set params_json = ? where id = ?",
             (json.dumps({"ticket_id": "TCK-1001", "client_id": "acme"}), job.id),
@@ -478,7 +478,7 @@ def test_playbook_and_scheduler_skip_quarantined_ticket(settings) -> None:
         job,
         params_json=json.dumps({"ticket_id": "TCK-1001", "client_id": "acme"}),
     )
-    asyncio.run(scheduler._run_job(scheduled))  # noqa: SLF001
+    asyncio.run(scheduler._run_job(scheduled))
 
     playbook_job = store.create_scheduled_job(
         "ticket-intake-review",
@@ -488,7 +488,7 @@ def test_playbook_and_scheduler_skip_quarantined_ticket(settings) -> None:
         job_kind="playbook",
     )
     asyncio.run(
-        scheduler._run_playbook_job(  # noqa: SLF001
+        scheduler._run_playbook_job(
             replace(
                 playbook_job,
                 params_json=json.dumps({"ticket_id": "TCK-1001", "client_id": "acme"}),
@@ -508,7 +508,7 @@ def test_playbook_and_scheduler_skip_quarantined_ticket(settings) -> None:
         entity_id="TCK-1002",
     )
     asyncio.run(
-        scheduler._run_agent_job(  # noqa: SLF001
+        scheduler._run_agent_job(
             replace(agent_job, entity_id="TCK-1001"),
             {},
             "acme",
@@ -538,7 +538,7 @@ def test_agent_run_and_resume_skip_quarantine_without_side_effects(settings) -> 
         updated_at="",
     )
 
-    with store._connect() as connection:  # noqa: SLF001
+    with store._connect() as connection:
         connection.execute("update tickets set client_id = '__quarantine__' where id = 'TCK-1001'")
 
     with pytest.raises(QuarantinedTicketError):
@@ -593,7 +593,7 @@ def test_smart_action_quarantine_guards_block_invoke_and_approval_update(setting
         {"action_id": "ticket-follow-up", "payload": {"ticket_id": "TCK-1001"}},
         client_id="acme",
     )
-    with store._connect() as connection:  # noqa: SLF001
+    with store._connect() as connection:
         connection.execute("update tickets set client_id = '__quarantine__' where id = 'TCK-1001'")
     with pytest.raises(QuarantinedTicketError):
         service.update_approval(

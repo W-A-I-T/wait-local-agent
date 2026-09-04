@@ -12,7 +12,7 @@ from wait_local_agent.store import Store
 
 def _seed_client_ticket(store: Store) -> None:
     ingest_local(store, Path("examples/sample_tickets/tickets.json"))
-    with store._connect() as connection:  # noqa: SLF001
+    with store._connect() as connection:
         connection.execute("update tickets set client_id = ?", ("acme",))
 
 

@@ -80,7 +80,7 @@ def test_v4_rebuild_preserves_asset_ids_observations_indexes_and_counts(tmp_path
     _build_pre_v4_database(path)
 
     store = Store(path)
-    with store._connect() as connection:  # noqa: SLF001
+    with store._connect() as connection:
         assert connection.execute("select count(*) from canonical_assets").fetchone()[0] == 2
         assert connection.execute("select count(*) from asset_observations").fetchone()[0] == 1
         assert {
@@ -98,7 +98,7 @@ def test_v4_rebuild_preserves_asset_ids_observations_indexes_and_counts(tmp_path
         before = connection.execute(
             "select id, canonical_id, client_id from canonical_assets order by id"
         ).fetchall()
-        store._apply_canonical_tenant_unique_migration(connection)  # noqa: SLF001
+        store._apply_canonical_tenant_unique_migration(connection)
         assert connection.execute(
             "select id, canonical_id, client_id from canonical_assets order by id"
         ).fetchall() == before
@@ -215,7 +215,7 @@ def test_canonical_asset_upsert_and_lookup_are_tenant_aware(settings) -> None:
     unscoped = store.get_canonical_asset_by_canonical_id("shared-asset")
     assert unscoped is not None
     assert unscoped.id == first.id
-    with store._connect() as connection:  # noqa: SLF001
+    with store._connect() as connection:
         assert connection.execute(
             "select count(*) from canonical_assets where canonical_id = 'shared-asset'"
         ).fetchone()[0] == 2

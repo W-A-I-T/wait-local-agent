@@ -357,14 +357,14 @@ def test_remaining_sweep_boundaries_and_default_builder(tmp_path: Path, monkeypa
         store,
         base_settings=cast(Any, SimpleNamespace(connector_timeout_seconds=2.0)),
     )
-    assert poller._build_client(instance_id) is sentinel  # noqa: SLF001
+    assert poller._build_client(instance_id) is sentinel
 
 
 def test_internal_lease_and_cursor_reads_fail_closed(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     store, instance_id = _seed_store(tmp_path)
     poller = _poller(store, _HaloPages([]))
     monkeypatch.setattr(store, "get_sync_cursor", lambda *_args: (_ for _ in ()).throw(RuntimeError("secret")))
-    assert poller._read_cursor(instance_id) is None  # noqa: SLF001
+    assert poller._read_cursor(instance_id) is None
 
     assert store.claim_poll_lease(
         instance_id,
@@ -372,16 +372,16 @@ def test_internal_lease_and_cursor_reads_fail_closed(tmp_path: Path, monkeypatch
         token="token",
         ttl_seconds=63,
         now=NOW,
-    ) == PollLeaseClaimResult.GRANTED  # noqa: SLF001
-    assert poller._holds_lease(instance_id, "wrong") is False  # noqa: SLF001
-    with store._connect() as connection:  # noqa: SLF001
+    ) == PollLeaseClaimResult.GRANTED
+    assert poller._holds_lease(instance_id, "wrong") is False
+    with store._connect() as connection:
         connection.execute(
             "update sync_cursors set lease_expires_at = ? where connector_instance_id = ?",
             (NOW.replace("+00:00", ""), instance_id),
         )
-    assert poller._holds_lease(instance_id, "token") is True  # noqa: SLF001
+    assert poller._holds_lease(instance_id, "token") is True
     monkeypatch.setattr(store, "_connect", lambda: (_ for _ in ()).throw(RuntimeError("secret")))
-    assert poller._holds_lease(instance_id, "token") is False  # noqa: SLF001
+    assert poller._holds_lease(instance_id, "token") is False
 
 
 def test_invalid_retry_and_finish_paths_are_handled(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -395,7 +395,7 @@ def test_invalid_retry_and_finish_paths_are_handled(tmp_path: Path, monkeypatch:
             return 0.0 if self.calls == 1 else 2.0
 
     transient = _HaloPages([_response([], raw_count=0, http_status=503, retry_after=-1)])
-    clipped = _poller(store, transient, _ExpiredClock())._fetch_with_retries(  # noqa: SLF001
+    clipped = _poller(store, transient, _ExpiredClock())._fetch_with_retries(
         poller_module.ProviderTicketAdapter.for_connector("halopsa", instance_id),
         transient,
         page_number=1,
@@ -405,7 +405,7 @@ def test_invalid_retry_and_finish_paths_are_handled(tmp_path: Path, monkeypatch:
     )
     assert clipped.result == "invalid_retry_after"
     valid_transient = _HaloPages([_response([], raw_count=0, http_status=503, retry_after=0)])
-    clipped = _poller(store, valid_transient, _ExpiredClock())._fetch_with_retries(  # noqa: SLF001
+    clipped = _poller(store, valid_transient, _ExpiredClock())._fetch_with_retries(
         poller_module.ProviderTicketAdapter.for_connector("halopsa", instance_id),
         valid_transient,
         page_number=1,
@@ -420,7 +420,7 @@ def test_invalid_retry_and_finish_paths_are_handled(tmp_path: Path, monkeypatch:
         "finish_poll_lease",
         lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("secret")),
     )
-    finished = poller._finish(  # noqa: SLF001
+    finished = poller._finish(
         poller_module.PollSummary(instance_id, 0, 0, 0, "failed", "poll_error"),
         token="token",
         previous_cursor=None,
@@ -443,25 +443,25 @@ def test_more_bound_and_helper_validation_paths(tmp_path: Path) -> None:
             " ", max_pages=1, page_size=1, deadline_seconds=1, lease_ttl_seconds=63
         )
 
-    assert poller_module._page_failure(  # noqa: SLF001
+    assert poller_module._page_failure(
         poller_module.ProviderPage([], "ready", 0, -1, 200, None)
     ) == "malformed_response"
-    assert poller_module._page_failure(  # noqa: SLF001
+    assert poller_module._page_failure(
         poller_module.ProviderPage([], "ready", 0, 0, cast(Any, "200"), None)
     ) == "malformed_response"
-    assert poller_module._exception_reason(HaloReadError("x")) == "provider_failure"  # noqa: SLF001
+    assert poller_module._exception_reason(HaloReadError("x")) == "provider_failure"
     try:
         raise HaloReadError("x") from httpx.ReadTimeout("timeout")
     except HaloReadError as error:
-        assert poller_module._exception_reason(error) == "timeout"  # noqa: SLF001
-    assert poller_module._cursor_page(cast(Any, type("Cursor", (), {"cursor_value": "0"})())) is None  # noqa: SLF001
+        assert poller_module._exception_reason(error) == "timeout"
+    assert poller_module._cursor_page(cast(Any, type("Cursor", (), {"cursor_value": "0"})())) is None
 
 
 def test_retry_exception_paths_are_bounded_and_deadline_clipped(tmp_path: Path) -> None:
     store, _ = _seed_store(tmp_path)
     poller = _poller(store, _HaloPages([]))
     adapter = _RaisingAdapter(httpx.ReadTimeout("timeout"))
-    result = poller._fetch_with_retries(  # noqa: SLF001
+    result = poller._fetch_with_retries(
         adapter,
         object(),
         page_number=1,
@@ -471,7 +471,7 @@ def test_retry_exception_paths_are_bounded_and_deadline_clipped(tmp_path: Path) 
     )
     assert result.result == "timeout" and adapter.calls == 4
 
-    clipped = _poller(store, _HaloPages([]), _Clock(monotonic_value=2.0))._fetch_with_retries(  # noqa: SLF001
+    clipped = _poller(store, _HaloPages([]), _Clock(monotonic_value=2.0))._fetch_with_retries(
         _RaisingAdapter(httpx.ReadTimeout("timeout")),
         object(),
         page_number=1,
@@ -484,31 +484,31 @@ def test_retry_exception_paths_are_bounded_and_deadline_clipped(tmp_path: Path) 
 
 def test_private_taxonomy_and_clock_helpers() -> None:
     page = poller_module.ProviderPage([], "ready", 0, 0, 200, None)
-    assert poller_module._page_failure(page) is None  # noqa: SLF001
-    assert poller_module._page_failure(poller_module.ProviderPage([], "ready", 0, 0, 302, None)) == "provider_failure"  # noqa: SLF001
-    assert poller_module._page_failure(  # noqa: SLF001
+    assert poller_module._page_failure(page) is None
+    assert poller_module._page_failure(poller_module.ProviderPage([], "ready", 0, 0, 302, None)) == "provider_failure"
+    assert poller_module._page_failure(
         poller_module.ProviderPage([], "configured", 0, 0, 200, None)
     ) == "malformed_response"
-    assert poller_module._page_failure(  # noqa: SLF001
+    assert poller_module._page_failure(
         poller_module.ProviderPage([], "ready", -1, 0, 200, None)
     ) == "malformed_response"
-    assert poller_module._page_failure(  # noqa: SLF001
+    assert poller_module._page_failure(
         poller_module.ProviderPage([], "ready", 0, 0, 200, float("nan"))
     ) == "invalid_retry_after"
-    assert poller_module._transient_page(poller_module.ProviderPage([], "blocked", 0, 0, None, None))  # noqa: SLF001
-    assert poller_module._exception_reason(HaloReadError("x", http_status=408)) == "request_timeout"  # noqa: SLF001
-    assert poller_module._exception_reason(ConnectWiseReadError("x", http_status=429)) == "rate_limited"  # noqa: SLF001
-    assert poller_module._exception_reason(HaloReadError("x", http_status=503)) == "provider_5xx"  # noqa: SLF001
-    assert poller_module._exception_reason(httpx.ConnectError("x")) == "connect_fail"  # noqa: SLF001
-    assert poller_module._exception_reason(ConnectorFactoryError("x")) == "factory_error"  # noqa: SLF001
-    assert poller_module._exception_reason(ValueError("x")) == "provider_failure"  # noqa: SLF001
-    assert poller_module._retry_after_value(120.0) == 60.0  # noqa: SLF001
-    assert poller_module._retry_after_value(-1.0) is poller_module._INVALID_RETRY_AFTER  # noqa: SLF001
-    assert poller_module._valid_retry_after(True) is False  # noqa: SLF001
-    assert poller_module._finite_positive(1.0) and not poller_module._finite_positive(False)  # noqa: SLF001
-    assert poller_module._finite_positive_bounded(1.0, 1.0)  # noqa: SLF001
-    assert poller_module._cursor_page(None) is None  # noqa: SLF001
-    assert poller_module._cursor_page(cast(Any, type("Cursor", (), {"cursor_value": "bad"})())) is None  # noqa: SLF001
+    assert poller_module._transient_page(poller_module.ProviderPage([], "blocked", 0, 0, None, None))
+    assert poller_module._exception_reason(HaloReadError("x", http_status=408)) == "request_timeout"
+    assert poller_module._exception_reason(ConnectWiseReadError("x", http_status=429)) == "rate_limited"
+    assert poller_module._exception_reason(HaloReadError("x", http_status=503)) == "provider_5xx"
+    assert poller_module._exception_reason(httpx.ConnectError("x")) == "connect_fail"
+    assert poller_module._exception_reason(ConnectorFactoryError("x")) == "factory_error"
+    assert poller_module._exception_reason(ValueError("x")) == "provider_failure"
+    assert poller_module._retry_after_value(120.0) == 60.0
+    assert poller_module._retry_after_value(-1.0) is poller_module._INVALID_RETRY_AFTER
+    assert poller_module._valid_retry_after(True) is False
+    assert poller_module._finite_positive(1.0) and not poller_module._finite_positive(False)
+    assert poller_module._finite_positive_bounded(1.0, 1.0)
+    assert poller_module._cursor_page(None) is None
+    assert poller_module._cursor_page(cast(Any, type("Cursor", (), {"cursor_value": "bad"})())) is None
 
 
 def test_datetime_clock_and_default_timeout_paths(tmp_path: Path) -> None:
@@ -520,13 +520,13 @@ def test_datetime_clock_and_default_timeout_paths(tmp_path: Path) -> None:
         client_builder=lambda *_args: object(),
         wall_clock=lambda: datetime(2026, 8, 16, 12, 0, 0),
     )
-    assert naive._now_text().endswith("+00:00")  # noqa: SLF001
+    assert naive._now_text().endswith("+00:00")
     aware = IngestionPoller(
         store,
         client_builder=lambda *_args: object(),
         wall_clock=lambda: datetime.now().astimezone(),
     )
-    assert "T" in aware._now_text()  # noqa: SLF001
+    assert "T" in aware._now_text()
 
 
 def test_finish_and_audit_failures_are_best_effort(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -566,7 +566,7 @@ def test_fencing_aborts_before_the_next_page_write(tmp_path: Path, monkeypatch: 
         nonlocal writes
         writes += 1
         result = original_ingest(records, connector_instance_id=connector_instance_id)
-        with base._connect() as connection:  # noqa: SLF001
+        with base._connect() as connection:
             connection.execute(
                 "update sync_cursors set lease_expires_at = ? where connector_instance_id = ?",
                 ((datetime.fromisoformat(NOW) - timedelta(seconds=1)).isoformat(), connector_instance_id),

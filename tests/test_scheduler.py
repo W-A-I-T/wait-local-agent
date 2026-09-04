@@ -68,8 +68,8 @@ def test_scheduler_manager_registers_and_reloads_persisted_jobs(tmp_path: Path) 
         assert len(jobs) == 1
         assert jobs[0].id == scheduled_job.id
         assert jobs[0].next_run_at is not None
-        assert reloaded_manager._scheduler is not None  # noqa: SLF001
-        live_job = reloaded_manager._scheduler.get_job(  # noqa: SLF001
+        assert reloaded_manager._scheduler is not None
+        live_job = reloaded_manager._scheduler.get_job(
             reloaded_manager._job_identity(scheduled_job.id)
         )
         assert live_job is not None
@@ -94,14 +94,14 @@ def test_scheduler_registers_bounded_event_retry_worker(tmp_path: Path, settings
         manager = SchedulerManager(store, enabled=True, event_dispatcher=dispatcher)
         manager.start()
 
-        assert manager._scheduler is not None  # noqa: SLF001
-        retry_job = manager._scheduler.get_job(manager._retry_job_identity())  # noqa: SLF001
+        assert manager._scheduler is not None
+        retry_job = manager._scheduler.get_job(manager._retry_job_identity())
         assert retry_job is not None
-        founder_job = manager._scheduler.get_job(manager._founder_poll_job_identity())  # noqa: SLF001
+        founder_job = manager._scheduler.get_job(manager._founder_poll_job_identity())
         assert founder_job is not None
         assert founder_job.max_instances == 1
         assert founder_job.coalesce is True
-        manager._retry_due_event_deliveries()  # noqa: SLF001
+        manager._retry_due_event_deliveries()
         manager.shutdown()
 
     asyncio.run(scenario())
@@ -125,15 +125,15 @@ def test_founder_polling_idle_ticks_do_not_write_audit_rows(
     async def scenario() -> None:
         manager.start()
 
-        assert manager._scheduler is not None  # noqa: SLF001
-        founder_job = manager._scheduler.get_job(manager._founder_poll_job_identity())  # noqa: SLF001
+        assert manager._scheduler is not None
+        founder_job = manager._scheduler.get_job(manager._founder_poll_job_identity())
         if case in {"demo", "offline"}:
             assert founder_job is None
         else:
             assert founder_job is not None
 
         for _ in range(10):
-            manager._run_founder_poll_iteration()  # noqa: SLF001
+            manager._run_founder_poll_iteration()
 
         assert store.list_audit_events() == []
         manager.shutdown()
@@ -153,7 +153,7 @@ def test_founder_poll_due_handles_empty_invalid_naive_and_aware_values() -> None
 def test_scheduler_job_callable_creates_same_approval_path_as_manual_run(tmp_path: Path, settings) -> None:
     db_path = tmp_path / "state.db"
     _seed_tickets(db_path)
-    with Store(db_path)._connect() as connection:  # noqa: SLF001
+    with Store(db_path)._connect() as connection:
         connection.execute("update tickets set client_id = 'acme'")
 
     async def scenario() -> None:
@@ -196,7 +196,7 @@ def test_scheduler_job_callable_creates_same_approval_path_as_manual_run(tmp_pat
 def test_scheduler_playbook_job_reuses_bounded_playbook_and_approval_path(tmp_path: Path, settings) -> None:
     db_path = tmp_path / "playbook-schedule.db"
     _seed_tickets(db_path)
-    with Store(db_path)._connect() as connection:  # noqa: SLF001
+    with Store(db_path)._connect() as connection:
         connection.execute("update tickets set client_id = 'acme'")
 
     async def scenario() -> None:
@@ -210,7 +210,7 @@ def test_scheduler_playbook_job_reuses_bounded_playbook_and_approval_path(tmp_pa
             job_kind="playbook",
         )
 
-        await manager._build_job_callable(scheduled_job)()  # noqa: SLF001
+        await manager._build_job_callable(scheduled_job)()
 
         events = store.list_audit_events(client_id="acme")
         assert any(event.event_type == "msp.playbook.started" for event in events)
@@ -225,7 +225,7 @@ def test_scheduled_workflow_completion_triggers_tenant_scoped_event_agent(tmp_pa
     db_path = tmp_path / "completion.db"
     _seed_tickets(db_path)
     store = Store(db_path)
-    with store._connect() as connection:  # noqa: SLF001
+    with store._connect() as connection:
         connection.execute("update tickets set client_id = 'acme'")
     service = AgentService(store, settings, SmartActionService(store, settings))
     definition = service.create(
@@ -388,7 +388,7 @@ def test_scheduler_pause_resume_remove_update_store_and_live_state(tmp_path: Pat
             {"ticket_id": "TCK-1001"},
         )
         assert manager._scheduler is not None
-        manager._scheduler.remove_job(manager._job_identity(unregistered.id or 0))  # noqa: SLF001
+        manager._scheduler.remove_job(manager._job_identity(unregistered.id or 0))
         manager.pause(unregistered.id or 0)
         manager.resume(unregistered.id or 0)
         manager.remove(unregistered.id or 0)
@@ -435,7 +435,7 @@ def test_scheduler_validation_supports_interval_and_one_time_triggers() -> None:
         validate_schedule("unknown", "", None, None)
     with pytest.raises(ValueError, match="valid IANA timezone"):
         validate_schedule("cron", "0 9 * * *", None, None, "Not/AZone")
-    assert _schedule_trigger(  # noqa: SLF001
+    assert _schedule_trigger(
         ScheduledJob(
             id=1,
             template_id="template",
@@ -448,7 +448,7 @@ def test_scheduler_validation_supports_interval_and_one_time_triggers() -> None:
             interval_seconds=60,
         )
     ) is not None
-    timezone_trigger = _schedule_trigger(  # noqa: SLF001
+    timezone_trigger = _schedule_trigger(
         ScheduledJob(
             id=3,
             template_id="template",
@@ -480,7 +480,7 @@ def test_scheduler_validation_rejects_cross_type_and_malformed_schedule_values()
         validate_schedule("once", "", None, "not-a-timestamp")
     with pytest.raises(ValueError, match="schedule_type"):
         validate_schedule("unsupported", "", None, None)
-    assert _schedule_trigger(  # noqa: SLF001
+    assert _schedule_trigger(
         ScheduledJob(
             id=2,
             template_id="template",
@@ -529,7 +529,7 @@ def test_scheduler_graph_sync_validates_runs_and_audits(tmp_path: Path, monkeypa
         return function(*args, **kwargs)
 
     monkeypatch.setattr("wait_local_agent.scheduler.asyncio.to_thread", run_in_thread)
-    asyncio.run(manager._run_job(scheduled_job))  # noqa: SLF001
+    asyncio.run(manager._run_job(scheduled_job))
 
     assert calls == ["client-a"]
     events = store.list_audit_events()
@@ -595,7 +595,7 @@ def test_scheduler_baseline_snapshot_validates_registers_triggers_and_sanitizes_
         return function(*args, **kwargs)
 
     monkeypatch.setattr("wait_local_agent.scheduler.asyncio.to_thread", run_in_thread)
-    asyncio.run(manager._run_job(scheduled_job))  # noqa: SLF001
+    asyncio.run(manager._run_job(scheduled_job))
 
     assert calls == ["client-a"]
     completed = next(
@@ -613,7 +613,7 @@ def test_scheduler_baseline_snapshot_validates_registers_triggers_and_sanitizes_
         enabled=False,
         baseline_snapshot_runner=fail_baseline_snapshot,
     )
-    asyncio.run(failing_manager._run_job(scheduled_job))  # noqa: SLF001
+    asyncio.run(failing_manager._run_job(scheduled_job))
 
     events = store.list_audit_events()
     failed = next(
@@ -631,7 +631,7 @@ def test_scheduler_baseline_snapshot_validates_registers_triggers_and_sanitizes_
 def test_scheduler_skips_quarantined_workflow_playbook_and_agent_jobs(tmp_path: Path) -> None:
     store = Store(tmp_path / "quarantine-skip.db")
     manager = SchedulerManager(store, enabled=False)
-    manager._is_quarantined_ticket = lambda *_args: True  # type: ignore[method-assign]  # noqa: SLF001
+    manager._is_quarantined_ticket = lambda *_args: True  # type: ignore[method-assign]
 
     workflow = ScheduledJob(
         id=1, template_id="template", cron="0 9 * * *", params_json=json.dumps({"ticket_id": "T-1"}),
@@ -641,9 +641,9 @@ def test_scheduler_skips_quarantined_workflow_playbook_and_agent_jobs(tmp_path: 
     agent = replace(workflow, id=3, job_kind="agent", agent_id="agent-1", entity_id="T-1")
 
     async def scenario() -> None:
-        await manager._run_job(workflow)  # noqa: SLF001
-        await manager._run_job(playbook)  # noqa: SLF001
-        await manager._run_job(agent)  # noqa: SLF001
+        await manager._run_job(workflow)
+        await manager._run_job(playbook)
+        await manager._run_job(agent)
 
     asyncio.run(scenario())
     assert store.list_audit_events() == []
@@ -663,7 +663,7 @@ def test_scheduler_workflow_and_playbook_input_failures_are_audited(
     async def scenario() -> None:
         for job, message in ((workflow, "workflow input"), (playbook, "playbook input")):
             with pytest.raises(ValueError, match=message):
-                await manager._run_job(job)  # noqa: SLF001
+                await manager._run_job(job)
 
     asyncio.run(scenario())
     assert len([e for e in store.list_audit_events() if e.event_type == "scheduled_job.trigger_failed"]) == 2
@@ -674,7 +674,7 @@ def test_scheduler_workflow_and_playbook_input_failures_are_audited(
     monkeypatch.setattr("wait_local_agent.scheduler.run_msp_playbook", fail_playbook)
     failing = replace(playbook, id=3, params_json=json.dumps({"ticket_id": "T-1", "input": {}}))
     with pytest.raises(RuntimeError):
-        asyncio.run(manager._run_job(failing))  # noqa: SLF001
+        asyncio.run(manager._run_job(failing))
     event = next(e for e in store.list_audit_events() if e.subject_id == "3")
     assert "secret" not in event.detail
 
@@ -691,15 +691,15 @@ def test_scheduler_deterministic_noop_and_validation_edges(tmp_path: Path, monke
         "wait_local_agent.scheduler.run_workflow_template",
         lambda *_args, **_kwargs: SimpleNamespace(id=None),
     )
-    asyncio.run(manager._run_job(job))  # noqa: SLF001
-    manager._dispatch_completion(  # noqa: SLF001
+    asyncio.run(manager._run_job(job))
+    manager._dispatch_completion(
         run_id=None,
         ticket_id="T-1",
         template_id="template",
         status="completed",
         actor="scheduler",
     )
-    manager._retry_due_event_deliveries()  # noqa: SLF001
+    manager._retry_due_event_deliveries()
 
     with pytest.raises(ValueError, match="unsupported scheduled job kind"):
         _validate_schedule_target("unknown", "", None, None)
@@ -708,7 +708,7 @@ def test_scheduler_deterministic_noop_and_validation_edges(tmp_path: Path, monke
     with pytest.raises(ValueError, match="valid IANA timezone"):
         validate_timezone("")
     with pytest.raises(ValueError, match="scheduled report type"):
-        asyncio.run(manager._run_report_job(job, {"client_id": "acme", "period_days": 1}, "acme"))  # noqa: SLF001
+        asyncio.run(manager._run_report_job(job, {"client_id": "acme", "period_days": 1}, "acme"))
     with pytest.raises(ValueError, match="follow_up_after_days"):
         validate_scheduled_report_params({"client_id": "acme", "period_days": 1, "follow_up_after_days": 0})
     with pytest.raises(ValueError, match="period_days"):
@@ -777,11 +777,11 @@ def test_scheduler_baseline_and_completion_guards_are_noops(tmp_path: Path, capl
     missing_scope = replace(missing_runner, id=2, entity_id=" ")
 
     with caplog.at_level(logging.WARNING):
-        asyncio.run(manager._run_baseline_snapshot_job(missing_runner))  # noqa: SLF001
-        asyncio.run(manager._run_baseline_snapshot_job(missing_scope))  # noqa: SLF001
+        asyncio.run(manager._run_baseline_snapshot_job(missing_runner))
+        asyncio.run(manager._run_baseline_snapshot_job(missing_scope))
     assert caplog.messages.count("Scheduled baseline snapshot skipped: runner or client scope is not configured") == 2
 
-    manager._dispatch_completion(  # noqa: SLF001
+    manager._dispatch_completion(
         run_id=None, ticket_id="T-1", template_id="template", status="completed", actor="scheduler"
     )
     store.set_app_config("backup.retention_count", "not-an-integer")
@@ -845,7 +845,7 @@ def test_scheduler_connector_poll_runs_in_thread_and_audits_status(
         lambda *_args: pytest.fail("connector polls must not run the ticket quarantine guard"),
     )
 
-    asyncio.run(manager._run_job(scheduled_job))  # noqa: SLF001
+    asyncio.run(manager._run_job(scheduled_job))
 
     assert poller.calls == [
         (
@@ -876,7 +876,7 @@ def test_scheduler_connector_poll_without_poller_is_safe_noop(tmp_path: Path, ca
         entity_id="connector-1",
     )
 
-    asyncio.run(manager._run_job(scheduled_job))  # noqa: SLF001
+    asyncio.run(manager._run_job(scheduled_job))
 
     assert "ingestion poller is not configured" in caplog.text
 
@@ -893,9 +893,9 @@ def test_scheduler_does_not_replay_expired_one_time_jobs(tmp_path: Path) -> None
             schedule_type="once",
             run_at="2020-01-01T00:00:00+00:00",
         )
-        manager._register_live_job(expired)  # noqa: SLF001
-        assert manager._scheduler is not None  # noqa: SLF001
-        assert manager._scheduler.get_job(manager._job_identity(expired.id or 0)) is None  # noqa: SLF001
+        manager._register_live_job(expired)
+        assert manager._scheduler is not None
+        assert manager._scheduler.get_job(manager._job_identity(expired.id or 0)) is None
         manager.shutdown()
 
     asyncio.run(scenario())
@@ -906,7 +906,7 @@ def test_scheduler_ignores_jobs_without_runtime_identity(tmp_path: Path) -> None
     manager = SchedulerManager(store, enabled=True)
     async def scenario() -> None:
         manager.start()
-        manager._register_live_job(  # noqa: SLF001
+        manager._register_live_job(
             ScheduledJob(
                 id=None,
                 template_id="template",
@@ -967,7 +967,7 @@ def test_scheduler_skips_agent_when_execution_window_is_closed(settings, tmp_pat
     db_path = tmp_path / "state.db"
     _seed_tickets(db_path)
     store = Store(db_path)
-    with store._connect() as connection:  # noqa: SLF001
+    with store._connect() as connection:
         connection.execute("update tickets set client_id = 'acme'")
     agent_service = AgentService(store, settings, SmartActionService(store, settings))
     now = datetime.now(UTC)
@@ -1072,7 +1072,7 @@ def test_inactive_ticket_follow_up_executes_local_note_only_after_approval(
 ) -> None:
     store = Store(tmp_path / "follow-up.db")
     ingest_local(store, Path("examples/sample_tickets/tickets.json"))
-    with store._connect() as connection:  # noqa: SLF001
+    with store._connect() as connection:
         connection.execute("update tickets set client_id = 'acme'")
     service = SmartActionService(store, replace(settings, allow_write_actions=True))
 
@@ -1147,7 +1147,7 @@ def test_inactive_ticket_follow_up_preserves_draft_fallback_without_executor(
 def test_p1_alert_executes_local_note_only_after_approval(settings, tmp_path: Path) -> None:
     store = Store(tmp_path / "p1-alert.db")
     ingest_local(store, Path("examples/sample_tickets/tickets.json"))
-    with store._connect() as connection:  # noqa: SLF001
+    with store._connect() as connection:
         connection.execute("update tickets set client_id = 'acme'")
     service = SmartActionService(store, replace(settings, allow_write_actions=True))
 
@@ -1185,7 +1185,7 @@ def test_scheduler_runs_bounded_client_report_job(settings, tmp_path: Path) -> N
     db_path = tmp_path / "scheduled-report.db"
     store = Store(db_path)
     ingest_local(store, Path("examples/sample_tickets/tickets.json"))
-    with store._connect() as connection:  # noqa: SLF001
+    with store._connect() as connection:
         connection.execute("update tickets set client_id = 'acme'")
     manager = SchedulerManager(
         store,
@@ -1212,9 +1212,9 @@ def test_scheduler_runs_bounded_client_report_job(settings, tmp_path: Path) -> N
     )
 
     async def scenario() -> None:
-        await manager._build_job_callable(scheduled_job)()  # noqa: SLF001
-        await manager._build_job_callable(automation_job)()  # noqa: SLF001
-        await manager._build_job_callable(recurring_job)()  # noqa: SLF001
+        await manager._build_job_callable(scheduled_job)()
+        await manager._build_job_callable(automation_job)()
+        await manager._build_job_callable(recurring_job)()
 
     asyncio.run(scenario())
 
@@ -1246,7 +1246,7 @@ def test_scheduler_report_failure_is_audited_and_does_not_create_report(tmp_path
 
     async def scenario() -> None:
         with pytest.raises(RuntimeError, match="not configured"):
-            await manager._build_job_callable(scheduled_job)()  # noqa: SLF001
+            await manager._build_job_callable(scheduled_job)()
 
     asyncio.run(scenario())
 
@@ -1273,7 +1273,7 @@ def test_scheduler_report_failure_is_audited_and_does_not_create_report(tmp_path
 
     async def missing_client_scenario() -> None:
         with pytest.raises(ValueError, match="include client_id"):
-            await manager._build_job_callable(missing_client_job)()  # noqa: SLF001
+            await manager._build_job_callable(missing_client_job)()
 
     asyncio.run(missing_client_scenario())
 
@@ -1299,7 +1299,7 @@ def test_scheduled_report_period_validation_covers_explicit_dates() -> None:
 def test_tool_backed_workflow_reuses_smart_action_contract(settings) -> None:
     store = Store(settings.data_path)
     _seed_tickets(settings.data_path)
-    with store._connect() as connection:  # noqa: SLF001
+    with store._connect() as connection:
         connection.execute("update tickets set client_id = ? where id = ?", ("acme", "TCK-1001"))
     service = SmartActionService(store, settings)
 
@@ -1375,7 +1375,7 @@ def test_m365_workflow_templates_reuse_approval_gated_actions(
 
     store = Store(settings.data_path)
     _seed_tickets(settings.data_path)
-    with store._connect() as connection:  # noqa: SLF001
+    with store._connect() as connection:
         connection.execute("update tickets set client_id = ? where id = ?", ("acme", "TCK-1001"))
     service = SmartActionService(
         store,
@@ -1414,7 +1414,7 @@ def test_msp_review_templates_reuse_existing_local_tools(
 ) -> None:
     store = Store(settings.data_path)
     _seed_tickets(settings.data_path)
-    with store._connect() as connection:  # noqa: SLF001
+    with store._connect() as connection:
         connection.execute("update tickets set client_id = ? where id = ?", ("acme", "TCK-1001"))
     service = SmartActionService(store, settings)
 
@@ -1453,7 +1453,7 @@ def test_msp_review_templates_reuse_existing_local_tools(
 def test_threshold_review_templates_pass_bounded_payloads(settings, template_id, payload, tool_id) -> None:
     store = Store(settings.data_path)
     _seed_tickets(settings.data_path)
-    with store._connect() as connection:  # noqa: SLF001
+    with store._connect() as connection:
         connection.execute("update tickets set client_id = ? where id = ?", ("acme", "TCK-1001"))
     service = SmartActionService(store, settings)
 
@@ -1477,7 +1477,7 @@ def test_threshold_review_templates_pass_bounded_payloads(settings, template_id,
 def test_workflow_payload_requires_declared_fields_and_preserves_client_scope(settings) -> None:
     store = Store(settings.data_path)
     _seed_tickets(settings.data_path)
-    with store._connect() as connection:  # noqa: SLF001
+    with store._connect() as connection:
         connection.execute("update tickets set client_id = ? where id = ?", ("acme", "TCK-1001"))
 
     with pytest.raises(ValueError, match="thresholds_minutes"):
@@ -1526,7 +1526,7 @@ def test_workflow_payload_requires_declared_fields_and_preserves_client_scope(se
 def test_workflow_payload_rejects_unsafe_or_unbounded_values(settings, payload, error) -> None:
     store = Store(settings.data_path)
     _seed_tickets(settings.data_path)
-    with store._connect() as connection:  # noqa: SLF001
+    with store._connect() as connection:
         connection.execute("update tickets set client_id = ? where id = ?", ("acme", "TCK-1001"))
 
     with pytest.raises(ValueError, match=error):
@@ -1556,7 +1556,7 @@ def test_scheduled_threshold_workflow_uses_bounded_input_payload(settings, tmp_p
     db_path = tmp_path / "threshold-schedule.db"
     _seed_tickets(db_path)
     store = Store(db_path)
-    with store._connect() as connection:  # noqa: SLF001
+    with store._connect() as connection:
         connection.execute("update tickets set client_id = ? where id = ?", ("acme", "TCK-1001"))
 
     async def scenario() -> None:
@@ -1655,7 +1655,7 @@ def test_scheduled_agent_uses_persisted_definition_and_records_run(settings, tmp
     db_path = tmp_path / "agent-schedule.db"
     store = Store(db_path)
     _seed_tickets(db_path)
-    with store._connect() as connection:  # noqa: SLF001
+    with store._connect() as connection:
         connection.execute("update tickets set client_id = ?", ("acme",))
     agent_service = AgentService(store, settings, SmartActionService(store, settings))
     definition = agent_service.create(
@@ -1843,7 +1843,7 @@ def test_scheduled_agent_validation_and_failure_paths_are_audited(settings, tmp_
         with pytest.raises(Exception, match="ticket was not found"):
             await manager._build_job_callable(failed_run)()
 
-        with store._connect() as connection:  # noqa: SLF001
+        with store._connect() as connection:
             connection.execute("update tickets set client_id = ?", ("acme",))
         replacement_job = manager.register(
             "",

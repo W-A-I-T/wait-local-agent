@@ -844,7 +844,7 @@ def run_msp_playbook(
                     "evidence_status": report.evidence_status,
                 }
             )
-    except Exception as exc:  # noqa: BLE001 - preserve a bounded failed playbook result.
+    except Exception as exc:  # preserve a bounded failed playbook result.
         status = "failed"
         stopped_after_step = stopped_after_step or (
             playbook.steps[len(results)].id if len(results) < len(playbook.steps) else None

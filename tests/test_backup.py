@@ -49,7 +49,7 @@ def test_encrypted_backup_restore_round_trip(settings, tmp_path: Path) -> None:
     )
 
     assert encrypted_backup.read_bytes() != original_bytes
-    with Store(restored_path)._connect() as connection:  # noqa: SLF001
+    with Store(restored_path)._connect() as connection:
         assert connection.execute("select count(*) from tickets").fetchone()[0] > 0
         assert connection.execute("pragma integrity_check").fetchone()[0] == "ok"
 

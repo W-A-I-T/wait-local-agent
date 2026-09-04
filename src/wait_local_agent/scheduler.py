@@ -316,7 +316,7 @@ class SchedulerManager:
 
         try:
             config = resolve_open_config(settings, self._store)
-        except Exception:  # noqa: BLE001 - optional founder polling must not affect the scheduler
+        except Exception:  # optional founder polling must not affect the scheduler
             self._log_founder_poll_idle("launch_passport_not_configured")
             return
 
@@ -388,7 +388,7 @@ class SchedulerManager:
             destination = str(destination_path)
             size_bytes = destination_path.stat().st_size
             status = "succeeded"
-        except Exception as exc:  # noqa: BLE001 - persisted failure is intentionally generic
+        except Exception as exc:  # persisted failure is intentionally generic
             failure_summary = "backup creation failed"
             LOGGER.error(
                 "backup creation failed correlation_id=%s exception_class=%s error=%s",
@@ -409,7 +409,7 @@ class SchedulerManager:
                         prune_failures,
                         extra={"correlation_id": correlation_id},
                     )
-            except Exception as exc:  # noqa: BLE001 - retention failures are non-fatal and recorded
+            except Exception as exc:  # retention failures are non-fatal and recorded
                 failure_summary = "retention pruning failed"
                 LOGGER.error(
                     "backup retention pruning failed correlation_id=%s exception_class=%s error=%s",
@@ -450,7 +450,7 @@ class SchedulerManager:
                 deadline_seconds=60.0,
                 lease_ttl_seconds=300.0,
             )
-        except Exception:  # noqa: BLE001 - scheduled poll failures must not be resubmitted
+        except Exception:  # scheduled poll failures must not be resubmitted
             LOGGER.warning("Scheduled connector poll failed")
             self._store.add_audit_event(
                 "scheduled_job.connector_poll",
@@ -472,7 +472,7 @@ class SchedulerManager:
             return
         try:
             result = await asyncio.to_thread(runner, client_id)
-        except Exception as exc:  # noqa: BLE001 - scheduled sync failures are audited and isolated
+        except Exception as exc:  # scheduled sync failures are audited and isolated
             self._store.add_audit_event(
                 "scheduled_job.graph_sync",
                 str(scheduled_job.id),
@@ -495,7 +495,7 @@ class SchedulerManager:
             return
         try:
             result = await asyncio.to_thread(runner, client_id)
-        except Exception as exc:  # noqa: BLE001 - scheduled snapshot failures are isolated and sanitized
+        except Exception as exc:  # scheduled snapshot failures are isolated and sanitized
             self._store.add_audit_event(
                 "scheduled_job.baseline_snapshot",
                 str(scheduled_job.id),
@@ -753,7 +753,7 @@ class SchedulerManager:
                 f"workflow completion dispatched to {len(result.matched_agent_ids)} agent(s)",
                 client_id=client_id,
             )
-        except Exception as exc:  # noqa: BLE001 - completion must not undo a finished run
+        except Exception as exc:  # completion must not undo a finished run
             self._store.add_audit_event(
                 "workflow.completion_dispatch_failed",
                 str(run_id),

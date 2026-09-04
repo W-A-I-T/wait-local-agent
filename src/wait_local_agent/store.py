@@ -259,7 +259,7 @@ def _principal_identity_from_row(row: sqlite3.Row) -> PrincipalIdentity:
 
 
 def latest_declared_schema_version(store: Store) -> int:
-    return max(migration.version for migration in store._declared_migrations())
+    return max(migration.version for migration in store._declared_migrations())  # noqa: SLF001 - schema metadata
 
 
 class Store:

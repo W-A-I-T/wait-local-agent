@@ -197,7 +197,7 @@ def execute_tool_contract(
                 }
         except EvaluationValidationError:
             raise
-        except Exception as exc:  # noqa: BLE001 - convert provider failure into explicit failed evidence.
+        except Exception as exc:  # convert provider failure into explicit failed evidence.
             safe_error = _bounded_error(exc)
             execution_errors.append({"case_id": case_id, "error": safe_error})
             observations[case_id] = _failed_observation(case, safe_error, time.monotonic() - started)
