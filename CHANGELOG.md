@@ -47,6 +47,7 @@ All notable changes to WAIT Local Agent will be documented in this file.
 
 ### Fixed
 
+- The development Compose UI service no longer waits on the npm registry's advisory endpoints at start-up (`npm ci --no-audit`), which made the browser integration check time out whenever those endpoints were unreachable.
 - Connector instance creation now rejects unknown connector types, diagnostics
   bundle digests remain stable across volatile system uptime, and approved
   Power Platform executions are reserved atomically before PAC starts.
