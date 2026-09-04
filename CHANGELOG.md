@@ -25,6 +25,8 @@ All notable changes to WAIT Local Agent will be documented in this file.
 
 ### Changed
 
+- Ticket, approval, end-user and technician-chat routes now live in
+  `api/routers/tickets.py` and `api/routers/end_user.py`; no route changes.
 - Workflow, scheduled-job and MSP playbook routes now live in
   `api/routers/workflows.py`, `scheduled_jobs.py` and `msp_playbooks.py`; no route changes.
 - Agent, backfill, smart-action, tool and automation routes now live in
