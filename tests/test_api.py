@@ -17,6 +17,7 @@ from fastapi.testclient import TestClient
 import wait_local_agent.api.app as app_module
 import wait_local_agent.baseline as baseline_module
 import wait_local_agent.power_platform_deployment as deployment_module
+from tests.api_helpers import _auth, _hudu_response, _provision_bound_principal, _read_response
 from tests.support import ensure_test_client, ensure_test_clients, ingest_local
 from wait_local_agent.api.app import ClientReportRequest, ScheduledJobCreateRequest, create_app
 from wait_local_agent.autotask import AutotaskReadResponse
@@ -7092,24 +7093,6 @@ def test_ticket_status_history_api_exposes_recorded_transitions(settings, tmp_pa
         "changed_at": "2026-08-08T10:00:00+00:00",
         "source": "ticket_ingest",
     }]
-
-
-def _read_response(items):
-    return app_module.HaloReadResponse(HaloReadResult("ready", "ok", len(items)), items)
-
-
-def _hudu_response(items):
-    return app_module.HuduReadResponse(HaloReadResult("ready", "ok", len(items)), items)
-
-
-def _auth(token: str) -> dict[str, str]:
-    return {"Authorization": f"Bearer {token}"}
-
-
-def _provision_bound_principal(store: Store, principal_id: str, token: str, client_id: str, role: str) -> None:
-    store.create_principal(principal_id, kind="staff")
-    store.add_principal_credential(principal_id, token)
-    store.add_principal_client_role(principal_id, client_id, role)
 
 
 def test_generate_blueprint_playbook_is_admin_scoped_disabled_and_versioned(settings) -> None:

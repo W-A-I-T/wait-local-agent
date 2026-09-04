@@ -10,6 +10,7 @@ from fastapi.routing import APIRoute
 from starlette.requests import Request
 
 import wait_local_agent.api.app as app_module
+import wait_local_agent.api.scopes as scopes_module
 from tests.support import ensure_test_clients
 from wait_local_agent.autotask import AutotaskReadResponse
 from wait_local_agent.connector_factory import ConnectorFactoryError
@@ -275,6 +276,7 @@ def test_live_core_connector_reads_honor_bound_scope(live_settings, monkeypatch)
             return AutotaskReadResponse(ConnectorReadResult("ready", "fake", 1), [{"title": self.client_id or "all"}])
 
     monkeypatch.setattr(app_module, "M365GraphClient", FakeM365GraphClient)
+    monkeypatch.setattr(scopes_module, "M365GraphClient", FakeM365GraphClient)
     monkeypatch.setattr(app_module, "M365ConnectionResolver", FakeM365Resolver)
 
     factory_unavailable = [False]
@@ -292,6 +294,7 @@ def test_live_core_connector_reads_honor_bound_scope(live_settings, monkeypatch)
         return client
 
     monkeypatch.setattr(app_module, "build_read_client_for_client", fake_client_factory)
+    monkeypatch.setattr(scopes_module, "build_read_client_for_client", fake_client_factory)
     app = app_module.create_app(live_settings)
     store = Store(live_settings.data_path)
     ensure_test_clients(store, "alpha", "beta")
