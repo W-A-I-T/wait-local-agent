@@ -6,6 +6,7 @@ from cryptography.fernet import Fernet
 from fastapi.testclient import TestClient
 
 import wait_local_agent.api.app as app_module
+import wait_local_agent.api.routers.system as system_module
 from wait_local_agent.api.app import create_app
 from wait_local_agent.api.packs.loader import PackInstallResult
 from wait_local_agent.backup import BACKUP_KEY_SECRET_NAME
@@ -145,7 +146,7 @@ def test_pack_install_route_returns_safe_install_result(settings, tmp_path: Path
         extracted_files=(tmp_path / "packs" / "demo" / "__init__.py",),
         license_stored_in_vault=True,
     )
-    monkeypatch.setattr(app_module, "install_pack_tarball", lambda *args, **kwargs: result)
+    monkeypatch.setattr(system_module, "install_pack_tarball", lambda *args, **kwargs: result)
     client = TestClient(create_app(settings))
 
     response = client.post(

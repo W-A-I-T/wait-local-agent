@@ -11,6 +11,7 @@ from starlette.routing import Route
 from typer.testing import CliRunner
 
 import wait_local_agent.api.app as api_app_module
+import wait_local_agent.api.routers.system as system_module
 import wait_local_agent.update_channel as update_channel_module
 from wait_local_agent import __version__
 from wait_local_agent.cli import app as cli_app
@@ -202,7 +203,7 @@ def test_update_status_route_requires_admin_and_caches_results(settings, monkeyp
             notes_url="https://updates.wait.example.test/releases/0.1.0",
         )
 
-    monkeypatch.setattr(api_app_module, "check_for_updates", fake_check)
+    monkeypatch.setattr(system_module, "check_for_updates", fake_check)
     app = api_app_module.create_app(secure_settings)
     update_status_route = next(route for route in app.routes if getattr(route, "path", None) == "/update-status")
     assert isinstance(update_status_route, Route)

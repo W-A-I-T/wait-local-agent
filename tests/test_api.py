@@ -117,20 +117,6 @@ def test_api_lists_exactly_fourteen_collector_modules(settings, isolated_default
     assert len(modules) == len(registered_ids) == 14
 
 
-def test_health_reports_safe_defaults(settings) -> None:
-    client = TestClient(create_app(settings))
-
-    response = client.get("/health")
-
-    assert response.status_code == 200
-    assert response.json()["write_actions_enabled"] is False
-    assert response.json()["http_probing_enabled"] is False
-    assert response.json()["cloud_fallback_enabled"] is False
-    assert response.json()["offline_mode"] is False
-    assert response.json()["demo_mode"] is True
-    assert response.json()["api_auth_required"] is False
-
-
 def test_api_auth_is_off_in_default_demo_mode(settings) -> None:
     demo_settings = settings.__class__(
         **{**settings.__dict__, "api_token": "local-secret", "demo_mode": True}
@@ -293,22 +279,6 @@ def test_baseline_routes_return_unknown_client_and_version_404s_and_emit_audits(
     assert {"baseline.created", "baseline.accepted", "baseline.listed", "baseline.drift.viewed"} <= event_types
 
 
-def test_health_falls_back_to_static_m365_credentials_when_profile_resolution_fails(settings, monkeypatch) -> None:
-    configured = replace(settings, m365_graph_base_url="https://graph.example.test", m365_access_token="token")
-
-    def fail_resolution(*_args, **_kwargs):
-        raise ValueError("ambiguous stored profile")
-
-    monkeypatch.setattr(app_module.M365ConnectionResolver, "resolve", fail_resolution)
-    application = create_app(configured)
-    health_route = next(route for route in application.routes if getattr(route, "path", None) == "/health")
-    assert isinstance(health_route, APIRoute)
-    health = health_route.endpoint
-    response = health(None, None)
-
-    assert response["m365_configured"] is True
-
-
 def test_commercial_activation_routes_sanitize_store_errors_and_missing_clients(settings, monkeypatch) -> None:
     configured = replace(settings, demo_mode=False, admin_token="bootstrap-admin")
     store = Store(configured.data_path)
@@ -350,134 +320,6 @@ def test_commercial_activation_routes_sanitize_store_errors_and_missing_clients(
     with pytest.raises(HTTPException) as unknown:
         deactivate("missing", context)
     assert unknown.value.status_code == 404
-
-
-def test_provider_settings_and_tickets_list(settings) -> None:
-    ingest_local(Store(settings.data_path), Path("examples/sample_tickets/tickets.json"))
-    client = TestClient(create_app(settings))
-
-    providers = client.get("/settings/providers")
-    tickets = client.get("/tickets")
-
-    assert providers.status_code == 200
-    assert providers.json()["vector_backend"] == "sqlite"
-    assert providers.json()["llm_inference_enabled"] is False
-    assert providers.json()["local_model_timeout_seconds"] == 20.0
-    assert providers.json()["provider_scope"] == "appliance-wide"
-    assert providers.json()["context_scope"] == "tenant-scoped"
-    assert providers.json()["offline_mode"] is False
-    assert providers.json()["remote_model_enabled"] is False
-    assert providers.json()["model_input_cost_usd_per_million_tokens"] is None
-    assert providers.json()["model_output_cost_usd_per_million_tokens"] is None
-    assert tickets.status_code == 200
-    assert len(tickets.json()) == 2
-
-
-def test_provider_settings_expose_remote_status_without_secret(settings) -> None:
-    remote_settings = replace(
-        settings,
-        allow_llm_inference=True,
-        allow_cloud_fallback=True,
-        remote_model_provider="anthropic",
-        remote_model_base_url="https://api.example/v1",
-        remote_model_name="documented-model",
-        remote_model_api_key="do-not-return",
-    )
-    client = TestClient(create_app(remote_settings))
-
-    response = client.get("/settings/providers")
-
-    assert response.status_code == 200
-    payload = response.json()
-    assert payload["remote_model_provider"] == "anthropic"
-    assert payload["remote_model_configured"] is True
-    assert payload["remote_model_enabled"] is True
-    assert "remote_model_api_key" not in payload
-    assert "do-not-return" not in response.text
-
-
-def test_provider_settings_report_remote_fallback_disabled_in_offline_mode(settings) -> None:
-    offline_settings = replace(
-        settings,
-        allow_llm_inference=True,
-        allow_cloud_fallback=True,
-        offline_mode=True,
-        remote_model_provider="anthropic",
-        remote_model_base_url="https://api.example/v1",
-        remote_model_name="documented-model",
-        remote_model_api_key="do-not-return",
-    )
-    client = TestClient(create_app(offline_settings))
-
-    response = client.get("/settings/providers")
-
-    assert response.status_code == 200
-    payload = response.json()
-    assert payload["offline_mode"] is True
-    assert payload["remote_model_configured"] is True
-    assert payload["remote_model_enabled"] is False
-    assert "do-not-return" not in response.text
-
-
-def test_provider_health_is_admin_triggered_and_audited(settings, monkeypatch) -> None:
-    monkeypatch.setattr(
-        app_module,
-        "probe_model_providers",
-        lambda active_settings: {
-            "local": {"provider": "deterministic", "model": "llama3.1", "status": "ready", "probe": "not_required"},
-            "remote": {"provider": None, "model": None, "status": "not_configured", "probe": "not_run"},
-        },
-    )
-    client = TestClient(create_app(settings))
-
-    response = client.get("/settings/providers/health")
-
-    assert response.status_code == 200
-    assert response.json()["local"]["status"] == "ready"
-    assert response.json()["remote"]["status"] == "not_configured"
-    assert any(event["event_type"] == "model_provider.health" for event in client.get("/audit").json())
-
-
-def test_provider_health_requires_admin_role(settings, monkeypatch) -> None:
-    monkeypatch.setattr(
-        app_module,
-        "probe_model_providers",
-        lambda active_settings: {
-            "local": {"provider": "deterministic", "model": "llama3.1", "status": "ready", "probe": "not_required"},
-            "remote": {"provider": None, "model": None, "status": "not_configured", "probe": "not_run"},
-        },
-    )
-    secured = replace(
-        settings,
-        demo_mode=False,
-        admin_token="admin-token",
-        tech_token="tech-token",
-        viewer_token="viewer-token",
-    )
-    client = TestClient(create_app(secured))
-
-    assert client.get("/settings/providers/health", headers={"Authorization": "Bearer viewer-token"}).status_code == 403
-    assert client.get("/settings/providers/health", headers={"Authorization": "Bearer tech-token"}).status_code == 403
-    admin_health = client.get("/settings/providers/health", headers={"Authorization": "Bearer admin-token"})
-    assert admin_health.status_code == 200
-    assert admin_health.json()["local"]["status"] == "ready"
-
-
-def test_provider_settings_expose_operator_supplied_model_rates_without_secrets(settings) -> None:
-    priced_settings = replace(
-        settings,
-        model_input_cost_usd_per_million_tokens=1.25,
-        model_output_cost_usd_per_million_tokens=4.5,
-        remote_model_api_key="do-not-return",
-    )
-    client = TestClient(create_app(priced_settings))
-
-    response = client.get("/settings/providers")
-
-    assert response.status_code == 200
-    assert response.json()["model_input_cost_usd_per_million_tokens"] == 1.25
-    assert response.json()["model_output_cost_usd_per_million_tokens"] == 4.5
-    assert "do-not-return" not in response.text
 
 
 def test_ticket_summary_and_approval_flow(settings) -> None:

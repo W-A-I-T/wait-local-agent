@@ -25,6 +25,9 @@ All notable changes to WAIT Local Agent will be documented in this file.
 
 ### Changed
 
+- System routes (health, settings, providers, updates, packs) now live in
+  `api/routers/system.py`; a route-inventory guard fixes every route, handler
+  and rate limit in place. No route changes.
 - API request models and shared route helpers moved from `api/app.py` into
   `api/schemas.py`, `api/scopes.py` and `api/views.py`; no route changes.
 - Ruff now enforces `SLF001` in `src/` and flags unused `noqa` directives
