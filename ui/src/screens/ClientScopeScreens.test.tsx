@@ -54,9 +54,9 @@ describe("client-scoped activity screens", () => {
   });
 
   it.each([
-    ["Audit", <Audit />, "/audit"],
-    ["Executions", <Executions />, "/executions"],
-    ["Activity", <ActivityRuns />, "/packs/operator-control/activity/runs"],
+    ["Audit", <Audit key="audit" />, "/audit"],
+    ["Executions", <Executions key="executions" />, "/executions"],
+    ["Activity", <ActivityRuns key="activity" />, "/packs/operator-control/activity/runs"],
   ] as const)("shows the selected scope and sends it for %s", async (_name, screenElement, path) => {
     renderScreen(screenElement);
 

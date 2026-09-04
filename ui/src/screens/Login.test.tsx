@@ -21,7 +21,7 @@ describe("Login", () => {
     window.localStorage.clear();
     window.sessionStorage.clear();
     clearInMemoryApiToken();
-    delete window.__WAIT_API_BASE__;
+    delete window["__WAIT_API_BASE__"];
     mockedApiFetch.mockReset();
     mockedUseDashboard.mockReturnValue({ refresh: vi.fn().mockResolvedValue({ role: "viewer" }) } as never);
   });
@@ -55,7 +55,7 @@ describe("Login", () => {
 
   it("uses the desktop API base for Microsoft sign-in and preserves the validated next path", async () => {
     mockedApiFetch.mockResolvedValue({ enabled: true } as never);
-    window.__WAIT_API_BASE__ = "http://127.0.0.1:8788";
+    window["__WAIT_API_BASE__"] = "http://127.0.0.1:8788";
     const { assign, restore } = mockLocationAssign();
 
     renderScreen(["/settings?tab=providers"]);
@@ -69,7 +69,7 @@ describe("Login", () => {
 
   it("keeps Microsoft sign-in relative when no API base is configured", async () => {
     mockedApiFetch.mockResolvedValue({ enabled: true } as never);
-    delete window.__WAIT_API_BASE__;
+    delete window["__WAIT_API_BASE__"];
     const { assign, restore } = mockLocationAssign();
 
     renderScreen();

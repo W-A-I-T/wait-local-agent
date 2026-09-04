@@ -18,7 +18,7 @@ import { ScopeBadge } from "../components/ScopeBadge";
 import { ScopeChip, StatusChip } from "../components/StatusChip";
 
 export function Collectors() {
-  const { canWrite, selectedClientId = "", clients = [], isMspAdmin = false } = useDashboard();
+  const { canWrite, selectedClientId = "", isMspAdmin = false } = useDashboard();
   const [modules, setModules] = useState<CollectorModule[]>([]);
   const [loading, setLoading] = useState(true);
   const hasLoadedRef = useRef(false);

@@ -52,7 +52,7 @@ const EMPTY_SUMMARY: AnalyticsSummary = {
 };
 
 export function Analytics() {
-  const { selectedClientId = "", clients = [], isMspAdmin = false } = useDashboard();
+  const { selectedClientId = "" } = useDashboard();
   const [summary, setSummary] = useState<AnalyticsSummary>(EMPTY_SUMMARY);
   const [startedFrom, setStartedFrom] = useState("");
   const [startedTo, setStartedTo] = useState("");

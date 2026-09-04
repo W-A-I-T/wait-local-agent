@@ -58,24 +58,11 @@ export function FounderJourney() {
     setMissingPack(false);
   }, []);
 
-  async function request<T>(path: string, init?: RequestInit): Promise<T | null> {
-    try {
-      return await apiFetch<T>(path, init);
-    } catch (error) {
-      handleFounderError(error);
-      return null;
-    }
-  }
-
-  function isFounderUnavailable(error: unknown): boolean {
-    return error instanceof ApiRequestError && error.status === 501;
-  }
-
-  function handleFounderError(error: unknown) {
+  const handleFounderError = useCallback((error: unknown) => {
     const message = error instanceof Error
       ? `${error.message} ${error instanceof ApiRequestError ? error.technicalDetail : ""}`.toLowerCase()
       : "";
-    if (isFounderUnavailable(error) || /http 501/.test(message)) {
+    if ((error instanceof ApiRequestError && error.status === 501) || /http 501/.test(message)) {
       setMissingPack(true);
       setStatusMessage("This journey needs the Founder Pack. Install it from Settings, then return here.");
       return;
@@ -111,7 +98,16 @@ export function FounderJourney() {
       return;
     }
     setStatusMessage("That step could not finish. Check the project folder and try again.");
-  }
+  }, []);
+
+  const request = useCallback(async <T,>(path: string, init?: RequestInit): Promise<T | null> => {
+    try {
+      return await apiFetch<T>(path, init);
+    } catch (error) {
+      handleFounderError(error);
+      return null;
+    }
+  }, [handleFounderError]);
 
   async function runScan(): Promise<boolean> {
     if (!scanPath) {
@@ -221,7 +217,7 @@ export function FounderJourney() {
       if (!cancelled) setIsBusy(false);
     });
     return () => { cancelled = true; };
-  }, [step]);
+  }, [request, step]);
 
   useEffect(() => {
     if (step !== 3 || !launchResult) return;
@@ -241,7 +237,7 @@ export function FounderJourney() {
       cancelled = true;
       window.clearInterval(timer);
     };
-  }, [launchResult, results, step]);
+  }, [launchResult, request, results, step]);
 
   async function launchScan(): Promise<void> {
     setConfirmingLaunch(false);

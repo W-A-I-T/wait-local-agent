@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type FormEvent } from "react";
+import { useCallback, useEffect, useMemo, useState, type FormEvent } from "react";
 import { Search, X } from "lucide-react";
 import { apiFetch } from "../api/client";
 import type { CollectorConfigField, SmartActionInvokeResult, SmartActionManifest } from "../api/types";
@@ -21,7 +21,7 @@ export function SmartActionCatalog() {
   const [detailLoading, setDetailLoading] = useState(false);
   const [detailError, setDetailError] = useState("");
 
-  async function loadActions() {
+  const loadActions = useCallback(async () => {
     setLoading(true);
     setError("");
     try {
@@ -35,11 +35,11 @@ export function SmartActionCatalog() {
     } finally {
       setLoading(false);
     }
-  }
+  }, []);
 
   useEffect(() => {
     void loadActions();
-  }, []);
+  }, [loadActions]);
 
   async function openAction(actionId: string) {
     setSelectedActionId(actionId);

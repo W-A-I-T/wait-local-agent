@@ -1,6 +1,7 @@
 import { FormEvent, useCallback, useEffect, useState } from "react";
 import { useDashboard } from "../app/DashboardContext";
 import { apiFetch } from "../api/client";
+import { apiFetchForClient } from "../api/scopedFetch";
 import { EmptyState } from "../components/EmptyState";
 import { LoadingState } from "../components/LoadingState";
 import { ScopeBadge } from "../components/ScopeBadge";
@@ -11,7 +12,7 @@ import { type WorkflowRun, type WorkflowRunComparison, type WorkflowTemplate } f
 import { workflowPayloadFields } from "../lib/structured-inputs";
 
 export function Workflows() {
-  const { isAdmin, canWrite, clients = [], selectedClientId = "", isMspAdmin = false } = useDashboard();
+  const { isAdmin, canWrite, selectedClientId = "", isMspAdmin = false } = useDashboard();
   const [templates, setTemplates] = useState<WorkflowTemplate[]>([]);
   const [runs, setRuns] = useState<WorkflowRun[]>([]);
   const [runsLoading, setRunsLoading] = useState(false);
@@ -32,8 +33,8 @@ export function Workflows() {
     try {
       setRunsLoading(true);
       const [runRows, templateRows] = await Promise.all([
-        apiFetch<WorkflowRun[]>('/workflow-runs'),
-        apiFetch<WorkflowTemplate[]>('/workflows/templates')
+        apiFetchForClient<WorkflowRun[]>(selectedClientId, '/workflow-runs'),
+        apiFetchForClient<WorkflowTemplate[]>(selectedClientId, '/workflows/templates')
       ]);
       setRuns(runRows);
       setTemplates(templateRows);

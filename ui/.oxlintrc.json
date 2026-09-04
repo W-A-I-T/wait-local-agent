@@ -1,0 +1,13 @@
+{
+  "plugins": ["react", "typescript"],
+  "categories": { "correctness": "error", "suspicious": "error" },
+  "rules": {
+    "react/rules-of-hooks": "error",
+    "react/exhaustive-deps": "warn",
+    "react/exhaustive-effect-dependencies": "warn",
+    "react/react-in-jsx-scope": "off",
+    "react/set-state-in-effect": "warn"
+  },
+  "env": { "browser": true, "es2022": true },
+  "ignorePatterns": ["dist", "coverage", "node_modules", "test-results", "tsconfig.tsbuildinfo"]
+}

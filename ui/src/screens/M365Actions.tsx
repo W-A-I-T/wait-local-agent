@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
 import { Link } from "react-router-dom";
 import { apiFetch } from "../api/client";
+import { apiFetchForClient } from "../api/scopedFetch";
 import { useDashboard } from "../app/DashboardContext";
 import { LoadingState } from "../components/LoadingState";
 import { RoleGate } from "../components/RoleGate";
@@ -138,7 +139,7 @@ function useM365Lookups(enabled: boolean, clientId: string) {
 
     const entries = (Object.entries(LOOKUP_ENDPOINTS) as [M365LookupKind, string][]).map(async ([kind, path]) => {
       try {
-        const payload = await apiFetch<unknown>(path);
+        const payload = await apiFetchForClient<unknown>(clientId, path);
         if (!cancelled) setLookups((current) => ({ ...current, [kind]: responseRows(payload) }));
       } catch {
         // Picker reads are optional. The field remains editable as plain text.

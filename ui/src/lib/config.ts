@@ -7,7 +7,7 @@ declare global {
 export function getApiBase(): string {
   // Tauri injects the sidecar URL after the bundle is evaluated. Read the
   // runtime override for every request so late injection is honored.
-  return import.meta.env.VITE_API_BASE ?? (typeof window !== "undefined" ? window.__WAIT_API_BASE__ : undefined) ?? "";
+  return import.meta.env.VITE_API_BASE ?? (typeof window !== "undefined" ? window["__WAIT_API_BASE__"] : undefined) ?? "";
 }
 
 // Kept for callers that need the build-time value; request construction must

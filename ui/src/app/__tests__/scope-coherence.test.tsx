@@ -85,9 +85,9 @@ afterEach(() => vi.clearAllMocks());
 
 describe("shell scope coherence", () => {
   it.each([
-    ["Agents", <Agents />],
-    ["Backfills", <Backfills />],
-    ["Workflows", <Workflows />]
+    ["Agents", <Agents key="agents" />],
+    ["Backfills", <Backfills key="backfills" />],
+    ["Workflows", <Workflows key="workflows" />]
   ] as const)("does not render a second client selector on %s", async (_name, element) => {
     render(<MemoryRouter>{element}</MemoryRouter>);
     await waitFor(() => expect(screen.queryByRole("combobox", { name: /client/i })).not.toBeInTheDocument());

@@ -28,7 +28,7 @@ function toSinglePath(value: string | string[] | null | undefined): string {
 
 export function FolderPicker({ label, value, onChange, placeholder, disabled }: FolderPickerProps) {
   const [isSelecting, setIsSelecting] = useState(false);
-  const isTauri = typeof window !== "undefined" && typeof (window as TauriWindow).__TAURI__?.dialog?.open === "function";
+  const isTauri = typeof window !== "undefined" && typeof (window as TauriWindow)["__TAURI__"]?.dialog?.open === "function";
 
   async function pickFolder() {
     if (disabled || isSelecting || !isTauri) {
@@ -36,7 +36,7 @@ export function FolderPicker({ label, value, onChange, placeholder, disabled }: 
     }
     setIsSelecting(true);
     try {
-      const path = toSinglePath(await (window as TauriWindow).__TAURI__?.dialog?.open({ directory: true }));
+      const path = toSinglePath(await (window as TauriWindow)["__TAURI__"]?.dialog?.open({ directory: true }));
       if (path) {
         onChange(path);
       }

@@ -400,8 +400,8 @@ export function Playbooks() {
     if (!canWrite) return;
     try {
       const current = await apiFetch<MspPlaybookSubscription>(`/msp/playbook-subscriptions/${encodeURIComponent(subscription.id)}`);
-      setSubscriptionDrafts((drafts) => ({
-        ...drafts,
+      setSubscriptionDrafts((currentDrafts) => ({
+        ...currentDrafts,
         [subscription.id]: {
           inputMapping: jsonText(current.input_mapping),
           enabled: current.enabled,
@@ -703,15 +703,15 @@ export function Playbooks() {
                   </div>
                   <label>
                     Input mapping JSON
-                    <textarea rows={5} value={subscriptionDrafts[subscription.id].inputMapping} onChange={(event) => setSubscriptionDrafts((drafts) => ({
-                      ...drafts,
-                      [subscription.id]: { ...drafts[subscription.id], inputMapping: event.target.value }
+                    <textarea rows={5} value={subscriptionDrafts[subscription.id].inputMapping} onChange={(event) => setSubscriptionDrafts((currentDrafts) => ({
+                      ...currentDrafts,
+                      [subscription.id]: { ...currentDrafts[subscription.id], inputMapping: event.target.value }
                     }))} spellCheck={false} />
                   </label>
                   <label className="checkbox-label">
-                    <input type="checkbox" checked={subscriptionDrafts[subscription.id].enabled} onChange={(event) => setSubscriptionDrafts((drafts) => ({
-                      ...drafts,
-                      [subscription.id]: { ...drafts[subscription.id], enabled: event.target.checked }
+                    <input type="checkbox" checked={subscriptionDrafts[subscription.id].enabled} onChange={(event) => setSubscriptionDrafts((currentDrafts) => ({
+                      ...currentDrafts,
+                      [subscription.id]: { ...currentDrafts[subscription.id], enabled: event.target.checked }
                     }))} />
                     Enabled
                   </label>
