@@ -1,6 +1,7 @@
 import { FormEvent, useCallback, useEffect, useRef, useState } from "react";
 import { useDashboard } from "../app/DashboardContext";
 import { apiFetch } from "../api/client";
+import { apiFetchForClient } from "../api/scopedFetch";
 import { EmptyState } from "../components/EmptyState";
 import { LoadingState } from "../components/LoadingState";
 import { ScopeBadge } from "../components/ScopeBadge";
@@ -8,7 +9,7 @@ import { SelectClientNotice } from "../components/SelectClientNotice";
 import type { AgentDefinition, MspPlaybook, ScheduledJob, ScheduledJobRequestBody, WorkflowTemplate } from "../api/types";
 
 export function ScheduledJobs() {
-  const { canWrite, clients = [], selectedClientId = "", isMspAdmin = false } = useDashboard();
+  const { canWrite, selectedClientId = "", isMspAdmin = false } = useDashboard();
   const [jobs, setJobs] = useState<ScheduledJob[]>([]);
   const [templates, setTemplates] = useState<WorkflowTemplate[]>([]);
   const [agents, setAgents] = useState<AgentDefinition[]>([]);
@@ -32,10 +33,10 @@ export function ScheduledJobs() {
     if (!hasLoadedRef.current) setLoading(true);
     try {
       const [jobsResponse, templatesResponse, agentsResponse, playbooksResponse] = await Promise.all([
-        apiFetch<ScheduledJob[]>("/scheduled-jobs"),
-        apiFetch<WorkflowTemplate[]>("/workflows/templates"),
-        apiFetch<AgentDefinition[]>("/agents"),
-        apiFetch<MspPlaybook[]>("/msp/playbooks")
+        apiFetchForClient<ScheduledJob[]>(selectedClientId, "/scheduled-jobs"),
+        apiFetchForClient<WorkflowTemplate[]>(selectedClientId, "/workflows/templates"),
+        apiFetchForClient<AgentDefinition[]>(selectedClientId, "/agents"),
+        apiFetchForClient<MspPlaybook[]>(selectedClientId, "/msp/playbooks")
       ]);
       setJobs(jobsResponse);
       setTemplates(templatesResponse);

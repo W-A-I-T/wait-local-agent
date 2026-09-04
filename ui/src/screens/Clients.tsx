@@ -55,7 +55,6 @@ export function Clients() {
     refresh,
     refreshConfiguration = refresh
   } = useDashboard();
-  const canMutate = roleResolved && role === "admin";
   const canManageCommercial = roleResolved && isMspAdmin && commercialEntitlement !== null;
   const [clients, setClients] = useState<ClientDirectoryEntry[]>([]);
   const [selectedClientId, setSelectedClientId] = useState<string | null>(null);

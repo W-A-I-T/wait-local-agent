@@ -75,7 +75,7 @@ describe("Smart Action catalog", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "User offboarding" }));
     expect(await screen.findByRole("heading", { name: "User offboarding" })).toBeInTheDocument();
-    expect(screen.getByText(/\"user_id\"/)).toBeInTheDocument();
+    expect(screen.getByText(/"user_id"/)).toBeInTheDocument();
     expect(screen.getAllByText("Not declared by this manifest")).toHaveLength(2);
     expect(fetchMock).toHaveBeenCalledWith("/smart-actions/user-offboarding", expect.anything());
   });

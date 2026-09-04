@@ -1,6 +1,7 @@
 import { FormEvent, useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import { useDashboard } from "../app/DashboardContext";
 import { ApiRequestError, apiFetch, apiFetchBlob } from "../api/client";
+import { apiFetchForClient } from "../api/scopedFetch";
 import { ScopeBadge } from "../components/ScopeBadge";
 import { SelectClientNotice } from "../components/SelectClientNotice";
 import {
@@ -56,7 +57,7 @@ const CHECK_SCOPES: Record<string, string> = {
 };
 
 export function Reports() {
-  const { clients = [], role, roleResolved, selectedClientId = "", isMspAdmin = false } = useDashboard();
+  const { role, roleResolved, selectedClientId = "", isMspAdmin = false } = useDashboard();
   const [reports, setReports] = useState<EvidenceReport[]>([]);
   const [hardeningRuns, setHardeningRuns] = useState<HardeningRun[]>([]);
   const [restoreExercises, setRestoreExercises] = useState<RestoreExercise[]>([]);
@@ -82,9 +83,9 @@ export function Reports() {
     setTechnicalError("");
     try {
       const [reportRows, hardeningRows, restoreRows] = await Promise.all([
-        apiFetch<EvidenceReport[]>("/reports"),
-        apiFetch<HardeningRun[]>("/hardening/runs"),
-        apiFetch<RestoreExercise[]>("/backup/restore-exercises")
+        apiFetchForClient<EvidenceReport[]>(selectedClientId, "/reports"),
+        apiFetchForClient<HardeningRun[]>(selectedClientId, "/hardening/runs"),
+        apiFetchForClient<RestoreExercise[]>(selectedClientId, "/backup/restore-exercises")
       ]);
       setReports(reportRows);
       setHardeningRuns(sortByLatest(hardeningRows, (run) => run.completed_at || run.started_at));
@@ -189,7 +190,7 @@ export function Reports() {
   }
 
   async function generateClientReport(
-    reportType: "qbr" | "automation-opportunity" | "recurring-service-review"
+    requestedReportType: "qbr" | "automation-opportunity" | "recurring-service-review"
   ) {
     if (!reportPeriodStart || !reportPeriodEnd) {
       setStatusMessage("Choose a start and end date before generating a client report.");
@@ -199,9 +200,9 @@ export function Reports() {
       setStatusMessage("The report end date must be on or after the start date.");
       return;
     }
-    setReportGeneration(reportType);
+    setReportGeneration(requestedReportType);
     try {
-      const report = await apiFetch<EvidenceReport>(`/reports/${reportType}`, {
+      const report = await apiFetch<EvidenceReport>(`/reports/${requestedReportType}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -212,7 +213,7 @@ export function Reports() {
       });
       setSelectedReport(report);
       setSelectedDetail(report);
-      setStatusMessage(`${humanize(reportType)} report generated from local evidence.`);
+      setStatusMessage(`${humanize(requestedReportType)} report generated from local evidence.`);
       await refresh();
     } catch (error) {
       showError(error, "The client report could not be generated.", setStatusMessage, setTechnicalError);

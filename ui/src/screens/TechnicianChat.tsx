@@ -1,13 +1,14 @@
 import { FormEvent, useCallback, useEffect, useState } from "react";
 import { CheckCircle2, MessageSquare, Plus, Send, XCircle } from "lucide-react";
 import { apiFetch } from "../api/client";
+import { apiFetchForClient } from "../api/scopedFetch";
 import { useDashboard } from "../app/DashboardContext";
 import { ScopeBadge } from "../components/ScopeBadge";
 import { SelectClientNotice } from "../components/SelectClientNotice";
 import type { SmartActionRun, TechnicianChatResponse, TechnicianChatSession } from "../api/types";
 
 export function TechnicianChat() {
-  const { canWrite, canWriteExternally = canWrite, clients = [], selectedClientId = "", isMspAdmin = false } = useDashboard();
+  const { canWrite, canWriteExternally = canWrite, selectedClientId = "", isMspAdmin = false } = useDashboard();
   const [sessions, setSessions] = useState<TechnicianChatSession[]>([]);
   const [activeSession, setActiveSession] = useState<TechnicianChatSession | null>(null);
   const [ticketId, setTicketId] = useState("");
@@ -35,7 +36,7 @@ export function TechnicianChat() {
     setNotificationLoading(true);
     setNotificationError("");
     try {
-      const runs = await apiFetch<SmartActionRun[]>("/smart-actions/runs");
+      const runs = await apiFetchForClient<SmartActionRun[]>(selectedClientId, "/smart-actions/runs");
       setNotificationRuns(runs.filter((run) => run.action_id === "communication-send").slice(0, 12));
     } catch (requestError) {
       setNotificationError(requestError instanceof Error ? requestError.message : "Unable to load notification activity.");
@@ -52,7 +53,7 @@ export function TechnicianChat() {
     setLoading(true);
     setError("");
     try {
-      const rows = await apiFetch<TechnicianChatSession[]>("/technician/chat/sessions");
+      const rows = await apiFetchForClient<TechnicianChatSession[]>(selectedClientId, "/technician/chat/sessions");
       setSessions(rows);
       setActiveSession((current) => {
         if (!current) return rows[0] ?? null;

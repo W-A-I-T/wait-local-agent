@@ -37,21 +37,23 @@ Run the full release gate before opening or updating a PR:
 That script runs exactly:
 
 1. `ruff check .`
-2. `mypy src tests`
-3. `bandit -r src`
-4. `pip-audit --skip-editable`
-5. `python -m pytest --cov=wait_local_agent --cov-report=term-missing --cov-fail-under=95`
-6. `python scripts/public_surface_audit.py`
-7. `cd ui`
-8. `npm ci`
-9. `npm run test`
-10. `npm run build`
+2. `python scripts/check_release_version.py`
+3. `mypy src tests`
+4. `bandit -r src`
+5. `pip-audit --skip-editable`
+6. `python -m pytest --cov=wait_local_agent --cov=packs --cov-report=term-missing --cov-fail-under=95`
+7. `python scripts/public_surface_audit.py`
+8. `cd ui`
+9. `npm ci`
+10. `npm run lint`
+11. `npm run test:coverage`
+12. `npm run build`
 
 Coverage is a release gate. Backend coverage must stay at or above `95%`.
 
 CI additionally runs `scripts/demo_consultant_mode.sh` and
-`scripts/validate_local_first.sh`. CI uses `npm install` for the UI job; the
-release script uses `npm ci`.
+`scripts/validate_local_first.sh`. CI uses `npm ci` for the UI job; the release
+script uses `npm ci`.
 
 ## Contributor Rules
 

@@ -93,7 +93,7 @@ describe("Schedules screen", () => {
     fireEvent.click(screen.getByRole("button", { name: "Show details for scheduled job 102" }));
     expect(await screen.findByRole("heading", { name: "Job 102" })).toBeInTheDocument();
     expect(screen.getByText("America/Vancouver")).toBeInTheDocument();
-    expect(screen.getByText(/\"priority\": \"high\"/)).toBeInTheDocument();
+    expect(screen.getByText(/"priority": "high"/)).toBeInTheDocument();
     expect(fetchMock).toHaveBeenCalledTimes(1);
     expect(fetchMock.mock.calls).toHaveLength(1);
   });

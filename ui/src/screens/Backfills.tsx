@@ -1,6 +1,7 @@
 import { FormEvent, useCallback, useEffect, useRef, useState } from "react";
 import { useDashboard } from "../app/DashboardContext";
 import { apiFetch, shouldSuppressClientScopeError } from "../api/client";
+import { apiFetchForClient } from "../api/scopedFetch";
 import { EmptyState } from "../components/EmptyState";
 import { LoadingState } from "../components/LoadingState";
 import { SelectClientNotice } from "../components/SelectClientNotice";
@@ -22,7 +23,7 @@ function scopeAwareErrorMessage(
 }
 
 export function Backfills() {
-  const { canWrite, selectedClientId = "", clients = [], clientScopeIds, isMspAdmin = false } = useDashboard();
+  const { canWrite, selectedClientId = "", clientScopeIds, isMspAdmin = false } = useDashboard();
   const [agents, setAgents] = useState<AgentDefinition[]>([]);
   const [backfills, setBackfills] = useState<AgentBackfill[]>([]);
   const [loading, setLoading] = useState(true);
@@ -38,8 +39,8 @@ export function Backfills() {
     if (!hasLoadedRef.current) setLoading(true);
     try {
       const [agentRows, backfillRows] = await Promise.all([
-        apiFetch<AgentDefinition[]>("/agents"),
-        apiFetch<AgentBackfill[]>("/agent-backfills")
+        apiFetchForClient<AgentDefinition[]>(selectedClientId, "/agents"),
+        apiFetchForClient<AgentBackfill[]>(selectedClientId, "/agent-backfills")
       ]);
       setAgents(agentRows);
       setBackfills(backfillRows);

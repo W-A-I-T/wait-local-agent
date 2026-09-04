@@ -135,7 +135,7 @@ describe("SchemaForm", () => {
 
   it("supports multi-character secret_ref input as a normal controlled field", () => {
     const secret = "vault-secret-name";
-    const { container } = renderHarness();
+    renderHarness();
     const field = screen.getByLabelText("API credential");
     fireEvent.change(field, { target: { value: secret } });
 

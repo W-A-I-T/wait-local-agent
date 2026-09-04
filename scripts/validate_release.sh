@@ -22,5 +22,6 @@ pip-audit --skip-editable
 
 cd "$ROOT_DIR/ui"
 npm ci
+npm run lint
 npm run test:coverage
 npm run build

@@ -25,8 +25,6 @@ export function Overview() {
     roleResolved,
     isAdmin,
     isMspAdmin,
-    selectedClientId,
-    clients
   } = useDashboard();
   const [backupStatus, setBackupStatus] = useState<BackupStatusResponse | null>(null);
   const [searchParams, setSearchParams] = useSearchParams();

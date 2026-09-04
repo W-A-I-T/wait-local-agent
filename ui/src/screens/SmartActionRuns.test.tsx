@@ -5,7 +5,7 @@ import { ApiRequestError, apiFetch } from "../api/client";
 import { useDashboard } from "../app/DashboardContext";
 import { SmartActionRuns } from "./SmartActionRuns";
 
-vi.mock("../api/client", () => ({ apiFetch: vi.fn(), ApiRequestError: class ApiRequestError extends Error { status?: number; constructor(message: string, _technicalDetail?: string, status?: number) { super(message); this.status = status; } } }));
+vi.mock("../api/client", () => ({ apiFetch: vi.fn(), ApiRequestError: class MockApiRequestError extends Error { status?: number; constructor(message: string, _technicalDetail?: string, status?: number) { super(message); this.status = status; } } }));
 vi.mock("../app/DashboardContext", () => ({ useDashboard: vi.fn() }));
 
 const mockedApiFetch = vi.mocked(apiFetch);

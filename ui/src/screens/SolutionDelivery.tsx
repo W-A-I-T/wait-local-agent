@@ -126,7 +126,6 @@ export function SolutionDelivery() {
     approvalRequests,
     canWrite,
     canWriteExternally = canWrite,
-    clients = [],
     selectedClientId = "",
     isMspAdmin = false,
     executeApproval,

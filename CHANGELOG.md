@@ -9,6 +9,7 @@ All notable changes to WAIT Local Agent will be documented in this file.
 - Scheduled encrypted backups can use an optional separately mounted
   `WAIT_BACKUP_DIR`, and production Compose provisions a dedicated backup
   volume.
+- oxlint runs on the dashboard sources in CI and in the release gate (`npm run lint`).
 
 ### Security
 

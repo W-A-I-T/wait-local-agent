@@ -12,6 +12,7 @@ import {
   isClientScopeErrorDetail,
   shouldSuppressClientScopeError,
 } from "../api/client";
+import { apiFetchForClient } from "../api/scopedFetch";
 import { StatusChip } from "../components/StatusChip";
 import { LifecycleBar } from "../components/LifecycleBar";
 import { humanizeName } from "../lib/fields";
@@ -216,7 +217,6 @@ function SectionLoadNotice({
 export function Consultant() {
   const {
     canWrite,
-    clients = [],
     selectedClientId = "",
     isMspAdmin = false,
     authState,
@@ -229,7 +229,7 @@ export function Consultant() {
   const [blueprintDetail, setBlueprintDetail] = useState<ConsultantBlueprint | null>(null);
   const [architecture, setArchitecture] = useState<ConsultantArchitecture | null>(null);
   const [workflowDrafts, setWorkflowDrafts] = useState<Record<string, { trigger: string; steps: string[] }>>({});
-  const [useCases, setUseCases] = useState<ConsultantUseCase[]>([]);
+  const [solutionUseCases, setSolutionUseCases] = useState<ConsultantUseCase[]>([]);
   const [monitoring, setMonitoring] = useState<ConsultantMonitoring | null>(null);
   const [employeeOnboardingDemo, setEmployeeOnboardingDemo] = useState<ConsultantEmployeeOnboardingDemo | null>(null);
   const [employeeOnboardingEntityId, setEmployeeOnboardingEntityId] = useState("TCK-1001");
@@ -311,7 +311,7 @@ export function Consultant() {
   const loadBlueprints = useCallback(async () => {
     setSectionState("blueprints", { status: "loading" });
     try {
-      const result = await apiFetch<ConsultantBlueprint[]>("/consultant/blueprints");
+      const result = await apiFetchForClient<ConsultantBlueprint[]>(selectedClientId, "/consultant/blueprints");
       const rows = Array.isArray(result) ? result : [];
       setBlueprints(rows);
       setSelectedId((currentSelectedId) => (
@@ -333,9 +333,9 @@ export function Consultant() {
   const loadUseCases = useCallback(async () => {
     setSectionState("useCases", { status: "loading" });
     try {
-      const result = await apiFetch<{ use_cases: ConsultantUseCase[] }>("/consultant/use-cases");
+      const result = await apiFetchForClient<{ use_cases: ConsultantUseCase[] }>(selectedClientId, "/consultant/use-cases");
       const rows = Array.isArray(result.use_cases) ? result.use_cases : [];
-      setUseCases(rows);
+      setSolutionUseCases(rows);
       setSectionState("useCases", { status: rows.length ? "ready" : "empty" });
     } catch (error) {
       setSectionState("useCases", sectionStateForError(error, clientScopeIds, isMspAdmin));
@@ -345,7 +345,7 @@ export function Consultant() {
   const loadMonitoring = useCallback(async () => {
     setSectionState("monitoring", { status: "loading" });
     try {
-      const result = await apiFetch<ConsultantMonitoring>("/consultant/monitoring/agents");
+      const result = await apiFetchForClient<ConsultantMonitoring>(selectedClientId, "/consultant/monitoring/agents");
       setMonitoring(result);
       setSectionState("monitoring", { status: "ready" });
     } catch (error) {
@@ -356,7 +356,7 @@ export function Consultant() {
   const loadDiscoverySessions = useCallback(async () => {
     setSectionState("discoverySessions", { status: "loading" });
     try {
-      const result = await apiFetch<ConsultantDiscoverySession[]>("/consultant/discovery/sessions");
+      const result = await apiFetchForClient<ConsultantDiscoverySession[]>(selectedClientId, "/consultant/discovery/sessions");
       const rows = Array.isArray(result) ? result : [];
       setDiscoverySessions(rows);
       setSectionState("discoverySessions", { status: rows.length ? "ready" : "empty" });
@@ -365,18 +365,21 @@ export function Consultant() {
     }
   }, [clientScopeIds, isMspAdmin, selectedClientId, setSectionState]);
 
-  const refresh = useCallback(async () => {
+  const refresh = async () => {
     setLoading(true);
     try {
       await Promise.all([loadBlueprints(), loadUseCases(), loadMonitoring(), loadDiscoverySessions()]);
     } finally {
       setLoading(false);
     }
-  }, [loadBlueprints, loadDiscoverySessions, loadMonitoring, loadUseCases]);
+  };
 
   useEffect(() => {
-    void refresh();
-  }, [refresh]);
+    setLoading(true);
+    void Promise.all([loadBlueprints(), loadUseCases(), loadMonitoring(), loadDiscoverySessions()]).finally(() => {
+      setLoading(false);
+    });
+  }, [loadBlueprints, loadDiscoverySessions, loadMonitoring, loadUseCases]);
 
   async function inspectBlueprint(blueprintId: string) {
     setSelectedId(blueprintId);
@@ -1518,10 +1521,10 @@ export function Consultant() {
           </div>
         ) : null}
         <SectionLoadNotice section="useCases" state={sectionStates.useCases} onRetry={() => void loadUseCases()} />
-        {sectionStates.useCases.status === "loading" && useCases.length === 0 ? <p className="screen-note">Loading Solutions Architect use cases…</p> : null}
-        {useCases.length > 0 ? (
+        {sectionStates.useCases.status === "loading" && solutionUseCases.length === 0 ? <p className="screen-note">Loading Solutions Architect use cases…</p> : null}
+        {solutionUseCases.length > 0 ? (
           <div className="consultant-component-list">
-            {useCases.map((useCase) => <UseCaseCard useCase={useCase} key={useCase.id} />)}
+            {solutionUseCases.map((solutionUseCase) => <UseCaseCard item={solutionUseCase} key={solutionUseCase.id} />)}
           </div>
         ) : sectionStates.useCases.status !== "loading" && sectionStates.useCases.status !== "gated" && sectionStates.useCases.status !== "error" ? <p>No Solutions Architect use cases are available.</p> : null}
         </section>
@@ -2442,14 +2445,14 @@ function parseJsonArray(value: string, label: string): Record<string, unknown>[]
   return parsed as Record<string, unknown>[];
 }
 
-function UseCaseCard({ useCase }: { useCase: ConsultantUseCase }) {
+function UseCaseCard({ item }: { item: ConsultantUseCase }) {
   return (
     <article className="consultant-component">
       <div>
-        <strong>{useCase.title}</strong>
-        <span>{useCase.category} · {useCase.business_goal}</span>
-        <span>Services: {useCase.services.join(", ")}</span>
-        <span>Approval boundaries: {useCase.approval_boundaries.join(", ")}</span>
+        <strong>{item.title}</strong>
+        <span>{item.category} · {item.business_goal}</span>
+        <span>Services: {item.services.join(", ")}</span>
+        <span>Approval boundaries: {item.approval_boundaries.join(", ")}</span>
       </div>
     </article>
   );
