@@ -5,14 +5,13 @@ import io
 import json
 import logging
 import os
-import re
 import sqlite3
 import time
 import uuid
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import asynccontextmanager
 from dataclasses import asdict, replace
-from datetime import UTC, date, datetime
+from datetime import UTC, datetime
 from functools import partial
 from pathlib import Path
 from typing import Annotated, Literal, cast
@@ -22,7 +21,7 @@ from fastapi import status as http_status
 from fastapi.encoders import jsonable_encoder
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import FileResponse, JSONResponse
-from pydantic import AliasChoices, BaseModel, ConfigDict, Field, ValidationError
+from pydantic import ValidationError
 from slowapi import Limiter
 from slowapi.errors import RateLimitExceeded
 from slowapi.extension import _rate_limit_exceeded_handler
@@ -58,6 +57,168 @@ from wait_local_agent.api.packs.loader import (
     configure_pack_routes,
     get_entitlement_status,
     install_pack_tarball,
+)
+from wait_local_agent.api.schemas import (
+    AgentApprovalRuleRequest,  # noqa: F401
+    AgentBackfillCreateRequest,
+    AgentBackfillPreviewRequest,
+    AgentDefinitionRequest,
+    AgentPlanRequest,
+    AgentRunStartRequest,
+    AgentStepRequest,  # noqa: F401
+    ApprovalPayloadPatchRequest,
+    ApprovalRequest,
+    BackupCreateRequest,
+    BackupRestoreRequest,
+    ClientConnectorMappingCreateRequest,
+    ClientCreateRequest,
+    ClientDiscoveryBulkAcceptRequest,
+    ClientDiscoveryRunRequest,
+    ClientReportRequest,
+    ClientStatusRequest,
+    CollectorConfigRequest,
+    CollectorRunRequest,
+    ConnectorInstanceCreateRequest,
+    ConnectorInstanceUpdateRequest,
+    ConnectWiseDraftRequest,
+    CopilotStudioPlanRequest,
+    DeliveryPlanRequest,
+    DeploymentModeRequest,
+    DiagnosticsBundleRequest,
+    DiagnosticsUploadRequest,
+    DiscoveryBlueprintPromotionRequest,
+    DiscoveryRequest,
+    DiscoverySessionStartRequest,
+    DiscoveryTurnRequest,
+    EmployeeOnboardingDemoRequest,
+    EndUserBrandingResponse,
+    EndUserHaloSyncDraftRequest,
+    EndUserMessageRequest,
+    EndUserTicketCreateRequest,
+    EnvironmentDiscoveryRequest,
+    EvaluationExecutionRequest,  # noqa: F401
+    EvaluationRequest,
+    EventIngestRequest,
+    GovernanceRequest,
+    HaloDraftRequest,
+    HardeningRunRequest,
+    KnowledgeAuthorityRequest,
+    KnowledgeIngestRequest,
+    M365AuthenticationMethodDeleteDraftRequest,
+    M365GroupMembershipDraftRequest,
+    M365LicenseChangeDraftRequest,
+    M365MailboxSettingsUpdateDraftRequest,
+    M365MailMessageDeleteDraftRequest,
+    M365MailMessageMoveDraftRequest,
+    M365MailMessageReadStateDraftRequest,
+    M365ManagedDeviceRebootDraftRequest,
+    M365ManagedDeviceRemoteLockDraftRequest,
+    M365ManagedDeviceRetirementDraftRequest,
+    M365ManagedDeviceSyncDraftRequest,
+    M365PasswordResetDraftRequest,
+    M365SessionRevocationDraftRequest,
+    M365UserDisableDraftRequest,
+    M365UserDraftRequest,
+    MspPlaybookEntryCreateRequest,
+    MspPlaybookEntryUpdateRequest,
+    MspPlaybookRunRequest,
+    MspPlaybookSubscriptionCreateRequest,
+    MspPlaybookSubscriptionUpdateRequest,
+    OpenApiConnectorRequest,
+    PackInstallRequest,
+    PowerAppsPlanRequest,
+    PowerAutomatePlanRequest,
+    PowerPlatformDeploymentRequest,
+    PowerPlatformPackageMaterializationRequest,
+    PowerPlatformPackageRequest,
+    PowerPlatformPackageValidationRequest,
+    PowerPlatformRollbackRequest,
+    QuarantineReclassificationRequest,
+    RestoreExerciseRequest,
+    ScheduledJobCreateRequest,
+    ScheduledJobRescheduleRequest,
+    SecretSetRequest,
+    SmartActionInvokeRequest,
+    SolutionBlueprintRequest,
+    SupervisorPlanRequest,
+    SupervisorRunRequest,
+    TeamsMessageDraftRequest,
+    TechnicianChatMessageRequest,
+    TechnicianChatRequest,
+    TechnicianChatSessionCreateRequest,
+    TemplateGalleryCreateRequest,
+    TemplateGalleryImportRequest,
+    TemplateGalleryRestoreRequest,
+    TemplateGalleryUpdateRequest,
+    WorkflowRunRequest,
+)
+from wait_local_agent.api.scopes import (
+    _approval_scope_visible,
+    _backfill_scope,
+    _connector_read_client,  # noqa: F401
+    _end_user_client_id,
+    _end_user_read_client_id,
+    _operator_scope,
+    _request_correlation_id,
+    _require_commercial_activation_access,
+    _require_msp_operator,
+    _required_client_id,
+    _resolve_client_target_scope,
+    _resolve_detail_scope,
+    _scheduled_job_for_context,
+    _scope_contains_client,  # noqa: F401
+    _singular_action_client,
+)
+from wait_local_agent.api.views import (
+    _EXECUTING_EXECUTION_STATUS,  # noqa: F401
+    _TERMINAL_EXECUTION_STATUSES,
+    SENSITIVE_KEY_PARTS,  # noqa: F401
+    _agent_backfill_view,
+    _agent_definition_view,
+    _agent_revision_diff_view,
+    _agent_revision_view,
+    _agent_run_view,
+    _baseline_view,
+    _connectwise_draft_view,
+    _dispatch_workflow_completion_event,
+    _empty_analytics_summary,  # noqa: F401
+    _end_user_brand_color,
+    _end_user_brand_logo_data_uri,
+    _end_user_branding_text,
+    _end_user_message_view,
+    _end_user_ticket_view,
+    _event_delivery_view,
+    _event_dispatch_view,
+    _execution_artifact_view,
+    _execution_run_view,
+    _execution_step_view,
+    _halopsa_client_mapping,
+    _halopsa_draft_view,
+    _invoke_technician_chat_message,
+    _operator_end_user_message_view,
+    _power_platform_source_record,
+    _record_technician_chat_assistant,  # noqa: F401
+    _redact_json_text,
+    _redact_payload,
+    _redact_request_input,
+    _redact_value,  # noqa: F401
+    _safe_end_user_ticket_id,
+    _safe_external_ticket_id,
+    _safe_json_list,  # noqa: F401
+    _safe_json_object,
+    _safe_json_value,  # noqa: F401
+    _safe_json_values,
+    _safe_redacted_json_object,  # noqa: F401
+    _scheduled_job_view,
+    _scheduled_ticket_id,
+    _smart_action_run_view,
+    _technician_chat_session_view,
+    _template_gallery_export_view,
+    _template_gallery_revision_diff_view,
+    _template_gallery_revision_view,
+    _template_gallery_view,
+    _workflow_run_comparison_view,
+    make_approval_view,
 )
 from wait_local_agent.autotask import AutotaskClient, AutotaskReadResponse
 from wait_local_agent.backup import (
@@ -96,7 +257,7 @@ from wait_local_agent.confluence import ConfluenceClient, ConfluenceReadResponse
 from wait_local_agent.connector_factory import (
     SUPPORTED_CONNECTOR_TYPES,
     ConnectorFactoryError,
-    build_read_client_for_client,
+    build_read_client_for_client,  # noqa: F401
     validate_connector_instance,
 )
 from wait_local_agent.connectors import (
@@ -202,18 +363,10 @@ from wait_local_agent.mcp import (
 )
 from wait_local_agent.models import (
     AGENT_BACKFILL_MAX_CONCURRENCY,
-    DEFAULT_EVENT_MAX_RETRIES,
-    DEFAULT_EVENT_RETRY_DELAY_SECONDS,
-    MAX_APPROVAL_EXPIRY_SECONDS,
-    MAX_EVENT_RETRIES,
-    MAX_EVENT_RETRY_DELAY_SECONDS,
-    MAX_KNOWLEDGE_SOP_VERSION_LENGTH,
     AgentDefinition,
     ClientCandidate,
     ConnectorInstance,
     ConsultantDiscoverySession,
-    KnowledgeAuthority,
-    WorkflowRun,
 )
 from wait_local_agent.monitoring import build_agent_health_summary
 from wait_local_agent.msp_playbooks import (
@@ -232,11 +385,6 @@ from wait_local_agent.msp_playbooks import (
 )
 from wait_local_agent.notion import NotionClient, NotionDataSourceResponse, NotionReadResponse
 from wait_local_agent.observability import (
-    APPROVAL_RATE_DERIVATION,
-    ESTIMATED_MINUTES_SAVED_DERIVATION,
-    MODEL_COST_DERIVATION,
-    TICKET_LIFECYCLE_DERIVATION,
-    TICKET_METRICS_DERIVATION,
     build_analytics_summary,
 )
 from wait_local_agent.oidc import get_or_create_session_signing_key
@@ -252,7 +400,6 @@ from wait_local_agent.power_platform import (
     compare_pac_versions,
     generate_power_platform_connector,
     power_platform_cli_status,
-    resolve_pac_executable,
 )
 from wait_local_agent.power_platform_deployment import (
     PowerPlatformDeploymentError,
@@ -332,7 +479,7 @@ from wait_local_agent.supervisor import (
 )
 from wait_local_agent.syncro import SyncroClient, SyncroCommentsResponse, SyncroReadResponse
 from wait_local_agent.teams_graph import TeamsGraphClient
-from wait_local_agent.technician_chat import TechnicianChatParseError, parse_technician_message
+from wait_local_agent.technician_chat import TechnicianChatParseError
 from wait_local_agent.timezest import TimeZestClient
 from wait_local_agent.update_channel import UpdateStatusCache, check_for_updates
 from wait_local_agent.vault import SecretVault, SecretVaultError
@@ -354,78 +501,10 @@ AdminAccess = Annotated[AuthContext, Depends(require_role(Role.ADMIN))]
 EndUserAccess = Annotated[AuthContext, Depends(require_end_user)]
 
 
-def _connector_read_client(
-    request: Request,
-    context: AuthContext,
-    connector_type: str,
-    appliance_client: object,
-    *,
-    requested_client_id: str | None = None,
-    m365_teams: bool = False,
-    settings: Settings,
-    store: Store,
-    vault: SecretVault,
-    m365_connection_resolver: M365ConnectionResolver,
-) -> object:
-    """Resolve a provider read client without widening a tenant scope."""
-    scope = resolve_client_scope(context, requested_client_from(request, requested_client_id))
-    if isinstance(scope, AllClients):
-        return appliance_client
-    client_id = scope.client_id
-    if client_id is None:  # pragma: no cover - BoundClients rejects empty scopes
-        raise HTTPException(status_code=403, detail="client scope is required")
-    if connector_type == "m365":
-        transport = getattr(
-            request.app.state,
-            f"{connector_type}_transport",
-            getattr(appliance_client, "transport", None),
-        )
-        try:
-            connection = m365_connection_resolver.resolve(client_id)
-            if m365_teams:
-                return TeamsGraphClient(
-                    settings,
-                    transport=transport,
-                    connection=connection,
-                )
-            return M365GraphClient(
-                settings,
-                transport=transport,
-                connection=connection,
-                client_id=client_id,
-            )
-        except M365ProfileResolutionError as exc:
-            raise HTTPException(
-                status_code=409,
-                detail={"code": "client_scope_unavailable", "client_id": client_id},
-            ) from exc
-    if connector_type not in {"halopsa", "connectwise", "syncro", "servicenow", "autotask"}:
-        raise HTTPException(status_code=409, detail={"code": "client_scope_unsupported"})
-    transport = getattr(
-        request.app.state,
-        f"{connector_type}_transport",
-        getattr(appliance_client, "transport", None),
-    )
-    try:
-        return build_read_client_for_client(
-            store,
-            connector_type,
-            client_id,
-            base_settings=settings,
-            vault=vault,
-            inner_transport=transport,
-        )
-    except ConnectorFactoryError as exc:
-        raise HTTPException(
-            status_code=409,
-            detail={"code": "client_scope_unavailable", "client_id": client_id},
-        ) from exc
 
 
 LOGGER = logging.getLogger(__name__)
 CORRELATION_HEADER = "X-Correlation-ID"
-_TERMINAL_EXECUTION_STATUSES = frozenset({"succeeded", "verified", "unverified", "submitted"})
-_EXECUTING_EXECUTION_STATUS = "running"
 
 
 class CorrelationIdMiddleware:
@@ -459,710 +538,6 @@ class CorrelationIdMiddleware:
             )
 
 
-class ApprovalRequest(BaseModel):
-    status: Literal["approved", "rejected", "pending"]
-    comment: str = ""
-
-
-class KnowledgeIngestRequest(BaseModel):
-    path: str
-    parser: str | None = None
-    ocr: bool | None = None
-    client_id: str | None = None
-
-
-class KnowledgeAuthorityRequest(BaseModel):
-    authority: KnowledgeAuthority
-    sop_version: str | None = Field(default=None, max_length=MAX_KNOWLEDGE_SOP_VERSION_LENGTH)
-    superseded_by: int | None = Field(default=None, gt=0)
-
-    model_config = ConfigDict(extra="forbid")
-
-
-class ApprovalPayloadPatchRequest(BaseModel):
-    fields: dict[str, object]
-    comment: str = "Draft edited before approval"
-
-
-class HaloDraftRequest(BaseModel):
-    action_type: Literal[
-        "add_note",
-        "update_status",
-        "assign_technician",
-        "draft_response",
-        "update_ticket_fields",
-    ]
-    fields: dict[str, object]
-    client_id: str | None = None
-
-
-class ConnectWiseDraftRequest(BaseModel):
-    action_type: Literal["update_status", "assign_technician", "update_ticket_fields"]
-    fields: dict[str, object]
-    client_id: str | None = None
-
-
-class M365UserDraftRequest(BaseModel):
-    user_principal_name: str = Field(min_length=3, max_length=320)
-    display_name: str = Field(min_length=1, max_length=256)
-    mail_nickname: str = Field(min_length=1, max_length=64)
-    temporary_vault_name: str = Field(min_length=14, max_length=128)
-    account_enabled: bool = True
-    force_change_password_next_sign_in: bool = True
-    client_id: str | None = None
-
-
-class M365UserDisableDraftRequest(BaseModel):
-    user_identity: str = Field(min_length=1, max_length=320)
-    client_id: str | None = None
-
-
-class M365PasswordResetDraftRequest(BaseModel):
-    user_identity: str = Field(min_length=1, max_length=320)
-    temporary_vault_name: str = Field(min_length=14, max_length=128)
-    force_change_password_next_sign_in: bool = True
-    force_change_password_next_sign_in_with_mfa: bool = False
-    client_id: str | None = None
-
-
-class M365AuthenticationMethodDeleteDraftRequest(BaseModel):
-    user_identity: str = Field(min_length=1, max_length=320)
-    method_type: Literal["fido2", "microsoft_authenticator", "phone", "software_oath"]
-    method_id: str = Field(min_length=1, max_length=320)
-    client_id: str | None = None
-
-
-class M365GroupMembershipDraftRequest(BaseModel):
-    group_id: str = Field(min_length=1, max_length=320)
-    user_id: str = Field(min_length=1, max_length=320)
-    operation: Literal["add", "remove"]
-    client_id: str | None = None
-
-
-class M365LicenseChangeDraftRequest(BaseModel):
-    user_id: str = Field(min_length=1, max_length=320)
-    sku_ids: list[str] = Field(min_length=1, max_length=50)
-    operation: Literal["add", "remove"]
-    client_id: str | None = None
-
-
-class M365SessionRevocationDraftRequest(BaseModel):
-    user_id: str = Field(min_length=1, max_length=320)
-    client_id: str | None = None
-
-
-class M365ManagedDeviceRetirementDraftRequest(BaseModel):
-    device_id: str = Field(min_length=1, max_length=320)
-    client_id: str | None = None
-
-
-class M365ManagedDeviceSyncDraftRequest(BaseModel):
-    device_id: str = Field(min_length=1, max_length=320)
-    client_id: str | None = None
-
-
-class M365ManagedDeviceRebootDraftRequest(BaseModel):
-    device_id: str = Field(min_length=1, max_length=320)
-    client_id: str | None = None
-
-
-class M365ManagedDeviceRemoteLockDraftRequest(BaseModel):
-    device_id: str = Field(min_length=1, max_length=320)
-    client_id: str | None = None
-
-
-class M365MailboxSettingsUpdateDraftRequest(BaseModel):
-    user_identity: str = Field(min_length=1, max_length=320)
-    settings: dict[str, str] = Field(min_length=1, max_length=4)
-    client_id: str | None = None
-
-
-class M365MailMessageMoveDraftRequest(BaseModel):
-    user_identity: str = Field(min_length=1, max_length=320)
-    source_folder_id: str = Field(min_length=1, max_length=320)
-    message_id: str = Field(min_length=1, max_length=320)
-    destination_folder_id: str = Field(min_length=1, max_length=320)
-    client_id: str | None = None
-
-
-class M365MailMessageReadStateDraftRequest(BaseModel):
-    user_identity: str = Field(min_length=1, max_length=320)
-    source_folder_id: str = Field(min_length=1, max_length=320)
-    message_id: str = Field(min_length=1, max_length=320)
-    is_read: bool
-    client_id: str | None = None
-
-
-class M365MailMessageDeleteDraftRequest(BaseModel):
-    user_identity: str = Field(min_length=1, max_length=320)
-    source_folder_id: str = Field(min_length=1, max_length=320)
-    message_id: str = Field(min_length=1, max_length=320)
-    client_id: str | None = None
-
-
-class WorkflowRunRequest(BaseModel):
-    ticket_id: str
-    client_id: str | None = None
-    payload: dict[str, object] = Field(default_factory=dict)
-
-
-class MspPlaybookRunRequest(BaseModel):
-    ticket_id: str | None = None
-    client_id: str | None = None
-    payload: dict[str, object] = Field(default_factory=dict)
-
-
-class MspPlaybookEntryCreateRequest(BaseModel):
-    source_playbook_id: str = Field(min_length=1, max_length=120)
-    provenance: str = Field(min_length=1, max_length=1000)
-    definition: dict[str, object] | None = None
-    enabled: bool = True
-    client_id: str | None = None
-
-
-class MspPlaybookEntryUpdateRequest(BaseModel):
-    definition: dict[str, object] | None = None
-    provenance: str | None = Field(default=None, min_length=1, max_length=1000)
-    enabled: bool | None = None
-
-
-class MspPlaybookSubscriptionCreateRequest(BaseModel):
-    playbook_id: str = Field(min_length=1, max_length=120)
-    event_type: str = Field(min_length=1, max_length=120)
-    input_mapping: dict[str, object] = Field(default_factory=dict, max_length=16)
-    enabled: bool = True
-    client_id: str | None = None
-    model_config = ConfigDict(extra="forbid")
-
-
-class MspPlaybookSubscriptionUpdateRequest(BaseModel):
-    input_mapping: dict[str, object] | None = Field(default=None, max_length=16)
-    enabled: bool | None = None
-    model_config = ConfigDict(extra="forbid")
-
-
-class TemplateGalleryCreateRequest(BaseModel):
-    source_template_id: str
-    provenance: str = Field(min_length=1, max_length=1000)
-    display_name: str | None = Field(default=None, max_length=120)
-    instructions: str = Field(default="", max_length=4000)
-    definition: dict[str, object] | None = None
-    client_id: str | None = None
-
-
-class TemplateGalleryImportRequest(BaseModel):
-    format: Literal["wait-local-agent.workflow-template"]
-    format_version: Literal[1]
-    source_template_id: str
-    name: str = Field(min_length=1, max_length=120)
-    description: str = Field(min_length=1, max_length=2000)
-    provenance: str = Field(min_length=1, max_length=1000)
-    instructions: str = Field(default="", max_length=4000)
-    definition: dict[str, object] | None = None
-    client_id: str | None = None
-
-
-class TemplateGalleryUpdateRequest(BaseModel):
-    name: str | None = Field(default=None, min_length=1, max_length=120)
-    description: str | None = Field(default=None, min_length=1, max_length=2000)
-    instructions: str | None = Field(default=None, max_length=4000)
-    definition: dict[str, object] | None = None
-    enabled: bool | None = None
-    client_id: str | None = None
-
-
-class TemplateGalleryRestoreRequest(BaseModel):
-    client_id: str | None = None
-
-
-class SolutionBlueprintRequest(BaseModel):
-    solution: dict[str, object]
-    business_goal: dict[str, object]
-    users: list[object]
-    knowledge: list[object]
-    systems: list[object]
-    agents: list[dict[str, object]]
-    workflows: list[dict[str, object]]
-    approvals: dict[str, object]
-    deployment: list[object]
-    risk: str
-    instructions: str = Field(default="", max_length=4000)
-    intents: list[object] = Field(default_factory=list, max_length=32)
-    skills: list[object] = Field(default_factory=list, max_length=32)
-    model: str = Field(default="", max_length=240)
-    orchestration: str = Field(default="", max_length=32)
-    environment: list[dict[str, object]] = Field(default_factory=list, max_length=32)
-    discovery: dict[str, object] = Field(default_factory=dict)
-    client_id: str | None = None
-    model_config = ConfigDict(extra="forbid")
-
-
-class OpenApiConnectorRequest(BaseModel):
-    connector_id: str = Field(min_length=1, max_length=64)
-    definition: dict[str, object]
-
-
-class EvaluationExecutionRequest(BaseModel):
-    agent_id: str = Field(min_length=1, max_length=64)
-    entity_id: str = Field(min_length=1, max_length=100)
-    client_id: str = Field(min_length=1, max_length=128)
-    input: dict[str, object] = Field(default_factory=dict)
-
-    model_config = ConfigDict(extra="forbid")
-
-
-class EvaluationRequest(BaseModel):
-    test_set: list[dict[str, object]]
-    observations: dict[str, object] = Field(default_factory=dict)
-    execution: EvaluationExecutionRequest | None = None
-
-    model_config = ConfigDict(extra="forbid")
-
-
-class EmployeeOnboardingDemoRequest(BaseModel):
-    client_id: str = Field(min_length=1, max_length=128)
-    entity_id: str = Field(default="TCK-1001", min_length=1, max_length=100)
-    blueprint_id: str | None = Field(default=None, min_length=1, max_length=64)
-    blueprint: dict[str, object] | None = Field(default=None, max_length=32)
-    output_directory: str | None = Field(default=None, min_length=1, max_length=240)
-
-    model_config = ConfigDict(extra="forbid")
-
-
-class GovernanceRequest(BaseModel):
-    architecture: dict[str, object]
-    connector_artifacts: list[dict[str, object]] = Field(default_factory=list, max_length=16)
-
-
-class PowerAppsPlanRequest(BaseModel):
-    client_id: str = Field(min_length=1, max_length=128)
-    app_name: str = Field(min_length=1, max_length=120)
-    entities: list[dict[str, object]] = Field(default_factory=list, max_length=16)
-    screens: list[dict[str, object]] = Field(default_factory=list, max_length=16)
-    actions: list[dict[str, object]] = Field(default_factory=list, max_length=32)
-    model_config = ConfigDict(extra="forbid")
-
-
-class PowerPlatformPackageRequest(BaseModel):
-    client_id: str = Field(min_length=1, max_length=128)
-    solution_name: str = Field(min_length=1, max_length=64)
-    publisher_name: str = Field(min_length=1, max_length=100)
-    publisher_prefix: str = Field(min_length=2, max_length=8)
-    output_directory: str = Field(min_length=1, max_length=240)
-    artifacts: list[dict[str, object]] = Field(default_factory=list, max_length=32)
-    connector_artifacts: list[dict[str, object]] = Field(default_factory=list, max_length=16)
-
-    model_config = ConfigDict(extra="forbid")
-
-
-class PowerPlatformPackageValidationRequest(BaseModel):
-    client_id: str | None = Field(default=None, max_length=128)
-    package: dict[str, object]
-
-    model_config = ConfigDict(extra="forbid")
-
-
-class PowerPlatformPackageMaterializationRequest(BaseModel):
-    client_id: str | None = Field(default=None, max_length=128)
-    package: dict[str, object]
-
-    model_config = ConfigDict(extra="forbid")
-
-
-class PowerAutomatePlanRequest(BaseModel):
-    client_id: str = Field(min_length=1, max_length=128)
-    workflow_id: str = Field(min_length=1, max_length=64)
-    workflow_name: str = Field(min_length=1, max_length=240)
-    trigger: str = Field(min_length=1, max_length=240)
-    steps: list[dict[str, object]] = Field(min_length=1, max_length=32)
-    model_config = ConfigDict(extra="forbid")
-
-
-class CopilotStudioPlanRequest(BaseModel):
-    client_id: str = Field(min_length=1, max_length=128)
-    copilot_name: str = Field(min_length=1, max_length=240)
-    business_goal: str = Field(min_length=1, max_length=500)
-    topics: list[dict[str, object]] = Field(default_factory=list, max_length=32)
-    knowledge_sources: list[object] = Field(default_factory=list, max_length=32)
-    actions: list[dict[str, object]] = Field(default_factory=list, max_length=32)
-
-    model_config = ConfigDict(extra="forbid")
-
-
-class DiscoveryRequest(BaseModel):
-    client_id: str = Field(min_length=1, max_length=128)
-    answers: dict[str, object] = Field(default_factory=dict)
-    model_config = ConfigDict(extra="forbid")
-
-
-class DiscoveryBlueprintPromotionRequest(BaseModel):
-    client_id: str = Field(min_length=1, max_length=128)
-    solution_name: str = Field(min_length=1, max_length=240)
-    risk: Literal["low", "medium", "high"]
-    answers: dict[str, object] = Field(default_factory=dict, max_length=28)
-
-    model_config = ConfigDict(extra="forbid")
-
-
-class DiscoverySessionStartRequest(BaseModel):
-    client_id: str = Field(min_length=1, max_length=128)
-    opening_message: str | None = Field(default=None, max_length=2000)
-    answers: dict[str, object] = Field(default_factory=dict)
-    model_config = ConfigDict(extra="forbid")
-
-
-class DiscoveryTurnRequest(BaseModel):
-    client_id: str = Field(min_length=1, max_length=128)
-    field: str = Field(min_length=1, max_length=64)
-    answer: object
-    model_config = ConfigDict(extra="forbid")
-
-
-class EnvironmentDiscoveryRequest(BaseModel):
-    client_id: str = Field(min_length=1, max_length=128)
-    systems: list[object] = Field(default_factory=list, max_length=32)
-    probe: bool = False
-
-    model_config = ConfigDict(extra="forbid")
-
-
-class SupervisorPlanRequest(BaseModel):
-    client_id: str = Field(min_length=1, max_length=128)
-    task: str = Field(min_length=1, max_length=2000)
-    child_agent_ids: list[str] = Field(min_length=1, max_length=8)
-    max_retries: int = Field(default=0, ge=0, le=3)
-    model_config = ConfigDict(extra="forbid")
-
-
-class SupervisorRunRequest(BaseModel):
-    client_id: str = Field(min_length=1, max_length=128)
-    entity_id: str = Field(min_length=1, max_length=100)
-    task: str = Field(min_length=1, max_length=2_000)
-    child_agent_ids: list[str] = Field(min_length=1, max_length=8)
-    input: dict[str, object] = Field(default_factory=dict, max_length=16)
-    completed_run_ids: list[int] = Field(default_factory=list, max_length=8)
-    max_retries: int = Field(default=0, ge=0, le=3)
-    cancel_run_id: int | None = Field(default=None, ge=1)
-    model_config = ConfigDict(extra="forbid")
-
-
-class DeliveryPlanRequest(BaseModel):
-    client_id: str = Field(min_length=1, max_length=128)
-    architecture: dict[str, object]
-    evaluation: dict[str, object]
-    governance: dict[str, object]
-    deployment_targets: list[str] = Field(min_length=1, max_length=8)
-    connector_artifacts: list[dict[str, object]] = Field(default_factory=list, max_length=16)
-    review_artifacts: list[dict[str, object]] = Field(default_factory=list, max_length=16)
-    deployable_package: dict[str, object] | None = None
-    model_config = ConfigDict(extra="forbid")
-
-
-class PowerPlatformDeploymentRequest(BaseModel):
-    client_id: str = Field(min_length=1, max_length=128)
-    solution_name: str = Field(min_length=1, max_length=64)
-    publisher_name: str = Field(min_length=1, max_length=100)
-    publisher_prefix: str = Field(min_length=2, max_length=8)
-    output_directory: str = Field(min_length=1, max_length=240)
-    deployment_targets: list[dict[str, object]] = Field(min_length=1, max_length=3)
-    stage: Literal["build", "dev", "test", "prod"] = "build"
-    promotion_evidence: dict[str, object] = Field(default_factory=dict)
-    model_config = ConfigDict(extra="forbid")
-
-
-class PowerPlatformRollbackRequest(BaseModel):
-    client_id: str = Field(min_length=1, max_length=128)
-    solution_name: str = Field(min_length=1, max_length=64)
-    publisher_name: str = Field(min_length=1, max_length=100)
-    publisher_prefix: str = Field(min_length=2, max_length=8)
-    output_directory: str = Field(min_length=1, max_length=240)
-    deployment_targets: list[dict[str, object]] = Field(min_length=1, max_length=3)
-    stage: Literal["dev", "test", "prod"]
-    rollback_artifact_path: str = Field(min_length=1, max_length=240)
-    rollback_evidence: dict[str, object]
-    model_config = ConfigDict(extra="forbid")
-
-
-class TeamsMessageDraftRequest(BaseModel):
-    team_id: str = Field(min_length=1, max_length=320)
-    channel_id: str = Field(min_length=1, max_length=320)
-    body: str = Field(min_length=1, max_length=4000)
-    client_id: str | None = Field(default=None, max_length=128)
-    model_config = ConfigDict(extra="forbid")
-
-
-class SmartActionInvokeRequest(BaseModel):
-    payload: dict[str, object] = Field(default_factory=dict)
-    confirm: bool = False
-    client_id: str | None = None
-
-
-class TechnicianChatRequest(BaseModel):
-    message: str = Field(min_length=1, max_length=2000)
-    ticket_id: str | None = Field(default=None, max_length=100)
-    client_id: str | None = None
-
-
-class TechnicianChatSessionCreateRequest(BaseModel):
-    ticket_id: str | None = Field(default=None, max_length=100)
-    client_id: str | None = None
-
-
-class TechnicianChatMessageRequest(BaseModel):
-    message: str = Field(min_length=1, max_length=2000)
-    ticket_id: str | None = Field(default=None, max_length=100)
-
-
-class EndUserTicketCreateRequest(BaseModel):
-    subject: str = Field(min_length=1, max_length=200)
-    body: str = Field(min_length=1, max_length=10_000)
-
-
-class EndUserBrandingResponse(BaseModel):
-    brand_name: str
-    brand_tagline: str
-    brand_logo_data_uri: str
-    brand_accent_color: str
-    brand_surface_color: str
-
-
-class EndUserMessageRequest(BaseModel):
-    body: str = Field(min_length=1, max_length=10_000)
-
-
-class EndUserHaloSyncDraftRequest(BaseModel):
-    external_ticket_id: str = Field(min_length=1, max_length=100)
-
-
-class ClientReportRequest(BaseModel):
-    period_start: date
-    period_end: date
-    client_id: str | None = Field(default=None, min_length=1, max_length=200)
-
-
-class AgentStepRequest(BaseModel):
-    tool_id: str
-    payload: dict[str, object] = Field(default_factory=dict)
-    failure_policy: dict[str, object] | None = None
-
-
-class AgentApprovalRuleRequest(BaseModel):
-    tool_id: str = Field(min_length=1, max_length=120)
-    when: dict[str, list[str]] = Field(min_length=1, max_length=3)
-
-
-class AgentDefinitionRequest(BaseModel):
-    name: str
-    description: str = ""
-    enabled: bool = True
-    trigger: Literal["manual", "scheduled", "event"] = "manual"
-    entity_type: Literal["ticket"] = "ticket"
-    filters: dict[str, object] = Field(default_factory=dict)
-    enabled_tools: list[str]
-    steps: list[AgentStepRequest]
-    max_steps: int = Field(default=8, ge=1, le=8)
-    execution_timeout_seconds: float = Field(default=30.0, gt=0, le=120)
-    client_id: str | None = None
-    run_once_per_entity: bool = True
-    depends_on_agent_ids: list[str] = Field(default_factory=list)
-    execution_window_start: str | None = Field(default=None, max_length=5)
-    execution_window_end: str | None = Field(default=None, max_length=5)
-    execution_window_timezone: str = Field(default="UTC", min_length=1, max_length=100)
-    context_sources: list[Literal["ticket", "client", "knowledge"]] = Field(default_factory=list, max_length=3)
-    approval_expiry_seconds: int | None = Field(default=None, ge=1, le=MAX_APPROVAL_EXPIRY_SECONDS)
-    result_aware: bool = False
-    approval_required_tools: list[str] = Field(default_factory=list, max_length=8)
-    approval_rules: list[AgentApprovalRuleRequest] = Field(default_factory=list, max_length=8)
-
-
-class AgentRunStartRequest(BaseModel):
-    entity_id: str
-    input: dict[str, object] = Field(default_factory=dict)
-    client_id: str | None = None
-
-
-class AgentPlanRequest(BaseModel):
-    instruction: str = Field(min_length=1, max_length=2_000)
-    entity_id: str = Field(min_length=1, max_length=100)
-    max_steps: int = Field(default=8, ge=1, le=8)
-    client_id: str | None = None
-
-
-class AgentBackfillCreateRequest(BaseModel):
-    agent_id: str
-    entity_ids: list[str] = Field(min_length=1, max_length=100)
-    input: dict[str, object] = Field(default_factory=dict)
-    max_concurrency: int = Field(default=1, ge=1, le=AGENT_BACKFILL_MAX_CONCURRENCY)
-    client_id: str | None = None
-
-
-class AgentBackfillPreviewRequest(BaseModel):
-    agent_id: str
-    entity_ids: list[str] = Field(min_length=1, max_length=100)
-    input: dict[str, object] = Field(default_factory=dict)
-    max_concurrency: int = Field(default=1, ge=1, le=AGENT_BACKFILL_MAX_CONCURRENCY)
-    client_id: str | None = None
-
-
-class EventIngestRequest(BaseModel):
-    event_type: str
-    entity_type: Literal["ticket"] = "ticket"
-    entity_id: str
-    payload: dict[str, object] = Field(default_factory=dict)
-    idempotency_key: str | None = None
-    client_id: str | None = None
-    max_retries: int = Field(default=DEFAULT_EVENT_MAX_RETRIES, ge=0, le=MAX_EVENT_RETRIES)
-    retry_delay_seconds: int = Field(
-        default=DEFAULT_EVENT_RETRY_DELAY_SECONDS,
-        ge=1,
-        le=MAX_EVENT_RETRY_DELAY_SECONDS,
-    )
-
-
-class ScheduledJobCreateRequest(BaseModel):
-    template_id: str | None = None
-    report_type: Literal["qbr", "automation_opportunity", "recurring_service_review"] | None = None
-    playbook_id: str | None = None
-    agent_id: str | None = None
-    job_kind: Literal[
-        "workflow", "playbook", "agent", "report", "connector_poll", "graph_sync", "baseline_snapshot", "backup"
-    ] | None = None
-    graph_sync: bool = False
-    entity_id: str | None = None
-    cron: str = ""
-    schedule_type: Literal["cron", "interval", "once"] = "cron"
-    interval_seconds: int | None = Field(default=None, ge=1, le=31_536_000)
-    run_at: str | None = None
-    timezone: str = Field(default="UTC", min_length=1, max_length=100)
-    params: dict[str, object] = Field(default_factory=dict)
-
-
-class ScheduledJobRescheduleRequest(BaseModel):
-    cron: str = ""
-    schedule_type: Literal["cron", "interval", "once"] = "cron"
-    interval_seconds: int | None = Field(default=None, ge=1, le=31_536_000)
-    run_at: str | None = None
-    timezone: str = Field(default="UTC", min_length=1, max_length=100)
-
-
-class CollectorConfigRequest(BaseModel):
-    config: dict[str, object] = Field(default_factory=dict)
-    client_id: str | None = None
-
-
-class CollectorRunRequest(CollectorConfigRequest):
-    confirm: bool = False
-
-
-class PackInstallRequest(BaseModel):
-    tarball_path: str = Field(validation_alias=AliasChoices("tarball_path", "tarball"))
-    license_key: str | None = Field(
-        default=None,
-        validation_alias=AliasChoices("license_key", "license"),
-    )
-
-    model_config = ConfigDict(populate_by_name=True)
-
-
-class BackupCreateRequest(BaseModel):
-    destination: str
-    encrypt: bool = False
-
-
-class BackupRestoreRequest(BaseModel):
-    source: str
-    encrypted: bool = False
-
-
-class HardeningRunRequest(BaseModel):
-    backup_paths: list[str] = Field(default_factory=list)
-
-
-class DiagnosticsBundleRequest(BaseModel):
-    case_id: str | None = Field(default=None, max_length=128)
-
-    model_config = ConfigDict(extra="forbid")
-
-
-class DiagnosticsUploadRequest(DiagnosticsBundleRequest):
-    consent: bool = False
-
-
-class RestoreExerciseRequest(BaseModel):
-    backup_id: str
-    encrypted: bool = False
-
-
-class SecretSetRequest(BaseModel):
-    name: str
-    value: str
-
-
-class ClientCreateRequest(BaseModel):
-    client_id: str = Field(min_length=1, max_length=128)
-    name: str = Field(min_length=1, max_length=256)
-
-    model_config = ConfigDict(extra="forbid")
-
-
-class ClientStatusRequest(BaseModel):
-    status: Literal["active", "archived", "quarantine"]
-
-    model_config = ConfigDict(extra="forbid")
-
-
-class ConnectorInstanceCreateRequest(BaseModel):
-    connector_type: str = Field(min_length=1, max_length=120)
-    display_name: str = Field(min_length=1, max_length=256)
-    client_id: str | None = Field(default=None, max_length=128)
-    credential_ref: str | None = Field(default=None, max_length=256)
-    config_json: str = Field(default="{}", max_length=20_000)
-
-    model_config = ConfigDict(extra="forbid")
-
-
-class ConnectorInstanceUpdateRequest(BaseModel):
-    connector_type: str | None = Field(default=None, min_length=1, max_length=120)
-    display_name: str | None = Field(default=None, min_length=1, max_length=256)
-    client_id: str | None = Field(default=None, max_length=128)
-    credential_ref: str | None = Field(default=None, max_length=256)
-    config_json: str | None = Field(default=None, max_length=20_000)
-    status: Literal["inactive", "active", "error", "disabled"] | None = None
-
-    model_config = ConfigDict(extra="forbid")
-
-
-class ClientConnectorMappingCreateRequest(BaseModel):
-    connector_instance_id: str = Field(min_length=1, max_length=128)
-    external_company_id: str = Field(min_length=1, max_length=256)
-    external_company_name: str | None = Field(default=None, max_length=256)
-    client_id: str = Field(min_length=1, max_length=128)
-
-    model_config = ConfigDict(extra="forbid")
-
-
-class ClientDiscoveryRunRequest(BaseModel):
-    connector_instance_id: str | None = Field(default=None, min_length=1, max_length=128)
-
-    model_config = ConfigDict(extra="forbid")
-
-
-class ClientDiscoveryBulkAcceptRequest(BaseModel):
-    candidate_ids: list[str] = Field(min_length=1, max_length=100)
-
-    model_config = ConfigDict(extra="forbid")
-
-
-class DeploymentModeRequest(BaseModel):
-    mode: Literal["msp", "smb"]
-
-    model_config = ConfigDict(extra="forbid")
-
-
-class QuarantineReclassificationRequest(BaseModel):
-    client_id: str = Field(min_length=1, max_length=128)
-
-    model_config = ConfigDict(extra="forbid")
 
 
 class SPAStaticFiles(StaticFiles):
@@ -1487,12 +862,20 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             # sanitized failure when it is used.
             return bool(active_settings.m365_graph_base_url and active_settings.m365_access_token)
 
-    _connector_read_client = partial(
+    _connector_read_client = partial(  # noqa: F811
         globals()["_connector_read_client"],
         settings=active_settings,
         store=store,
         vault=vault,
         m365_connection_resolver=m365_connection_resolver,
+    )
+
+    _approval_view = make_approval_view(
+        store=store,
+        active_settings=active_settings,
+        halopsa_client=halopsa_client,
+        m365_client=m365_client,
+        teams_client=teams_client,
     )
 
     @app.get("/health")
@@ -8418,93 +7801,6 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             "next_cursor": response.next_cursor,
         }
 
-    def _approval_view(request) -> dict[str, object]:
-        payload = _safe_json_object(request.payload_json)
-        workflow_run = store.get_workflow_run_for_approval(request.id) if request.id is not None else None
-        can_execute, block_reason = _approval_execution_state(request)
-        view = asdict(request)
-        view["payload_json"] = _redact_json_text(request.payload_json)
-        view["execution_result_json"] = _redact_json_text(request.execution_result_json)
-        view["comment"] = redact_text(request.comment)
-        view["payload"] = _redact_payload(payload)
-        view["output"] = _safe_redacted_json_object(request.execution_result_json)
-        return {
-            **view,
-            "can_execute": can_execute,
-            "block_reason": block_reason,
-            "workflow_run_id": workflow_run.id if workflow_run is not None else None,
-        }
-
-    def _approval_execution_state(request) -> tuple[bool, str]:
-        if request.action_type == "power_platform.solution_stage":
-            if request.status != "approved":
-                return False, "Approval must be approved before execution."
-            if request.execution_status == _EXECUTING_EXECUTION_STATUS:
-                return False, "Approval request is currently executing."
-            if request.execution_status in _TERMINAL_EXECUTION_STATUSES:
-                return False, "Approval request has already executed successfully."
-            if not active_settings.allow_write_actions:
-                return False, "Power Platform execution is blocked until WAIT_ALLOW_WRITE_ACTIONS=true."
-            if not active_settings.allow_power_platform_deployment:
-                return False, ("Power Platform deployment is blocked until WAIT_ALLOW_POWER_PLATFORM_DEPLOYMENT=true.")
-            if resolve_pac_executable(active_settings) is None:
-                if active_settings.pac_path is not None:
-                    return False, "WAIT_PAC_PATH is configured but is not an executable regular file."
-                return False, "The pac executable is not available on the local PATH."
-            if not active_settings.power_platform_workspace.expanduser().is_dir():
-                return False, "WAIT_POWER_PLATFORM_WORKSPACE must already exist."
-            return True, ""
-        if request.action_type == "teams.message.send":
-            if request.status != "approved":
-                return False, "Approval must be approved before execution."
-            if request.execution_status == "succeeded":
-                return False, "Approval request has already executed successfully."
-            write_health = teams_client.write_health()
-            if write_health.status != "ready":
-                return False, write_health.message
-            return True, ""
-        if request.action_type.startswith("m365."):
-            if request.status != "approved":
-                return False, "Approval must be approved before execution."
-            if request.execution_status == "succeeded":
-                return False, "Approval request has already executed successfully."
-            write_health = m365_client.write_health()
-            if write_health.status != "ready":
-                return False, write_health.message
-            return True, ""
-        if not request.action_type.startswith("halopsa."):
-            return False, "Only HaloPSA approvals have live execution in this release."
-        if request.status != "approved":
-            return False, "Approval must be approved before execution."
-        if request.execution_status in {"succeeded", "verified", "unverified", "submitted"}:
-            return False, "Approval request has already executed successfully."
-        if not hasattr(halopsa_client, "write_health"):
-            return False, "HaloPSA write health is unavailable."
-        write_health = halopsa_client.write_health()
-        if write_health.status != "ready":
-            return False, write_health.message
-        return True, ""
-
-    def _scheduled_job_view(job) -> dict[str, object]:
-        return {
-            "id": job.id,
-            "job_kind": job.job_kind,
-            "template_id": job.template_id,
-            "playbook_id": job.template_id if job.job_kind == "playbook" else None,
-            "agent_id": job.agent_id,
-            "entity_id": job.entity_id,
-            "cron": job.cron,
-            "schedule_type": job.schedule_type,
-            "interval_seconds": job.interval_seconds,
-            "run_at": job.run_at,
-            "timezone": job.timezone,
-            "paused": job.paused,
-            "created_at": job.created_at,
-            "updated_at": job.updated_at,
-            "client_id": job.client_id,
-            "next_run_at": job.next_run_at,
-            "params": _safe_json_object(job.params_json),
-        }
 
     ui_dist = _resolve_ui_dist()
     if ui_dist is not None:
@@ -8512,969 +7808,6 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     return app
 
-
-def _baseline_view(baseline) -> dict[str, object]:
-    """Decode the safe normalized baseline fields for API and UI consumers."""
-
-    try:
-        source_coverage = json.loads(baseline.source_coverage_json)
-    except (TypeError, json.JSONDecodeError):
-        source_coverage = {}
-    try:
-        summary = json.loads(baseline.summary_json)
-    except (TypeError, json.JSONDecodeError):
-        summary = {}
-    try:
-        sections = json.loads(baseline.sections_json)
-    except (TypeError, json.JSONDecodeError):
-        sections = {}
-    return {
-        "baseline_id": baseline.baseline_id,
-        "client_id": baseline.client_id,
-        "version": baseline.version,
-        "generated_at": baseline.generated_at,
-        "accepted": baseline.accepted,
-        "source_coverage": source_coverage,
-        "summary": summary,
-        "sections": sections,
-    }
-
-
-def _smart_action_run_view(run) -> dict[str, object]:
-    output = redact_value(_safe_json_object(run.output_json))
-    evidence = redact_value(_safe_json_list(run.evidence_json))
-    return {
-        "id": run.id,
-        "action_id": run.action_id,
-        "actor": run.actor,
-        "status": run.status,
-        "payload_digest": run.payload_digest,
-        "output": output,
-        "evidence": evidence,
-        "approval_id": run.approval_id,
-        "created_at": run.created_at,
-        "updated_at": run.updated_at,
-        "client_id": run.client_id,
-        "error_detail": redact_text(run.error_detail),
-    }
-
-
-def _agent_definition_view(definition) -> dict[str, object]:
-    return cast(
-        dict[str, object],
-        redact_value(
-            {
-                "id": definition.id,
-                "name": definition.name,
-                "description": definition.description,
-                "enabled": definition.enabled,
-                "trigger": definition.trigger,
-                "entity_type": definition.entity_type,
-                "filters": definition.filters,
-                "enabled_tools": definition.enabled_tools,
-                "steps": definition.steps,
-                "max_steps": definition.max_steps,
-                "execution_timeout_seconds": definition.execution_timeout_seconds,
-                "client_id": definition.client_id,
-                "version": definition.version,
-                "run_once_per_entity": definition.run_once_per_entity,
-                "depends_on_agent_ids": definition.depends_on_agent_ids,
-                "execution_window_start": definition.execution_window_start,
-                "execution_window_end": definition.execution_window_end,
-                "execution_window_timezone": definition.execution_window_timezone,
-                "context_sources": definition.context_sources,
-                "approval_expiry_seconds": definition.approval_expiry_seconds,
-                "result_aware": definition.result_aware,
-                "approval_required_tools": definition.approval_required_tools,
-                "approval_rules": definition.approval_rules,
-                "created_at": definition.created_at,
-                "updated_at": definition.updated_at,
-            }
-        ),
-    )
-
-
-def _event_dispatch_view(result) -> dict[str, object]:
-    return {
-        "delivery": _event_delivery_view(result.delivery),
-        "duplicate": result.duplicate,
-        "matched_agent_ids": result.matched_agent_ids,
-        "run_ids": result.run_ids,
-        "matched_playbook_ids": result.matched_playbook_ids,
-        "playbook_run_ids": result.playbook_run_ids,
-        "errors": result.errors,
-    }
-
-
-def _event_delivery_view(delivery) -> dict[str, object]:
-    return {
-        "id": delivery.id,
-        "idempotency_key": delivery.idempotency_key,
-        "event_type": delivery.event_type,
-        "entity_type": delivery.entity_type,
-        "entity_id": delivery.entity_id,
-        "payload": _safe_redacted_json_object(delivery.payload_json),
-        "status": delivery.status,
-        "matched_agent_count": delivery.matched_agent_count,
-        "agent_ids": _safe_json_values(delivery.agent_ids_json),
-        "run_ids": _safe_json_values(delivery.run_ids_json),
-        "matched_playbook_count": delivery.matched_playbook_count,
-        "playbook_ids": _safe_json_values(delivery.playbook_ids_json),
-        "playbook_run_ids": _safe_json_values(delivery.playbook_run_ids_json),
-        "playbook_attempts": _safe_redacted_json_object(delivery.playbook_attempts_json),
-        "error_detail": redact_text(delivery.error_detail),
-        "agent_attempts": _safe_redacted_json_object(delivery.agent_attempts_json),
-        "retry_count": delivery.retry_count,
-        "max_retries": delivery.max_retries,
-        "retry_delay_seconds": delivery.retry_delay_seconds,
-        "next_retry_at": delivery.next_retry_at,
-        "received_at": delivery.received_at,
-        "processed_at": delivery.processed_at,
-        "client_id": delivery.client_id,
-    }
-
-
-def _template_gallery_view(entry) -> dict[str, object]:
-    return {
-        "id": entry.id,
-        "source_template_id": entry.source_template_id,
-        "name": entry.name,
-        "trigger": entry.trigger,
-        "description": entry.description,
-        "action_type": entry.action_type,
-        "approval_required": entry.approval_required,
-        "risk_level": entry.risk_level,
-        "preview_fields": _safe_json_values(entry.preview_fields_json),
-        "provenance": redact_text(entry.provenance),
-        "instructions": redact_text(entry.instructions),
-        "definition": _safe_redacted_json_object(entry.definition_json),
-        "enabled": entry.enabled,
-        "version": entry.version,
-        "created_at": entry.created_at,
-        "updated_at": entry.updated_at,
-        "client_id": entry.client_id,
-    }
-
-
-def _template_gallery_export_view(entry) -> dict[str, object]:
-    """Return a portable artifact without local ids, timestamps, or tenant identity."""
-
-    return {
-        "format": "wait-local-agent.workflow-template",
-        "format_version": 1,
-        "source_template_id": entry.source_template_id,
-        "name": redact_text(entry.name),
-        "description": redact_text(entry.description),
-        "provenance": redact_text(entry.provenance),
-        "instructions": redact_text(entry.instructions),
-        "definition": _safe_redacted_json_object(entry.definition_json),
-        "enabled": entry.enabled,
-    }
-
-
-def _template_gallery_revision_view(revision) -> dict[str, object]:
-    return {
-        "id": revision.id,
-        "gallery_id": revision.gallery_id,
-        "version": revision.version,
-        "definition": _safe_redacted_json_object(revision.definition_json),
-        "created_at": revision.created_at,
-        "client_id": revision.client_id,
-    }
-
-
-def _workflow_run_comparison_view(left: WorkflowRun, right: WorkflowRun) -> dict[str, object]:
-    fields = (
-        "template_id",
-        "ticket_id",
-        "status",
-        "message",
-        "approval_request_id",
-        "template_version",
-        "client_id",
-    )
-    left_view = asdict(left)
-    right_view = asdict(right)
-    left_view["message"] = redact_text(left.message)
-    right_view["message"] = redact_text(right.message)
-    changes = [
-        {"field": field, "before": left_view[field], "after": right_view[field]}
-        for field in fields
-        if left_view[field] != right_view[field]
-    ]
-    return {
-        "from_run": left_view,
-        "to_run": right_view,
-        "changed": bool(changes),
-        "changes": changes,
-    }
-
-
-def _template_gallery_revision_diff_view(left, right) -> dict[str, object]:
-    left_definition = _safe_redacted_json_object(left.definition_json)
-    right_definition = _safe_redacted_json_object(right.definition_json)
-    changed_fields: list[dict[str, object]] = []
-    for field in sorted(set(left_definition) | set(right_definition)):
-        before = left_definition.get(field)
-        after = right_definition.get(field)
-        if before != after:
-            changed_fields.append({"field": field, "before": before, "after": after})
-    return {
-        "gallery_id": left.gallery_id,
-        "from_version": left.version,
-        "to_version": right.version,
-        "changed": bool(changed_fields),
-        "changes": changed_fields,
-        "client_id": left.client_id,
-    }
-
-
-def _agent_revision_view(revision) -> dict[str, object]:
-    return {
-        "id": revision.id,
-        "agent_id": revision.agent_id,
-        "version": revision.version,
-        "definition": _safe_redacted_json_object(revision.definition_json),
-        "created_at": revision.created_at,
-        "client_id": revision.client_id,
-    }
-
-
-def _agent_revision_diff_view(left, right) -> dict[str, object]:
-    left_definition = _safe_redacted_json_object(left.definition_json)
-    right_definition = _safe_redacted_json_object(right.definition_json)
-    changed_fields: list[dict[str, object]] = []
-    for field in sorted(set(left_definition) | set(right_definition)):
-        before = left_definition.get(field)
-        after = right_definition.get(field)
-        if before != after:
-            changed_fields.append({"field": field, "before": before, "after": after})
-    return {
-        "agent_id": left.agent_id,
-        "from_version": left.version,
-        "to_version": right.version,
-        "changed": bool(changed_fields),
-        "changes": changed_fields,
-        "client_id": left.client_id,
-    }
-
-
-def _agent_run_view(run) -> dict[str, object]:
-    state = _safe_json_object(run.state_json)
-    final_result = state.get("final_result") if isinstance(state.get("final_result"), dict) else {}
-    retry_count = state.get("retry_count") if isinstance(state.get("retry_count"), int) else 0
-    retry_of_run_id = state.get("retry_of_run_id") if isinstance(state.get("retry_of_run_id"), int) else None
-    history = final_result.get("history") if isinstance(final_result, dict) else None
-    return cast(
-        dict[str, object],
-        redact_value(
-            {
-                "id": run.id,
-                "agent_id": run.agent_id,
-                "entity_id": run.entity_id,
-                "actor": run.actor,
-                "status": run.status,
-                "current_step": run.current_step,
-                "state": state,
-                "started_at": run.started_at,
-                "finished_at": run.finished_at,
-                "revision_version": run.revision_version,
-                "client_id": run.client_id,
-                "lineage": {
-                    "retry_count": retry_count,
-                    "retry_of_run_id": retry_of_run_id,
-                    "partial_history": history if isinstance(history, dict) else {},
-                },
-            }
-        ),
-    )
-
-
-def _agent_backfill_view(backfill) -> dict[str, object]:
-    return {
-        "id": backfill.id,
-        "agent_id": backfill.agent_id,
-        "entity_ids": _safe_json_values(backfill.entity_ids_json),
-        "input": _safe_redacted_json_object(backfill.input_json),
-        "max_concurrency": backfill.max_concurrency,
-        "status": backfill.status,
-        "next_index": backfill.next_index,
-        "processed_count": backfill.processed_count,
-        "succeeded_count": backfill.succeeded_count,
-        "failed_count": backfill.failed_count,
-        "run_ids": _safe_json_values(backfill.run_ids_json),
-        "failed_entity_ids": _safe_json_values(backfill.failed_entity_ids_json),
-        "actor": redact_text(backfill.actor),
-        "error_detail": redact_text(backfill.error_detail),
-        "created_at": backfill.created_at,
-        "updated_at": backfill.updated_at,
-        "client_id": backfill.client_id,
-    }
-
-
-def _end_user_ticket_view(ticket) -> dict[str, object]:
-    return {
-        "ticket_id": ticket.id,
-        "subject": redact_text(ticket.subject),
-        "body": redact_text(ticket.body),
-        "status": ticket.status,
-        "priority": ticket.priority,
-    }
-
-
-def _end_user_branding_text(value: str, fallback: str) -> str:
-    cleaned = redact_text(value.strip())[:120].strip()
-    return cleaned or fallback
-
-
-_END_USER_COLOR_PATTERN = re.compile(r"^#[0-9a-fA-F]{6}$")
-_END_USER_LOGO_PATTERN = re.compile(r"^data:image/(?:png|jpeg|webp|gif);base64,[A-Za-z0-9+/=]+$")
-
-
-def _end_user_brand_color(value: str, fallback: str) -> str:
-    cleaned = value.strip()
-    return cleaned if _END_USER_COLOR_PATTERN.fullmatch(cleaned) else fallback
-
-
-def _end_user_brand_logo_data_uri(value: str) -> str:
-    cleaned = value.strip()
-    if len(cleaned) > 1_000_000 or not _END_USER_LOGO_PATTERN.fullmatch(cleaned):
-        return ""
-    return cleaned
-
-
-def _end_user_message_view(message) -> dict[str, object]:
-    return {
-        "id": message.id,
-        "ticket_id": message.ticket_id,
-        "body": redact_text(message.body),
-        "role": "support" if message.author_role == "support" else "requester",
-        "created_at": message.created_at,
-    }
-
-
-def _operator_end_user_message_view(message) -> dict[str, object]:
-    return {
-        "id": message.id,
-        "ticket_id": message.ticket_id,
-        "role": "support" if message.author_role == "support" else "requester",
-        "body": redact_text(message.body),
-        "created_at": message.created_at,
-    }
-
-
-def _technician_chat_session_view(store: Store, session) -> dict[str, object]:
-    return {
-        "id": session.id,
-        "status": session.status,
-        "ticket_id": session.ticket_id,
-        "client_id": session.client_id,
-        "created_at": session.created_at,
-        "updated_at": session.updated_at,
-        "messages": [
-            {
-                "id": message.id,
-                "role": message.role,
-                "message": redact_text(message.message),
-                "action_id": message.action_id,
-                "status": message.status,
-                "ticket_id": message.ticket_id,
-                "created_at": message.created_at,
-            }
-            for message in store.list_technician_chat_messages(
-                session.id,
-                client_id=session.client_id,
-            )
-        ],
-    }
-
-
-def _invoke_technician_chat_message(
-    store: Store,
-    smart_action_service: SmartActionService,
-    agent_service: AgentService,
-    message: str,
-    *,
-    ticket_id: str | None,
-    actor: str,
-    client_id: str | None,
-    session_id: str | None = None,
-    principal_id: str | None = None,
-    correlation_id: str | None = None,
-) -> dict[str, object]:
-    if session_id is not None:
-        store.add_technician_chat_message(
-            session_id,
-            role="user",
-            message=message,
-            status="received",
-            ticket_id=ticket_id,
-            client_id=client_id,
-            principal_id=principal_id,
-        )
-    try:
-        command = parse_technician_message(message, ticket_id=ticket_id)
-    except TechnicianChatParseError as exc:
-        if session_id is not None:
-            store.add_technician_chat_message(
-                session_id,
-                role="assistant",
-                message=str(exc),
-                status="failed",
-                ticket_id=ticket_id,
-                client_id=client_id,
-                principal_id=principal_id,
-            )
-        raise
-    candidate_ticket_id = command.payload.get("ticket_id")
-    resolved_ticket_id = candidate_ticket_id if isinstance(candidate_ticket_id, str) else None
-    if session_id is not None and resolved_ticket_id and client_id:
-        if (
-            store.update_technician_chat_session_ticket(
-                session_id,
-                client_id=client_id,
-                ticket_id=resolved_ticket_id,
-                principal_id=principal_id,
-            )
-            is None
-        ):
-            raise LookupError(resolved_ticket_id)
-    if command.mode == "help":
-        if session_id is not None:
-            store.add_technician_chat_message(
-                session_id,
-                role="assistant",
-                message=command.reply,
-                status="help",
-                ticket_id=resolved_ticket_id,
-                client_id=client_id,
-                principal_id=principal_id,
-            )
-        response: dict[str, object] = {
-            "status": "help",
-            "message": command.reply,
-            "supported": True,
-        }
-        if session_id is not None:
-            response["session_id"] = session_id
-        return response
-    if command.mode == "plan":
-        if not resolved_ticket_id:  # pragma: no cover - parser guarantees a plan ticket ID
-            raise TechnicianChatParseError("include a ticket ID such as TCK-1001")
-        try:
-            plan = agent_service.plan(
-                command.instruction or message,
-                entity_id=resolved_ticket_id,
-                client_id=client_id,
-            )
-        except AgentDefinitionError as exc:
-            plan_message = f"The plan is blocked: {redact_text(str(exc))}"
-            plan_payload: dict[str, object] = {
-                "instruction": command.instruction or message,
-                "entity_id": resolved_ticket_id,
-                "client_id": client_id,
-                "status": "blocked",
-                "steps": [],
-                "blocked_reason": redact_text(str(exc)),
-            }
-            plan_status = "blocked"
-        else:
-            plan_payload = asdict(plan)
-            plan_status = plan.status
-            plan_message = (
-                "I prepared a bounded plan preview. Review the selected tools and approvals "
-                "before creating or running an agent."
-                if plan.status == "preview"
-                else f"The plan is blocked: {plan.blocked_reason}"
-            )
-        _record_technician_chat_assistant(
-            store,
-            session_id=session_id,
-            message=plan_message,
-            status=plan_status,
-            ticket_id=resolved_ticket_id,
-            client_id=client_id,
-            principal_id=principal_id,
-        )
-        response = {
-            "status": plan_status,
-            "message": plan_message,
-            "plan": redact_value(plan_payload),
-            "supported": True,
-        }
-        response.update({"session_id": session_id} if session_id is not None else {})
-        return response
-    action_id = command.action_id
-    if not action_id:  # pragma: no cover - parser assigns an action for this mode
-        raise TechnicianChatParseError("technician request did not select an approved action")
-    result = smart_action_service.invoke(
-        action_id,
-        command.payload,
-        actor,
-        client_id=client_id,
-        correlation_id=correlation_id,
-    )
-    _record_technician_chat_assistant(
-        store,
-        session_id=session_id,
-        message=command.reply,
-        action_id=action_id,
-        status=result.status,
-        ticket_id=resolved_ticket_id,
-        client_id=client_id,
-        principal_id=principal_id,
-    )
-    response = {
-        "status": result.status,
-        "message": command.reply,
-        "action_id": action_id,
-        "result": asdict(result),
-    }
-    if session_id is not None:
-        response["session_id"] = session_id
-    return response
-
-
-def _record_technician_chat_assistant(
-    store: Store,
-    *,
-    session_id: str | None,
-    message: str,
-    status: str,
-    ticket_id: str | None,
-    client_id: str | None,
-    principal_id: str | None,
-    action_id: str | None = None,
-) -> None:
-    if session_id is None:
-        return
-    store.add_technician_chat_message(
-        session_id,
-        role="assistant",
-        message=message,
-        action_id=action_id,
-        status=status,
-        ticket_id=ticket_id,
-        client_id=client_id,
-        principal_id=principal_id,
-    )
-
-
-def _safe_end_user_ticket_id(ticket_id: str) -> bool:
-    return bool(
-        ticket_id
-        and len(ticket_id) <= 100
-        and not any(ord(character) < 32 or character.isspace() for character in ticket_id)
-    )
-
-
-def _safe_external_ticket_id(ticket_id: str) -> bool:
-    return (
-        bool(ticket_id.strip())
-        and len(ticket_id) <= 100
-        and all(ord(character) >= 32 and character not in "/?#\x00" for character in ticket_id)
-    )
-
-
-def _halopsa_client_mapping(settings: Settings, client_id: str | None) -> str | None:
-    normalized_client_id = _normalize_client_id(client_id)
-    if normalized_client_id is None:
-        return None
-    try:
-        payload = json.loads(settings.halopsa_client_map_json or "{}")
-    except json.JSONDecodeError:
-        return None
-    if not isinstance(payload, dict):
-        return None
-    mapped = payload.get(normalized_client_id)
-    if isinstance(mapped, bool) or not isinstance(mapped, (str, int)):
-        return None
-    value = str(mapped).strip()
-    return value or None
-
-
-def _execution_run_view(run) -> dict[str, object]:
-    return {
-        "id": run.id,
-        "run_kind": run.run_kind,
-        "source_run_id": run.source_run_id,
-        "actor": run.actor,
-        "status": run.status,
-        "started_at": run.started_at,
-        "finished_at": run.finished_at,
-        "trigger_source": run.trigger_source,
-        "client_id": run.client_id,
-        "metadata": _safe_redacted_json_object(run.metadata_json),
-    }
-
-
-def _execution_step_view(step) -> dict[str, object]:
-    # Step payloads are redacted at persistence and again here at
-    # serialization so legacy rows never surface secrets.
-    return {
-        "id": step.id,
-        "ordinal": step.ordinal,
-        "kind": step.kind,
-        "name": step.name,
-        "status": step.status,
-        "started_at": step.started_at,
-        "finished_at": step.finished_at,
-        "input_digest": step.input_digest,
-        "output_digest": step.output_digest,
-        "input": redact_value(_safe_json_value(step.input_json)),
-        "output": redact_value(_safe_json_value(step.output_json)),
-        "error_detail": redact_text(step.error_detail),
-    }
-
-
-def _execution_artifact_view(artifact) -> dict[str, object]:
-    return {
-        "id": artifact.id,
-        "step_ordinal": artifact.step_ordinal,
-        "name": artifact.name,
-        "media_type": artifact.media_type,
-        "byte_size": artifact.byte_size,
-        "sha256": artifact.sha256,
-    }
-
-
-def _safe_json_value(payload_json: str) -> object:
-    try:
-        return json.loads(payload_json)
-    except json.JSONDecodeError:
-        return None
-
-
-def _dispatch_workflow_completion_event(
-    event_dispatcher: EventDispatcher,
-    run: WorkflowRun,
-    actor: str,
-) -> None:
-    """Continue completed API workflow runs without changing their outcome."""
-    if run.status != "completed" or run.id is None or not run.ticket_id.strip():
-        return
-    payload: dict[str, object] = {
-        "workflow_run_id": str(run.id),
-        "workflow_template_id": run.template_id,
-        "status": run.status,
-    }
-    try:
-        event_dispatcher.dispatch(
-            event_type="workflow.completed",
-            entity_type="ticket",
-            entity_id=run.ticket_id,
-            payload=payload,
-            idempotency_key=f"workflow-completed:{run.id}",
-            client_id=run.client_id,
-            actor=actor,
-        )
-        event_dispatcher.store.add_audit_event(
-            "workflow.completion_dispatched",
-            str(run.id),
-            "workflow.completed event dispatched",
-            client_id=run.client_id,
-        )
-    except Exception as exc:  # completion must not be undone
-        detail = redact_text(f"workflow.completed dispatch failed: {exc}")
-        event_dispatcher.store.add_audit_event(
-            "workflow.completion_dispatch_failed",
-            str(run.id),
-            detail,
-            client_id=run.client_id,
-        )
-
-
-def _empty_analytics_summary(started_from: str | None, started_to: str | None) -> dict[str, object]:
-    return {
-        "range": {"from": started_from, "to": started_to},
-        "client_id": None,
-        "executions_over_time": [],
-        "success_rate": {"total": 0, "succeeded": 0, "rate": 0.0},
-        "failures_by_status": [],
-        "approval_rate": {
-            "requested": 0,
-            "decided": 0,
-            "approved": 0,
-            "rejected": 0,
-            "pending": 0,
-            "rate": 0.0,
-            "derivation": APPROVAL_RATE_DERIVATION,
-        },
-        "ticket_metrics": {
-            "touched": 0,
-            "resolved": 0,
-            "resolution_rate": 0.0,
-            "derivation": TICKET_METRICS_DERIVATION,
-            "historical_resolution": {
-                "resolved_with_history": 0,
-                "with_duration": 0,
-                "average_minutes": None,
-                "derivation": TICKET_LIFECYCLE_DERIVATION,
-            },
-        },
-        "activity_by_workflow": [],
-        "estimated_minutes_saved": {
-            "minutes": 0,
-            "estimate": True,
-            "derivation": ESTIMATED_MINUTES_SAVED_DERIVATION,
-        },
-        "model_usage": {
-            "runs_with_usage": 0,
-            "runs_with_cost": 0,
-            "input_tokens": 0,
-            "output_tokens": 0,
-            "estimated_cost_usd": 0.0,
-            "estimate": True,
-            "derivation": MODEL_COST_DERIVATION,
-        },
-    }
-
-
-def _resolve_detail_scope(
-    context: AuthContext,
-    requested_client_id: str | None,
-) -> ClientScope:
-    """Resolve an entity lookup scope while hiding foreign-resource existence."""
-
-    try:
-        return resolve_client_scope(context, requested_client_id)
-    except HTTPException as exc:
-        if exc.status_code == 403 and exc.detail in {
-            "requested tenant is outside authenticated scope",
-            "authenticated principal has no tenant",
-        }:
-            raise HTTPException(status_code=404, detail="resource not found") from exc
-        raise
-
-
-def _resolve_client_target_scope(context: AuthContext, requested_client_id: str) -> ClientScope:
-    """Resolve a client target without disclosing missing versus foreign IDs."""
-
-    try:
-        return resolve_client_scope(context, requested_client_id)
-    except HTTPException as exc:
-        if exc.status_code == 403 and exc.detail in {
-            "requested tenant is outside authenticated scope",
-            "authenticated principal has no tenant",
-        }:
-            raise HTTPException(status_code=404, detail="client not found") from exc
-        raise
-
-
-def _backfill_scope(context: AuthContext, requested_client_id: str | None) -> ClientScope:
-    """Resolve the scope used by agent-backfill list and entity routes."""
-
-    scope = resolve_client_scope(context, requested_client_id)
-    if isinstance(scope, AllClients) and context.role < Role.ADMIN and not context.demo_mode:
-        raise HTTPException(status_code=403, detail="agent backfills require a client scope")
-    return scope
-
-
-def _scope_contains_client(scope: ClientScope, client_id: str | None) -> bool:
-    normalized_client_id = _normalize_client_id(client_id)
-    if normalized_client_id is None:
-        return False
-    if isinstance(scope, AllClients):
-        return True
-    return normalized_client_id in scope.client_ids
-
-
-def _required_client_id(context: AuthContext, requested_client_id: str | None) -> str:
-    """Resolve a single tenant for a non-entity operation."""
-
-    scope = resolve_client_scope(context, requested_client_id)
-    try:
-        client_id = scope.client_id
-    except HTTPException:
-        raise
-    if client_id is None:
-        raise HTTPException(status_code=403, detail="client scope is required")
-    return client_id
-
-
-def _require_msp_operator(context: AuthContext) -> None:
-    """Require the appliance operator scope used for authority-estate changes."""
-
-    if not context.demo_mode and not context.is_msp_admin:
-        raise HTTPException(status_code=403, detail="msp operator access required")
-
-
-def _require_commercial_activation_access(context: AuthContext) -> None:
-    if context.demo_mode:
-        raise HTTPException(status_code=403, detail="commercial activation is unavailable in demo mode")
-    _require_msp_operator(context)
-
-
-def _request_correlation_id(request: Request) -> str | None:
-    candidate = getattr(request.state, "correlation_id", None)
-    return str(candidate) if valid_correlation_id(candidate) else None
-
-
-def _operator_scope(
-    context: AuthContext,
-    configured_client_id: str | None,
-    requested_client_id: str | None = None,
-) -> ClientScope:
-    """Use an appliance operator's configured tenant for singular portal views.
-
-    Bootstrap credentials intentionally resolve to ``AllClients`` globally.  A
-    non-admin operator route that is anchored to one stored tenant can still
-    use the appliance's configured primary client without changing that global
-    resolver contract.
-    """
-
-    requested = _normalize_client_id(requested_client_id)
-    if requested is None and context.is_msp_admin and context.role < Role.ADMIN:
-        requested = _normalize_client_id(configured_client_id)
-    return resolve_client_scope(context, requested)
-
-
-def _end_user_client_id(context: AuthContext) -> str:
-    """Resolve the end-user's own bound client rather than trusting a field."""
-
-    if not context.principal_id:
-        raise HTTPException(status_code=403, detail="end-user identity is not fully scoped")
-    scope = resolve_client_scope(context, None)
-    if not isinstance(scope, BoundClients):  # pragma: no cover - end users are single-client principals
-        raise HTTPException(status_code=403, detail="end-user identity is not fully scoped")
-    client_id = scope.client_id
-    if client_id is None:  # pragma: no cover - BoundClients rejects empty scopes
-        raise HTTPException(status_code=403, detail="end-user identity is not fully scoped")
-    return client_id
-
-
-def _end_user_read_client_id(context: AuthContext) -> str:
-    """Hide unreadable end-user resources instead of disclosing scope state."""
-
-    try:
-        return _end_user_client_id(context)
-    except HTTPException as exc:
-        if exc.status_code == 403:
-            raise HTTPException(status_code=404, detail="end-user ticket not found") from exc
-        raise
-
-
-def _singular_action_client(
-    store: Store,
-    context: AuthContext,
-    requested_client_id: str | None,
-    payload: dict[str, object],
-) -> str | None:
-    """Choose an action tenant from a stored ticket or the operator's primary tenant."""
-
-    scope = resolve_client_scope(context, requested_client_id)
-    ticket_id = payload.get("ticket_id")
-    if isinstance(ticket_id, str) and ticket_id.strip():
-        ticket = store.get_ticket(ticket_id.strip(), client_id=scope)
-        if ticket is not None:
-            return ticket.client_id
-    if isinstance(scope, BoundClients):
-        client_id = scope.client_id
-        if client_id is None:  # pragma: no cover - BoundClients rejects empty scopes
-            raise HTTPException(status_code=403, detail="client scope is required")
-        return client_id
-    configured_client_id = _normalize_client_id(context.client_id)
-    if context.demo_mode and configured_client_id is None:
-        return None
-    if configured_client_id is None:
-        raise HTTPException(status_code=403, detail="client scope is required")
-    return configured_client_id
-
-
-def _approval_scope_visible(context: AuthContext, approval) -> bool:
-    """Apply the same resolver to approval detail and mutation checks."""
-
-    approval_client_id = _normalize_client_id(approval.client_id)
-    if approval_client_id is None:
-        return context.demo_mode or context.is_msp_admin
-    try:
-        resolve_client_scope(context, approval_client_id)
-    except HTTPException:
-        return False
-    return True
-
-
-def _scheduled_job_for_context(store: Store, job_id: int, context: AuthContext):
-    scope = resolve_client_scope(context, None)
-    job = store.get_scheduled_job(job_id)
-    if job is None or not _scope_contains_client(scope, job.client_id):
-        raise HTTPException(status_code=404, detail="scheduled job not found")
-    return job
-
-
-def _halopsa_draft_view(draft) -> dict[str, object]:
-    payload = _safe_json_object(draft.payload_json)
-    return {
-        **asdict(draft),
-        "payload_json": _redact_json_text(draft.payload_json),
-        "payload": _redact_payload(payload),
-    }
-
-
-def _connectwise_draft_view(draft) -> dict[str, object]:
-    payload = _safe_json_object(draft.payload_json)
-    return {
-        **asdict(draft),
-        "payload_json": _redact_json_text(draft.payload_json),
-        "payload": _redact_payload(payload),
-    }
-
-
-def _safe_json_object(payload_json: str) -> dict[str, object]:
-    try:
-        payload = json.loads(payload_json)
-    except json.JSONDecodeError:
-        return {}
-    return payload if isinstance(payload, dict) else {}
-
-
-def _power_platform_source_record(approval) -> dict[str, object] | None:
-    if approval is None or approval.id is None:
-        return None
-    return {
-        "id": approval.id,
-        "client_id": approval.client_id,
-        "action_type": approval.action_type,
-        "status": approval.status,
-        "execution_status": approval.execution_status,
-        "payload": _safe_json_object(approval.payload_json),
-        "execution_result": _safe_json_object(approval.execution_result_json),
-    }
-
-
-def _safe_json_list(payload_json: str) -> list[dict[str, object]]:
-    try:
-        payload = json.loads(payload_json)
-    except json.JSONDecodeError:
-        return []
-    return [item for item in payload if isinstance(item, dict)] if isinstance(payload, list) else []
-
-
-def _safe_json_values(payload_json: str) -> list[object]:
-    try:
-        payload = json.loads(payload_json)
-    except json.JSONDecodeError:
-        return []
-    return payload if isinstance(payload, list) else []
-
-
-def _redact_json_text(payload_json: str) -> str:
-    try:
-        payload = json.loads(payload_json)
-    except json.JSONDecodeError:
-        return "[redacted]"
-    return json.dumps(redact_value(payload), sort_keys=True, separators=(",", ":"))
-
-
-def _safe_redacted_json_object(payload_json: str) -> dict[str, object]:
-    return cast(dict[str, object], redact_value(_safe_json_object(payload_json)))
-
-
-def _scheduled_ticket_id(params: dict[str, object]) -> str:
-    ticket_id = params.get("ticket_id")
-    if not isinstance(ticket_id, str) or not ticket_id.strip():
-        raise HTTPException(status_code=422, detail="scheduled job params must include ticket_id")
-    return ticket_id
 
 
 def _rate_limit_handler(request: Request, exc: Exception) -> Response:
@@ -9526,49 +7859,3 @@ def _request_validation_error_handler(request: Request, exc: Exception) -> JSONR
             redacted["input"] = _redact_request_input(error["input"], sensitive_fields)
         errors.append(redacted)
     return JSONResponse(status_code=422, content={"detail": jsonable_encoder(errors)})
-
-
-def _redact_request_input(value: object, sensitive_fields: set[str]) -> object:
-    if isinstance(value, dict):
-        return {
-            str(key): "[redacted]"
-            if str(key).lower() in sensitive_fields
-            else _redact_request_input(item, sensitive_fields)
-            for key, item in value.items()
-        }
-    if isinstance(value, list):
-        return [_redact_request_input(item, sensitive_fields) for item in value]
-    return "[redacted]" if sensitive_fields else value
-
-
-SENSITIVE_KEY_PARTS = (
-    "secret",
-    "token",
-    "api_key",
-    "password",
-    "apikey",
-    "auth_token",
-    "bearer",
-    "authorization",
-    "x-api-key",
-    "client_secret",
-    "access_token",
-)
-
-
-def _redact_payload(payload: dict[str, object]) -> dict[str, object]:
-    redacted: dict[str, object] = {}
-    for key, value in payload.items():
-        if any(secret in key.lower() for secret in SENSITIVE_KEY_PARTS):
-            redacted[key] = "[redacted]"
-        else:
-            redacted[key] = _redact_value(value)
-    return redacted
-
-
-def _redact_value(value: object) -> object:
-    if isinstance(value, dict):
-        return _redact_payload(value)
-    if isinstance(value, list):
-        return [_redact_value(item) for item in value]
-    return value

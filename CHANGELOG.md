@@ -25,6 +25,8 @@ All notable changes to WAIT Local Agent will be documented in this file.
 
 ### Changed
 
+- API request models and shared route helpers moved from `api/app.py` into
+  `api/schemas.py`, `api/scopes.py` and `api/views.py`; no route changes.
 - Ruff now enforces `SLF001` in `src/` and flags unused `noqa` directives
   (`RUF100`); inert suppressions were removed.
 - `SECURITY.md` now lists the 2.0.0 release candidate line as supported and 1.1.x as security-fix only.
