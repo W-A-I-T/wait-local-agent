@@ -8,7 +8,7 @@ from typing import cast
 import pytest
 from fastapi.testclient import TestClient
 
-import wait_local_agent.api.app as api_app_module
+import wait_local_agent.api.routers.msp_playbooks as msp_playbooks_router_module
 import wait_local_agent.msp_playbooks as msp_playbooks_module
 from tests.support import ingest_local
 from wait_local_agent.api.app import create_app
@@ -652,7 +652,7 @@ def test_api_maps_playbook_runner_value_error(monkeypatch, settings) -> None:
     def raise_value_error(*args: object, **kwargs: object) -> dict[str, object]:
         raise ValueError("invalid playbook input")
 
-    monkeypatch.setattr(api_app_module, "run_msp_playbook", raise_value_error)
+    monkeypatch.setattr(msp_playbooks_router_module, "run_msp_playbook", raise_value_error)
     client = TestClient(create_app(settings))
 
     response = client.post(
