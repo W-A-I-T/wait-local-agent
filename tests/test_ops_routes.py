@@ -6,10 +6,11 @@ from cryptography.fernet import Fernet
 from fastapi.testclient import TestClient
 
 import wait_local_agent.api.app as app_module
+import wait_local_agent.api.routers.operations as operations_module
 import wait_local_agent.api.routers.system as system_module
 from wait_local_agent.api.app import create_app
 from wait_local_agent.api.packs.loader import PackInstallResult
-from wait_local_agent.backup import BACKUP_KEY_SECRET_NAME
+from wait_local_agent.backup import BACKUP_KEY_SECRET_NAME, BackupEncryptionError
 from wait_local_agent.models import RestoreExerciseWrite
 from wait_local_agent.reports.hardening_checks import HardeningRunRecord
 from wait_local_agent.reports.models import GeneratedReport
@@ -259,10 +260,10 @@ def test_hardening_and_restore_routes_cover_success_and_listing(
                 metadata=kwargs.get("metadata"),
             )
 
-    monkeypatch.setattr(app_module, "run_hardening_checks", lambda *args, **kwargs: run)
-    monkeypatch.setattr(app_module, "build_appliance_hardening_report", lambda *args: ([], {}))
-    monkeypatch.setattr(app_module, "run_restore_exercise", lambda *args, **kwargs: exercise)
-    monkeypatch.setattr(app_module, "build_restore_evidence_report", lambda *args: ([], {}))
+    monkeypatch.setattr(operations_module, "run_hardening_checks", lambda *args, **kwargs: run)
+    monkeypatch.setattr(operations_module, "build_appliance_hardening_report", lambda *args: ([], {}))
+    monkeypatch.setattr(operations_module, "run_restore_exercise", lambda *args, **kwargs: exercise)
+    monkeypatch.setattr(operations_module, "build_restore_evidence_report", lambda *args: ([], {}))
     monkeypatch.setattr(app_module, "ReportService", FakeReportService)
     client = TestClient(create_app(secure_settings))
 
@@ -316,9 +317,9 @@ def test_hardening_and_restore_routes_map_errors_and_require_admin(settings, mon
         assert response.status_code == 403
 
     def raise_encryption(*args, **kwargs):
-        raise app_module.BackupEncryptionError("bad encrypted backup")
+        raise BackupEncryptionError("bad encrypted backup")
 
-    monkeypatch.setattr(app_module, "restore_state", raise_encryption)
+    monkeypatch.setattr(operations_module, "restore_state", raise_encryption)
     encrypted = client.post(
         "/backups/restore",
         headers={"Authorization": "Bearer admin-token"},
@@ -328,7 +329,7 @@ def test_hardening_and_restore_routes_map_errors_and_require_admin(settings, mon
     assert encrypted.json()["detail"] == "bad encrypted backup"
 
     monkeypatch.setattr(
-        app_module,
+        operations_module,
         "restore_state",
         lambda *args, **kwargs: (_ for _ in ()).throw(OSError("read failed")),
     )
@@ -341,7 +342,7 @@ def test_hardening_and_restore_routes_map_errors_and_require_admin(settings, mon
     assert os_error.json()["detail"] == "backup source could not be restored"
 
     monkeypatch.setattr(
-        app_module,
+        operations_module,
         "run_restore_exercise",
         lambda *args, **kwargs: (_ for _ in ()).throw(OSError("cannot start")),
     )
@@ -354,7 +355,7 @@ def test_hardening_and_restore_routes_map_errors_and_require_admin(settings, mon
     assert exercise_error.json()["detail"] == "restore exercise could not be started"
 
     monkeypatch.setattr(
-        app_module,
+        operations_module,
         "run_hardening_checks",
         lambda *args, **kwargs: HardeningRunRecord(None, "completed", "start", "", 0, 0),
     )

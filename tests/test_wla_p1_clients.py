@@ -680,7 +680,6 @@ def test_p1_api_non_msp_admin_is_denied_mutations_and_scoped_verify(settings, mo
             f"/client-connector-mappings/{mapping.mapping_id}/verify", headers=headers
         ).status_code == 403
 
-        monkeypatch.setattr(app_module, "_require_msp_operator", lambda _context: None)
         monkeypatch.setattr(tenancy_module, "_require_msp_operator", lambda _context: None)
         out_of_scope_patch = client.patch(
             "/clients/client-b", headers=headers, json={"status": "archived"}
