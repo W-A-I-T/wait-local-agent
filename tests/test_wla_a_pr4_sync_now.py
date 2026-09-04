@@ -5,6 +5,7 @@ from dataclasses import replace
 from fastapi.testclient import TestClient
 
 import wait_local_agent.api.app as app_module
+import wait_local_agent.api.routers.psa_connectors as psa_connectors_module
 from wait_local_agent.api.app import create_app
 from wait_local_agent.ingestion_poller import PollSummary
 
@@ -32,6 +33,7 @@ def test_sync_now_operator_runs_and_returns_poll_summary_without_credentials(set
             return PollSummary(connector_instance_id, 1, 2, 0, "idle", "completed")
 
     monkeypatch.setattr(app_module, "IngestionPoller", FakePoller)
+    monkeypatch.setattr(psa_connectors_module, "IngestionPoller", FakePoller)
     app = create_app(active_settings)
     app.state.store.create_principal("msp-admin", kind="staff")
     app.state.store.add_principal_credential("msp-admin", "msp-secret")
@@ -84,6 +86,7 @@ def test_sync_now_rejects_missing_disabled_and_inactive_instances(settings, monk
             raise AssertionError("poll_instance must not be called")
 
     monkeypatch.setattr(app_module, "IngestionPoller", FakePoller)
+    monkeypatch.setattr(psa_connectors_module, "IngestionPoller", FakePoller)
     app = create_app(settings)
     client = TestClient(app)
     assert client.post("/connectors/instances/missing/sync").status_code == 404

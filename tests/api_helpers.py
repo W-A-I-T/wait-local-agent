@@ -2,17 +2,18 @@
 
 from __future__ import annotations
 
-import wait_local_agent.api.app as app_module
+from wait_local_agent.halopsa import HaloReadResponse
+from wait_local_agent.hudu import HuduReadResponse
 from wait_local_agent.models import HaloReadResult
 from wait_local_agent.store import Store
 
 
 def _read_response(items):
-    return app_module.HaloReadResponse(HaloReadResult("ready", "ok", len(items)), items)
+    return HaloReadResponse(HaloReadResult("ready", "ok", len(items)), items)
 
 
 def _hudu_response(items):
-    return app_module.HuduReadResponse(HaloReadResult("ready", "ok", len(items)), items)
+    return HuduReadResponse(HaloReadResult("ready", "ok", len(items)), items)
 
 
 def _auth(token: str) -> dict[str, str]:
