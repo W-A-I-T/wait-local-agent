@@ -11,10 +11,11 @@ from fastapi import HTTPException, Response
 from fastapi.routing import APIRoute
 from starlette.requests import Request
 
-import wait_local_agent.api.app as app_module
+import wait_local_agent.api.routers.consultant as consultant_module
 from tests.support import ingest_local
 from wait_local_agent.agents import AgentService
-from wait_local_agent.api.app import (
+from wait_local_agent.api.app import create_app
+from wait_local_agent.api.schemas import (
     CopilotStudioPlanRequest,
     DeliveryPlanRequest,
     DiscoveryBlueprintPromotionRequest,
@@ -36,7 +37,6 @@ from wait_local_agent.api.app import (
     SolutionBlueprintRequest,
     SupervisorRunRequest,
     TeamsMessageDraftRequest,
-    create_app,
 )
 from wait_local_agent.consultant import generate_playbook_from_blueprint
 from wait_local_agent.discovery import _QUESTION_DEFS
@@ -1236,7 +1236,7 @@ def test_power_platform_deployment_route_records_approved_execution(settings, mo
             "artifact_digest": "sha256:" + "a" * 64,
         }
 
-    monkeypatch.setattr("wait_local_agent.api.app.execute_power_platform_stage", fake_execute)
+    monkeypatch.setattr("wait_local_agent.api.routers.consultant.execute_power_platform_stage", fake_execute)
     result = _endpoint(settings, "/consultant/solutions/deployment-approvals/{request_id}/execute")(
         approval_id,
         _request(),
@@ -1261,7 +1261,7 @@ def test_power_platform_stage_execution_rejects_already_executed_approval(settin
         calls.append((args, kwargs))
         raise AssertionError("PAC execution must not run for a terminal approval")
 
-    monkeypatch.setattr("wait_local_agent.api.app.execute_power_platform_stage", unexpected_execute)
+    monkeypatch.setattr("wait_local_agent.api.routers.consultant.execute_power_platform_stage", unexpected_execute)
 
     for terminal_status in ("succeeded", "verified", "unverified", "submitted"):
         approval = store.create_approval_request(
@@ -1313,7 +1313,7 @@ def test_power_platform_rollback_execution_rejects_already_executed_approval(set
         calls.append((args, kwargs))
         raise AssertionError("PAC execution must not run for a terminal approval")
 
-    monkeypatch.setattr("wait_local_agent.api.app.execute_power_platform_rollback", unexpected_execute)
+    monkeypatch.setattr("wait_local_agent.api.routers.consultant.execute_power_platform_rollback", unexpected_execute)
 
     for terminal_status in ("succeeded", "verified", "unverified", "submitted"):
         approval = store.create_approval_request(
@@ -1372,7 +1372,7 @@ def test_power_platform_stage_execution_still_runs_for_a_fresh_approval(settings
             "artifact_digest": "sha256:" + "a" * 64,
         }
 
-    monkeypatch.setattr("wait_local_agent.api.app.execute_power_platform_stage", fake_execute)
+    monkeypatch.setattr("wait_local_agent.api.routers.consultant.execute_power_platform_stage", fake_execute)
     result = _endpoint(settings, "/consultant/solutions/deployment-approvals/{request_id}/execute")(
         approval_id,
         _request(),
@@ -1774,7 +1774,7 @@ def test_environment_discovery_route_returns_explicit_local_evidence(settings) -
 
 def test_power_platform_cli_status_route_surfaces_server_owned_prerequisites(monkeypatch, settings) -> None:
     monkeypatch.setattr(
-        app_module,
+        consultant_module,
         "power_platform_cli_status",
         lambda active_settings: {
             "available": True,
@@ -1823,7 +1823,7 @@ def test_power_platform_stage_execution_is_atomic_under_concurrency(settings, mo
         runner_calls.append(1)
         return {"status": "succeeded", "message": "bounded PAC fixture succeeded", "stage": "build"}
 
-    monkeypatch.setattr("wait_local_agent.api.app.execute_power_platform_stage", fake_execute)
+    monkeypatch.setattr("wait_local_agent.api.routers.consultant.execute_power_platform_stage", fake_execute)
     execute = _endpoint(settings, "/consultant/solutions/deployment-approvals/{request_id}/execute")
 
     def invoke():
@@ -1868,7 +1868,7 @@ def test_environment_discovery_does_not_construct_probe_clients_when_http_probin
         calls.append((args, kwargs))
         raise AssertionError("probe clients must not be constructed when HTTP probing is disabled")
 
-    monkeypatch.setattr(app_module, "probe_connector_health", unexpected_probe)
+    monkeypatch.setattr(consultant_module, "probe_connector_health", unexpected_probe)
     result = _endpoint(active, "/consultant/environment-discovery")(
         EnvironmentDiscoveryRequest(client_id="acme", systems=["Microsoft 365"], probe=True),
         _technician(),
@@ -1889,7 +1889,7 @@ def test_environment_discovery_route_projects_positive_health_evidence_and_audit
         }
     )
     monkeypatch.setattr(
-        app_module,
+        consultant_module,
         "probe_connector_health",
         lambda connector_ids, active_settings, **clients: {
             connector_id: {"passed": True, "layer": "connector", "message": "health succeeded"}
@@ -1925,7 +1925,7 @@ def test_environment_discovery_does_not_probe_foreign_tenant_configuration(monke
         calls.extend(connector_ids)
         return {}
 
-    monkeypatch.setattr(app_module, "probe_connector_health", probe)
+    monkeypatch.setattr(consultant_module, "probe_connector_health", probe)
     result = _endpoint(active, "/consultant/environment-discovery")(
         EnvironmentDiscoveryRequest(client_id="acme", systems=["Microsoft 365"], probe=True),
         _technician(),
