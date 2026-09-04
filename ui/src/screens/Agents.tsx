@@ -1,6 +1,7 @@
 import { FormEvent, useCallback, useEffect, useState } from "react";
 import { useDashboard } from "../app/DashboardContext";
 import { apiFetch } from "../api/client";
+import { apiFetchForClient } from "../api/scopedFetch";
 import { EmptyState } from "../components/EmptyState";
 import { LoadingState } from "../components/LoadingState";
 import { AgentToolPicker } from "../components/AgentToolPicker";
@@ -42,7 +43,7 @@ function renderDiffValue(value: unknown): string {
 }
 
 export function Agents() {
-  const { canWrite, clients = [], connectors = [], selectedClientId = "", isMspAdmin = false } = useDashboard();
+  const { canWrite, connectors = [], selectedClientId = "", isMspAdmin = false } = useDashboard();
   const [agents, setAgents] = useState<AgentDefinition[]>([]);
   const [tools, setTools] = useState<AgentTool[]>([]);
   const [loading, setLoading] = useState(true);
@@ -72,8 +73,8 @@ export function Agents() {
     setLoading(true);
     try {
       const [agentRows, toolRows] = await Promise.all([
-        apiFetch<AgentDefinition[]>("/agents"),
-        apiFetch<AgentTool[]>("/tools")
+        apiFetchForClient<AgentDefinition[]>(selectedClientId, "/agents"),
+        apiFetchForClient<AgentTool[]>(selectedClientId, "/tools")
       ]);
       setAgents(agentRows);
       setTools(toolRows);

@@ -239,6 +239,12 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
   const selectedClientIdRef = useRef(selectedClientId);
   const roleRequestIdRef = useRef(0);
   const configuration = useConfiguredState({ role });
+  const {
+    isConfigured: configurationIsConfigured,
+    loading: configurationLoading,
+    steps: configurationSteps,
+    refresh: configurationRefresh
+  } = configuration;
 
   const setSelectedClientId = useCallback((nextClientId: string) => {
     const normalized = nextClientId.trim();
@@ -337,7 +343,7 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
       setAllowWriteActions(auth.allow_write_actions !== false);
       setIsMspAdmin(auth.is_msp_admin === true);
       setClientScopeIds(Array.isArray(auth.client_ids)
-        ? auth.client_ids.filter((clientId): clientId is string => typeof clientId === "string" && clientId.trim().length > 0)
+        ? auth.client_ids.filter((candidateClientId): candidateClientId is string => typeof candidateClientId === "string" && candidateClientId.trim().length > 0)
         : typeof auth.client_id === "string" && auth.client_id.trim()
           ? [auth.client_id.trim()]
           : null);
@@ -379,9 +385,9 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
       setEventDeliveries(asArray(settledValue(results[2] as PromiseSettledResult<EventDelivery[]>, [])));
       setEventHistory(asArray(settledValue(results[3] as PromiseSettledResult<EventHistory[]>, [])));
       setWorkflowRuns(asArray(settledValue(results[4] as PromiseSettledResult<WorkflowRun[]>, [])));
-      setClients(asArray<ClientDirectoryEntry>(clientRows).filter((client) => client.client_id !== "__quarantine__"));
+      setClients(asArray<ClientDirectoryEntry>(clientRows).filter((candidateClient) => candidateClient.client_id !== "__quarantine__"));
       setRefreshErrors(errors);
-      await configuration.refresh();
+      await configurationRefresh();
       return { authState: nextAuthState, role: auth.role };
     } catch (error) {
       if (roleRequestId !== roleRequestIdRef.current) {
@@ -410,10 +416,10 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
         setLoading(false);
       }
     }
-  }, [configuration.refresh, resolveWriteHealth]);
+  }, [configurationRefresh, resolveWriteHealth]);
 
   const refreshConfiguration = useCallback(async () => {
-    await configuration.refresh();
+    await configurationRefresh();
     const { configuredPsaConnectors, byConnector } = await resolveWriteHealth(connectors);
     const firstWriteHealth = byConnector[configuredPsaConnectors[0]?.id ?? ""];
     setWriteHealthByConnector(byConnector);
@@ -423,7 +429,7 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
       count: firstWriteHealth?.count ?? 0
     });
     setWriteHealthResolved(true);
-  }, [configuration.refresh, connectors, resolveWriteHealth]);
+  }, [configurationRefresh, connectors, resolveWriteHealth]);
 
   const recheckWriteHealth = useCallback(async () => {
     const { configuredPsaConnectors, byConnector } = await resolveWriteHealth(connectors, true);
@@ -639,9 +645,9 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
       canWrite: roleResolved && role !== "viewer" && role !== "end_user",
       canWriteExternally: roleResolved && allowWriteActions && role !== "viewer" && role !== "end_user",
       isAdmin: roleResolved && role === "admin",
-      isConfigured: configuration.isConfigured,
-      configurationLoading: configuration.loading,
-      configurationSteps: configuration.steps,
+      isConfigured: configurationIsConfigured,
+      configurationLoading,
+      configurationSteps,
       setApiToken,
       setSelectedClientId,
       refresh,
@@ -680,10 +686,9 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
     capabilityResolved,
     clearApiToken,
     logout,
-    configuration.isConfigured,
-    configuration.loading,
-    configuration.steps,
-    configuration.refresh,
+    configurationIsConfigured,
+    configurationLoading,
+    configurationSteps,
     connectors,
     createDraft,
     eventHistory,
@@ -693,6 +698,8 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
     loading,
     refreshNonce,
     roleResolved,
+    isMspAdmin,
+    clientScopeIds,
     refresh,
     refreshConfiguration,
     recheckWriteHealth,

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "react-router-dom";
-import { apiFetch } from "../api/client";
+import { apiFetchForClient } from "../api/scopedFetch";
 import { EmptyState } from "../components/EmptyState";
 import { LoadingState } from "../components/LoadingState";
 import { ScopeBadge } from "../components/ScopeBadge";
@@ -37,7 +37,7 @@ const kindOptions = [
 ] as const;
 
 export function ActivityRuns() {
-  const { selectedClientId = "", clients = [], isMspAdmin = false } = useDashboard();
+  const { selectedClientId = "" } = useDashboard();
   const [searchParams, setSearchParams] = useSearchParams();
   const [rows, setRows] = useState<ActivityItem[]>([]);
   const [loading, setLoading] = useState(true);
@@ -51,7 +51,7 @@ export function ActivityRuns() {
     if (kind && kind !== "execution" && kind !== "scheduled") params.set("kinds", kind);
     if (status.trim()) params.set("status", status.trim());
     return params.toString();
-  }, [kind, selectedClientId, status]);
+  }, [kind, status]);
 
   const visibleRows = rows.filter((row) => (
     (executionId === null || row.canonical_execution_id === executionId) &&
@@ -64,7 +64,7 @@ export function ActivityRuns() {
   const refresh = useCallback(async () => {
     setLoading(true);
     try {
-      const result = await apiFetch<ActivityItem[]>(`/packs/operator-control/activity/runs?${query}`);
+      const result = await apiFetchForClient<ActivityItem[]>(selectedClientId, `/packs/operator-control/activity/runs?${query}`);
       if (!Array.isArray(result)) throw new Error("The appliance returned invalid activity data.");
       setRows(result);
       setMessage("");

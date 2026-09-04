@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { apiFetch, apiFetchBlob } from "../api/client";
+import { apiFetchForClient } from "../api/scopedFetch";
 import { EmptyState } from "../components/EmptyState";
 import { LoadingState } from "../components/LoadingState";
 import { ScopeBadge } from "../components/ScopeBadge";
@@ -33,7 +34,7 @@ export function Executions({ initialExecutionId }: ExecutionsProps = {}) {
       if (kind) query.set("kind", kind);
       if (status) query.set("status", status);
       const suffix = query.toString() ? `?${query.toString()}` : "";
-      setExecutions(await apiFetch<ExecutionRun[]>(`/executions${suffix}`));
+      setExecutions(await apiFetchForClient<ExecutionRun[]>(selectedClientId, `/executions${suffix}`));
       setMessage("");
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "Unable to load execution history.");

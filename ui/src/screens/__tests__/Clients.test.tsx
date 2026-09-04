@@ -7,7 +7,7 @@ import { Clients } from "../Clients";
 
 vi.mock("../../api/client", () => ({
   apiFetch: vi.fn(),
-  ApiRequestError: class ApiRequestError extends Error {
+  ApiRequestError: class MockApiRequestError extends Error {
     status?: number;
     constructor(message: string, _technicalDetail: string, status?: number) {
       super(message);

@@ -283,10 +283,10 @@ export function ConnectorInstances() {
       if (!parsedConfig || typeof parsedConfig !== "object" || Array.isArray(parsedConfig)) {
         throw new Error("Configuration must be a JSON object.");
       }
-    } catch (error) {
+    } catch (parseError) {
       setInstanceEditErrors((current) => ({
         ...current,
-        [instance.connector_instance_id]: error instanceof Error ? error.message : "Configuration must be valid JSON."
+        [instance.connector_instance_id]: parseError instanceof Error ? parseError.message : "Configuration must be valid JSON."
       }));
       return;
     }

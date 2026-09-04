@@ -1,6 +1,7 @@
 import { FormEvent, useCallback, useEffect, useState } from "react";
 import { useDashboard } from "../app/DashboardContext";
 import { apiFetch } from "../api/client";
+import { apiFetchForClient } from "../api/scopedFetch";
 import { type KnowledgeChunk, type KnowledgeDocument } from "../api/types";
 import { ScopeBadge } from "../components/ScopeBadge";
 import { SelectClientNotice } from "../components/SelectClientNotice";
@@ -23,7 +24,7 @@ export function parserPayload(parser: KnowledgeParser): "" | "basic" | "pypdf" {
 }
 
 export function Knowledge() {
-  const { clients = [], isAdmin, canWrite, role, roleResolved, selectedClientId = "", isMspAdmin = false } = useDashboard();
+  const { isAdmin, canWrite, role, roleResolved, selectedClientId = "", isMspAdmin = false } = useDashboard();
   const [documents, setDocuments] = useState<KnowledgeDocument[]>([]);
   const [chunks, setChunks] = useState<KnowledgeChunk[]>([]);
   const [path, setPath] = useState("");
@@ -40,7 +41,7 @@ export function Knowledge() {
 
   const loadDocuments = useCallback(async () => {
     try {
-      const loaded = await apiFetch<KnowledgeDocument[]>('/knowledge/documents');
+      const loaded = await apiFetchForClient<KnowledgeDocument[]>(selectedClientId, '/knowledge/documents');
       setDocuments(loaded);
     } catch (error) {
       setStatusMessage(error instanceof Error ? error.message : "Failed to load knowledge documents.");

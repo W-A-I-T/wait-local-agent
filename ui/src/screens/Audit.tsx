@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { Link, useLocation } from "react-router-dom";
 import { apiFetch } from "../api/client";
+import { apiFetchForClient } from "../api/scopedFetch";
 import { useDashboard } from "../app/DashboardContext";
 import type { AuditEvent } from "../api/types";
 import { EmptyState } from "../components/EmptyState";
@@ -8,7 +9,7 @@ import { LoadingState } from "../components/LoadingState";
 import { ScopeBadge } from "../components/ScopeBadge";
 
 export function Audit() {
-  const { selectedClientId } = useDashboard();
+  const { selectedClientId = "" } = useDashboard();
   const location = useLocation();
   const [events, setEvents] = useState<AuditEvent[]>([]);
   const [loading, setLoading] = useState(true);
@@ -21,7 +22,7 @@ export function Audit() {
   const refresh = useCallback(async () => {
     setLoading(true);
     try {
-      setEvents(await apiFetch<AuditEvent[]>("/audit"));
+      setEvents(await apiFetchForClient<AuditEvent[]>(selectedClientId, "/audit"));
     } catch (error) {
       setEventsStatus(error instanceof Error ? error.message : "Unable to load audit." );
     } finally {

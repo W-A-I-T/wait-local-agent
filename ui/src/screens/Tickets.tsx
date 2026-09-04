@@ -75,6 +75,11 @@ export function Tickets() {
   const tabRequestSeqRef = useRef(0);
   const tabInFlightSeqRef = useRef<number | null>(null);
   const lastRefreshNonceRef = useRef(refreshNonce);
+  const selectedTicketIdRef = useRef(selectedTicketId);
+
+  useEffect(() => {
+    selectedTicketIdRef.current = selectedTicketId;
+  }, [selectedTicketId]);
 
   const [actionType, setActionType] = useState(actionTypes[0] ?? "add_note");
   const [fieldText, setFieldText] = useState(defaultFieldText);
@@ -141,11 +146,11 @@ export function Tickets() {
     if (force && tabCacheRef.current.ticketId === requestTicketId) {
       // Evict only this tab's slot up front so a failed forced refresh leaves
       // no stale entry and the next visit retries.
-      const cache = tabCacheRef.current;
-      if (tab === "summary") delete cache.summary;
-      if (tab === "notes") delete cache.notes;
-      if (tab === "status-history") delete cache.statusHistory;
-      if (tab === "context") delete cache.context;
+      const tabCache = tabCacheRef.current;
+      if (tab === "summary") delete tabCache.summary;
+      if (tab === "notes") delete tabCache.notes;
+      if (tab === "status-history") delete tabCache.statusHistory;
+      if (tab === "context") delete tabCache.context;
     }
     const seq = ++tabRequestSeqRef.current;
     tabInFlightSeqRef.current = seq;
@@ -201,7 +206,7 @@ export function Tickets() {
         if (cancelled) return;
         const rows = Array.isArray(result) ? result : [];
         setTickets(rows);
-        if (selectedTicketId && !rows.some((ticket) => ticket.id === selectedTicketId)) selectTicket("");
+        if (selectedTicketIdRef.current && !rows.some((ticket) => ticket.id === selectedTicketIdRef.current)) selectTicket("");
       })
       .catch((error) => {
         if (!cancelled) setListError(error instanceof Error ? error.message : "Unable to load tickets.");
@@ -210,7 +215,7 @@ export function Tickets() {
         if (!cancelled) setListLoading(false);
       });
     return () => { cancelled = true; };
-  }, [selectedClientId]);
+  }, [selectedClientId, selectTicket]);
 
   useEffect(() => {
     if (!actionTicketId) return;
@@ -222,7 +227,7 @@ export function Tickets() {
     setContextNotFound(false);
     setTabError("");
     tabCacheRef.current = { ticketId };
-  }, [ticketId]);
+  }, [actionTicketId, ticketId]);
 
   useEffect(() => {
     if (!ticketId) return;

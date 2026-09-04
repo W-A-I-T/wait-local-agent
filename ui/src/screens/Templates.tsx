@@ -1,6 +1,7 @@
 import { FormEvent, useCallback, useEffect, useRef, useState } from "react";
 import { useDashboard } from "../app/DashboardContext";
 import { apiFetch } from "../api/client";
+import { apiFetchForClient } from "../api/scopedFetch";
 import { EmptyState } from "../components/EmptyState";
 import { LoadingState } from "../components/LoadingState";
 import { ScopeBadge } from "../components/ScopeBadge";
@@ -14,7 +15,7 @@ type GalleryDraft = {
 };
 
 export function Templates() {
-  const { canWrite, clients = [], selectedClientId = "", isMspAdmin = false } = useDashboard();
+  const { canWrite, selectedClientId = "", isMspAdmin = false } = useDashboard();
   const [templates, setTemplates] = useState<WorkflowTemplate[]>([]);
   const [entries, setEntries] = useState<TemplateGalleryEntry[]>([]);
   const [loading, setLoading] = useState(true);
@@ -34,8 +35,8 @@ export function Templates() {
     if (!hasLoadedRef.current) setLoading(true);
     try {
       const [coreRows, galleryRows] = await Promise.all([
-        apiFetch<WorkflowTemplate[]>("/workflows/templates"),
-        apiFetch<TemplateGalleryEntry[]>("/workflow-templates/gallery")
+        apiFetchForClient<WorkflowTemplate[]>(selectedClientId, "/workflows/templates"),
+        apiFetchForClient<TemplateGalleryEntry[]>(selectedClientId, "/workflow-templates/gallery")
       ]);
       setTemplates(coreRows);
       setEntries(galleryRows);
