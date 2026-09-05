@@ -249,6 +249,13 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
   const setSelectedClientId = useCallback((nextClientId: string) => {
     const normalized = nextClientId.trim();
     if (selectedClientIdRef.current === normalized) return;
+    // Revoke stale UI authority immediately, before the new client's probe.
+    ++roleRequestIdRef.current;
+    setRoleResolved(false);
+    setRole("viewer");
+    setAllowWriteActions(false);
+    setCapabilityResolved(false);
+    setCapabilityGrants([]);
     setSelectedClientIdState(normalized);
     persistSelectedClientId(normalized);
   }, []);
@@ -270,6 +277,11 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const refresh = useCallback(async (): Promise<AuthRefreshResult | null> => {
+    const storedClientId = loadStoredSelectedClientId();
+    if (selectedClientIdRef.current !== storedClientId) {
+      selectedClientIdRef.current = storedClientId;
+      setSelectedClientIdState(storedClientId);
+    }
     setRefreshNonce((nonce) => nonce + 1);
     const roleRequestId = ++roleRequestIdRef.current;
     setLoading(true);
@@ -444,10 +456,10 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
   }, [connectors, resolveWriteHealth]);
 
   useEffect(() => {
-    if (!roleResolved || selectedClientIdRef.current === selectedClientId) return;
+    if (selectedClientIdRef.current === selectedClientId) return;
     selectedClientIdRef.current = selectedClientId;
     void refresh();
-  }, [refresh, roleResolved, selectedClientId]);
+  }, [refresh, selectedClientId]);
 
   useEffect(() => {
     void refresh();
@@ -487,6 +499,7 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
     clearInMemoryApiToken();
     persistApiToken("");
     setStatusMessage("Signed out.");
+    persistSelectedClientId("");
     await refresh();
   }, [refresh]);
 

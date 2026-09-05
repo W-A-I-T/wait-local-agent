@@ -478,7 +478,7 @@ def _safe_filter(value: str | None) -> str | None:
     if value is None:
         return None
     stripped = value.strip()
-    if len(stripped) > 200 or any(ord(character) < 32 for character in stripped):
+    if len(stripped) > 200 or any(ord(character) < 32 or ord(character) == 127 for character in value):
         raise SyncroReadError("Syncro filters are too long or contain control characters.")
     return stripped or None
 

@@ -83,7 +83,7 @@ def create_system_router(ctx: ApiContext) -> APIRouter:
         return {
             "role": context.role.label(),
             "client_id": context.client_id,
-            "client_ids": sorted(context.client_ids),
+            "client_ids": sorted(context.membership_client_ids),
             "principal_id": context.principal_id,
             "auth_method": context.auth_method,
             "is_msp_admin": context.is_msp_admin,

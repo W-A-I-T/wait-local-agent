@@ -8,6 +8,13 @@ import { SelectClientNotice } from "../components/SelectClientNotice";
 import type { SmartActionRun, TechnicianChatResponse, TechnicianChatSession } from "../api/types";
 
 export function TechnicianChat() {
+  const { selectedClientId = "" } = useDashboard();
+  // Changing clients discards unsent drafts and detaches in-flight responses
+  // from the previous conversation before the new workspace is displayed.
+  return <ClientTechnicianChat key={selectedClientId} />;
+}
+
+function ClientTechnicianChat() {
   const { canWrite, canWriteExternally = canWrite, selectedClientId = "", isMspAdmin = false } = useDashboard();
   const [sessions, setSessions] = useState<TechnicianChatSession[]>([]);
   const [activeSession, setActiveSession] = useState<TechnicianChatSession | null>(null);

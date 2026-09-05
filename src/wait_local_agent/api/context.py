@@ -41,6 +41,8 @@ from wait_local_agent.update_channel import UpdateStatusCache
 from wait_local_agent.vault import SecretVault
 
 ViewerAccess = Annotated[AuthContext, Depends(require_role(Role.VIEWER))]
+# A client picker must retain the authorized directory after selecting a client.
+ClientDirectoryAccess = Annotated[AuthContext, Depends(require_role(Role.VIEWER, scope_client=False))]
 TechnicianAccess = Annotated[AuthContext, Depends(require_role(Role.TECHNICIAN))]
 AdminAccess = Annotated[AuthContext, Depends(require_role(Role.ADMIN))]
 EndUserAccess = Annotated[AuthContext, Depends(require_end_user)]
@@ -88,6 +90,7 @@ class ApiContext:
 __all__ = [
     "AdminAccess",
     "ApiContext",
+    "ClientDirectoryAccess",
     "EndUserAccess",
     "TechnicianAccess",
     "ViewerAccess",

@@ -8,6 +8,8 @@ import os
 import re
 import sqlite3
 import uuid
+from collections.abc import Iterator
+from contextlib import closing, contextmanager
 from dataclasses import asdict, dataclass, replace
 from datetime import UTC, datetime, timedelta
 from enum import StrEnum
@@ -295,13 +297,18 @@ class Store:
         ):
             fs_permissions.restrict_existing_file(sibling, missing_ok=True)
 
-    def _connect(self) -> sqlite3.Connection:
-        connection = sqlite3.connect(self.path)
-        connection.row_factory = sqlite3.Row
-        connection.execute("pragma foreign_keys = on")
-        connection.execute("pragma busy_timeout = 5000")
-        connection.execute("pragma journal_mode = wal")
-        return connection
+    @contextmanager
+    def _connect(self) -> Iterator[sqlite3.Connection]:
+        # SQLite's transaction context commits/rolls back but does not close
+        # the connection. Release file handles on every path, including
+        # failed setup and interrupted migrations, without waiting for GC.
+        with closing(sqlite3.connect(self.path)) as connection:
+            connection.row_factory = sqlite3.Row
+            connection.execute("pragma foreign_keys = on")
+            connection.execute("pragma busy_timeout = 5000")
+            connection.execute("pragma journal_mode = wal")
+            with connection:
+                yield connection
 
     def _init_schema(self) -> None:
         migrations = self._declared_migrations()

@@ -495,7 +495,7 @@ def _safe_query(value: str | None) -> str | None:
     if value is None:
         return None
     stripped = value.strip()
-    if len(stripped) > 500 or any(ord(character) < 32 for character in stripped):
+    if len(stripped) > 500 or any(ord(character) < 32 or ord(character) == 127 for character in value):
         raise ServiceNowReadError("ServiceNow queries are too long or contain control characters.")
     return stripped or None
 

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import hashlib
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from enum import IntEnum
 from secrets import compare_digest
@@ -73,6 +73,12 @@ class AuthContext:
     capability_grants: frozenset[tuple[str, str | None]] = frozenset()
     auth_method: str = "bearer"
     session_token_hash: str | None = None
+    client_roles: tuple[tuple[str, Role], ...] = ()
+
+    @property
+    def membership_client_ids(self) -> frozenset[str]:
+        """Keep the client directory available when an operation is narrowed."""
+        return frozenset(client_id for client_id, _ in self.client_roles) or self.client_ids
 
     @property
     def approver_id(self) -> str | None:
@@ -217,7 +223,18 @@ def _resolve_bearer_auth_context(
     raise _unauthorized("invalid bearer token")
 
 
-def require_end_user(request: Request, authorization: Annotated[str | None, Header()] = None) -> AuthContext:
+def resolve_request_auth_context(
+    request: Request,
+    authorization: str | None,
+    *,
+    scope_client: bool = True,
+) -> AuthContext:
+    """Bind role and data scope together for a request, using persisted roles.
+
+    With no selected client, use the least role across memberships. A caller
+    must select a client to use a stronger role, and that selection also
+    confines body fields and resource-ID lookups to the same client.
+    """
     context = resolve_auth_context(
         request.app.state.settings,
         authorization,
@@ -226,25 +243,48 @@ def require_end_user(request: Request, authorization: Annotated[str | None, Head
         request_method=request.method,
         csrf_header_present=CSRF_HEADER in request.headers,
     )
+    return _request_client_context(context, request, scope_client=scope_client)
+
+
+def _request_client_context(context: AuthContext, request: Request, *, scope_client: bool = True) -> AuthContext:
+    if context.demo_mode or context.is_msp_admin or not context.client_roles:
+        return context
+    roles = dict(context.client_roles)
+    requested: str | None = None
+    if scope_client:
+        path_client = request.path_params.get("client_id")
+        query_client = request.query_params.get("client_id")
+        if path_client and query_client and path_client.strip() != query_client.strip():
+            raise HTTPException(status_code=400, detail="conflicting client scopes")
+        requested = requested_client_from(request, path_client or query_client)
+    if requested is None:
+        return replace(context, role=min(roles.values()))
+    if requested not in roles:
+        if request.path_params.get("client_id"):
+            raise HTTPException(status_code=404, detail="client not found")
+        if request.method == "GET" and request.path_params:
+            # Preserve the entity-route boundary: an out-of-scope lookup
+            # must not distinguish an existing resource from a missing one.
+            raise HTTPException(status_code=404, detail="resource not found")
+        raise HTTPException(status_code=403, detail="requested tenant is outside authenticated scope")
+    return replace(
+        context, role=roles[requested], client_id=requested, client_ids=frozenset({requested}),
+    )
+
+
+def require_end_user(request: Request, authorization: Annotated[str | None, Header()] = None) -> AuthContext:
+    context = resolve_request_auth_context(request, authorization)
     if context.role != Role.END_USER:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="end-user access required")
     return context
 
 
-def require_role(minimum: Role):
+def require_role(minimum: Role, *, scope_client: bool = True):
     def dependency(
         request: Request,
         authorization: Annotated[str | None, Header()] = None,
     ) -> AuthContext:
-        settings = request.app.state.settings
-        context = resolve_auth_context(
-            settings,
-            authorization,
-            request.app.state.store,
-            session_token=request.cookies.get(SESSION_COOKIE_NAME),
-            request_method=request.method,
-            csrf_header_present=CSRF_HEADER in request.headers,
-        )
+        context = resolve_request_auth_context(request, authorization, scope_client=scope_client)
         if context.role < minimum:
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="insufficient role")
         return context
@@ -268,8 +308,6 @@ def require_capability(capability_key: str, minimum: Role = Role.VIEWER):
             request_method=request.method,
             csrf_header_present=CSRF_HEADER in request.headers,
         )
-        if context.role < minimum:
-            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="insufficient role")
         query_client_id = request.query_params.get("client_id")
         requested_client_id = requested_client_from(
             request,
@@ -284,6 +322,9 @@ def require_capability(capability_key: str, minimum: Role = Role.VIEWER):
             and requested_client_id.strip() not in context.client_ids
         ):
             raise _capability_required(capability_key, "client_scope_mismatch")
+        context = _request_client_context(context, request)
+        if context.role < minimum:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="insufficient role")
         if requested_client_id is not None:
             client_id = resolve_client_scope(context, requested_client_id).client_id
         if not context.has_capability(capability_key, client_id):
@@ -374,7 +415,9 @@ def _principal_auth_context(
     auth_method: str = "bearer",
     session_token_hash: str | None = None,
 ) -> AuthContext:
-    client_roles = {client_id: _role_from_label(role) for client_id, role in principal.client_roles}
+    client_roles: dict[str, Role] = {}
+    for client_id, role_label in principal.client_roles:
+        client_roles[client_id] = max(client_roles.get(client_id, Role.END_USER), _role_from_label(role_label))
     client_ids = frozenset(client_roles)
     if principal.principal_kind == "customer" and len(client_ids) != 1:
         raise _unauthorized("principal has an invalid client membership")
@@ -404,6 +447,7 @@ def _principal_auth_context(
         capability_grants=active_capability_grants(principal_store, principal.principal_id),
         auth_method=auth_method,
         session_token_hash=session_token_hash,
+        client_roles=tuple(sorted(client_roles.items())),
     )
 
 

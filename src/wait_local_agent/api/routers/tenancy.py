@@ -8,7 +8,7 @@ from typing import Annotated, Literal, cast
 
 from fastapi import APIRouter, HTTPException, Query
 
-from wait_local_agent.api.context import AdminAccess, ApiContext, ViewerAccess
+from wait_local_agent.api.context import AdminAccess, ApiContext, ClientDirectoryAccess, ViewerAccess
 from wait_local_agent.api.schemas import (
     ClientConnectorMappingCreateRequest,
     ClientCreateRequest,
@@ -62,7 +62,7 @@ def create_tenancy_router(ctx: ApiContext) -> APIRouter:
     _m365_graph_service_for_client = ctx.m365_graph_service_for_client
 
     @router.get("/clients")
-    def clients(context: ViewerAccess, client_id: str | None = None) -> list[dict[str, object]]:
+    def clients(context: ClientDirectoryAccess, client_id: str | None = None) -> list[dict[str, object]]:
         scope = resolve_client_scope(context, client_id)
         return [asdict(client) for client in store.list_clients(scope)]
 
