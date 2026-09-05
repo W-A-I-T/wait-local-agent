@@ -4,6 +4,7 @@ import sys
 from collections.abc import Iterator
 from pathlib import Path
 
+import httpx
 import pytest
 from fastapi.testclient import TestClient
 
@@ -14,6 +15,28 @@ from wait_local_agent.config import Settings
 REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
+
+
+@pytest.fixture(autouse=True)
+def local_http_only(monkeypatch) -> None:
+    """Provider tests must inject a fake transport; only local HTTP is real."""
+    send = httpx.HTTPTransport.handle_request
+    send_async = httpx.AsyncHTTPTransport.handle_async_request
+
+    def check(request: httpx.Request) -> None:
+        if request.url.host not in {"127.0.0.1", "localhost", "::1"}:
+            raise AssertionError("external HTTP is forbidden in tests; inject a MockTransport")
+
+    def handle_request(transport: httpx.HTTPTransport, request: httpx.Request) -> httpx.Response:
+        check(request)
+        return send(transport, request)
+
+    async def handle_async_request(transport: httpx.AsyncHTTPTransport, request: httpx.Request) -> httpx.Response:
+        check(request)
+        return await send_async(transport, request)
+
+    monkeypatch.setattr(httpx.HTTPTransport, "handle_request", handle_request)
+    monkeypatch.setattr(httpx.AsyncHTTPTransport, "handle_async_request", handle_async_request)
 
 
 class LiveTestClient(TestClient):

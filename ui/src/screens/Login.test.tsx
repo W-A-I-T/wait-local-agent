@@ -4,7 +4,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { Login } from "./Login";
 import { apiFetch } from "../api/client";
 import { useDashboard } from "../app/DashboardContext";
-import { buildApiHeaders, clearInMemoryApiToken } from "../api/headers";
+import { buildApiHeaders, clearInMemoryApiToken, selectedClientStorageKey } from "../api/headers";
 
 vi.mock("../api/client", () => ({ apiFetch: vi.fn() }));
 vi.mock("../app/DashboardContext", () => ({ useDashboard: vi.fn() }));
@@ -38,6 +38,24 @@ describe("Login", () => {
       expect.objectContaining({ body: JSON.stringify({ token: "secret-token" }) })
     ));
     expect(window.localStorage.getItem("wait-local-agent-api-token")).toBeNull();
+  });
+
+  it("does not carry a previous account's client scope into a new sign-in", async () => {
+    window.localStorage.setItem(selectedClientStorageKey, "previous-account-client");
+    mockedApiFetch.mockImplementation(async (path) => {
+      if (path === "/auth/login/local") {
+        expect(new Headers(buildApiHeaders()).has("X-WAIT-Client-ID")).toBe(false);
+        return { session_created: true } as never;
+      }
+      return { enabled: false } as never;
+    });
+
+    renderScreen();
+    fireEvent.change(screen.getByLabelText("Access token"), { target: { value: "new-account-fixture" } });
+    fireEvent.click(screen.getByRole("button", { name: "Sign in" }));
+
+    await waitFor(() => expect(mockedUseDashboard().refresh).toHaveBeenCalled());
+    expect(window.localStorage.getItem(selectedClientStorageKey)).toBeNull();
   });
 
   it("keeps bootstrap credentials in session storage for the bearer break-glass path", async () => {

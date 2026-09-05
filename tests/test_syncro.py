@@ -490,9 +490,13 @@ def test_syncro_failures_are_sanitized_and_distinguish_auth(settings) -> None:
 
 def test_syncro_helpers_and_invalid_inputs(settings) -> None:
     active = _settings(settings)
+    def unexpected_request(_request: httpx.Request) -> httpx.Response:
+        raise AssertionError("invalid Syncro input must not contact a provider")
+
+    invalid_client = SyncroClient(active, transport=httpx.MockTransport(unexpected_request))
     invalid_page = SyncroClient(active).list_tickets(page=0)
-    invalid_filter = SyncroClient(active).list_tickets(query="\n")
-    invalid_customer_filter = SyncroClient(active).list_customers(business_name="x\n")
+    invalid_filter = invalid_client.list_tickets(query="\n")
+    invalid_customer_filter = invalid_client.list_customers(business_name="x\n")
     invalid_customer = SyncroClient(active).list_tickets(customer_id="7/8")
     invalid_ticket = SyncroClient(active).get_ticket("not-a-number")
     invalid_customer_id = SyncroClient(active).get_customer("not-a-number")

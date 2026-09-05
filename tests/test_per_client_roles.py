@@ -102,3 +102,29 @@ def test_conflicting_header_and_query_cannot_choose_a_more_privileged_role(mixed
         headers={**_sign_in(client, "bearer"), "X-WAIT-Client-ID": "alpha"},
     )
     assert response.status_code == 400
+
+
+@pytest.mark.parametrize("method", ["bearer", "session"])
+def test_path_and_query_scopes_resolve_membership_and_hide_foreign_clients(mixed_role_client, method) -> None:
+    client, _ = mixed_role_client
+    headers = _sign_in(client, method)
+    assert client.get("/auth/role?client_id=beta", headers=headers).json()["role"] == "viewer"
+    assert client.get("/clients/beta", headers=headers).json()["client_id"] == "beta"
+    assert client.get("/clients/foreign", headers=headers).status_code == 404
+    assert client.get("/auth/role?client_id=foreign", headers=headers).status_code == 403
+    assert client.get("/clients/alpha?client_id=beta", headers=headers).status_code == 400
+    assert client.get("/clients/alpha", headers={**headers, "X-WAIT-Client-ID": "beta"}).status_code == 400
+
+
+@pytest.mark.parametrize("method", ["bearer", "session"])
+def test_membership_role_changes_take_effect_without_signing_in_again(mixed_role_client, method) -> None:
+    client, store = mixed_role_client
+    headers = {**_sign_in(client, method), "X-WAIT-Client-ID": "alpha"}
+    assert client.get("/auth/role", headers=headers).json()["role"] == "admin"
+    store.add_principal_client_role("mixed-role", "alpha", "viewer")
+    # A role grant adds to this client's existing grants; it must not replace
+    # the administrator grant through incidental database ordering.
+    assert client.get("/auth/role", headers=headers).json()["role"] == "admin"
+    store.remove_principal_client_role("mixed-role", "alpha", "admin")
+    assert client.get("/auth/role", headers=headers).json()["role"] == "viewer"
+    assert client.get("/settings/security", headers=headers).status_code == 403

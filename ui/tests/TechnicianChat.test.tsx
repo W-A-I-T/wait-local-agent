@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { TechnicianChat } from "../src/screens/TechnicianChat";
@@ -27,6 +27,7 @@ const session = {
 describe("TechnicianChat", () => {
   beforeEach(() => {
     dashboard.canWrite = true;
+    dashboard.selectedClientId = "acme";
     vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
       const path = String(input);
       if (path === "/technician/chat/sessions" && !init?.method) {
@@ -125,6 +126,44 @@ describe("TechnicianChat", () => {
     expect(await screen.findByText("Technician access required")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "New chat session" })).not.toBeInTheDocument();
     expect(vi.mocked(fetch)).not.toHaveBeenCalled();
+  });
+
+  it("clears the conversation and unsent client data when switching clients", async () => {
+    const { rerender } = render(<MemoryRouter><TechnicianChat /></MemoryRouter>);
+    await screen.findByRole("button", { name: /TCS-1/ });
+    fireEvent.change(screen.getByLabelText("Message"), { target: { value: "Private Alpha draft" } });
+    fireEvent.change(screen.getByLabelText("Ticket id (optional)"), { target: { value: "ALPHA-123" } });
+    fireEvent.change(screen.getByLabelText("Notification message"), { target: { value: "Alpha notification" } });
+    vi.mocked(fetch).mockImplementation(() => Promise.resolve(json([])));
+
+    dashboard.selectedClientId = "beta";
+    rerender(<MemoryRouter><TechnicianChat /></MemoryRouter>);
+
+    await screen.findByText("No technician sessions yet.");
+    expect(screen.queryByRole("heading", { name: "TCS-1" })).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Message")).not.toBeInTheDocument();
+    expect(screen.getByLabelText("Ticket id (optional)")).toHaveValue("");
+    expect(screen.getByLabelText("Notification message")).toHaveValue("");
+    expect(screen.getByRole("heading", { name: "Select or start a session" })).toBeInTheDocument();
+  });
+
+  it("ignores an old client's delayed session response after switching clients", async () => {
+    let finishAlpha!: (response: Response) => void;
+    const alphaResponse = new Promise<Response>((resolve) => { finishAlpha = resolve; });
+    vi.mocked(fetch).mockImplementation((input, init) => {
+      const clientId = new Headers(init?.headers).get("X-WAIT-Client-ID");
+      if (String(input) === "/technician/chat/sessions" && clientId === "acme") return alphaResponse;
+      return Promise.resolve(json([]));
+    });
+    const { rerender } = render(<MemoryRouter><TechnicianChat /></MemoryRouter>);
+    dashboard.selectedClientId = "beta";
+    rerender(<MemoryRouter><TechnicianChat /></MemoryRouter>);
+    await screen.findByText("No technician sessions yet.");
+
+    await act(async () => { finishAlpha(json([session])); });
+
+    expect(screen.queryByRole("button", { name: /TCS-1/ })).not.toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Select or start a session" })).toBeInTheDocument();
   });
 });
 

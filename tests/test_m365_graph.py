@@ -89,6 +89,9 @@ def test_m365_graph_defaults_block_and_missing_credentials(settings) -> None:
 
 @pytest.mark.parametrize("operation", ["get", "post", "patch", "delete"])
 def test_connection_seam_auth_failures_are_sanitized(settings, operation: str) -> None:
+    def unexpected_request(_request: httpx.Request) -> httpx.Response:
+        raise AssertionError("failed authentication must not contact Microsoft Graph")
+
     class FailingToken:
         configured = True
 
@@ -101,6 +104,7 @@ def test_connection_seam_auth_failures_are_sanitized(settings, operation: str) -
             graph_base_url="https://graph.microsoft.com/v1.0",
             token_provider=FailingToken(),
         ),
+        transport=httpx.MockTransport(unexpected_request),
     )
     calls = {
         "get": lambda: client._get("users"),
