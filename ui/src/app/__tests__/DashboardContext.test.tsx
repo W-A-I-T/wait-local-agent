@@ -2,7 +2,7 @@ import { act, fireEvent, render, screen, waitFor } from "@testing-library/react"
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { DashboardProvider, getWriteHealthPosture, useDashboard } from "../DashboardContext";
 import { apiFetch } from "../../api/client";
-import { apiTokenStorageKey } from "../../api/headers";
+import { apiTokenStorageKey, selectedClientStorageKey } from "../../api/headers";
 
 vi.mock("../../api/client", () => ({
   apiFetch: vi.fn()
@@ -196,6 +196,7 @@ describe("DashboardContext role refresh", () => {
 
   it("clears a break-glass session token when signing out", async () => {
     window.sessionStorage.setItem(apiTokenStorageKey, "bootstrap-token");
+    window.localStorage.setItem(selectedClientStorageKey, "previous-client");
     mockedApiFetch.mockImplementation((path: string) => {
       if (path === "/auth/role") {
         return Promise.resolve({ role: "admin", api_auth_required: true, demo_mode: false }) as ReturnType<typeof apiFetch>;
@@ -212,6 +213,32 @@ describe("DashboardContext role refresh", () => {
     fireEvent.click(screen.getByRole("button", { name: "Sign out" }));
 
     await waitFor(() => expect(window.sessionStorage.getItem(apiTokenStorageKey)).toBeNull());
+    expect(window.localStorage.getItem(selectedClientStorageKey)).toBeNull();
+    expect(screen.getByTestId("selected-client-id")).toBeEmptyDOMElement();
+  });
+
+  it("removes administrator controls while a newly selected client's role is pending", async () => {
+    const selectedRole = deferred<{ role: "viewer" }>();
+    mockedApiFetch.mockImplementation((path: string) => {
+      if (path === "/auth/role") {
+        return (window.localStorage.getItem(selectedClientStorageKey)
+          ? selectedRole.promise
+          : Promise.resolve({ role: "admin", demo_mode: true })) as ReturnType<typeof apiFetch>;
+      }
+      return Promise.resolve(defaultResponse(path)) as ReturnType<typeof apiFetch>;
+    });
+    render(<DashboardProvider><DashboardHarness /></DashboardProvider>);
+    await screen.findByRole("button", { name: "Admin controls" });
+
+    fireEvent.click(screen.getByRole("button", { name: "Select client A" }));
+    expect(screen.queryByRole("button", { name: "Admin controls" })).not.toBeInTheDocument();
+    expect(screen.getByTestId("can-write")).toHaveTextContent("no");
+    expect(screen.getByTestId("capability-grants")).toBeEmptyDOMElement();
+
+    await act(async () => selectedRole.resolve({ role: "viewer" }));
+    await screen.findByText("access resolved");
+    expect(screen.queryByRole("button", { name: "Admin controls" })).not.toBeInTheDocument();
+    expect(screen.getByTestId("can-write")).toHaveTextContent("no");
   });
 
   it("derives invalid-token only when a saved token receives a 401", async () => {

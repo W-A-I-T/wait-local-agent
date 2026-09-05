@@ -21,7 +21,7 @@ from wait_local_agent.oidc import (
     resolve_identity,
     validate_next_path,
 )
-from wait_local_agent.rbac import AuthContext, Role, require_role, resolve_auth_context
+from wait_local_agent.rbac import AuthContext, Role, require_role, resolve_auth_context, resolve_request_auth_context
 from wait_local_agent.sessions import (
     CSRF_HEADER,
     SESSION_COOKIE_NAME,
@@ -111,14 +111,7 @@ def create_auth_router(limiter: Limiter | None = None) -> APIRouter:
     def session_probe(request: Request) -> dict[str, object]:
         store = _store(request)
         try:
-            context = resolve_auth_context(
-                request.app.state.settings,
-                request.headers.get("authorization"),
-                store,
-                session_token=request.cookies.get(SESSION_COOKIE_NAME),
-                request_method=request.method,
-                csrf_header_present=CSRF_HEADER in request.headers,
-            )
+            context = resolve_request_auth_context(request, request.headers.get("authorization"))
         except HTTPException:
             return {"authenticated": False}
         expires_at = None
@@ -822,7 +815,7 @@ def _auth_view(
     return {
         "role": context.role.label(),
         "client_id": context.client_id,
-        "client_ids": sorted(context.client_ids),
+        "client_ids": sorted(context.membership_client_ids),
         "principal_id": context.principal_id,
         "is_msp_admin": context.is_msp_admin,
         "auth_method": auth_method or context.auth_method,

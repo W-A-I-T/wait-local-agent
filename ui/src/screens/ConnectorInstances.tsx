@@ -626,7 +626,7 @@ export function ConnectorInstances() {
       ]);
       await selectInstance(createdInstance);
       setConnectForm((current) => ({ ...initialConnectForm, connectorType: current.connectorType }));
-      setConnectNotice(`Connected ${displayName}. Verify it with 'Sync now' / map its companies below.`);
+      setConnectNotice(`Saved connection ${displayName}. Provider access has not been verified. Use 'Sync now' and review its result, then map its companies below.`);
       await refreshConfiguration();
     } catch (requestError) {
       setConnectError(requestError instanceof Error ? requestError.message : "Unable to create the connector instance.");

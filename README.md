@@ -334,6 +334,12 @@ HTTP 403.
 The identity model supports principals with roles assigned per client and a
 global `msp_admin` role for cross-client administration. Principal credentials
 are stored as SHA-256 hashes; raw credentials are not persisted.
+For a staff principal with different roles across clients, select a client in
+the dashboard (or send its `X-WAIT-Client-ID` header for API calls) to use that
+client's role. The backend binds that role and the operation's data scope
+together. Without a selection, the least privileged membership role applies;
+an administrator role in one client never grants it in another. The client
+picker still lists all authorized memberships.
 Cloud inventory connectors are governed read-only adapters for AWS, Azure,
 GCP, and Microsoft 365. They require a vault credential reference and never
 persist credential material. See the provider-specific permission guides.

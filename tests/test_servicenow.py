@@ -356,11 +356,26 @@ def test_servicenow_failures_are_sanitized_and_distinguish_auth(settings) -> Non
     assert health_failure.status == "failed"
 
 
+@pytest.mark.parametrize("query", ["\n", "active=true\n", "\tactive=true", "active=true\r\n", "\x7f"])
+def test_servicenow_control_characters_never_reach_provider(settings, query: str) -> None:
+    def unexpected_request(_request: httpx.Request) -> httpx.Response:
+        raise AssertionError("malformed query reached provider")
+
+    client = ServiceNowClient(_settings(settings), transport=httpx.MockTransport(unexpected_request))
+    result = client.list_incidents(query=query)
+    assert result.result.status == "failed"
+    assert "control characters" in result.result.message
+
+
 def test_servicenow_helpers_and_invalid_inputs(settings) -> None:
     active = _settings(settings)
+    def unexpected_request(_request: httpx.Request) -> httpx.Response:
+        raise AssertionError("invalid ServiceNow input must not contact a provider")
+
+    invalid_client = ServiceNowClient(active, transport=httpx.MockTransport(unexpected_request))
     invalid_page = ServiceNowClient(active).list_incidents(page=0)
     invalid_page_size = ServiceNowClient(active).list_incidents(page_size=0)
-    invalid_query = ServiceNowClient(active).list_incidents(query="\n")
+    invalid_query = invalid_client.list_incidents(query="\n")
     invalid_id = ServiceNowClient(active).get_incident("../secret")
     invalid_base = ServiceNowClient(
         replace(active, servicenow_base_url="https://service-now.test?token=leak"),

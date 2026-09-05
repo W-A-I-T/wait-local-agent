@@ -256,7 +256,12 @@ def test_zip_init_rejects_missing_details_and_upload_failures(monkeypatch) -> No
 def test_upload_result_fallback_and_token_configuration() -> None:
     result = LaunchPassportClient._upload_result({}, fallback={"id": "fallback", "status": "pending"})
     assert result.as_dict() == {"artifact_id": "fallback", "status": "pending"}
-    with LaunchPassportClient("https://lp.test", lambda: None) as client:
+    def unexpected_request(_request: httpx.Request) -> httpx.Response:
+        raise AssertionError("missing token must not contact Launch Passport")
+
+    with LaunchPassportClient(
+        "https://lp.test", lambda: None, transport=httpx.MockTransport(unexpected_request),
+    ) as client:
         assert client.status() == {"status": "unreachable", "error": "Launch Passport token is not configured"}
 
 
