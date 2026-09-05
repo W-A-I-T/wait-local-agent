@@ -356,6 +356,17 @@ def test_servicenow_failures_are_sanitized_and_distinguish_auth(settings) -> Non
     assert health_failure.status == "failed"
 
 
+@pytest.mark.parametrize("query", ["\n", "active=true\n", "\tactive=true", "active=true\r\n", "\x7f"])
+def test_servicenow_control_characters_never_reach_provider(settings, query: str) -> None:
+    def unexpected_request(_request: httpx.Request) -> httpx.Response:
+        raise AssertionError("malformed query reached provider")
+
+    client = ServiceNowClient(_settings(settings), transport=httpx.MockTransport(unexpected_request))
+    result = client.list_incidents(query=query)
+    assert result.result.status == "failed"
+    assert "control characters" in result.result.message
+
+
 def test_servicenow_helpers_and_invalid_inputs(settings) -> None:
     active = _settings(settings)
     def unexpected_request(_request: httpx.Request) -> httpx.Response:

@@ -98,7 +98,8 @@ test("completes the safe local setup journey and exercises primary UI surfaces",
   await page.getByLabel("Tenant").fill("browser-tenant");
   await page.getByRole("button", { name: "Continue to verify and map", exact: true }).click();
   await page.getByRole("button", { name: "Connect system" }).click();
-  await expect(page.getByRole("status")).toContainText(`Connected ${connectorName}`);
+  await expect(page.getByRole("status")).toContainText(`Saved connection ${connectorName}`);
+  await expect(page.getByRole("status")).toContainText("Provider access has not been verified.");
   await page.goto("/integrations/connector-instances");
   await page.getByRole("button", { name: connectorName }).click();
 

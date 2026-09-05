@@ -40,3 +40,18 @@ def test_failed_store_transaction_rolls_back_and_releases_its_handle(tmp_path: P
         connection.execute("select 1")
     restarted = Store(store.path)
     assert all(row.client_id != "alpha" for row in restarted.list_clients(AllClients()))
+
+
+def test_connection_setup_failure_releases_handle(tmp_path: Path, monkeypatch) -> None:
+    store = Store(tmp_path / "state.db")
+
+    class FailedSetup(sqlite3.Connection):
+        def execute(self, *args, **kwargs):
+            raise sqlite3.OperationalError("fixture PRAGMA failure")
+
+    connection = sqlite3.connect(store.path, factory=FailedSetup)
+    monkeypatch.setattr(sqlite3, "connect", lambda _path: connection)
+    with pytest.raises(sqlite3.OperationalError, match="fixture PRAGMA failure"):
+        store.list_clients(AllClients())
+    with pytest.raises(sqlite3.ProgrammingError, match="closed database"):
+        connection.cursor()

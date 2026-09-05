@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import replace
 
 import httpx
+import pytest
 
 from wait_local_agent.syncro import (
     SyncroClient,
@@ -486,6 +487,17 @@ def test_syncro_failures_are_sanitized_and_distinguish_auth(settings) -> None:
     assert "syncro-token" not in disconnected.result.message
     assert generic_failure.result.message == "Syncro request failed."
     assert health_failure.status == "failed"
+
+
+@pytest.mark.parametrize("query", ["\n", "customer\n", "\tcustomer", "customer\r\n", "\x7f"])
+def test_syncro_control_characters_never_reach_provider(settings, query: str) -> None:
+    def unexpected_request(_request: httpx.Request) -> httpx.Response:
+        raise AssertionError("malformed filter reached provider")
+
+    client = SyncroClient(_settings(settings), transport=httpx.MockTransport(unexpected_request))
+    for result in (client.list_tickets(query=query), client.list_customers(business_name=query)):
+        assert result.result.status == "failed"
+        assert "control characters" in result.result.message
 
 
 def test_syncro_helpers_and_invalid_inputs(settings) -> None:

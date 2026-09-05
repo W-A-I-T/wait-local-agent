@@ -263,7 +263,9 @@ describe("Connector Instances screen", () => {
     fireEvent.click(screen.getByRole("button", { name: "Continue to verify and map" }));
     fireEvent.click(screen.getByRole("button", { name: "Connect system" }));
 
-    expect(await screen.findByRole("status")).toHaveTextContent("Connected Acme Microsoft 365.");
+    expect(await screen.findByRole("status")).toHaveTextContent("Saved connection Acme Microsoft 365.");
+    expect(screen.getByRole("status")).toHaveTextContent("Provider access has not been verified.");
+    expect(fetchMock.mock.calls.some(([input]) => String(input).endsWith("/sync"))).toBe(false);
     const secretCall = fetchMock.mock.calls.find(([input, request]) => String(input) === "/secrets" && request?.method === "POST");
     const instanceCall = fetchMock.mock.calls.find(([input, request]) => String(input) === "/connector-instances" && request?.method === "POST");
     expect(JSON.parse(String(secretCall?.[1]?.body))).toEqual({
