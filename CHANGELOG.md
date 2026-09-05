@@ -13,6 +13,9 @@ All notable changes to WAIT Local Agent will be documented in this file.
 
 ### Security
 
+- Staff requests now resolve roles for the selected client and bind resource
+  and payload scope to that client. Bearer and browser sessions no longer
+  reuse one client's administrator role for another client's viewer access.
 - Weak-token startup warnings now cover end-user credentials and all bootstrap
   tokens shorter than 32 characters.
 - Principal lifecycle mutations now use one canonical Store path; deactivation
@@ -66,6 +69,15 @@ All notable changes to WAIT Local Agent will be documented in this file.
 
 ### Fixed
 
+- Client switching immediately clears stale UI permissions, and Technician
+  Chat discards the previous client's conversation, drafts, and late responses.
+  Sign-in and logout clear the previous account's selected client.
+- SQLite connections close after each operation, including failed setup and
+  rolled-back transactions, instead of retaining handles until collection.
+- ServiceNow queries and Syncro filters reject control characters before
+  whitespace normalization; malformed filters cannot silently become reads.
+- Saving connector configuration now reports that provider access is still
+  unverified instead of claiming that the connector is connected.
 - The development Compose UI service no longer waits on the npm registry's advisory endpoints at start-up (`npm ci --no-audit`), which made the browser integration check time out whenever those endpoints were unreachable.
 - Connector instance creation now rejects unknown connector types, diagnostics
   bundle digests remain stable across volatile system uptime, and approved

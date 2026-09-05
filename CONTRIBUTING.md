@@ -51,6 +51,11 @@ That script runs exactly:
 
 Coverage is a release gate. Backend coverage must stay at or above `95%`.
 
+Provider tests must inject `httpx.MockTransport` or use a disposable localhost
+service. The test harness rejects non-local HTTPX transport requests before
+they leave the process, including requests accidentally triggered by invalid
+input. Do not disable this guard to make a test pass.
+
 CI additionally runs `scripts/demo_consultant_mode.sh` and
 `scripts/validate_local_first.sh`. CI uses `npm ci` for the UI job; the release
 script uses `npm ci`.
