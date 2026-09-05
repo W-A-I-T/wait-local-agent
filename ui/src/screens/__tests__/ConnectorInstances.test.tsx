@@ -382,7 +382,8 @@ describe("ConnectorInstances connect flow", () => {
     fireEvent.click(screen.getByRole("button", { name: "Continue to verify and map" }));
     fireEvent.click(screen.getByRole("button", { name: "Connect system" }));
 
-    expect(await screen.findByRole("status")).toHaveTextContent("Connected Acme ConnectWise.");
+    expect(await screen.findByRole("status")).toHaveTextContent("Saved connection Acme ConnectWise.");
+    expect(screen.getByRole("status")).toHaveTextContent("Provider access has not been verified.");
     const secretCall = mockedApiFetch.mock.calls.find(([path, init]) => path === "/secrets" && init?.method === "POST");
     const instanceCall = mockedApiFetch.mock.calls.find(([path, init]) => path === "/connector-instances" && init?.method === "POST");
     const secretCallIndex = mockedApiFetch.mock.calls.findIndex(([path, init]) => path === "/secrets" && init?.method === "POST");
@@ -544,7 +545,8 @@ describe("ConnectorInstances connect flow", () => {
     fireEvent.click(screen.getByRole("button", { name: "Continue to verify and map" }));
     fireEvent.click(screen.getByRole("button", { name: "Connect system" }));
 
-    expect(await screen.findByRole("status")).toHaveTextContent("Connected Acme Microsoft 365.");
+    expect(await screen.findByRole("status")).toHaveTextContent("Saved connection Acme Microsoft 365.");
+    expect(screen.getByRole("status")).toHaveTextContent("Provider access has not been verified.");
     const secretCall = mockedApiFetch.mock.calls.find(([path, request]) => path === "/secrets" && request?.method === "POST");
     const instanceCall = mockedApiFetch.mock.calls.find(([path, request]) => path === "/connector-instances" && request?.method === "POST");
     expect(JSON.parse(String(secretCall?.[1]?.body))).toEqual({
