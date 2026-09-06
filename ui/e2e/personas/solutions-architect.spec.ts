@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { api, expect, selectAlpha, signIn, test } from "./helpers";
 
-test("architect completes and resumes guided discovery and reviews a local delivery package", async ({ page, request }) => {
+test("architect resumes discovery and distinguishes a review package from deployable work", async ({ page, request }) => {
   await signIn(page);
   const name = `Local onboarding ${randomUUID()}`;
   await selectAlpha(page);
@@ -40,7 +40,12 @@ test("architect completes and resumes guided discovery and reviews a local deliv
   await page.getByLabel("Output directory", { exact: true }).fill(`${fixture.delivery}/${randomUUID()}`);
   await page.getByRole("button", { name: "Build package", exact: true }).click();
   await expect(page.getByText("Package ready", { exact: true })).toBeVisible();
+  const validation = page.waitForResponse((response) => response.url().endsWith("/power-platform/package/validate"));
   await page.getByRole("button", { name: "Validate package", exact: true }).click();
-  await expect(page.getByText("Validation passed", { exact: true })).toBeVisible();
+  const refusal = await validation;
+  expect(refusal.status()).toBe(422);
+  expect((await refusal.json()).detail).toContain("package contains no component that will import");
+  await expect(page.getByRole("alert")).toContainText("This package is for design review only.");
+  await expect(page.getByText("Validation passed", { exact: true })).toHaveCount(0);
   await expect(page.getByText(/Nothing runs until WAIT_ALLOW_POWER_PLATFORM_DEPLOYMENT/)).toBeVisible();
 });

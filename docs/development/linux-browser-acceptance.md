@@ -36,7 +36,7 @@ appliance database or connector credentials. Port 18790 must be free. Set
 | Technician | Open a local requester ticket, start Technician Chat, investigate, revisit stored evidence, reject an unsupported command, close the session |
 | Restricted viewer | Admin deep-link denial, denied principal API, client isolation, unavailable privileged chat controls |
 | Requester | Required-field validation, submit and follow up, read an operator reply after reload, escalate, deny another requester/client's ticket, clear private state |
-| Solutions architect | Answer the actual guided discovery schema, save and resume the resulting blueprint, build and validate a local review package |
+| Solutions architect | Answer the actual guided discovery schema, save and resume the resulting blueprint, build a local review package, reject deployment validation of design-only work |
 | Founder | Scan a disposable project, preview metadata, cancel before upload, confirm a handoff, recover from a fixture provider failure |
 | Appliance operator | Run a local collector, export its evidence, download diagnostics and audit records |
 

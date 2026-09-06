@@ -12,6 +12,9 @@ All notable changes to WAIT Local Agent will be documented in this file.
   supply the selected client when listing or reopening guided discovery sessions.
 - Show permitted environment key names in the Founder upload preview while
   excluding values and credential-shaped strings.
+- Preserve a confirmed Founder upload when optional checks are unavailable;
+  keep absent reports and unavailable launch scans visibly unavailable.
+- Explain why a design-only delivery package cannot pass deployment validation.
 - Keep onboarding, client selection and operational layouts usable at small
   viewports; correct dialog focus, diagnostics list semantics, field names and
   text contrast.

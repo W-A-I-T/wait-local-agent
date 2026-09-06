@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState, type FormEvent } from "react";
 import { AlertTriangle, CheckCircle2, Circle, FileJson, PackageOpen, PlayCircle, RefreshCw, RotateCcw, ShieldCheck } from "lucide-react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
 import { executeEndpointFor, useDashboard } from "../app/DashboardContext";
-import { apiFetch } from "../api/client";
+import { apiFetch, ApiRequestError } from "../api/client";
 import { ScopeBadge } from "../components/ScopeBadge";
 import { SelectClientNotice } from "../components/SelectClientNotice";
 import { LifecycleBar } from "../components/LifecycleBar";
@@ -283,7 +283,9 @@ export function SolutionDelivery() {
       setValidationResult(result);
       setMessage("Package validation passed. No execution or deployment was started.");
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : "The package could not be validated.");
+      setMessage(error instanceof ApiRequestError && error.status === 422 && typeof error.detail === "string" && error.detail.startsWith("package contains no component that will import")
+        ? "This package is for design review only. Add a supported importable component before validating deployment. Nothing has been deployed."
+        : error instanceof Error ? error.message : "The package could not be validated.");
     } finally {
       setBusy(null);
     }

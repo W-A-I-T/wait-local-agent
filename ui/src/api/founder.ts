@@ -106,7 +106,7 @@ export function projectFounderResults(value: unknown): FounderResults {
         return normalizeState(scan?.status ?? scan?.state, SCAN_STATES) as FounderScanState;
       })
     },
-    latest_report: { available: hasContent(latestReport) }
+    latest_report: { available: reportAvailable(latestReport) }
   };
 }
 
@@ -143,15 +143,11 @@ function looksCredentialLike(value: string): boolean {
   return /(?:AKIA[0-9A-Z]{16}|AIza[0-9A-Za-z_-]{20,}|(?:sk|rk)_(?:live|test)_[0-9A-Za-z_]+|(?:gh[pousr]|github_pat)_[0-9A-Za-z_]+|xox[baprs]-[0-9A-Za-z-]+)/.test(value);
 }
 
-function hasContent(value: unknown): boolean {
-  if (value === null || value === undefined || value === false || value === "") {
-    return false;
-  }
-  if (Array.isArray(value)) {
-    return value.length > 0;
-  }
-  if (typeof value === "object") {
-    return Object.keys(value).length > 0;
-  }
-  return true;
+function reportAvailable(value: unknown): boolean {
+  const record = asRecord(value);
+  if (!record) return false;
+  if ("available" in record) return record.available === true;
+  // Older responses contain a report reference. Error/status objects alone
+  // are not evidence that a report exists.
+  return [record.id, record.report_id, record.reportId].some((reference) => Boolean(safeIdentifier(reference)));
 }

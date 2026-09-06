@@ -37,6 +37,8 @@ export function FounderJourney() {
   const [results, setResults] = useState<FounderResults | null>(null);
   const [preflight, setPreflight] = useState<unknown>(null);
   const [vaultState, setVaultState] = useState<unknown>(null);
+  const [preflightError, setPreflightError] = useState("");
+  const [vaultError, setVaultError] = useState("");
   const [launchResult, setLaunchResult] = useState<Record<string, unknown> | null>(null);
   const [confirmingLaunch, setConfirmingLaunch] = useState(false);
   const [connectionNotConfigured, setConnectionNotConfigured] = useState(false);
@@ -52,6 +54,8 @@ export function FounderJourney() {
     setResults(null);
     setPreflight(null);
     setVaultState(null);
+    setPreflightError("");
+    setVaultError("");
     setLaunchResult(null);
     setConfirmingLaunch(false);
     setConnectionNotConfigured(false);
@@ -206,18 +210,26 @@ export function FounderJourney() {
     if (step !== 3) return;
     let cancelled = false;
     setIsBusy(true);
+    setPreflightError("");
+    setVaultError("");
+    async function loadCheck(path: string, update: (value: unknown) => void, showError: (message: string) => void) {
+      try {
+        const value = await apiFetch<unknown>(path);
+        if (!cancelled) update(value);
+      } catch (error) {
+        if (!cancelled) showError(error instanceof ApiRequestError && error.status === 501
+          ? "This check is unavailable in the installed package."
+          : error instanceof Error ? error.message : "This check could not be loaded.");
+      }
+    }
     void Promise.all([
-      request<unknown>("/founder/preflight/latest"),
-      request<unknown>("/founder/vault")
-    ]).then(([latestPreflight, latestVault]) => {
-      if (cancelled) return;
-      setPreflight(latestPreflight);
-      setVaultState(latestVault);
-    }).finally(() => {
+      loadCheck("/founder/preflight/latest", setPreflight, setPreflightError),
+      loadCheck("/founder/vault", setVaultState, setVaultError)
+    ]).finally(() => {
       if (!cancelled) setIsBusy(false);
     });
     return () => { cancelled = true; };
-  }, [request, step]);
+  }, [step]);
 
   useEffect(() => {
     if (step !== 3 || !launchResult) return;
@@ -381,11 +393,11 @@ export function FounderJourney() {
               <div className="smart-action-schema-grid">
                 <section>
                   <h4>Latest preflight</h4>
-                  {preflight === null ? <p className="screen-note">Preflight state is not available yet.</p> : <pre className="smart-action-code"><code>{JSON.stringify(safeFounderState(preflight), null, 2)}</code></pre>}
+                  {preflightError ? <p className="screen-note">{preflightError}</p> : preflight === null ? <p className="screen-note">Preflight state is not available yet.</p> : <pre className="smart-action-code"><code>{JSON.stringify(safeFounderState(preflight), null, 2)}</code></pre>}
                 </section>
                 <section>
                   <h4>Vault state</h4>
-                  {vaultState === null ? <p className="screen-note">Vault state is not available yet.</p> : <pre className="smart-action-code"><code>{JSON.stringify(safeFounderState(vaultState), null, 2)}</code></pre>}
+                  {vaultError ? <p className="screen-note">{vaultError}</p> : vaultState === null ? <p className="screen-note">Vault state is not available yet.</p> : <pre className="smart-action-code"><code>{JSON.stringify(safeFounderState(vaultState), null, 2)}</code></pre>}
                 </section>
               </div>
               {launchResult ? <div className="connection-state" role="status"><strong>Launch result</strong><pre className="smart-action-code"><code>{JSON.stringify(launchResult, null, 2)}</code></pre></div> : null}
@@ -404,11 +416,12 @@ export function FounderJourney() {
                 <div className="notice confirm-panel" role="alertdialog" aria-label="Confirm launch scan">
                   <p>Run the Launch Passport scan for this reviewed project package?</p>
                   <div className="row-actions">
-                    <button type="button" onClick={() => void launchScan()}>Yes, run launch scan</button>
+                    <button type="button" disabled={isBusy || launchPassport?.capabilities?.launch_scan !== true} onClick={() => void launchScan()}>Yes, run launch scan</button>
                     <button type="button" className="icon-button" onClick={() => setConfirmingLaunch(false)}>Cancel</button>
                   </div>
                 </div>
-              ) : <button type="button" onClick={() => setConfirmingLaunch(true)} disabled={isBusy}>{isBusy ? "Checking…" : "Run launch scan"}</button>}
+              ) : <button type="button" onClick={() => setConfirmingLaunch(true)} disabled={isBusy || launchPassport?.capabilities?.launch_scan !== true}>{isBusy ? "Checking…" : "Run launch scan"}</button>}
+              {launchPassport?.capabilities?.launch_scan !== true ? <p className="screen-note">Launch scan is unavailable for this connection. Uploading a reviewed package does not start a scan.</p> : null}
             </div>
           ) : null}
 

@@ -28,4 +28,7 @@ test("founder reviews the real privacy package, cancels, and retries a failed fi
   await page.getByRole("button", { name: "Upload reviewed package" }).click();
   await expect(page.getByText(/Upload complete\./)).toBeVisible();
   expect((await api(request, "/__acceptance/fixtures")).uploads).toBe(2);
+  await expect(page.getByRole("button", { name: "Run launch scan", exact: true })).toBeDisabled();
+  await expect(page.getByText("No latest report reference was returned yet.")).toBeVisible();
+  await expect(page.getByText("This check is unavailable in the installed package.")).toHaveCount(2);
 });
