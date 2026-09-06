@@ -60,22 +60,24 @@ export function Wizard({
         <button className="icon-button" type="button" onClick={onClose}>Dismiss</button>
       </div>
 
-      <div className="wizard-steps" role="list" aria-label="Onboarding progress">
+      <ol className="wizard-steps" aria-label="Onboarding progress">
         {steps.map((step, index) => {
           const isActive = index === activeStep;
           const isDone = index < activeStep;
           const content = <><span>{isDone ? <CheckCircle2 size={16} aria-hidden="true" /> : index + 1}</span><div><strong>{step.title}</strong>{step.description ? <p>{step.description}</p> : null}</div></>;
           return onStepSelect ? (
-            <button
-              className={`wizard-step ${isActive ? "active" : ""} ${isDone ? "done" : ""}`}
-              type="button"
-              aria-label={step.title}
-              disabled={index > activeStep || isBusy}
-              onClick={() => onStepSelect(index)}
-              key={step.id}
-            >
-              {content}
-            </button>
+            <li key={step.id}>
+              <button
+                className={`wizard-step ${isActive ? "active" : ""} ${isDone ? "done" : ""}`}
+                type="button"
+                aria-label={step.title}
+                aria-current={isActive ? "step" : undefined}
+                disabled={index > activeStep || isBusy}
+                onClick={() => onStepSelect(index)}
+              >
+                {content}
+              </button>
+            </li>
           ) : (
             <li
               className={`wizard-step ${isActive ? "active" : ""} ${isDone ? "done" : ""}`}
@@ -86,7 +88,7 @@ export function Wizard({
             </li>
           );
         })}
-      </div>
+      </ol>
 
       <div className="wizard-content">
         {children}

@@ -48,5 +48,7 @@ describe("Wizard step controls", () => {
     fireEvent.click(screen.getByRole("button", { name: "Two" }));
     expect(onStepSelect.mock.calls.map(([index]) => index)).toEqual([0, 1]);
     expect(screen.getByRole("button", { name: "Three" })).toBeDisabled();
+    expect(screen.getAllByRole("listitem")).toHaveLength(3);
+    expect(screen.getByRole("button", { name: "Two" })).toHaveAttribute("aria-current", "step");
   });
 });

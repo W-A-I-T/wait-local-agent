@@ -124,29 +124,28 @@ export function DiagnosticsSupport() {
             </button>
           </div>
           {statusMessage ? <div className="notice" role="status">{statusMessage}</div> : null}
-          <div className="table-list settings-list">
+          <dl className="table-list settings-list">
             <StatusRow label="Version" value={system?.version} />
             <StatusRow label="Build" value={system?.build_commit ?? "Not recorded"} />
             <StatusRow label="Operating system" value={system?.os_name} />
             <StatusRow label="Install mode" value={system?.install_mode} />
             <StatusRow label="Data integrity" value={databaseIntegrity(summary)} />
-          </div>
+          </dl>
         </section>
 
         <section className="panel">
-          <div className="panel-heading"><h2>Safe configuration</h2><span>Values are never shown</span></div>
-          <div className="flag-grid">
+          <div className="panel-heading"><h2>Safe configuration</h2><span>Secret values are never shown</span></div>
+          <dl className="diagnostics-flags" aria-label="Safe feature configuration">
             {FEATURE_FLAGS.map(([key, label]) => {
               const enabled = configuration ? Boolean(configuration[key]) : undefined;
               return (
                 <div key={key}>
-                  <strong>{label}</strong>
-                  <span>{enabled === undefined ? "Not loaded" : enabled ? "Enabled" : "Disabled"}</span>
-                  <StatusChip status={enabled === undefined ? "unavailable" : enabled ? "configured" : "not_configured"} />
+                  <dt>{label}</dt>
+                  <dd>{enabled === undefined ? "Not loaded" : enabled ? "Enabled" : "Disabled"}</dd>
                 </div>
               );
             })}
-          </div>
+          </dl>
         </section>
 
         <section className="panel">
@@ -180,11 +179,11 @@ export function DiagnosticsSupport() {
 
         <section className="panel">
           <div className="panel-heading"><h2>Security checks and updates</h2><span>Local status</span></div>
-          <div className="table-list settings-list">
+          <dl className="table-list settings-list">
             <StatusRow label="Latest security checks" value={hardening?.status} status={hardening?.status} />
             <StatusRow label="Update check" value={update?.detail} status={update?.status} />
             <StatusRow label="Installed packs" value={String(packs.length)} />
-          </div>
+          </dl>
         </section>
 
         <section className="panel">

@@ -30,3 +30,5 @@ ai/
 # Local Playwright CLI traces and generated matrix reports
 .playwright-cli/
 output/playwright/*.json
+ui/persona-results/
+ui/persona-report/

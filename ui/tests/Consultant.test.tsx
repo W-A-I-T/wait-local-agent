@@ -310,7 +310,7 @@ describe("Consultant", () => {
           deployment_started: false,
         }), { status: 201 }));
       }
-      if (path === "/consultant/discovery/sessions") {
+      if (path === "/consultant/discovery/sessions" || path === "/consultant/discovery/sessions?client_id=acme") {
         if (String(init?.method ?? "GET") === "GET") {
           return Promise.resolve(new Response(JSON.stringify([]), { status: 200 }));
         }
@@ -331,7 +331,7 @@ describe("Consultant", () => {
           deployment_started: false,
         }), { status: 200 }));
       }
-      if (path === "/consultant/discovery/sessions/CDS-guided") {
+      if (path === "/consultant/discovery/sessions/CDS-guided?client_id=acme") {
         return Promise.resolve(new Response(JSON.stringify({
           session_id: "CDS-guided",
           principal_scope: "technician",
@@ -484,6 +484,10 @@ describe("Consultant", () => {
     expect(screen.getByText(/Saved sessions are visible only to this tenant/)).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: /CDS-guided/ }));
     expect(await screen.findByRole("list", { name: "Guided discovery transcript" })).toHaveTextContent("We want to automate employee onboarding");
+    expect(vi.mocked(fetch).mock.calls.map(([input]) => String(input))).toEqual(expect.arrayContaining([
+      "/consultant/discovery/sessions?client_id=acme",
+      "/consultant/discovery/sessions/CDS-guided?client_id=acme",
+    ]));
   });
 
   it("requires the shell client scope before submitting discovery", async () => {

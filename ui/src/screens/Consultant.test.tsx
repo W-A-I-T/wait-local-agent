@@ -55,7 +55,7 @@ describe("Consultant architecture decisions", () => {
     holdPlaybookGeneration = false;
     resolvePlaybookGeneration = null;
     vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL) => {
-      const path = String(input);
+      const path = String(input).split("?")[0];
       const responses: Record<string, unknown> = {
         "/consultant/blueprints": emptyBlueprints ? [] : [{
           id: "bp-acme",

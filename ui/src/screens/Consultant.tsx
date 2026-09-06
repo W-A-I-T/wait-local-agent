@@ -354,9 +354,14 @@ export function Consultant() {
   }, [clientScopeIds, isMspAdmin, selectedClientId, setSectionState]);
 
   const loadDiscoverySessions = useCallback(async () => {
+    if (!selectedClientId.trim()) {
+      setDiscoverySessions([]);
+      setSectionState("discoverySessions", { status: "empty" });
+      return;
+    }
     setSectionState("discoverySessions", { status: "loading" });
     try {
-      const result = await apiFetchForClient<ConsultantDiscoverySession[]>(selectedClientId, "/consultant/discovery/sessions");
+      const result = await apiFetchForClient<ConsultantDiscoverySession[]>(selectedClientId, `/consultant/discovery/sessions?client_id=${encodeURIComponent(selectedClientId)}`);
       const rows = Array.isArray(result) ? result : [];
       setDiscoverySessions(rows);
       setSectionState("discoverySessions", { status: rows.length ? "ready" : "empty" });
@@ -846,7 +851,7 @@ export function Consultant() {
     setMessage("");
     try {
       const result = await apiFetch<ConsultantDiscoverySession>(
-        `/consultant/discovery/sessions/${encodeURIComponent(sessionId)}`,
+        `/consultant/discovery/sessions/${encodeURIComponent(sessionId)}?client_id=${encodeURIComponent(clientId)}`,
       );
       setDiscoverySession(result);
       setDiscoveryResult(result);
@@ -1405,7 +1410,7 @@ export function Consultant() {
           {!canWrite ? <p className="screen-note">Technician access is required to submit discovery evidence.</p> : null}
         </form>
         {discoveryResult ? (
-          <div className="notice">
+          <div className="notice discovery-readiness-panel">
             <strong>{discoveryResult.readiness === "ready_for_architecture" ? "Ready for architecture review." : "More discovery is required."}</strong>{" "}
             {discoveryResult.missing_required.length ? `Missing: ${discoveryResult.missing_required.join(", ")}. ` : "All required answers are present. "}
             Risk review: {discoveryResult.risk_review.level}. ROI estimate: {discoveryResult.roi_analysis.status}.
@@ -1422,7 +1427,7 @@ export function Consultant() {
         <SectionLoadNotice section="discoverySessions" state={sectionStates.discoverySessions} onRetry={() => void loadDiscoverySessions()} />
         {sectionStates.discoverySessions.status === "loading" && discoverySessions.length === 0 ? <p className="screen-note">Loading saved guided discovery sessions…</p> : null}
         {sectionStates.discoverySessions.status === "empty" ? <p className="screen-note">No saved guided discovery sessions yet.</p> : null}
-        <div className="notice">
+        <div className="notice guided-discovery-panel">
           <strong>Guided discovery</strong>{" "}
           <span>Answer one bounded evidence question at a time. The assistant records your answers and does not infer missing requirements.</span>
           {discoverySessions.length ? (

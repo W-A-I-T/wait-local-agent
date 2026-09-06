@@ -89,6 +89,20 @@ describe("TechnicianChat", () => {
     expect(calls.some(([input, request]) => String(input) === "/technician/chat/sessions/TCS-1/messages" && request?.method === "POST" && String(request.body).includes("summarize TCK-1001"))).toBe(true);
   });
 
+  it("keeps an unsupported command error visible after refreshing its audit history", async () => {
+    const originalFetch = vi.mocked(fetch).getMockImplementation()!;
+    vi.mocked(fetch).mockImplementation((input, init) => {
+      if (String(input).endsWith("/messages")) return Promise.resolve(new Response(JSON.stringify({ detail: "Unsupported command. No action executed." }), { status: 422, headers: { "Content-Type": "application/json" } }));
+      return originalFetch(input, init);
+    });
+    render(<MemoryRouter><TechnicianChat /></MemoryRouter>);
+    await screen.findByRole("button", { name: /TCS-1/ });
+    fireEvent.change(screen.getByLabelText("Message"), { target: { value: "unsupported request" } });
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+    await screen.findByText("Ready.");
+    expect(screen.getByRole("alert")).toHaveTextContent("The request could not be completed. Check the details and try again.");
+  });
+
   it("prepares a scoped Teams notification approval", async () => {
     render(<MemoryRouter><TechnicianChat /></MemoryRouter>);
 

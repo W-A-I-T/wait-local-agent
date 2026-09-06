@@ -168,6 +168,8 @@ a {
 .technician-conversation,
 .technician-messages {
   display: grid;
+  align-content: start;
+  min-width: 0;
   gap: 12px;
 }
 
@@ -181,6 +183,8 @@ a {
   justify-items: flex-start;
   text-align: left;
   width: 100%;
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 
 .technician-session.selected {
@@ -201,6 +205,8 @@ a {
   gap: 4px;
   max-width: 85%;
   padding: 10px 12px;
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 
 .technician-message.user {
@@ -653,11 +659,13 @@ nav a:hover {
 }
 
 .workspace {
+  min-width: 0;
   padding: 28px;
 }
 
 .topbar {
   display: flex;
+  flex-wrap: wrap;
   justify-content: space-between;
   gap: 20px;
   align-items: flex-start;
@@ -670,6 +678,8 @@ nav a:hover {
   align-items: center;
   flex-wrap: wrap;
   justify-content: flex-end;
+  min-width: 0;
+  max-width: 100%;
 }
 
 .account-chip {
@@ -727,6 +737,8 @@ nav a:hover {
   font-size: 0.86rem;
   font-weight: 800;
   gap: 8px;
+  min-width: 0;
+  max-width: 100%;
 }
 
 .client-selector select {
@@ -734,7 +746,9 @@ nav a:hover {
   border: 1px solid #dce5e1;
   border-radius: 8px;
   color: #253633;
-  min-width: 180px;
+  min-width: 0;
+  width: 260px;
+  max-width: 100%;
   padding: 9px 12px;
 }
 
@@ -855,11 +869,13 @@ nav a:hover {
 
 .screen-stack {
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
   gap: 18px;
 }
 
 .consultant-group {
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
   gap: 10px;
 }
 
@@ -879,6 +895,18 @@ nav a:hover {
   color: #60706a;
   font-size: 0.88rem;
   margin: 0;
+}
+
+.guided-discovery-panel,
+.discovery-readiness-panel {
+  align-items: stretch;
+  flex-direction: column;
+}
+
+.guided-discovery-panel > *,
+.discovery-readiness-panel > * {
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 
 .automations-shell {
@@ -923,6 +951,7 @@ nav a:hover {
 }
 
 .automations-tabs a.active {
+  background: #e4f5ed;
   border-bottom-color: #1f6f55;
   color: #1f6f55;
 }
@@ -1138,6 +1167,7 @@ nav a:hover {
 .clients-hero {
   align-items: flex-start;
   display: flex;
+  flex-wrap: wrap;
   gap: 18px;
   justify-content: space-between;
 }
@@ -1963,16 +1993,26 @@ nav a:hover {
   position: fixed;
   inset: 0;
   z-index: 20;
-  display: grid;
+  margin: 0;
+  width: 100%;
+  max-width: none;
+  height: 100%;
+  max-height: none;
+  border: 0;
   place-items: center;
   background: rgba(15, 22, 24, 0.45);
   padding: 24px;
   overflow-y: auto;
 }
 
+.modal-backdrop[open] {
+  display: grid;
+}
+
 .onboarding-modal {
   width: min(980px, 100%);
   max-height: calc(100vh - 48px);
+  overflow-y: auto;
 }
 
 .overview-cards {
@@ -2317,6 +2357,7 @@ button:disabled {
 }
 
 .panel {
+  min-width: 0;
   background: #ffffff;
   border: 1px solid #dce5e1;
   border-radius: 8px;
@@ -2325,6 +2366,7 @@ button:disabled {
 
 .panel-heading {
   display: flex;
+  flex-wrap: wrap;
   justify-content: space-between;
   gap: 16px;
   align-items: center;
@@ -2333,9 +2375,19 @@ button:disabled {
 
 .panel-heading span,
 .ticket-id {
-  color: #687b75;
+  color: #60706a;
   font-size: 0.86rem;
   font-weight: 700;
+}
+
+.panel-heading > div,
+.clients-hero > div {
+  min-width: 0;
+  max-width: 100%;
+}
+
+.panel-heading h3 {
+  overflow-wrap: anywhere;
 }
 
 .scope-badge {
@@ -2347,7 +2399,8 @@ button:disabled {
   font-size: 0.78rem;
   font-weight: 700;
   padding: 0.2rem 0.55rem;
-  white-space: nowrap;
+  max-width: 100%;
+  overflow-wrap: anywhere;
 }
 
 .setup-status-list {
@@ -2373,8 +2426,8 @@ button:disabled {
 
 .setup-status-item.todo .setup-status-marker { color: #9b3825; }
 .setup-status-item.done .setup-status-marker { color: #23734e; }
-.setup-status-item.info .setup-status-marker { color: #687b75; }
-.setup-status-item small { color: #687b75; display: block; margin-top: 2px; }
+.setup-status-item.info .setup-status-marker { color: #60706a; }
+.setup-status-item small { color: #60706a; display: block; margin-top: 2px; }
 
 .setup-status-summary {
   border-top: 1px solid #e4ebe8;
@@ -2458,6 +2511,10 @@ button:disabled {
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 18px;
   margin-top: 18px;
+}
+
+.grid > * {
+  min-width: 0;
 }
 
 .knowledge-panel {
@@ -2566,6 +2623,34 @@ button:disabled {
   color: #60706a;
   font-size: 0.9rem;
   margin-top: 4px;
+}
+
+.diagnostics-flags {
+  display: grid;
+  gap: 12px;
+  grid-template-columns: repeat(auto-fit, minmax(min(190px, 100%), 1fr));
+  margin: 0;
+}
+
+.diagnostics-flags > div {
+  display: grid;
+  align-content: start;
+  gap: 6px;
+  min-width: 0;
+  background: #f7faf8;
+  border: 1px solid #e4ebe8;
+  border-radius: 8px;
+  padding: 12px;
+}
+
+.diagnostics-flags dt {
+  font-weight: 800;
+  overflow-wrap: anywhere;
+}
+
+.diagnostics-flags dd {
+  color: #40504b;
+  margin: 0;
 }
 
 .connector-summary em {
@@ -2725,7 +2810,7 @@ button:disabled {
 }
 
 .flag-grid {
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(min(190px, 100%), 1fr));
 }
 
 .flag-grid span {
@@ -2782,9 +2867,11 @@ button:disabled {
 }
 
 .wizard-steps {
+  list-style: none;
+  padding: 0;
   align-items: start;
   display: grid;
-  grid-template-columns: repeat(5, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(min(150px, 100%), 1fr));
   gap: 10px;
   margin: 12px 0;
 }
@@ -2800,6 +2887,8 @@ button:disabled {
   text-align: left;
   padding: 9px;
   width: 100%;
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 
 .wizard-step.done {
@@ -3272,6 +3361,7 @@ button:disabled {
   border: 1px solid #dce5e1;
   border-radius: 10px;
   display: flex;
+  flex-wrap: wrap;
   gap: 14px;
   margin-top: 12px;
   padding: 10px 12px;
@@ -3280,6 +3370,8 @@ button:disabled {
 .lifecycle-bar > ol {
   align-items: center;
   display: flex;
+  flex-wrap: wrap;
+  min-width: 0;
   flex: 1;
   gap: 8px;
   justify-content: space-between;
@@ -3464,7 +3556,7 @@ button:disabled {
 }
 
 dt {
-  color: #687b75;
+  color: #60706a;
   font-weight: 700;
 }
 
@@ -3637,6 +3729,7 @@ dd svg {
   display: inline-flex;
   flex-wrap: wrap;
   gap: 6px;
+  max-width: 100%;
 }
 
 .status-chip {
@@ -3645,7 +3738,8 @@ dd svg {
   display: inline-flex;
   font-weight: 700;
   padding: 4px 10px;
-  white-space: nowrap;
+  max-width: 100%;
+  overflow-wrap: anywhere;
 }
 
 .status-chip.ok {
@@ -3869,7 +3963,7 @@ dd svg {
 }
 
 .workflow-node small {
-  color: #687b75;
+  color: #60706a;
   overflow-wrap: anywhere;
 }
 
@@ -3996,7 +4090,7 @@ dd svg {
 
 .agent-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(min(320px, 100%), 1fr));
   gap: 1rem;
 }
 
@@ -4291,6 +4385,12 @@ dd svg {
   overflow-wrap: anywhere;
 }
 
+@media (max-width: 1100px) {
+  .technician-chat-layout {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
 @media (max-width: 760px) {
   .guided-step-list,
   .prerequisite-list {
@@ -4337,6 +4437,7 @@ dd svg {
 
   .approval-result {
     grid-template-columns: 1fr;
+  }
 
   .lifecycle-bar,
   .lifecycle-bar > ol {

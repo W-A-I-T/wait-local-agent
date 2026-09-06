@@ -13,7 +13,8 @@
     "test": "vitest run",
     "test:coverage": "vitest run --coverage",
     "test:browser": "npm run test:e2e",
-    "test:e2e": "playwright test --config playwright.config.ts"
+    "test:e2e": "playwright test --config playwright.config.ts",
+    "test:personas": "playwright test --config playwright.personas.config.ts"
   },
   "dependencies": {
     "@vitejs/plugin-react": "^6.0.5",
@@ -25,6 +26,7 @@
     "vite": "^8.2.1"
   },
   "devDependencies": {
+    "@axe-core/playwright": "^4.13.0",
     "@playwright/test": "^1.62.1",
     "@testing-library/jest-dom": "^7.0.1",
     "@testing-library/react": "^16.1.0",

@@ -139,8 +139,8 @@ export function TechnicianChat() {
       await openSession(activeSession.id);
       await refreshSessions();
     } catch (requestError) {
-      setError(requestError instanceof Error ? requestError.message : "Unable to send the technician request.");
       await openSession(activeSession.id);
+      setError(requestError instanceof Error ? requestError.message : "Unable to send the technician request.");
     } finally {
       setBusy(null);
     }
