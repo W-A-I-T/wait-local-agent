@@ -35,7 +35,7 @@ test("architect completes and resumes guided discovery and reviews a local deliv
   await page.getByRole("button", { name: new RegExp(`${name} · completed`) }).click();
   await expect(page.getByLabel("Guided discovery transcript")).toContainText("Local test evidence reviewed by the service team");
 
-  await page.getByRole("link", { name: "Solution delivery", exact: true }).click();
+  await page.getByRole("complementary", { name: "Workspace navigation" }).getByRole("link", { name: "Solution delivery", exact: true }).click();
   const fixture = await api(request, "/__acceptance/fixtures");
   await page.getByLabel("Output directory", { exact: true }).fill(`${fixture.delivery}/${randomUUID()}`);
   await page.getByRole("button", { name: "Build package", exact: true }).click();

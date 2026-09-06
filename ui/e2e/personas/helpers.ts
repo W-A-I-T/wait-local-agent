@@ -4,10 +4,32 @@ export const adminToken = "acceptance-admin-token";
 export const requesterToken = "acceptance-requester-token";
 
 export const test = base.extend<{ browserErrors: string[] }>({
-  browserErrors: [async ({ page }, use) => {
+  browserErrors: [async ({ context }, use, testInfo) => {
     const errors: string[] = [];
-    page.on("pageerror", (error) => errors.push(error.message));
+    const diagnostics: object[] = [];
+    const observe = (page: Page) => {
+      page.on("pageerror", (error) => errors.push(error.message));
+      page.on("console", (message) => {
+        if (message.type() !== "error" && message.type() !== "warning") return;
+        const text = message.text();
+        diagnostics.push({ type: message.type(), text });
+        // Chromium also logs expected 401/403/404/503 responses. Each negative
+        // journey asserts those responses explicitly; script errors still fail.
+        if (message.type() === "error" && !text.startsWith("Failed to load resource:")) errors.push(text);
+      });
+      page.on("response", (response) => {
+        if (response.status() >= 400) diagnostics.push({ status: response.status(), path: new URL(response.url()).pathname });
+      });
+      page.on("requestfailed", (request) => {
+        const failure = request.failure()?.errorText ?? "Unknown network failure";
+        diagnostics.push({ failure, path: new URL(request.url()).pathname });
+        if (failure !== "net::ERR_ABORTED") errors.push(failure);
+      });
+    };
+    context.pages().forEach(observe);
+    context.on("page", observe);
     await use(errors);
+    await testInfo.attach("browser-diagnostics", { body: JSON.stringify(diagnostics, null, 2), contentType: "application/json" });
     expect(errors, "Unexpected browser exceptions").toEqual([]);
   }, { auto: true }],
 });

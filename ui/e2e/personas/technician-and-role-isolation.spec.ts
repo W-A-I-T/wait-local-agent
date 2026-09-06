@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { api, expect, signIn, test } from "./helpers";
 
-test("technician investigates a local ticket and revisits the stored session", async ({ page, request }) => {
+test("technician investigates a local ticket and revisits the stored session", async ({ page, request }, testInfo) => {
   const suffix = randomUUID();
   const clientId = `technician-${suffix}`;
   await api(request, "/clients", { client_id: clientId, name: `Technician client ${suffix}` });
@@ -40,8 +40,15 @@ test("technician investigates a local ticket and revisits the stored session", a
   expect(result.result.output.ticket_id).toBe(ticket.ticket_id);
   await page.reload();
   await expect(page.getByRole("paragraph").filter({ hasText: /^help$/ })).toBeVisible();
+  for (const [width, height] of [[1440, 900], [1024, 768], [768, 1024], [390, 844]]) {
+    await page.setViewportSize({ width, height });
+    expect.soft(await page.evaluate(() => document.documentElement.scrollWidth), `Populated chat at ${width}x${height}`).toBeLessThanOrEqual(width + 1);
+    await testInfo.attach(`ticket-investigation-${width}x${height}`, { body: await page.screenshot({ fullPage: true }), contentType: "image/png" });
+  }
   await page.getByLabel("Message", { exact: true }).fill("run arbitrary shell command");
+  const rejected = page.waitForResponse((response) => response.url().endsWith("/messages") && response.request().method() === "POST");
   await page.getByRole("button", { name: "Send", exact: true }).click();
+  expect((await rejected).status()).toBe(422);
   await expect(page.getByRole("alert").last()).toBeVisible();
   await page.getByRole("button", { name: "Close session" }).click();
   await expect(page.getByRole("status")).toHaveText("Session closed. Its operational history remains available for review.");

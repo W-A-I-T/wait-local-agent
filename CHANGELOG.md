@@ -4,8 +4,22 @@ All notable changes to WAIT Local Agent will be documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+
+- Clear requester conversations and pending results when support access changes,
+  and verify access before reporting that it was saved.
+- Preserve Technician Chat error feedback when refreshing stored history and
+  supply the selected client when listing or reopening guided discovery sessions.
+- Show permitted environment key names in the Founder upload preview while
+  excluding values and credential-shaped strings.
+- Keep onboarding, client selection and operational layouts usable at small
+  viewports; correct dialog focus, diagnostics list semantics, field names and
+  text contrast.
+
 ### Added
 
+- Linux browser persona acceptance against the compiled UI and real API, with
+  disposable fixtures, four viewport checks and retained screenshots/traces.
 - Scheduled encrypted backups can use an optional separately mounted
   `WAIT_BACKUP_DIR`, and production Compose provisions a dedicated backup
   volume.
