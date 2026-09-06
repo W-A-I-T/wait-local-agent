@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { EndUserSupport } from "../src/screens/EndUserSupport";
@@ -81,6 +81,60 @@ describe("EndUserSupport", () => {
     ));
     const request = fetchMock.mock.calls[0]?.[1];
     expect(new Headers(request?.headers).get("Authorization")).toBe("Bearer scoped-token");
+  });
+
+  it("clears the previous requester's conversation and drafts when access changes", async () => {
+    window.localStorage.setItem("wait-local-agent-end-user-token", "alpha-token");
+    vi.mocked(fetch)
+      .mockResolvedValueOnce(json({ ticket_id: "EUS-ALPHA", subject: "Alpha private request", status: "new" }))
+      .mockResolvedValueOnce(json([{ id: 1, role: "support", body: "Alpha private reply" }]));
+    render(<MemoryRouter><EndUserSupport /></MemoryRouter>);
+    fireEvent.change(screen.getByLabelText("Request number"), { target: { value: "EUS-ALPHA" } });
+    fireEvent.click(screen.getByRole("button", { name: "Check status" }));
+    expect(await screen.findByText("Alpha private reply")).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText("Send a follow-up"), { target: { value: "Alpha unsent reply" } });
+    fireEvent.change(screen.getByLabelText("Subject"), { target: { value: "Alpha unsent subject" } });
+
+    fireEvent.change(screen.getByLabelText("Support access token"), { target: { value: "beta-token" } });
+
+    expect(screen.queryByText("Alpha private request")).not.toBeInTheDocument();
+    expect(screen.queryByText("Alpha private reply")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Send a follow-up")).not.toBeInTheDocument();
+    expect(screen.getByLabelText("Request number")).toHaveValue("");
+    expect(screen.getByLabelText("Subject")).toHaveValue("");
+    expect(fetch).toHaveBeenCalledTimes(2);
+  });
+
+  it("discards responses from an identity that was cleared while a lookup was pending", async () => {
+    window.localStorage.setItem("wait-local-agent-end-user-token", "alpha-token");
+    let resolveTicket!: (response: Response) => void;
+    let resolveMessages!: (response: Response) => void;
+    vi.mocked(fetch)
+      .mockReturnValueOnce(new Promise((resolve) => { resolveTicket = resolve; }))
+      .mockReturnValueOnce(new Promise((resolve) => { resolveMessages = resolve; }));
+    render(<MemoryRouter><EndUserSupport /></MemoryRouter>);
+    fireEvent.change(screen.getByLabelText("Request number"), { target: { value: "EUS-ALPHA" } });
+    fireEvent.click(screen.getByRole("button", { name: "Check status" }));
+    fireEvent.change(screen.getByLabelText("Support access token"), { target: { value: "" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save access" }));
+    await act(async () => {
+      resolveTicket(json({ ticket_id: "EUS-ALPHA", subject: "Late private request", status: "new" }));
+      resolveMessages(json([{ id: 1, role: "support", body: "Late private reply" }]));
+    });
+    expect(screen.queryByText("Late private request")).not.toBeInTheDocument();
+    expect(screen.queryByText("Late private reply")).not.toBeInTheDocument();
+    expect(screen.getByText("No request selected")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Check status" })).toBeDisabled();
+  });
+
+  it("does not claim access was saved when verification fails", async () => {
+    vi.mocked(fetch).mockResolvedValue(new Response(JSON.stringify({ detail: "invalid token" }), { status: 401 }));
+    render(<MemoryRouter><EndUserSupport /></MemoryRouter>);
+    fireEvent.change(screen.getByLabelText("Support access token"), { target: { value: "invalid-token" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save access" }));
+    expect(await screen.findByRole("alert")).toBeInTheDocument();
+    expect(screen.queryByRole("status")).not.toBeInTheDocument();
+    expect(window.localStorage.getItem("wait-local-agent-end-user-token")).toBeNull();
   });
 });
 
