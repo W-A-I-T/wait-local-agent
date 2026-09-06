@@ -219,6 +219,13 @@ jobs:
       - run: npx playwright install --with-deps chromium
         working-directory: ui
       - run: WAIT_PROD_COMPOSE_RUN_BROWSER=true scripts/test_prod_compose.sh
+      - name: Retain production browser failure traces
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: production-browser-failures
+          path: ui/test-results/
+          retention-days: 7
 
   linux-personas:
     if: github.event_name != 'schedule'

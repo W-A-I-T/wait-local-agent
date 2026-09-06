@@ -111,7 +111,7 @@ def serve(port: int, ui_dist: Path) -> None:
                 raise HTTPException(status_code=403)
             return {
                 "project": str(project), "delivery": str(root / "delivery"),
-                "other_ticket": other.ticket_id, "beta_ticket": beta.ticket_id,
+                "other_ticket": other.id, "beta_ticket": beta.id,
                 "uploads": len(uploads),
             }
 

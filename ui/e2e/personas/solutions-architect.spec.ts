@@ -11,8 +11,14 @@ test("architect completes and resumes guided discovery and reviews a local deliv
   const started = page.waitForResponse((response) => response.url().endsWith("/consultant/discovery/sessions") && response.request().method() === "POST");
   await page.getByRole("button", { name: "Start guided discovery", exact: true }).click();
   let session = await (await started).json();
-  // The backend supplies bounded questions; every answer is entered in the UI.
-  for (let turn = 0; session.next_question && turn < 20; turn += 1) {
+  // Use the actual discovery schema's remaining questions, including optional
+  // evidence; the shipped flow completes only once all questions are answered.
+  const remainingQuestions = session.unanswered.length;
+  const answered = new Set<string>();
+  for (let turn = 0; session.next_question && turn < remainingQuestions; turn += 1) {
+    expect(answered.has(session.next_question.id), "Discovery must advance to a new question").toBe(false);
+    answered.add(session.next_question.id);
+    await expect(page.getByText(`${session.unanswered.length} evidence questions remain unanswered.`, { exact: true })).toBeVisible();
     if (session.next_question.kind === "boolean") {
       await page.getByRole("checkbox", { name: "Yes", exact: true }).uncheck();
     } else {

@@ -39,7 +39,7 @@ test("technician investigates a local ticket and revisits the stored session", a
   expect(result.result.status).toBe("success");
   expect(result.result.output.ticket_id).toBe(ticket.ticket_id);
   await page.reload();
-  await expect(page.getByText("help", { exact: true })).toBeVisible();
+  await expect(page.getByRole("paragraph").filter({ hasText: /^help$/ })).toBeVisible();
   await page.getByLabel("Message", { exact: true }).fill("run arbitrary shell command");
   await page.getByRole("button", { name: "Send", exact: true }).click();
   await expect(page.getByRole("alert").last()).toBeVisible();
