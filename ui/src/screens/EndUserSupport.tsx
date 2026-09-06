@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Additional terms: ../../../ADDITIONAL_TERMS.md
 
-import { FormEvent, type CSSProperties, useState } from "react";
+import { FormEvent, type CSSProperties, useRef, useState } from "react";
 import { AlertTriangle, CheckCircle2, KeyRound, LifeBuoy, Search, ShieldCheck } from "lucide-react";
 import { Link } from "react-router-dom";
 import { apiFetch, ApiRequestError } from "../api/client";
@@ -42,6 +42,7 @@ function endUserFetch<T>(token: string, path: string, init: RequestInit = {}): P
 
 export function EndUserSupport() {
   const [token, setToken] = useState(loadToken);
+  const identityVersion = useRef(0);
   const [subject, setSubject] = useState("");
   const [body, setBody] = useState("");
   const [lookupId, setLookupId] = useState("");
@@ -54,34 +55,59 @@ export function EndUserSupport() {
   const [busy, setBusy] = useState<"create" | "lookup" | "message" | "escalate" | null>(null);
   const hasOperatorSession = loadStoredApiToken().trim().length > 0;
 
+  function changeToken(nextToken: string) {
+    identityVersion.current += 1;
+    setToken(nextToken);
+    setTicket(null);
+    setMessages([]);
+    setReplyBody("");
+    setBranding(defaultBranding);
+    setMessage("");
+    setError("");
+    setBusy(null);
+    if (token.trim()) {
+      setSubject("");
+      setBody("");
+      setLookupId("");
+    }
+  }
+
   async function saveToken(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    try {
-      if (token.trim()) {
-        window.localStorage.setItem(tokenStorageKey, token.trim());
-      } else {
-        window.localStorage.removeItem(tokenStorageKey);
-      }
-    } catch {
-      // The token still applies to this page session when storage is unavailable.
-    }
+    const version = identityVersion.current;
     setError("");
+    setMessage("");
     if (!token.trim()) {
+      try {
+        window.localStorage.removeItem(tokenStorageKey);
+      } catch {
+        setError("Access is cleared for this page, but browser storage could not be cleared.");
+        return;
+      }
       setBranding(defaultBranding);
       setMessage("Access token cleared.");
       return;
     }
     try {
-      setBranding(await endUserFetch<EndUserBranding>(token, "/end-user/config"));
-      setMessage("Access token saved on this device.");
+      const verifiedBranding = await endUserFetch<EndUserBranding>(token, "/end-user/config");
+      if (version !== identityVersion.current) return;
+      setBranding(verifiedBranding);
+      try {
+        window.localStorage.setItem(tokenStorageKey, token.trim());
+        setMessage("Access token saved on this device.");
+      } catch {
+        setMessage("Access verified for this page. Browser storage is unavailable; sign in again after reloading.");
+      }
     } catch (requestError) {
-      setMessage("Access token saved. Default support branding is shown.");
+      if (version !== identityVersion.current) return;
+      setBranding(defaultBranding);
       setError(userFacingError(requestError, "We couldn't load your support branding."));
     }
   }
 
   async function createTicket(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    const version = identityVersion.current;
     if (!token.trim()) {
       setError("Enter the access token provided by your support team.");
       return;
@@ -95,6 +121,7 @@ export function EndUserSupport() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ subject: subject.trim(), body: body.trim() })
       });
+      if (version !== identityVersion.current) return;
       setTicket(created);
       setMessages([]);
       setLookupId(created.ticket_id);
@@ -102,14 +129,16 @@ export function EndUserSupport() {
       setBody("");
       setMessage(`Your request ${created.ticket_id} was submitted.`);
     } catch (requestError) {
+      if (version !== identityVersion.current) return;
       setError(userFacingError(requestError, "We couldn't submit your request."));
     } finally {
-      setBusy(null);
+      if (version === identityVersion.current) setBusy(null);
     }
   }
 
   async function lookupTicket(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    const version = identityVersion.current;
     const ticketId = lookupId.trim();
     if (!token.trim()) {
       setError("Enter the access token provided by your support team.");
@@ -127,18 +156,22 @@ export function EndUserSupport() {
         endUserFetch<EndUserTicket>(token, `/end-user/tickets/${encodeURIComponent(ticketId)}`),
         endUserFetch<EndUserMessage[]>(token, `/end-user/tickets/${encodeURIComponent(ticketId)}/messages`)
       ]);
+      if (version !== identityVersion.current) return;
       setTicket(ticketResult);
       setMessages(messageResults);
     } catch (requestError) {
+      if (version !== identityVersion.current) return;
       setTicket(null);
+      setMessages([]);
       setError(userFacingError(requestError, "We couldn't find that request."));
     } finally {
-      setBusy(null);
+      if (version === identityVersion.current) setBusy(null);
     }
   }
 
   async function sendMessage(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    const version = identityVersion.current;
     if (!ticket || !token.trim() || !replyBody.trim()) {
       return;
     }
@@ -151,17 +184,20 @@ export function EndUserSupport() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ body: replyBody.trim() })
       });
+      if (version !== identityVersion.current) return;
       setMessages((current) => [...current, created]);
       setReplyBody("");
       setMessage("Your message was sent to the support team.");
     } catch (requestError) {
+      if (version !== identityVersion.current) return;
       setError(userFacingError(requestError, "We couldn't send your message."));
     } finally {
-      setBusy(null);
+      if (version === identityVersion.current) setBusy(null);
     }
   }
 
   async function escalateTicket() {
+    const version = identityVersion.current;
     if (!ticket || !token.trim()) {
       return;
     }
@@ -169,12 +205,15 @@ export function EndUserSupport() {
     setError("");
     setMessage("");
     try {
-      setTicket(await endUserFetch<EndUserTicket>(token, `/end-user/tickets/${encodeURIComponent(ticket.ticket_id)}/escalate`, { method: "POST" }));
+      const escalated = await endUserFetch<EndUserTicket>(token, `/end-user/tickets/${encodeURIComponent(ticket.ticket_id)}/escalate`, { method: "POST" });
+      if (version !== identityVersion.current) return;
+      setTicket(escalated);
       setMessage("Your request was marked for technician attention.");
     } catch (requestError) {
+      if (version !== identityVersion.current) return;
       setError(userFacingError(requestError, "We couldn't escalate that request."));
     } finally {
-      setBusy(null);
+      if (version === identityVersion.current) setBusy(null);
     }
   }
 
@@ -197,7 +236,7 @@ export function EndUserSupport() {
         <section className="panel">
           <div className="panel-heading"><h2>Access</h2><span>Required for private requests</span></div>
           <form className="draft-form" onSubmit={saveToken}>
-            <label>Support access token<input type="password" autoComplete="off" value={token} onChange={(event) => setToken(event.target.value)} placeholder="Provided by your support team" /></label>
+            <label>Support access token<input type="password" autoComplete="off" value={token} onChange={(event) => changeToken(event.target.value)} placeholder="Provided by your support team" /></label>
             <button type="submit" className="icon-button"><KeyRound size={17} aria-hidden="true" />Save access</button>
           </form>
           <p className="screen-note">This token is scoped to your organization and requester identity. It cannot open another customer’s requests.</p>
