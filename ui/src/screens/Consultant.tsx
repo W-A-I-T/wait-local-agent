@@ -1427,7 +1427,7 @@ export function Consultant() {
         <SectionLoadNotice section="discoverySessions" state={sectionStates.discoverySessions} onRetry={() => void loadDiscoverySessions()} />
         {sectionStates.discoverySessions.status === "loading" && discoverySessions.length === 0 ? <p className="screen-note">Loading saved guided discovery sessions…</p> : null}
         {sectionStates.discoverySessions.status === "empty" ? <p className="screen-note">No saved guided discovery sessions yet.</p> : null}
-        <div className="notice">
+        <div className="notice guided-discovery-panel">
           <strong>Guided discovery</strong>{" "}
           <span>Answer one bounded evidence question at a time. The assistant records your answers and does not infer missing requirements.</span>
           {discoverySessions.length ? (

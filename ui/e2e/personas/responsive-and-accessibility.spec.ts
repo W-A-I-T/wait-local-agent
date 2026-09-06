@@ -57,8 +57,8 @@ for (const [width, height] of [[1440, 900], [1024, 768], [768, 1024], [390, 844]
       const layout = await page.evaluate(() => ({
         width: document.documentElement.scrollWidth,
         viewport: window.innerWidth,
-        overflow: [...document.querySelectorAll("main *")].filter((element) => element.getBoundingClientRect().right > window.innerWidth + 1)
-          .slice(0, 12).map((element) => ({ tag: element.tagName, className: element.className, width: element.getBoundingClientRect().width })),
+        overflow: [...document.querySelectorAll(".workspace *")].filter((element) => element.getBoundingClientRect().right > window.innerWidth + 1)
+          .slice(0, 30).map((element) => ({ tag: element.tagName, className: element.className, width: element.getBoundingClientRect().width })),
       }));
       expect.soft(layout.width, `${path} overflow: ${JSON.stringify(layout.overflow)}`).toBeLessThanOrEqual(layout.viewport + 1);
       const unnamed = await page.getByRole("button").evaluateAll((buttons) => buttons

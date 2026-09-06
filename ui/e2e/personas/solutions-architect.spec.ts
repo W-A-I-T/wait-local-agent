@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { api, expect, selectAlpha, signIn, test } from "./helpers";
 
-test("architect resumes discovery and distinguishes a review package from deployable work", async ({ page, request }) => {
+test("architect resumes discovery and distinguishes a review package from deployable work", async ({ page, request }, testInfo) => {
   await signIn(page);
   const name = `Local onboarding ${randomUUID()}`;
   await selectAlpha(page);
@@ -11,6 +11,14 @@ test("architect resumes discovery and distinguishes a review package from deploy
   const started = page.waitForResponse((response) => response.url().endsWith("/consultant/discovery/sessions") && response.request().method() === "POST");
   await page.getByRole("button", { name: "Start guided discovery", exact: true }).click();
   let session = await (await started).json();
+  await expect(page.getByRole("button", { name: "Save answer and continue" })).toBeVisible();
+  for (const [width, height] of [[1440, 900], [1024, 768], [768, 1024], [390, 844]]) {
+    await page.setViewportSize({ width, height });
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1)).toBe(true);
+    await testInfo.attach(`guided-discovery-${width}x${height}`, {
+      body: await page.locator(".guided-discovery-panel").screenshot(), contentType: "image/png",
+    });
+  }
   // Use the actual discovery schema's remaining questions, including optional
   // evidence; the shipped flow completes only once all questions are answered.
   const remainingQuestions = session.unanswered.length;
@@ -34,6 +42,7 @@ test("architect resumes discovery and distinguishes a review package from deploy
   await page.reload();
   await page.getByRole("button", { name: new RegExp(`${name} · completed`) }).click();
   await expect(page.getByLabel("Guided discovery transcript")).toContainText("Local test evidence reviewed by the service team");
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1)).toBe(true);
 
   await page.getByRole("complementary", { name: "Workspace navigation" }).getByRole("link", { name: "Solution delivery", exact: true }).click();
   const fixture = await api(request, "/__acceptance/fixtures");

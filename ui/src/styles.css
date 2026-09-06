@@ -897,6 +897,16 @@ nav a:hover {
   margin: 0;
 }
 
+.guided-discovery-panel {
+  align-items: stretch;
+  flex-direction: column;
+}
+
+.guided-discovery-panel > * {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
 .automations-shell {
   display: grid;
   gap: 18px;

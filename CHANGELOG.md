@@ -15,6 +15,8 @@ All notable changes to WAIT Local Agent will be documented in this file.
 - Preserve a confirmed Founder upload when optional checks are unavailable;
   keep absent reports and unavailable launch scans visibly unavailable.
 - Explain why a design-only delivery package cannot pass deployment validation.
+- Keep guided discovery instructions, answers and saved sessions in a readable
+  column, including on mobile screens.
 - Keep onboarding, client selection and operational layouts usable at small
   viewports; correct dialog focus, diagnostics list semantics, field names and
   text contrast.
