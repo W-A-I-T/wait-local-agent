@@ -20,7 +20,7 @@ for (const [width, height] of [[1440, 900], [1024, 768], [768, 1024], [390, 844]
     await page.getByLabel("Client ID", { exact: true }).fill(`responsive-${randomUUID()}`);
     await page.getByLabel("Name", { exact: true }).fill(name);
     await page.getByRole("button", { name: "Create client", exact: true }).click();
-    await expect(page.getByRole("status")).toContainText("Client created.");
+    await expect(page.getByRole("status").filter({ hasText: "Client created." })).toBeVisible();
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1)).toBe(true);
     const client = page.getByRole("combobox", { name: "Client", exact: true });
     await expect(client).toBeVisible();
