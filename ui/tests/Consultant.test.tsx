@@ -484,6 +484,10 @@ describe("Consultant", () => {
     expect(screen.getByText(/Saved sessions are visible only to this tenant/)).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: /CDS-guided/ }));
     expect(await screen.findByRole("list", { name: "Guided discovery transcript" })).toHaveTextContent("We want to automate employee onboarding");
+    expect(vi.mocked(fetch).mock.calls.map(([input]) => String(input))).toEqual(expect.arrayContaining([
+      "/consultant/discovery/sessions?client_id=acme",
+      "/consultant/discovery/sessions/CDS-guided?client_id=acme",
+    ]));
   });
 
   it("requires the shell client scope before submitting discovery", async () => {

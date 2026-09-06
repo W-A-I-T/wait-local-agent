@@ -75,6 +75,8 @@ describe("Diagnostics and support screen", () => {
 
     expect(await screen.findByText("Diagnostics refreshed.")).toBeInTheDocument();
     expect(screen.getByText("2.0.0-dev.0")).toBeInTheDocument();
+    expect(screen.getByText("Version").closest("dl")).not.toBeNull();
+    expect(screen.getByText("Latest security checks").closest("dl")).not.toBeNull();
     expect(screen.getByText(/redacted error/)).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Generate diagnostic bundle" }));
 
