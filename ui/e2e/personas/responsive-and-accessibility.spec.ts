@@ -54,6 +54,15 @@ for (const [width, height] of [[1440, 900], [1024, 768], [768, 1024], [390, 844]
     ]) {
       await page.goto(path);
       await expect(page.getByRole("heading", { name: heading, exact: true })).toBeVisible();
+      if (path === "/system/diagnostics") {
+        const flags = page.getByLabel("Safe feature configuration");
+        await expect(flags.getByRole("term")).toHaveCount(8);
+        await expect(flags.getByText("Not connected", { exact: true })).toHaveCount(0);
+        expect(await flags.getByRole("term").evaluateAll((terms) => terms.every((term) => {
+          const value = term.nextElementSibling;
+          return value !== null && value.getBoundingClientRect().top >= term.getBoundingClientRect().bottom;
+        })), "Feature values must not overlap their labels").toBe(true);
+      }
       const layout = await page.evaluate(() => ({
         width: document.documentElement.scrollWidth,
         viewport: window.innerWidth,

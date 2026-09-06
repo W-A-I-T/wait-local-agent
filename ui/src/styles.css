@@ -2625,6 +2625,34 @@ button:disabled {
   margin-top: 4px;
 }
 
+.diagnostics-flags {
+  display: grid;
+  gap: 12px;
+  grid-template-columns: repeat(auto-fit, minmax(min(190px, 100%), 1fr));
+  margin: 0;
+}
+
+.diagnostics-flags > div {
+  display: grid;
+  align-content: start;
+  gap: 6px;
+  min-width: 0;
+  background: #f7faf8;
+  border: 1px solid #e4ebe8;
+  border-radius: 8px;
+  padding: 12px;
+}
+
+.diagnostics-flags dt {
+  font-weight: 800;
+  overflow-wrap: anywhere;
+}
+
+.diagnostics-flags dd {
+  color: #40504b;
+  margin: 0;
+}
+
 .connector-summary em {
   color: #246647;
   font-style: normal;

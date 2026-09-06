@@ -17,6 +17,8 @@ All notable changes to WAIT Local Agent will be documented in this file.
 - Explain why a design-only delivery package cannot pass deployment validation.
 - Keep guided discovery instructions, answers and saved sessions in a readable
   column, including on mobile screens.
+- Describe diagnostic feature switches as enabled or disabled, with labels and
+  values that do not overlap across screen sizes.
 - Keep onboarding, client selection and operational layouts usable at small
   viewports; correct dialog focus, diagnostics list semantics, field names and
   text contrast.

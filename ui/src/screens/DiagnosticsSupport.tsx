@@ -134,19 +134,18 @@ export function DiagnosticsSupport() {
         </section>
 
         <section className="panel">
-          <div className="panel-heading"><h2>Safe configuration</h2><span>Values are never shown</span></div>
-          <div className="flag-grid">
+          <div className="panel-heading"><h2>Safe configuration</h2><span>Secret values are never shown</span></div>
+          <dl className="diagnostics-flags" aria-label="Safe feature configuration">
             {FEATURE_FLAGS.map(([key, label]) => {
               const enabled = configuration ? Boolean(configuration[key]) : undefined;
               return (
                 <div key={key}>
-                  <strong>{label}</strong>
-                  <span>{enabled === undefined ? "Not loaded" : enabled ? "Enabled" : "Disabled"}</span>
-                  <StatusChip status={enabled === undefined ? "unavailable" : enabled ? "configured" : "not_configured"} />
+                  <dt>{label}</dt>
+                  <dd>{enabled === undefined ? "Not loaded" : enabled ? "Enabled" : "Disabled"}</dd>
                 </div>
               );
             })}
-          </div>
+          </dl>
         </section>
 
         <section className="panel">
