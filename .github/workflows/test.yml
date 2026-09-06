@@ -209,4 +209,48 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - run: scripts/test_prod_compose.sh
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "22.22.2"
+          cache: npm
+          cache-dependency-path: ui/package-lock.json
+      - run: npm ci
+        working-directory: ui
+      - run: npx playwright install --with-deps chromium
+        working-directory: ui
+      - run: WAIT_PROD_COMPOSE_RUN_BROWSER=true scripts/test_prod_compose.sh
+
+  linux-personas:
+    if: github.event_name != 'schedule'
+    timeout-minutes: 20
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "22.22.2"
+          cache: npm
+          cache-dependency-path: ui/package-lock.json
+      - name: Install the Linux application
+        run: python -m pip install .
+      - run: npm ci
+        working-directory: ui
+      - run: npm run build
+        working-directory: ui
+      - run: npx playwright install --with-deps chromium
+        working-directory: ui
+      - name: Exercise personas and four viewports against the compiled UI and real API
+        run: npm run test:personas
+        working-directory: ui
+      - name: Retain acceptance screenshots and failure traces
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-persona-acceptance
+          path: |
+            ui/persona-report/
+            ui/persona-results/
+          retention-days: 7

@@ -67,3 +67,10 @@ curl --fail --silent --show-error \
   -H "Authorization: Bearer $TOKEN" \
   "http://127.0.0.1:$PORT/clients/persisted" | grep -q 'Persisted'
 echo "Production Compose integration passed: health, SPA, and named-volume persistence verified."
+
+if [[ "${WAIT_PROD_COMPOSE_RUN_BROWSER:-false}" == "true" ]]; then
+  WAIT_BROWSER_TOKEN="$TOKEN" \
+    WAIT_BROWSER_UI_URL="http://127.0.0.1:$PORT" \
+    WAIT_BROWSER_API_URL="http://127.0.0.1:$PORT" \
+    npm --prefix "$ROOT_DIR/ui" run test:e2e
+fi

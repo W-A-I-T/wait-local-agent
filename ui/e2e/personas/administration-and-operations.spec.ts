@@ -1,0 +1,50 @@
+import { randomUUID } from "node:crypto";
+import { adminToken, expect, signIn, test } from "./helpers";
+
+test("administrator recovers from invalid login, chooses MSP mode, and creates scoped access", async ({ page }) => {
+  await page.goto("/");
+  await page.getByLabel("Access token", { exact: true }).fill("invalid-fixture-token");
+  await page.getByRole("button", { name: "Sign in", exact: true }).click();
+  await expect(page.getByRole("alert")).toBeVisible();
+  await page.getByLabel("Access token", { exact: true }).fill(adminToken);
+  await page.getByRole("button", { name: "Sign in", exact: true }).click();
+  await page.getByRole("button", { name: "Dismiss", exact: true }).click();
+  await page.goto("/client-discovery");
+  await page.getByLabel("Deployment mode").selectOption("msp");
+  await expect(page.getByLabel("Workspace mode summary")).toHaveText("MSP mode");
+  await expect(page.getByRole("button", { name: "Run discovery", exact: true })).toBeDisabled();
+  await page.reload();
+  await expect(page.getByLabel("Workspace mode summary")).toHaveText("MSP mode");
+  await page.goto("/settings/access");
+  await page.getByLabel("Principal ID").fill(`ui-viewer-${randomUUID()}`);
+  await page.getByLabel("Display name").fill("Restricted local operator");
+  await page.getByLabel("Initial client").selectOption("acceptance-alpha");
+  await page.getByLabel("Initial role").selectOption("viewer");
+  await page.getByRole("button", { name: "Create & issue credential" }).click();
+  await expect(page.getByRole("dialog", { name: "Credential issued" })).toBeVisible();
+  await page.getByRole("dialog", { name: "Credential issued" }).getByRole("button", { name: "Close", exact: true }).click();
+  await expect(page.getByText("acceptance-alpha · Viewer", { exact: false })).toBeVisible();
+  await page.getByRole("button", { name: "Sign out", exact: true }).click();
+  await expect(page.getByRole("heading", { name: "Sign in to the appliance", exact: true })).toBeVisible();
+});
+
+test("operator runs a local collector and downloads local diagnostics and audit evidence", async ({ page }) => {
+  await signIn(page);
+  await page.goto("/collectors");
+  await page.getByRole("combobox", { name: "Collector", exact: true }).selectOption("host-runtime");
+  await page.getByRole("button", { name: "Run now", exact: true }).click();
+  await page.getByRole("button", { name: "Yes, run it", exact: true }).click();
+  await expect(page.getByText("Run started.", { exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "Export", exact: true }).first().click();
+  await expect(page.locator("pre.code-panel").last()).not.toBeEmpty();
+  await page.goto("/system/diagnostics");
+  await page.getByRole("button", { name: "Generate diagnostic bundle", exact: true }).click();
+  const downloaded = page.waitForEvent("download");
+  await page.getByRole("button", { name: "Download", exact: true }).click();
+  expect(await (await downloaded).failure()).toBeNull();
+  await expect(page.getByText("Support upload is not available in this edition. Download remains available.")).toBeVisible();
+  await page.goto("/audit");
+  const auditDownload = page.waitForEvent("download");
+  await page.getByRole("button", { name: "Export Events JSON", exact: true }).click();
+  expect(await (await auditDownload).failure()).toBeNull();
+});
