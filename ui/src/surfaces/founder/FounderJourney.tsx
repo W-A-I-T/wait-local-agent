@@ -199,7 +199,7 @@ export function FounderJourney() {
       setResults(projectFounderResults(resultsBody));
       setLaunchResult(null);
       setConnectionNotConfigured(false);
-      setStatusMessage(`Upload ${uploadProgressLabel(uploaded.status)}. Your latest result is ready to review.`);
+      setStatusMessage(`Upload ${uploadProgressLabel(uploaded.status)}. Review the connection and report status below.`);
       setStep(3);
     } finally {
       setIsBusy(false);

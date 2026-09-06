@@ -229,7 +229,7 @@ describe("wla-wp17 Launch Passport UI", () => {
 
     expect(await screen.findByRole("heading", { name: "Results" })).toBeInTheDocument();
     expect(screen.getByText(/latest report reference is available/i)).toBeInTheDocument();
-    expect(screen.getByText("Upload complete. Your latest result is ready to review.")).toBeInTheDocument();
+    expect(screen.getByText("Upload complete. Review the connection and report status below.")).toBeInTheDocument();
     expect(screen.getByText("Connected")).toBeInTheDocument();
   });
 
@@ -252,7 +252,7 @@ describe("wla-wp17 Launch Passport UI", () => {
     fireEvent.click(screen.getByRole("button", { name: "Continue to confirmation" }));
     fireEvent.click(await screen.findByRole("button", { name: "Upload reviewed package" }));
     await screen.findAllByText("This check is unavailable in the installed package.");
-    expect(screen.getByText("Upload complete. Your latest result is ready to review.")).toBeInTheDocument();
+    expect(screen.getByText("Upload complete. Review the connection and report status below.")).toBeInTheDocument();
     expect(screen.getByText("No latest report reference was returned yet.")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Run launch scan" })).toBeDisabled();
     expect(screen.queryByText(/The Founder Pack is not installed/)).not.toBeInTheDocument();
