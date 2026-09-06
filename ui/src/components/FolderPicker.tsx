@@ -1,5 +1,5 @@
 import { FolderOpen, RefreshCw } from "lucide-react";
-import { useState } from "react";
+import { useId, useState } from "react";
 
 type FolderPickerProps = {
   label: string;
@@ -27,6 +27,7 @@ function toSinglePath(value: string | string[] | null | undefined): string {
 }
 
 export function FolderPicker({ label, value, onChange, placeholder, disabled }: FolderPickerProps) {
+  const inputId = useId();
   const [isSelecting, setIsSelecting] = useState(false);
   const isTauri = typeof window !== "undefined" && typeof (window as TauriWindow)["__TAURI__"]?.dialog?.open === "function";
 
@@ -46,10 +47,12 @@ export function FolderPicker({ label, value, onChange, placeholder, disabled }: 
   }
 
   return (
-    <label className="folder-picker">
-      <span>{label}</span>
+    <div className="folder-picker">
+      <label htmlFor={inputId}>{label}</label>
       <div className="folder-picker-row">
         <input
+          id={inputId}
+          aria-describedby={!isTauri ? `${inputId}-hint` : undefined}
           placeholder={placeholder}
           value={value}
           onChange={(event) => onChange(event.target.value)}
@@ -65,7 +68,7 @@ export function FolderPicker({ label, value, onChange, placeholder, disabled }: 
           Browse
         </button>
       </div>
-      {!isTauri ? <p className="screen-note">Running in browser mode; use the text field for folder path.</p> : null}
-    </label>
+      {!isTauri ? <p className="screen-note" id={`${inputId}-hint`}>Running in browser mode; use the text field for folder path.</p> : null}
+    </div>
   );
 }

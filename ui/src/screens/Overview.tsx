@@ -1,5 +1,5 @@
 import { Activity, CheckCircle2, GitBranch, Sparkles, Workflow } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import { apiFetch } from "../api/client";
 import type { BackupStatusResponse } from "../api/types";
@@ -38,6 +38,14 @@ export function Overview() {
   const showOnboarding = roleResolved && !configurationLoading && (
     explicitlyRequested || (!isConfigured && !onboardingDismissed)
   );
+  const onboardingDialog = useRef<HTMLDialogElement>(null);
+
+  useEffect(() => {
+    if (!showOnboarding) return;
+    const dialog = onboardingDialog.current;
+    dialog?.showModal();
+    return () => dialog?.close();
+  }, [showOnboarding]);
 
   useEffect(() => {
     if (!isAdmin || !isMspAdmin) {
@@ -72,7 +80,7 @@ export function Overview() {
   return (
     <div className="screen-stack">
       {showOnboarding ? (
-        <section className="modal-backdrop">
+        <dialog ref={onboardingDialog} className="modal-backdrop" aria-label="Set up your MSP operations" onCancel={dismissOnboarding}>
           <div className="onboarding-modal">
             <OnboardingWizard
               initialStep={onboardingStep}
@@ -80,7 +88,7 @@ export function Overview() {
               onDismiss={() => dismissOnboarding()}
             />
           </div>
-        </section>
+        </dialog>
       ) : null}
 
       {!showOnboarding ? <SetupStatus /> : null}

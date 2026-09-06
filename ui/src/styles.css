@@ -1963,16 +1963,26 @@ nav a:hover {
   position: fixed;
   inset: 0;
   z-index: 20;
-  display: grid;
+  margin: 0;
+  width: 100%;
+  max-width: none;
+  height: 100%;
+  max-height: none;
+  border: 0;
   place-items: center;
   background: rgba(15, 22, 24, 0.45);
   padding: 24px;
   overflow-y: auto;
 }
 
+.modal-backdrop[open] {
+  display: grid;
+}
+
 .onboarding-modal {
   width: min(980px, 100%);
   max-height: calc(100vh - 48px);
+  overflow-y: auto;
 }
 
 .overview-cards {
@@ -2782,6 +2792,8 @@ button:disabled {
 }
 
 .wizard-steps {
+  list-style: none;
+  padding: 0;
   align-items: start;
   display: grid;
   grid-template-columns: repeat(5, minmax(0, 1fr));
@@ -4337,6 +4349,7 @@ dd svg {
 
   .approval-result {
     grid-template-columns: 1fr;
+  }
 
   .lifecycle-bar,
   .lifecycle-bar > ol {
