@@ -99,6 +99,17 @@ describe("Diagnostics and support screen", () => {
     expect(await screen.findByText("Administrator role required to view appliance diagnostics.")).toBeInTheDocument();
     await waitFor(() => expect(fetchMock).not.toHaveBeenCalled());
   });
+
+  it("describes disabled feature switches without claiming a missing connector connection", async () => {
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) =>
+      jsonResponse(String(input) === "/diagnostics/summary" ? summary : [])));
+    render(<DiagnosticsSupport />);
+    await screen.findByText("Diagnostics refreshed.");
+    const writeFlag = screen.getByText("Write actions").closest("div");
+    expect(writeFlag).toHaveTextContent("Disabled");
+    expect(writeFlag).not.toHaveTextContent("Not connected");
+    expect(screen.getByText("Access protection").closest("div")).toHaveTextContent("Enabled");
+  });
 });
 
 function jsonResponse(payload: unknown): Response {
