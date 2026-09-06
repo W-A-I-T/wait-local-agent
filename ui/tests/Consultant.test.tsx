@@ -310,7 +310,7 @@ describe("Consultant", () => {
           deployment_started: false,
         }), { status: 201 }));
       }
-      if (path === "/consultant/discovery/sessions") {
+      if (path === "/consultant/discovery/sessions" || path === "/consultant/discovery/sessions?client_id=acme") {
         if (String(init?.method ?? "GET") === "GET") {
           return Promise.resolve(new Response(JSON.stringify([]), { status: 200 }));
         }
@@ -331,7 +331,7 @@ describe("Consultant", () => {
           deployment_started: false,
         }), { status: 200 }));
       }
-      if (path === "/consultant/discovery/sessions/CDS-guided") {
+      if (path === "/consultant/discovery/sessions/CDS-guided?client_id=acme") {
         return Promise.resolve(new Response(JSON.stringify({
           session_id: "CDS-guided",
           principal_scope: "technician",

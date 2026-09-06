@@ -124,13 +124,13 @@ export function DiagnosticsSupport() {
             </button>
           </div>
           {statusMessage ? <div className="notice" role="status">{statusMessage}</div> : null}
-          <div className="table-list settings-list">
+          <dl className="table-list settings-list">
             <StatusRow label="Version" value={system?.version} />
             <StatusRow label="Build" value={system?.build_commit ?? "Not recorded"} />
             <StatusRow label="Operating system" value={system?.os_name} />
             <StatusRow label="Install mode" value={system?.install_mode} />
             <StatusRow label="Data integrity" value={databaseIntegrity(summary)} />
-          </div>
+          </dl>
         </section>
 
         <section className="panel">
@@ -180,11 +180,11 @@ export function DiagnosticsSupport() {
 
         <section className="panel">
           <div className="panel-heading"><h2>Security checks and updates</h2><span>Local status</span></div>
-          <div className="table-list settings-list">
+          <dl className="table-list settings-list">
             <StatusRow label="Latest security checks" value={hardening?.status} status={hardening?.status} />
             <StatusRow label="Update check" value={update?.detail} status={update?.status} />
             <StatusRow label="Installed packs" value={String(packs.length)} />
-          </div>
+          </dl>
         </section>
 
         <section className="panel">

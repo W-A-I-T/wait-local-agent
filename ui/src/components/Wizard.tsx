@@ -67,16 +67,16 @@ export function Wizard({
           const content = <><span>{isDone ? <CheckCircle2 size={16} aria-hidden="true" /> : index + 1}</span><div><strong>{step.title}</strong>{step.description ? <p>{step.description}</p> : null}</div></>;
           return onStepSelect ? (
             <li key={step.id}>
-            <button
-              className={`wizard-step ${isActive ? "active" : ""} ${isDone ? "done" : ""}`}
-              type="button"
-              aria-label={step.title}
-              aria-current={isActive ? "step" : undefined}
-              disabled={index > activeStep || isBusy}
-              onClick={() => onStepSelect(index)}
-            >
-              {content}
-            </button>
+              <button
+                className={`wizard-step ${isActive ? "active" : ""} ${isDone ? "done" : ""}`}
+                type="button"
+                aria-label={step.title}
+                aria-current={isActive ? "step" : undefined}
+                disabled={index > activeStep || isBusy}
+                onClick={() => onStepSelect(index)}
+              >
+                {content}
+              </button>
             </li>
           ) : (
             <li

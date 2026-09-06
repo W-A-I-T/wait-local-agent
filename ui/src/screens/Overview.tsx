@@ -44,6 +44,7 @@ export function Overview() {
     if (!showOnboarding) return;
     const dialog = onboardingDialog.current;
     dialog?.showModal();
+    dialog?.querySelector<HTMLButtonElement>("button")?.focus();
     return () => dialog?.close();
   }, [showOnboarding]);
 

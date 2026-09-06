@@ -168,6 +168,8 @@ a {
 .technician-conversation,
 .technician-messages {
   display: grid;
+  align-content: start;
+  min-width: 0;
   gap: 12px;
 }
 
@@ -181,6 +183,8 @@ a {
   justify-items: flex-start;
   text-align: left;
   width: 100%;
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 
 .technician-session.selected {
@@ -201,6 +205,8 @@ a {
   gap: 4px;
   max-width: 85%;
   padding: 10px 12px;
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 
 .technician-message.user {
@@ -863,11 +869,13 @@ nav a:hover {
 
 .screen-stack {
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
   gap: 18px;
 }
 
 .consultant-group {
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
   gap: 10px;
 }
 
@@ -1147,6 +1155,7 @@ nav a:hover {
 .clients-hero {
   align-items: flex-start;
   display: flex;
+  flex-wrap: wrap;
   gap: 18px;
   justify-content: space-between;
 }
@@ -2336,6 +2345,7 @@ button:disabled {
 }
 
 .panel {
+  min-width: 0;
   background: #ffffff;
   border: 1px solid #dce5e1;
   border-radius: 8px;
@@ -2356,6 +2366,16 @@ button:disabled {
   color: #60706a;
   font-size: 0.86rem;
   font-weight: 700;
+}
+
+.panel-heading > div,
+.clients-hero > div {
+  min-width: 0;
+  max-width: 100%;
+}
+
+.panel-heading h3 {
+  overflow-wrap: anywhere;
 }
 
 .scope-badge {
@@ -2479,6 +2499,10 @@ button:disabled {
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 18px;
   margin-top: 18px;
+}
+
+.grid > * {
+  min-width: 0;
 }
 
 .knowledge-panel {
@@ -2746,7 +2770,7 @@ button:disabled {
 }
 
 .flag-grid {
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(min(190px, 100%), 1fr));
 }
 
 .flag-grid span {
@@ -3297,6 +3321,7 @@ button:disabled {
   border: 1px solid #dce5e1;
   border-radius: 10px;
   display: flex;
+  flex-wrap: wrap;
   gap: 14px;
   margin-top: 12px;
   padding: 10px 12px;
@@ -3305,6 +3330,8 @@ button:disabled {
 .lifecycle-bar > ol {
   align-items: center;
   display: flex;
+  flex-wrap: wrap;
+  min-width: 0;
   flex: 1;
   gap: 8px;
   justify-content: space-between;
@@ -3662,6 +3689,7 @@ dd svg {
   display: inline-flex;
   flex-wrap: wrap;
   gap: 6px;
+  max-width: 100%;
 }
 
 .status-chip {
@@ -3670,7 +3698,8 @@ dd svg {
   display: inline-flex;
   font-weight: 700;
   padding: 4px 10px;
-  white-space: nowrap;
+  max-width: 100%;
+  overflow-wrap: anywhere;
 }
 
 .status-chip.ok {
@@ -4314,6 +4343,12 @@ dd svg {
   padding: 8px;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
+}
+
+@media (max-width: 1100px) {
+  .technician-chat-layout {
+    grid-template-columns: minmax(0, 1fr);
+  }
 }
 
 @media (max-width: 760px) {

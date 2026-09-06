@@ -100,7 +100,7 @@ describe("TechnicianChat", () => {
     fireEvent.change(screen.getByLabelText("Message"), { target: { value: "unsupported request" } });
     fireEvent.click(screen.getByRole("button", { name: "Send" }));
     await screen.findByText("Ready.");
-    expect(screen.getByRole("alert")).toHaveTextContent("Unsupported command. No action executed.");
+    expect(screen.getByRole("alert")).toHaveTextContent("The request could not be completed. Check the details and try again.");
   });
 
   it("prepares a scoped Teams notification approval", async () => {

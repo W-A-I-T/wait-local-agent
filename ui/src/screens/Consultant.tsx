@@ -354,9 +354,14 @@ export function Consultant() {
   }, [clientScopeIds, isMspAdmin, selectedClientId, setSectionState]);
 
   const loadDiscoverySessions = useCallback(async () => {
+    if (!selectedClientId.trim()) {
+      setDiscoverySessions([]);
+      setSectionState("discoverySessions", { status: "empty" });
+      return;
+    }
     setSectionState("discoverySessions", { status: "loading" });
     try {
-      const result = await apiFetchForClient<ConsultantDiscoverySession[]>(selectedClientId, "/consultant/discovery/sessions");
+      const result = await apiFetchForClient<ConsultantDiscoverySession[]>(selectedClientId, `/consultant/discovery/sessions?client_id=${encodeURIComponent(selectedClientId)}`);
       const rows = Array.isArray(result) ? result : [];
       setDiscoverySessions(rows);
       setSectionState("discoverySessions", { status: rows.length ? "ready" : "empty" });
@@ -846,7 +851,7 @@ export function Consultant() {
     setMessage("");
     try {
       const result = await apiFetch<ConsultantDiscoverySession>(
-        `/consultant/discovery/sessions/${encodeURIComponent(sessionId)}`,
+        `/consultant/discovery/sessions/${encodeURIComponent(sessionId)}?client_id=${encodeURIComponent(clientId)}`,
       );
       setDiscoverySession(result);
       setDiscoveryResult(result);

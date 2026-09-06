@@ -123,7 +123,11 @@ function nonNegativeInteger(value: unknown): number | undefined {
 }
 
 function stringList(value: unknown): string[] {
-  return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string" && !looksSecretLike(item)) : [];
+  // These are environment variable names, not values. Names such as API_KEY
+  // must remain visible so the user can review the exact upload metadata.
+  return Array.isArray(value) ? value.filter((item): item is string =>
+    typeof item === "string" && /^[A-Za-z_][A-Za-z0-9_]{0,127}$/.test(item) && !looksCredentialLike(item)
+  ) : [];
 }
 
 function safeIdentifier(value: unknown): string | undefined {
@@ -132,7 +136,11 @@ function safeIdentifier(value: unknown): string | undefined {
 
 function looksSecretLike(value: string): boolean {
   return /(?:bearer|token|secret|password|api[_-]?key)/i.test(value)
-    || /(?:AKIA[0-9A-Z]{16}|AIza[0-9A-Za-z_-]{20,}|(?:sk|rk)_(?:live|test)_[0-9A-Za-z_]+|(?:gh[pousr]|github_pat)_[0-9A-Za-z_]+|xox[baprs]-[0-9A-Za-z-]+)/.test(value);
+    || looksCredentialLike(value);
+}
+
+function looksCredentialLike(value: string): boolean {
+  return /(?:AKIA[0-9A-Z]{16}|AIza[0-9A-Za-z_-]{20,}|(?:sk|rk)_(?:live|test)_[0-9A-Za-z_]+|(?:gh[pousr]|github_pat)_[0-9A-Za-z_]+|xox[baprs]-[0-9A-Za-z-]+)/.test(value);
 }
 
 function hasContent(value: unknown): boolean {
