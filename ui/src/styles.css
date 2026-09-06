@@ -897,12 +897,14 @@ nav a:hover {
   margin: 0;
 }
 
-.guided-discovery-panel {
+.guided-discovery-panel,
+.discovery-readiness-panel {
   align-items: stretch;
   flex-direction: column;
 }
 
-.guided-discovery-panel > * {
+.guided-discovery-panel > *,
+.discovery-readiness-panel > * {
   min-width: 0;
   overflow-wrap: anywhere;
 }

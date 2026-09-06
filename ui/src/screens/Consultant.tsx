@@ -1410,7 +1410,7 @@ export function Consultant() {
           {!canWrite ? <p className="screen-note">Technician access is required to submit discovery evidence.</p> : null}
         </form>
         {discoveryResult ? (
-          <div className="notice">
+          <div className="notice discovery-readiness-panel">
             <strong>{discoveryResult.readiness === "ready_for_architecture" ? "Ready for architecture review." : "More discovery is required."}</strong>{" "}
             {discoveryResult.missing_required.length ? `Missing: ${discoveryResult.missing_required.join(", ")}. ` : "All required answers are present. "}
             Risk review: {discoveryResult.risk_review.level}. ROI estimate: {discoveryResult.roi_analysis.status}.

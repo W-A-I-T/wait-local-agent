@@ -42,7 +42,13 @@ test("architect resumes discovery and distinguishes a review package from deploy
   await page.reload();
   await page.getByRole("button", { name: new RegExp(`${name} · completed`) }).click();
   await expect(page.getByLabel("Guided discovery transcript")).toContainText("Local test evidence reviewed by the service team");
-  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1)).toBe(true);
+  const resumedLayout = await page.evaluate(() => ({
+    width: document.documentElement.scrollWidth, viewport: window.innerWidth,
+    overflow: [...document.querySelectorAll(".workspace *")]
+      .filter((element) => element.getBoundingClientRect().right > window.innerWidth + 1)
+      .slice(0, 30).map((element) => ({ tag: element.tagName, className: element.className })),
+  }));
+  expect(resumedLayout.width, JSON.stringify(resumedLayout.overflow)).toBeLessThanOrEqual(resumedLayout.viewport + 1);
 
   await page.getByRole("complementary", { name: "Workspace navigation" }).getByRole("link", { name: "Solution delivery", exact: true }).click();
   const fixture = await api(request, "/__acceptance/fixtures");
