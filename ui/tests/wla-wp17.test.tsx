@@ -233,6 +233,31 @@ describe("wla-wp17 Launch Passport UI", () => {
     expect(screen.getByText("Connected")).toBeInTheDocument();
   });
 
+  it("keeps the successful upload receipt when optional checks are unavailable", async () => {
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+      const path = String(input);
+      if (path === "/founder/scan") return jsonResponse({ artifact_id: "art-1", status: "preview_ready" });
+      if (path === "/founder/upload-preview/art-1") return jsonResponse({ artifact_id: "art-1", env_key_names: ["PUBLIC_NAME"] });
+      if (path === "/founder/upload/art-1") return jsonResponse({ status: "uploaded" });
+      if (path === "/founder/lp-status") return jsonResponse({ status: "connected", capabilities: { launch_scan: false } });
+      if (path === "/founder/results") return jsonResponse({ scans: { count: 0 }, latest_report: { available: false } });
+      if (path === "/founder/preflight/latest" || path === "/founder/vault") return jsonResponse({ detail: "Optional check unavailable" }, 501);
+      throw new Error(`Unexpected request: ${path}`);
+    }));
+    render(<MemoryRouter><FounderJourney /></MemoryRouter>);
+    fireEvent.change(screen.getByLabelText("Project folder"), { target: { value: "/workspace/project" } });
+    fireEvent.click(screen.getByRole("button", { name: "Next" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Preview upload package" }));
+    await screen.findByText("Review complete. You can now confirm this exact upload package.");
+    fireEvent.click(screen.getByRole("button", { name: "Continue to confirmation" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Upload reviewed package" }));
+    await screen.findAllByText("This check is unavailable in the installed package.");
+    expect(screen.getByText("Upload complete. Your latest result is ready to review.")).toBeInTheDocument();
+    expect(screen.getByText("No latest report reference was returned yet.")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Run launch scan" })).toBeDisabled();
+    expect(screen.queryByText(/The Founder Pack is not installed/)).not.toBeInTheDocument();
+  });
+
   it("does not label a missing launch-passport status as done", async () => {
     founderProjectorState.returnNullLaunchPassport = true;
     vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
